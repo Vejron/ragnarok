@@ -50,7 +50,20 @@ export interface DetailLevel {
    * shader cannot draw, such as a billboard its material turns to the camera.
    */
   shadow?: Geometry
+  /**
+   * Metres before `from` over which an instance is drawn at both this level and the one before it, so
+   * the material can cross-fade the two (a dither: each pixel from one or the other) rather than swap
+   * them in a frame. Scaled by the renderer's `detail` as `from` is. Without it the change is instant.
+   */
+  fade?: number
 }
+
+/**
+ * How far either side of a fade band an instance is still drawn at both levels, metres: the renderer
+ * measures from its bounds' centre, the material from wherever it likes, and the two must not leave a
+ * gap where neither draws the instance.
+ */
+export const FADE_MARGIN = 0.5
 
 /**
  * Which level an instance `distance2` (metres, squared) from the camera is drawn at: 0 is the mesh's
@@ -65,6 +78,19 @@ export function levelAt(distance2: number, levels: readonly DetailLevel[], detai
     level = i + 1
   }
   return level
+}
+
+/**
+ * The second level an instance `distance2` (metres, squared) from the camera is drawn at while it
+ * fades between two (`DetailLevel.fade`), or -1 when it is drawn at its own level alone.
+ */
+export function fadingAt(distance2: number, levels: readonly DetailLevel[], detail = 1): number {
+  const level = levelAt(distance2, levels, detail)
+  const ahead = levels[level]
+  if (ahead?.fade && distance2 >= Math.max(0, (ahead.from - ahead.fade) * detail - FADE_MARGIN) ** 2) return level + 1
+  const behind = levels[level - 1]
+  if (behind?.fade && distance2 < (behind.from * detail + FADE_MARGIN) ** 2) return level - 1
+  return -1
 }
 
 /**

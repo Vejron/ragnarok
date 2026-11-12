@@ -77,6 +77,7 @@ struct Surface {
   custom: vec4f,
   front: bool,
   viewDepth: f32,
+  extra: array<vec4f, 3>,
 }
 
 ${material.wgsl}
@@ -88,7 +89,8 @@ fn fs(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4f {
     n = -n;
   }
   let flags = materials[in.ids.x].params.x;
-  let c = surface(Surface(in.world, n, in.color, in.uv, in.custom, front, in.viewDepth));
+  let extra = ${material.vertex !== undefined ? 'array<vec4f, 3>(in.extra0, in.extra1, in.extra2)' : 'array<vec4f, 3>()'};
+  let c = surface(Surface(in.world, n, in.color, in.uv, in.custom, front, in.viewDepth, extra));
   if (frame.lightCount.z > 0.5 && in.world.y < frame.lightCount.y) {
     discard;
   }

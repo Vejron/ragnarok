@@ -1,4 +1,4 @@
-import { Color, Geometry, Group, InstancedMesh, Mesh, ShaderMaterial, type DetailLevel, type Material, type Node, cylinderGeometry, icosphereGeometry, mat4 } from '@ragnarok/engine'
+import { Color, Geometry, Group, InstancedMesh, Mesh, ShaderMaterial, Texture, type DetailLevel, type Node, cylinderGeometry, icosphereGeometry, mat4 } from '@ragnarok/engine'
 import {
   TREE_BIRCH,
   TREE_BROADLEAF,
@@ -11,6 +11,7 @@ import {
   TREE_SPRUCE,
   type Tree,
 } from '@/world'
+import { IMPOSTOR_ATLAS_PX, IMPOSTOR_FRAMES, IMPOSTOR_FRAME_PX, IMPOSTOR_MARGIN, IMPOSTOR_TILES, bakeImpostor, emptyAtlas, type ImpostorFrame } from './impostors'
 import { buildRocks, isRock } from './rocks'
 import type { Shore } from './shore'
 import { winter } from './season'
@@ -23,7 +24,7 @@ import { winter } from './season'
 const TRUNK_BARK = 0x8a5a3c
 const TRUNK_BIRCH = 0xe9e5d9
 
-interface Part {
+export interface Part {
   /** `ellipsoid`: a low-poly sphere scaled by `(rx, ry, rz)`; `cone` and `trunk` span `y0..y1`. */
   shape: 'ellipsoid' | 'cone' | 'trunk'
   color: number
@@ -46,11 +47,13 @@ const PROTOTYPES: Record<number, Part[]> = {
     { shape: 'ellipsoid', color: 0x4f8f4a, y0: 0.74, rx: 0.9, ry: 0.12 },
     { shape: 'ellipsoid', color: 0x5a9a50, y0: 0.9, rx: 0.6, ry: 0.1, x: 0.15 },
   ],
+  // Three tiers, each tall enough to reach well into the next, so the outline is a soft stack rather
+  // than deep notches: the impostor's pictures round notches off, and the solid should look as they do.
   [TREE_SPRUCE]: [
     { shape: 'trunk', color: TRUNK_BARK, y0: 0, y1: 0.2, rx: 0.09 },
-    { shape: 'cone', color: 0x2f6b4a, y0: 0.12, y1: 0.5, rx: 1 },
-    { shape: 'cone', color: 0x2f6b4a, y0: 0.4, y1: 0.75, rx: 0.75 },
-    { shape: 'cone', color: 0x35764f, y0: 0.65, y1: 1, rx: 0.5 },
+    { shape: 'cone', color: 0x2f6b4a, y0: 0.12, y1: 0.7, rx: 1 },
+    { shape: 'cone', color: 0x2f6b4a, y0: 0.42, y1: 0.86, rx: 0.76 },
+    { shape: 'cone', color: 0x35764f, y0: 0.66, y1: 1, rx: 0.52 },
   ],
   [TREE_ORNAMENTAL]: [
     { shape: 'trunk', color: TRUNK_BARK, y0: 0, y1: 0.55, rx: 0.05 },
@@ -82,21 +85,25 @@ const PROTOTYPES: Record<number, Part[]> = {
 }
 
 /**
- * Metres from the camera at which a tree changes to a coarser shape: first to a few-sided one, then to
- * billboards. A tree is drawn as built here up to the first, and a forest is mostly far trees: at full
- * detail they were nine tenths of the frame's triangles. The quality's `treeDetail` scales these.
+ * Metres from the camera at which a tree changes how it is drawn: first from its solid to its impostor
+ * (a picture of the solid from about where the camera is, `impostors.ts`), then to the same impostor
+ * casting a cruder shadow. The view changes only at the first, and fades into it over `TREE_FADE`.
+ * A forest is mostly far trees: drawn whole they were nine tenths of the frame's triangles. The
+ * quality's `treeDetail` scales these.
  */
-export const TREE_LEVELS_FROM = [70, 130]
-/** A tree's shapes: the full one, the few-sided one and the billboards. */
+export const TREE_LEVELS_FROM = [40, 130]
+/** Metres before the impostor takes over in which the solid dissolves into it, pixel by pixel. */
+export const TREE_FADE = 12
+/** A tree's levels: the solid, and the impostor twice over. */
 export const TREE_LEVELS = TREE_LEVELS_FROM.length + 1
 /** The finest level a tree's shadow is cast from: trees take no shadow, so the two are never compared. */
 const TREE_SHADOW_LEVEL = 1
 
-/** How finely a tree is built: as seen near, as seen from middling far, or for a far tree's shadow. */
+/** How finely a tree is built: as seen near, for a middling tree's shadow, or for a far tree's. */
 type Detail = 'full' | 'coarse' | 'shadow'
 
 /** Sides of a cone and of a trunk at each detail. Only the full shape has its ends closed. */
-const CONE_SIDES: Record<Detail, number> = { full: 7, coarse: 5, shadow: 4 }
+const CONE_SIDES: Record<Detail, number> = { full: 12, coarse: 5, shadow: 4 }
 const TRUNK_SIDES: Record<Detail, number> = { full: 6, coarse: 4, shadow: 3 }
 /**
  * How much wider a coarse crown is made, so its outline covers about what the round one did: an
@@ -190,133 +197,226 @@ function partGeometry(part: Part, detail: Detail): Geometry {
   return geometry
 }
 
-/** What a billboard's quad is drawn as, its `custom.z`; 0 is a part that is not a billboard. */
-const BILLBOARD_CROWN = 1
-const BILLBOARD_CONE = 2
-const BILLBOARD_TRUNK = 3
-/**
- * How far a billboard is brought toward the camera, in crown radii, so the parts of one tree lie in
- * front of each other as they would in the round: a crown by most of its own radius, in front of the
- * trunk it hides, and each higher tier of a spruce a little in front of the one below.
- */
-const CROWN_PUSH = 0.8
-const CONE_PUSH = 0.4
-const CONE_TIER_PUSH = 0.05
+/** The archetypes in the order of their tiles in the impostor atlas. */
+const KIND_TILES = Object.keys(PROTOTYPES).map(Number)
+
+/** A kind's shapes and what its impostor's pictures frame. */
+export interface TreeShapes {
+  /** The solid, with the middle of its bounds in every vertex's `custom` (w 0), so the shader can fade it. */
+  full: Geometry
+  /** One quad, all four corners at the middle, which the foliage shader opens to face the camera. */
+  impostor: Geometry
+  /** What a tree casts its shadow with, at the impostor's two levels: the shadow pass runs no vertex code. */
+  coarse: Geometry
+  shadow: Geometry
+  frame: ImpostorFrame
+}
 
 /**
- * A far tree: one quad a part, all four corners at the part's centre. The foliage shader's `displace`
- * opens each quad to face the camera: `uv` is the corner (-1 to 1 across and up), and `custom` is the
- * half width (crown radii) and half height (tree heights), the `BILLBOARD_*` kind and the push toward
- * the camera. The fragment shader cuts out an ellipse, a triangle or a bar and lights it as if round.
+ * The impostor's quad: `uv` is the corner (-1 to 1 across and up), and `custom` the half width of its
+ * pictures (unit space), the kind's tile in the atlas, and the radius and half height of the upright
+ * cylinder about the middle that holds the tree, which the quad is fitted to (w, never 0, also says it
+ * is an impostor). A quad any bigger is pixels the shader works on only to throw away.
  */
-function billboardGeometry(parts: readonly Part[]): Geometry {
+function impostorGeometry(frame: ImpostorFrame, tile: number, solid: Geometry): Geometry {
+  const [cx, cy, cz] = frame.center
+  let radius = 0, half = 0
+  for (let i = 0; i < solid.vertexCount; i++) {
+    const p = solid.positions
+    radius = Math.max(radius, Math.hypot(p[i * 3]! - cx, p[i * 3 + 2]! - cz))
+    half = Math.max(half, Math.abs(p[i * 3 + 1]! - cy))
+  }
   const positions: number[] = []
-  const normals: number[] = []
   const uvs: number[] = []
   const custom: number[] = []
-  const colors: number[] = []
-  const indices: number[] = []
-  let tier = 0
-  for (const part of parts) {
-    const crown = part.shape === 'ellipsoid'
-    const y = crown ? part.y0 : (part.y0 + part.y1!) / 2
-    const half = crown ? part.ry! : (part.y1! - part.y0) / 2
-    const kind = crown ? BILLBOARD_CROWN : part.shape === 'cone' ? BILLBOARD_CONE : BILLBOARD_TRUNK
-    const push = crown ? part.rx! * CROWN_PUSH : part.shape === 'cone' ? CONE_PUSH + CONE_TIER_PUSH * tier++ : 0
-    const color = Color.hex(part.color)
-    const first = positions.length / 3
-    for (const [u, v] of [[-1, -1], [1, -1], [1, 1], [-1, 1]] as const) {
-      positions.push(crown ? (part.x ?? 0) : 0, y, crown ? (part.z ?? 0) : 0)
-      normals.push(0, 1, 0)
-      uvs.push(u, v)
-      custom.push(part.rx!, half, kind, push)
-      colors.push(color.r, color.g, color.b)
-    }
-    indices.push(first, first + 1, first + 2, first, first + 2, first + 3)
+  for (const [u, v] of [[-1, -1], [1, -1], [1, 1], [-1, 1]] as const) {
+    positions.push(...frame.center)
+    uvs.push(u, v)
+    custom.push(frame.radius * IMPOSTOR_MARGIN, tile, radius, half)
   }
   return new Geometry({
     positions: new Float32Array(positions),
-    normals: new Float32Array(normals),
+    normals: new Float32Array([0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0]),
     uvs: new Float32Array(uvs),
     custom: new Float32Array(custom),
-    colors: new Float32Array(colors),
-    indices: new Uint16Array(indices),
+    colors: new Float32Array(12).fill(1),
+    indices: new Uint16Array([0, 1, 2, 0, 2, 3]),
+    // Its corners move: it is culled by the solid's bounds.
+    bounds: { x: frame.center[0], y: frame.center[1], z: frame.center[2], radius: frame.radius },
   })
 }
 
 /**
- * The shapes of tree `kind`: `levels`, finest first (`TREE_LEVELS` of them, the last its billboards),
- * and `shadow`, what a tree drawn as billboards casts its shadow with. The full shape's bounds are
- * widened to hold the swollen coarse crowns too, since every level is culled by them.
+ * The shapes of tree `kind`. The solid's bounds are widened to hold the swollen shadow crowns too,
+ * since every level is culled by them.
  */
-export function treeGeometries(kind: number): { levels: Geometry[]; shadow: Geometry } {
+export function treeGeometries(kind: number): TreeShapes {
   const parts = PROTOTYPES[kind] ?? PROTOTYPES[TREE_BIRCH]!
+  const tile = Math.max(0, KIND_TILES.indexOf(PROTOTYPES[kind] ? kind : TREE_BIRCH))
   const shape = (detail: Detail) => Geometry.merge(partsAt(parts, detail).map((part) => partGeometry(part, detail)))
   const full = shape('full')
   const coarse = shape('coarse')
   const shadow = shape('shadow')
   const bounds = full.bounds
+  const frame: ImpostorFrame = { center: [bounds.x, bounds.y, bounds.z], radius: bounds.radius }
   for (const other of [coarse, shadow]) {
     const b = other.bounds
     bounds.radius = Math.max(bounds.radius, Math.hypot(b.x - bounds.x, b.y - bounds.y, b.z - bounds.z) + b.radius)
   }
-  return { levels: [full, coarse, billboardGeometry(parts)], shadow }
+  full.custom = new Float32Array(full.vertexCount * 4)
+  for (let i = 0; i < full.vertexCount; i++) full.custom.set([bounds.x, bounds.y, bounds.z, 0], i * 4)
+  return { full, impostor: impostorGeometry(frame, tile, full), coarse, shadow, frame }
 }
 
 /** Metres from the eye inside which foliage dissolves, so a view from inside a crown stays clear. */
 const NEAR_FADE = 2.5
 
 /**
- * The foliage's own shader: the cel look of the standard one (four bands, sun and hemisphere), plus
- * a 4×4 ordered dither that removes pixels within `NEAR_FADE` of the camera. It is a material of its
- * own so the shared mesh shader, and every other material, stays as it was. Trees take no shadow.
+ * The foliage's own shader: the cel look of the standard one (four bands, sun and hemisphere), and a 4×4
+ * ordered dither that removes pixels within `NEAR_FADE` of the camera and fades a tree from its solid to
+ * its impostor. It is a material of its own so the shared mesh shader, and every other material, stays
+ * as it was. Trees take no shadow.
+ *
+ * The fade: `extra[0].w` is how far into the band the tree is (0 to 1, the same for both, worked out from
+ * the middle of its bounds), and of the 16 places of the dither the solid leaves that share and the
+ * impostor draws only that share, so each pixel is one or the other.
+ *
+ * The impostor: `extra[0].xyz` is the pixel's place in the tree's unit space, from the middle of its
+ * bounds, and `extra[1].xyz` the direction to the camera from there. The three pictures nearest that
+ * direction are each met where the pixel's line of sight crosses the picture's plane, and blended by
+ * how near they are (a dither picking one of them a pixel was cheaper, but the pictures are far enough
+ * apart that it speckled); the surface found is lit as the solid's would be. The quad keeps its own depth: writing the surface's cost more than a millisecond in a
+ * forest, as it stops the GPU skipping hidden pixels.
  */
 const FOLIAGE_WGSL = /* wgsl */ `
 const BANDS_AT = array<f32, 4>(0.376, 0.588, 0.804, 1.0);
-const BAYER_AT = array<f32, 16>(0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
+const BAYER_AT = array<u32, 16>(0u, 8u, 2u, 10u, 12u, 4u, 14u, 6u, 3u, 11u, 1u, 9u, 15u, 7u, 13u, 5u);
+const FRAMES = ${IMPOSTOR_FRAMES.toFixed(1)};
+const FRAME_PX = ${IMPOSTOR_FRAME_PX.toFixed(1)};
+const ATLAS_PX = ${IMPOSTOR_ATLAS_PX.toFixed(1)};
+const TILES = ${IMPOSTOR_TILES.toFixed(1)};
 
-/** The round surface under a billboard's pixel, facing the viewer; it cuts away what is outside the part. */
-fn billboardNormal(s: Surface) -> vec3f {
-  let u = s.uv.x;
-  let v = s.uv.y;
-  let toward = normalize(frame.cameraPos.xyz - s.world);
-  let right = billboardRight(s.world);
-  // Toward the camera, level with the ground.
-  let level = vec3f(-right.z, 0.0, right.x);
-  if (s.custom.z < 1.5) {
-    let r2 = u * u + v * v;
-    if (r2 > 1.0) {
-      discard;
-    }
-    return normalize(right * u + cross(toward, right) * v + toward * sqrt(1.0 - r2));
+/** The dither's place (0 to 15) at the pixel under \`world\`. */
+fn ditherAt(world: vec3f) -> u32 {
+  let clip = frame.viewProj * vec4f(world, 1.0);
+  let pixel = vec2u((clip.xy / clip.w * 0.5 + 0.5) * frame.viewport.xy);
+  // Copied to a variable first: WGSL only indexes a constant array with a constant.
+  var bayer = BAYER_AT;
+  return bayer[(pixel.y & 3u) * 4u + (pixel.x & 3u)];
+}
+
+/** The direction picture \`cell\` of a kind's grid was taken from (\`decodeView\` in impostors.ts). */
+fn frameView(cell: vec2f) -> vec3f {
+  let ab = cell / (FRAMES - 1.0) * 2.0 - 1.0;
+  let p = vec2f(ab.x + ab.y, ab.x - ab.y) * 0.5;
+  return normalize(vec3f(p.x, max(0.0, 1.0 - abs(p.x) - abs(p.y)), p.y));
+}
+
+/** One picture's colour and coverage, normal and surface point (unit space, from the middle), weighted. */
+struct Picture {
+  albedo: vec4f,
+  normal: vec3f,
+  hit: vec3f,
+}
+
+fn picture(cell: vec2f, weight: f32, q: vec3f, sight: vec3f, extent: f32, tile: f32, lod: f32) -> Picture {
+  var out: Picture;
+  let v = frameView(cell);
+  var right = vec3f(1.0, 0.0, 0.0);
+  let level = vec2f(v.z, -v.x);
+  if (dot(level, level) > 1e-12) {
+    let r = normalize(level);
+    right = vec3f(r.x, 0.0, r.y);
   }
-  if (s.custom.z < 2.5) {
-    // A cone narrows from its base (v -1) to its tip (v 1), and its sides lean back toward the sky.
-    let half = (1.0 - v) * 0.5;
-    if (abs(u) > half) {
-      discard;
-    }
-    let across = u / max(half, 0.001);
-    return normalize(right * across + level * sqrt(max(0.0, 1.0 - across * across)) + vec3f(0.0, 0.5, 0.0));
+  let up = cross(v, right);
+  // Where the line of sight through the pixel crosses the picture's plane.
+  let onPlane = q - sight * (dot(q, v) / max(dot(sight, v), 0.05));
+  let local = vec2f(dot(onPlane, right), dot(onPlane, up)) / extent;
+  if (weight <= 0.0 || abs(local.x) > 1.0 || abs(local.y) > 1.0) {
+    return out;
   }
-  return normalize(right * u + level * sqrt(max(0.0, 1.0 - u * u)));
+  let inside = clamp(vec2f(local.x, -local.y) * 0.5 + 0.5, vec2f(0.5 / FRAME_PX), vec2f(1.0 - 0.5 / FRAME_PX));
+  let tileAt = vec2f(tile % TILES, floor(tile / TILES)) * FRAMES;
+  let uv = (tileAt + cell + inside) * (FRAME_PX / ATLAS_PX);
+  let albedo = textureSampleLevel(impostorAlbedo, materialSampler, uv, lod);
+  // Well off the tree: nothing more to read. Most of the quad is.
+  if (albedo.a <= 0.0) {
+    return out;
+  }
+  let nd = textureSampleLevel(impostorNormalDepth, materialSampler, uv, lod);
+  let share = weight * albedo.a;
+  out.albedo = vec4f(albedo.rgb * share, share);
+  out.normal = (nd.rgb * 2.0 - 1.0) * share;
+  out.hit = (onPlane + v * ((nd.a * 2.0 - 1.0) * extent)) * share;
+  return out;
+}
+
+/** A world vector put into the tree's unit space: the inverse of \`treeToWorld\`. */
+fn worldToTree(w: vec3f, e: vec4f) -> vec3f {
+  return vec3f(e.x * w.x + e.y * w.z, e.z * w.y, e.x * w.z - e.y * w.x) / vec3f(e.w * e.w, e.z * e.z, e.w * e.w);
+}
+
+/** A vector in the tree's unit space put into the world: \`e\` is the model's first column's x and z, then height and crown. */
+fn treeToWorld(u: vec3f, e: vec4f) -> vec3f {
+  return vec3f(e.x * u.x - e.y * u.z, e.z * u.y, e.y * u.x + e.x * u.z);
 }
 
 fn surface(given: Surface) -> vec4f {
+  // Before anything is discarded: how many texels of a picture a pixel spans, for the mip level.
+  let texels = fwidth(given.uv) * (FRAME_PX * 0.5);
+  let lod = clamp(log2(max(max(texels.x, texels.y), 1e-4)), 0.0, 3.0);
   var s = given;
-  if (s.custom.z > 0.5) {
-    s.normal = billboardNormal(s);
-  }
-  let eye = distance(s.world, frame.cameraPos.xyz) / ${NEAR_FADE.toFixed(1)};
-  if (eye < 1.0) {
-    let clip = frame.viewProj * vec4f(s.world, 1.0);
-    let pixel = vec2u((clip.xy / clip.w * 0.5 + 0.5) * frame.viewport.xy);
-    let at = (pixel.y & 3u) * 4u + (pixel.x & 3u);
-    // Copied to a variable first: WGSL only indexes a constant array with a constant.
-    var bayer = BAYER_AT;
-    if (eye < (bayer[at] + 0.5) / 16.0) {
+  let fade = s.extra[0].w;
+  let dither = (f32(ditherAt(given.world)) + 0.5) / 16.0;
+  let impostor = s.custom.w > 0.0;
+  if (impostor) {
+    if (dither >= fade) {
       discard;
     }
+    let q = s.extra[0].xyz;
+    let e = s.extra[2];
+    // The pictures are picked by the direction to the camera from the tree's middle, the same over the
+    // whole tree, but looked up along this pixel's own line of sight: a near tree is seen in perspective.
+    let toward = normalize(s.extra[1].xyz);
+    let sight = normalize(worldToTree(frame.cameraPos.xyz - given.world, e));
+    let extent = s.custom.x;
+    // The three pictures around the direction to the camera, on the grid of \`encodeView\`.
+    let sum = abs(toward.x) + max(toward.y, 0.0) + abs(toward.z);
+    let p = toward.xz / max(sum, 1e-6);
+    let g = (vec2f(p.x + p.y, p.x - p.y) * 0.5 + 0.5) * (FRAMES - 1.0);
+    let cell = clamp(floor(g), vec2f(0.0), vec2f(FRAMES - 2.0));
+    let f = g - cell;
+    var a: Picture;
+    var b: Picture;
+    var c: Picture;
+    if (f.x + f.y < 1.0) {
+      a = picture(cell, 1.0 - f.x - f.y, q, sight, extent, s.custom.y, lod);
+      b = picture(cell + vec2f(1.0, 0.0), f.x, q, sight, extent, s.custom.y, lod);
+      c = picture(cell + vec2f(0.0, 1.0), f.y, q, sight, extent, s.custom.y, lod);
+    } else {
+      a = picture(cell + vec2f(1.0, 1.0), f.x + f.y - 1.0, q, sight, extent, s.custom.y, lod);
+      b = picture(cell + vec2f(0.0, 1.0), 1.0 - f.x, q, sight, extent, s.custom.y, lod);
+      c = picture(cell + vec2f(1.0, 0.0), 1.0 - f.y, q, sight, extent, s.custom.y, lod);
+    }
+    let cover = a.albedo.a + b.albedo.a + c.albedo.a;
+    // The coverage is a distance to the silhouette, a half on it.
+    if (cover < 0.5) {
+      discard;
+    }
+    let n = (a.normal + b.normal + c.normal) / cover;
+    s.normal = normalize(treeToWorld(n / vec3f(e.w * e.w, e.z * e.z, e.w * e.w), e));
+    s.world = given.world + treeToWorld((a.hit + b.hit + c.hit) / cover - q, e);
+    s.color = vec4f(s.color.rgb * (a.albedo.rgb + b.albedo.rgb + c.albedo.rgb) / cover, s.color.a);
+  } else {
+    if (dither < fade) {
+      discard;
+    }
+    // Where a fading solid really is: its corners were pressed toward the impostor's card.
+    s.world = given.world + s.extra[1].xyz;
+  }
+  let eye = distance(s.world, frame.cameraPos.xyz) / ${NEAR_FADE.toFixed(1)};
+  if (eye < dither) {
+    discard;
   }
   let band = u32(clamp(dot(s.normal, frame.sunDir.xyz) * 0.5 + 0.5, 0.0, 0.999) * 4.0);
   let hemi = mix(frame.hemiGround.rgb, frame.hemiSky.rgb, 0.5 * s.normal.y + 0.5);
@@ -327,39 +427,69 @@ fn surface(given: Surface) -> vec4f {
 `
 
 /**
- * Turns a far tree's quads (`billboardGeometry`) to the camera; any other vertex stays where it is.
- * Trunks and cones turn only about the vertical, so they stay upright. A crown faces the camera fully,
- * and grows from its side-on height to its width as the camera rises over it, as a flattened ball would.
+ * Opens an impostor's quad to face the camera and hands the fragment what it needs to find the tree
+ * in its pictures; a solid stays where it is. Both work out how far into the fade they are.
  */
-const BILLBOARD_WGSL = /* wgsl */ `
-fn billboardRight(world: vec3f) -> vec3f {
-  let to = frame.cameraPos.xyz - world;
-  let side = vec2f(to.z, -to.x);
-  let length2 = dot(side, side);
-  if (length2 < 1e-8) {
-    return vec3f(1.0, 0.0, 0.0);
-  }
-  let across = side * inverseSqrt(length2);
-  return vec3f(across.x, 0.0, across.y);
-}
-
+const IMPOSTOR_WGSL = /* wgsl */ `
 fn displace(world: vec3f, custom: vec4f, color: vec4f) -> vec3f {
-  if (custom.z < 0.5) {
-    return world;
+  let c0 = vertexModel[0].xyz;
+  let c1 = vertexModel[1].xyz;
+  let c2 = vertexModel[2].xyz;
+  let impostor = custom.w > 0.0;
+  // The middle of the tree's bounds: an impostor's corners all start there, a solid carries it.
+  var middle = world;
+  if (!impostor) {
+    middle = (vertexModel * vec4f(custom.xyz, 1.0)).xyz;
   }
-  // A tree is scaled by its crown radius across and its height up.
-  let crown = length(vertexModel[0].xyz);
-  let wide = custom.x * crown;
-  var tall = custom.y * length(vertexModel[1].xyz);
-  let toward = normalize(frame.cameraPos.xyz - world);
-  let right = billboardRight(world);
-  var up = vec3f(0.0, 1.0, 0.0);
-  if (custom.z < 1.5) {
-    up = cross(toward, right);
-    let rise = toward.y * toward.y;
-    tall = sqrt(tall * tall * (1.0 - rise) + wide * wide * rise);
+  let band = max(params.fadeBand, 1e-3);
+  let into = distance(middle, frame.cameraPos.xyz) - params.fadeFrom + band;
+  var fade = clamp(into / band, 0.0, 1.0);
+  vertexExtra[0] = vec4f(0.0, 0.0, 0.0, fade);
+  let toward = normalize(frame.cameraPos.xyz - middle);
+  if (!impostor) {
+    // Fading, the solid's pixels lie among the impostor's, which are on a flat card through the tree's
+    // middle: the ink would draw a line at every step between the two. So the solid is pressed toward
+    // that card, each corner slid along its own line of sight (it stays where it is on the screen), to a
+    // twentieth of its depth either side, over the third of a band before the fade starts. Its light is
+    // worked out where it really is.
+    let press = clamp(into / (band / 3.0) + 1.0, 0.0, 1.0);
+    if (press <= 0.0) {
+      return world;
+    }
+    let sight = world - frame.cameraPos.xyz;
+    let onCard = dot(middle - frame.cameraPos.xyz, toward) / dot(sight, toward);
+    let pressed = frame.cameraPos.xyz + sight * mix(1.0, onCard, press * 0.95);
+    vertexExtra[1] = vec4f(world - pressed, 0.0);
+    return pressed;
   }
-  return world + right * (vertexUv.x * wide) + up * (vertexUv.y * tall) + toward * (custom.w * crown);
+  // The mirror on the water draws every tree as its impostor, whole.
+  if (frame.lightCount.z > 0.5) {
+    fade = 1.0;
+  }
+  let crown = length(c0);
+  let height = length(c1);
+  var right = vec3f(1.0, 0.0, 0.0);
+  let level = vec2f(toward.z, -toward.x);
+  if (dot(level, level) > 1e-12) {
+    let r = normalize(level);
+    right = vec3f(r.x, 0.0, r.y);
+  }
+  let up = cross(toward, right);
+  // The outline of the upright cylinder that holds the tree. A near one, seen in perspective, spreads
+  // past its outline on the plane through its middle.
+  let reach = custom.x * max(crown, height);
+  let near = reach / max(distance(middle, frame.cameraPos.xyz), reach * 1.2);
+  let spread = 1.03 / sqrt(1.0 - near * near);
+  let wide = custom.z * crown * spread;
+  let tall = (custom.z * crown * length(up.xz) + custom.w * height * abs(up.y)) * spread;
+  let corner = middle + right * (vertexUv.x * wide) + up * (vertexUv.y * tall);
+  // Into unit space: the model's 3×3 is a turn and a scale, so its inverse is its transpose over the scales squared.
+  let inverse = vec3f(1.0 / (crown * crown), 1.0 / (height * height), 1.0 / dot(c2, c2));
+  let offset = corner - middle;
+  vertexExtra[0] = vec4f(vec3f(dot(c0, offset), dot(c1, offset), dot(c2, offset)) * inverse, fade);
+  vertexExtra[1] = vec4f(vec3f(dot(c0, toward), dot(c1, toward), dot(c2, toward)) * inverse, 0.0);
+  vertexExtra[2] = vec4f(c0.x, c0.z, height, crown);
+  return corner;
 }
 `
 
@@ -385,29 +515,60 @@ fn under(color: vec3f, s: Surface) -> vec3f {
 }
 `
 
-/** A kind's full shape, and its coarser ones with the distances they take over at. */
+/** A kind's solid, and the levels that take over from it with the distances they do. */
 interface Shapes {
   full: Geometry
   levels: DetailLevel[]
 }
 
-let shared: { geometries: Map<number, Shapes>; material: Material } | undefined
+let shared: { geometries: Map<number, Shapes>; material: ShaderMaterial; standalone: ShaderMaterial } | undefined
+/** The quality's `treeDetail`, for the fade's distances. */
+let treeDetail = 1
+
+function foliage(atlas: { albedo: Texture; normalDepth: Texture }, fadeFrom: number, fadeBand: number) {
+  return new ShaderMaterial({
+    wgsl: FOLIAGE_WGSL + (winter ? WINTER_WGSL : SUMMER_WGSL),
+    vertex: IMPOSTOR_WGSL,
+    vertexColors: true,
+    uniforms: { fadeFrom, fadeBand },
+    textures: { impostorAlbedo: atlas.albedo, impostorNormalDepth: atlas.normalDepth },
+  })
+}
 
 function prototypes() {
   if (!shared) {
     const geometries = new Map<number, Shapes>()
-    for (const kind of Object.keys(PROTOTYPES)) {
-      const { levels: [full, ...coarser], shadow } = treeGeometries(Number(kind))
-      // The billboards are turned in the vertex shader, which the shadow pass does not run.
-      const levels = coarser.map((geometry, i): DetailLevel => ({ geometry, from: TREE_LEVELS_FROM[i]!, shadow: i === coarser.length - 1 ? shadow : undefined }))
-      geometries.set(Number(kind), { full: full!, levels })
+    const pixels = emptyAtlas()
+    for (const kind of KIND_TILES) {
+      const { full, impostor, coarse, shadow, frame } = treeGeometries(kind)
+      bakeImpostor(full, frame, KIND_TILES.indexOf(kind), pixels)
+      // The impostor is turned in the vertex shader, which the shadow pass does not run: it casts from solids.
+      const levels: DetailLevel[] = [
+        { geometry: impostor, from: TREE_LEVELS_FROM[0]!, fade: TREE_FADE, shadow: coarse },
+        { geometry: impostor, from: TREE_LEVELS_FROM[1]!, shadow },
+      ]
+      geometries.set(kind, { full, levels })
     }
+    const texture = (data: Uint8Array, srgb: boolean) =>
+      new Texture({ data, width: IMPOSTOR_ATLAS_PX, height: IMPOSTOR_ATLAS_PX }, { srgb, wrap: 'clamp', mipmaps: true })
+    const atlas = { albedo: texture(pixels.albedo, true), normalDepth: texture(pixels.normalDepth, false) }
     shared = {
       geometries,
-      material: new ShaderMaterial({ wgsl: FOLIAGE_WGSL + (winter ? WINTER_WGSL : SUMMER_WGSL), vertex: BILLBOARD_WGSL, vertexColors: true }),
+      material: foliage(atlas, TREE_LEVELS_FROM[0]! * treeDetail, TREE_FADE * treeDetail),
+      // A felled tree is a mesh of its own, drawn as a solid however far off.
+      standalone: foliage(atlas, 1e9, 1),
     }
   }
   return shared
+}
+
+/** Moves the fade with the quality's `treeDetail`, which the renderer scales the levels by. */
+export function setTreeDetail(detail: number) {
+  treeDetail = detail
+  if (!shared) return
+  shared.material.uniforms.fadeFrom = TREE_LEVELS_FROM[0]! * detail
+  shared.material.uniforms.fadeBand = TREE_FADE * detail
+  shared.material.needsUpdate()
 }
 
 /** A turn about the vertical, from the position, so neighbours of one kind do not all look alike. */
@@ -420,8 +581,8 @@ function spin(tree: Tree): number {
  * instance: the pivot is where it turns as it falls. Geometry and material are the shared ones.
  */
 export function standaloneTree(tree: Tree): { pivot: Group; mesh: Mesh } {
-  const { geometries, material } = prototypes()
-  const mesh = new Mesh((geometries.get(tree.kind) ?? geometries.get(TREE_BIRCH)!).full, material)
+  const { geometries, standalone } = prototypes()
+  const mesh = new Mesh((geometries.get(tree.kind) ?? geometries.get(TREE_BIRCH)!).full, standalone)
   mesh.quaternion.setFromAxisAngle(0, 1, 0, spin(tree))
   mesh.scale.set(tree.crown, tree.height, tree.crown)
   mesh.castShadow = true

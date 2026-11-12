@@ -19,7 +19,7 @@ import { LIGHT_CELL, LightGrid } from './scene/lightgrid'
 import { outputWgsl } from './passes/output.wgsl'
 import type { PerspectiveCamera } from './scene/camera'
 import { ShaderMaterial, type Material } from './scene/material'
-import { InstancedMesh, Mesh, levelAt } from './scene/mesh'
+import { FADE_MARGIN, InstancedMesh, Mesh, levelAt } from './scene/mesh'
 import type { Node } from './scene/node'
 import { Craters } from './scene/craters'
 import type { Scene } from './scene/scene'
@@ -183,6 +183,9 @@ export class Renderer {
   /** How many instances each level's list holds so far: the view's lists, then the sun's. */
   private levelCounts = new Uint32Array(16)
   private levelFrom2 = new Float64Array(8)
+  /** Per level, squared: where its fade band starts (Infinity for none) and where the one before it stops being drawn. */
+  private levelFadeFrom2 = new Float64Array(8)
+  private levelFadeTo2 = new Float64Array(8)
   private readonly opaque: DrawItem[] = []
   private readonly transparent: DrawItem[] = []
   private readonly overlay: DrawItem[] = []
@@ -565,8 +568,9 @@ export class Renderer {
     }
     if (!inView && !inShadow) return
     const into = layer === 'overlay' ? this.overlay : layer === 'held' ? this.held : material.transparent ? this.transparent : this.opaque
-    // All of it past the last change of level: one draw of the whole mesh, with no instance looked at.
-    if (last > 0 && levelAt(nearest * nearest, levels, this.detail) === last) {
+    // All of it past the last change of level (and the fade into it): one draw of the whole mesh, with no instance looked at.
+    const lastFade = last > 0 && levels[last - 1]!.fade ? FADE_MARGIN : 0
+    if (last > 0 && levelAt(nearest * nearest, levels, this.detail) === last && nearest >= levels[last - 1]!.from * this.detail + lastFade) {
       if (inView) {
         const item = this.item(mesh, slots[last]!, record, mesh.count, pipeline, group)
         item.depth = distance2
@@ -587,7 +591,20 @@ export class Renderer {
     // Each level's distance, squared, so an instance's level is a compare or two.
     if (this.levelFrom2.length < last) this.levelFrom2 = new Float64Array(last)
     const from2 = this.levelFrom2
-    for (let i = 0; i < last; i++) from2[i] = (levels[i]!.from * this.detail) ** 2
+    if (this.levelFadeFrom2.length < last) {
+      this.levelFadeFrom2 = new Float64Array(last)
+      this.levelFadeTo2 = new Float64Array(last)
+    }
+    const fadeFrom2 = this.levelFadeFrom2, fadeTo2 = this.levelFadeTo2
+    let fades = false
+    for (let i = 0; i < last; i++) {
+      const level = levels[i]!
+      from2[i] = (level.from * this.detail) ** 2
+      // Inside a fade band an instance is listed at both levels; the material dithers between them.
+      fadeFrom2[i] = level.fade ? Math.max(0, (level.from - level.fade) * this.detail - FADE_MARGIN) ** 2 : Infinity
+      fadeTo2[i] = level.fade ? (level.from * this.detail + FADE_MARGIN) ** 2 : -1
+      if (level.fade) fades = true
+    }
     const frustum = this.frustum, shadowFrustum = this.shadowFrustum
     const culled = mesh.frustumCulled
     for (let i = 0; i < count; i++) {
@@ -600,7 +617,13 @@ export class Renderer {
       const d2 = dx * dx + dy * dy + dz * dz
       let level = 0
       while (level < last && d2 >= from2[level]!) level++
-      if (inView && (!culled || frustum.intersectsSphere(x, y, z, r))) scratch[first + level * count + counts[level]!++] = i
+      if (inView && (!culled || frustum.intersectsSphere(x, y, z, r))) {
+        scratch[first + level * count + counts[level]!++] = i
+        if (fades) {
+          const also = level < last && d2 >= fadeFrom2[level]! ? level + 1 : level > 0 && d2 < fadeTo2[level - 1]! ? level - 1 : -1
+          if (also >= 0) scratch[first + also * count + counts[also]!++] = i
+        }
+      }
       if (inShadow && (!culled || shadowFrustum.intersectsSphere(x, y, z, r))) {
         const cast = lists + Math.max(level, shadowLevel)
         scratch[first + cast * count + counts[cast]!++] = i

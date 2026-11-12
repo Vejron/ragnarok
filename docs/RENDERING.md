@@ -143,25 +143,44 @@ The style is flat, bright and few-banded, not physically based.
   is drawn as the middle of the road. In winter roads are ploughed snow, as before.
 - **Trees** are instanced: one `InstancedMesh` per archetype per tile (at most ten draw calls per
   tile), built from merged unit-space parts with vertex colours. The parts are low-poly: a crown
-  sphere is a 42-vertex icosphere, a cone is seven-sided, trunks have six sides. Normals are smoothed
+  sphere is a 42-vertex icosphere, a cone is twelve-sided, trunks have six sides. Normals are smoothed
   per vertex, so the faces read as bold shapes rather than a faceted mesh. Trees have their own small shader (`FOLIAGE_WGSL` in `trees.ts`): the same four cel
   bands, plus a 4×4 ordered dither that removes pixels within 2.5 m of the eye, so standing in a crown,
   or behind a felled one, you still see what you aim at. Trees take no shadow. A felled tree's instance
   is scaled to nothing in place.
-  Each tree is drawn in the shape its own distance picks (`TREE_LEVELS_FROM`: 70 and 130 m), and is
-  culled on its own. Past 70 m a crown is a 20-triangle icosahedron, a little wider so the outline
-  covers what the round one did, and the cones and trunks lose sides and their ends. Past 130 m a tree
-  is billboards: one quad a part, all four corners at the part's centre, which the foliage shader's
-  `displace` opens to face the camera (trunks and cones turn about the vertical only; a crown faces the
-  camera fully and grows to its width as the camera rises over it). The fragment shader cuts out an
-  ellipse, a triangle or a bar and lights it with the normal of the round shape under the pixel, so the
-  cel bands, the ink outline and winter's snow fall on it as on the real one. A pine goes from 184
-  triangles to 48 and then 4. An earlier version used ever fewer-sided solids instead, down to an
-  eight-triangle crown, and far forests read as diamonds. The shadow pass does not run the vertex
-  shader, so a billboarded tree casts its shadow from a crude solid (`DetailLevel.shadow`: one
-  octahedron crown, one cone), and nearer trees from the 70 m shape at the finest. The quality's
-  `treeDetail` scales the distances (0.7 at medium, 0.5 at low). It is the engine's
-  `InstancedMesh.levels`; rocks have it with no coarser shapes, for the culling alone.
+  Each tree is culled on its own, and drawn as its solid near the camera and as an **impostor** from
+  40 m (`TREE_LEVELS_FROM`; the quality's `treeDetail` scales it, 0.7 at medium and 0.5 at low). An
+  impostor is one quad showing pictures of the solid (`impostors.ts`): when the first tile is built,
+  each kind's full mesh is drawn on the CPU, its own triangles, colours and smoothed normals, from 64
+  directions over the upper half of the sky (a hemi-octahedral grid of 8 × 8, its edge the horizon), 64
+  pixels a picture, into one atlas of all nine kinds (1536² colour and coverage, and 1536² normal and
+  depth; about 130 ms). The coverage is stored as a signed distance to the outline, so the edge stays
+  smooth however near a picture is drawn and the mips do not thin it, and pixels just off the tree take
+  the nearest one's colour and normal. The foliage shader's `displace` opens the quad to face the
+  camera, fitted to the upright cylinder that holds the tree (a quad sized to its bounding sphere was
+  three times the pixels, and in a forest the shader's cost is its pixels). The fragment shader finds
+  the three pictures nearest the direction to the tree, meets each where the pixel's own line of sight
+  crosses its plane (with the tree's single direction instead, a near tree lost its foot), blends them,
+  and lights the colour and normal found with the same cel bands and winter snow as the solid. The
+  pictures are of the solid itself rather than of ideal shapes: drawn from ellipsoids and cones, their
+  outlines and band edges differed from the faceted solid's, and the fade between them showed.
+  The change is a **cross-fade**, not a swap: over the 12 m before it (`TREE_FADE`, the engine's
+  `DetailLevel.fade`) a tree is drawn as both, and the same 4×4 ordered dither that clears the view
+  inside a crown gives each pixel to one or the other, the impostor's share growing with the distance
+  of the tree's middle, so no pixel is left empty or drawn twice. The impostor's quad is flat, through
+  the tree's middle, and the solid's surface is up to a crown in front of it: dithered together, the
+  ink saw a step at every pixel. So over the third of a band before the fade a solid is pressed toward
+  that card, each corner slid along its own line of sight (so it does not move on the screen) to a
+  twentieth of its depth, and lit where it really is. Writing each impostor pixel's own depth would
+  have kept the ink's inner lines (between a spruce's tiers) and met the ground exactly, but it cost
+  more than a millisecond in a forest, since the GPU can no longer skip hidden pixels, and was left out.
+  Earlier versions swapped shapes outright: ever fewer-sided solids (far forests read as diamonds),
+  then a few-sided solid from 70 m and a billboard a part from 130 m, and both changes showed. The
+  shadow pass does not run the vertex shader, so an impostor casts its shadow from a solid
+  (`DetailLevel.shadow`): the few-sided one (a 20-triangle crown) out to 130 m and a crude one (one
+  octahedron crown, one cone) past it, where only the shadow changes. A felled tree is a mesh of its
+  own with a material that never fades. It is the engine's `InstancedMesh.levels`; rocks have it with
+  no coarser shapes, for the culling alone.
 - **Rocks** (`rocks.ts`) are a few shapes a kind, carved from an icosphere by flat cuts and drawn
   flat-faced, one `InstancedMesh` a shape per tile. Each rock is turned, tipped, sunk and stretched by its
   position, and its instance colour carries its stone's tint in rgb and its moss in alpha (how much forest
@@ -447,7 +466,12 @@ frame, materials, pipelines, and GPU milliseconds per pass when the browser expo
   18 tiles, quality high) a frame was 4.59 M triangles, 4.3 M of them trees: 2.6 M in the shadow pass
   and 1.7 M in the main one, since a tile's trees were drawn whole and at full detail however far off.
   With a shape and a culling test per tree it is 0.63 M, for about 0.3 ms more of the renderer's CPU
-  time on an M-series Mac (the loop over the trees of tiles within 300 m). Triangles do not go with
+  time on an M-series Mac (the loop over the trees of tiles within 300 m). Impostors (2 triangles a
+  tree from 40 m) keep it about there, but cost pixels instead: at the `docksta` spawn, headless at
+  1280 × 720 on an M-series Mac, the main pass is about 3.5 ms against 2.4 ms with the old shapes. Of
+  that, about 0.25 ms is the quads themselves (alpha-tested, so the GPU cannot skip hidden ones) and the
+  rest is the three pictures' reads and maths. Picking one picture a pixel by a dither cost about half,
+  but the pictures are far enough apart that it speckled. Triangles do not go with
   the resolution, so neither adaptive resolution nor a lower pixel ratio helped a GPU that was slow on
   them.
 - Pixel ratio is capped at 2.

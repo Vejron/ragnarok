@@ -206,7 +206,8 @@ export interface ShaderMaterialParams extends Omit<MaterialParams, 'lit' | 'map'
   /**
    * WGSL defining `fn surface(s: Surface) -> vec4f`, the fragment's linear colour and alpha before fog.
    * `Surface` has `world`, `normal` (unit, facing the viewer), `color` (material colour × tint × vertex
-   * colour), `uv`, `custom` (the geometry's custom attribute), `front` and `viewDepth`. Uniforms are
+   * colour), `uv`, `custom` (the geometry's custom attribute), `front`, `viewDepth` and `extra` (what the
+   * material's `vertex` code wrote to `vertexExtra`, interpolated; zeros without it). Uniforms are
    * fields of `params`; textures are bound by their names, with `materialSampler` to sample them. The
    * frame's `frame.cameraPos`, `frame.sunDir`, `frame.fog.w` (seconds) and the rest are in scope too.
    */

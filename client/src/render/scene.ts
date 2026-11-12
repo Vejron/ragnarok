@@ -3,6 +3,7 @@ import { GunSightView } from './gunsight'
 import { HeldMapView } from './heldmap'
 import { ContactShadows } from './contact'
 import { setWaterLight, setWaterPlane, setWaterReflection } from './water'
+import { setTreeDetail } from './trees'
 import { CLASSIC, SOFT, loadLook, wintry, type Look, type Palette } from './look'
 import { winter } from './season'
 import { loadQuality, PRESETS, resolveQuality, type Preset } from './quality'
@@ -137,6 +138,7 @@ export class Scene {
     const renderer = await Renderer.create(this.canvas, { sampleCount: this.currentPreset.msaa, onDeviceLost: (info) => this.deviceLost(info) })
     setWaterReflection(renderer.reflection)
     renderer.detail = this.currentPreset.treeDetail
+    setTreeDetail(this.currentPreset.treeDetail)
     return renderer
   }
 
@@ -183,6 +185,7 @@ export class Scene {
     this.scene.sun.shadow.taps = preset.shadowTaps
     this.heldMap.redrawMs = preset.heldMapMs
     if (this.renderer) this.renderer.detail = preset.treeDetail
+    setTreeDetail(preset.treeDetail)
     this.setShadowReach(this.currentLook.far)
     if (msaa && this.renderer) void this.replaceRenderer()
     else this.resize()

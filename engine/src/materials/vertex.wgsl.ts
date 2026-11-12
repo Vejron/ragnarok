@@ -5,12 +5,14 @@
  * `fn displace(world: vec3f, custom: vec4f, color: vec4f) -> vec3f`, which moves each vertex in world
  * space before it is projected (a ShaderMaterial's `vertex` code: grass bending in the wind). `color` is
  * the vertex's colour as the fragment gets it: material × instance tint × vertex colour. `displace`
- * may also read `vertexModel`, the object's (or instance's) model matrix, and `vertexUv`, the vertex's uv.
+ * may also read `vertexModel`, the object's (or instance's) model matrix, and `vertexUv`, the vertex's uv,
+ * and may write `vertexExtra`, three vec4s handed to the fragment stage interpolated (`Surface.extra`).
  */
 export function vertexWgsl(displace: boolean) {
   return /* wgsl */ `
 var<private> vertexModel: mat4x4f;
 var<private> vertexUv: vec2f;
+${displace ? 'var<private> vertexExtra: array<vec4f, 3>;' : ''}
 
 struct VertexIn {
   @location(0) position: vec3f,
@@ -33,6 +35,7 @@ struct VertexOut {
   @location(5) custom: vec4f,
   // material index, object flags, object record.
   @location(6) @interpolate(flat) ids: vec3u,
+${displace ? '  @location(7) extra0: vec4f,\n  @location(8) extra1: vec4f,\n  @location(9) extra2: vec4f,' : ''}
 }
 
 @vertex
@@ -57,6 +60,7 @@ fn vs(in: VertexIn) -> VertexOut {
   out.viewDepth = -(frame.view * world).z;
   out.custom = in.custom;
   out.ids = vec3u(object.misc.x, object.misc.y, record);
+${displace ? '  out.extra0 = vertexExtra[0];\n  out.extra1 = vertexExtra[1];\n  out.extra2 = vertexExtra[2];' : ''}
   return out;
 }
 
