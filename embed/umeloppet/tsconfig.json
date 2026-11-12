@@ -1,0 +1,27 @@
+{
+  // Checks the embed, and the client and engine code it pulls in, on its own: nothing in client/
+  // refers to this, so the game's own type-check never sees the embed.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "resolveJsonModule": true,
+    "allowImportingTsExtensions": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "typeRoots": ["../../client/node_modules/@types", "../../client/node_modules"],
+    "types": ["@webgpu/types", "vite/client", "node"],
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["../../client/src/*"],
+      "@ragnarok/engine": ["../../engine/src/index.ts"],
+      "vite/client": ["../../client/node_modules/vite/client.d.ts"]
+    }
+  },
+  "include": ["src/**/*", "scripts/**/*"]
+}

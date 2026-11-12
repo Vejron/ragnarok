@@ -1,0 +1,13 @@
+{
+  "name": "umeloppet-embed",
+  "private": true,
+  "type": "module",
+  "description": "The Umeloppet course as an offline <umeloppet-map> web component, built from the game's client code.",
+  "scripts": {
+    "dev": "node ../../client/node_modules/vite/bin/vite.js",
+    "build": "node ../../client/node_modules/vite/bin/vite.js build",
+    "check": "node ../../client/node_modules/typescript/bin/tsc -p tsconfig.json",
+    "course": "node scripts/course.ts",
+    "assets": "sh scripts/assets.sh"
+  }
+}
