@@ -14,6 +14,9 @@ import { Frustum } from './math/frustum'
 import * as mat4 from './math/mat4'
 import { Bloom } from './passes/bloom'
 import { SkyPass } from './passes/sky'
+import { LightShafts, type ShaftLight } from './passes/shafts'
+import { EyeAdaptation } from './passes/exposure'
+import { LensFlarePass, type FlareLight } from './passes/flare'
 import { CLOUD_HEIGHT } from './materials/sky.wgsl'
 import { transmittance } from './scene/atmosphere'
 import { HudLayer, HudPass } from './hud/layer'
@@ -36,6 +39,10 @@ type Layer = 'world' | 'held' | 'overlay'
 const FRAME_FLOATS = 124
 /** The sunlight on a white cloud against the atmosphere's tinted radiance for a sun of illuminance 1. */
 const CLOUD_SUNLIGHT = 0.12
+/** The sun's angular radius as drawn (`SUN_RADIUS` in sky.wgsl), radians: how wide the flare's visibility taps spread. */
+const SUN_RADIUS = 0.0095
+/** How much the moon's shafts count against the sun's, at full moonlight. */
+const MOON_SHAFTS = 0.3
 const HDR_FORMAT: GPUTextureFormat = 'rgba16float'
 const DEPTH_FORMAT: GPUTextureFormat = 'depth32float'
 /** The reflection holds nothing smaller than this share of the view's distance. */
@@ -70,6 +77,9 @@ export class RenderStats {
   lightEntries = 0
   /** Smoothed GPU ms per pass, when the device supports timestamp queries. */
   gpuMs: Record<string, number> = {}
+  /** The eye's adaptation, read back now and then: the exposure it set and the average luminance it metered. */
+  exposure = 1
+  luminance = 0
 }
 
 /** One mesh (or one instanced mesh) to draw in a pass this frame. Pooled. */
@@ -128,8 +138,14 @@ export class Renderer {
   private readonly lightGrid = new LightGrid()
   private readonly lightVisible = (x: number, y: number, z: number, radius: number) =>
     this.frustum.intersectsSphere(x, y, z, radius) || (this.reflectionOn && this.reflectionFrustum.intersectsSphere(x, y, z, radius))
-  private readonly outputData = new Float32Array(16)
+  private readonly outputData = new Float32Array(24)
   private readonly sky: SkyPass
+  private readonly shafts: LightShafts
+  private readonly adaptation: EyeAdaptation
+  private readonly flare: LensFlarePass
+  private readonly shaftLight: ShaftLight = { u: 0, v: 0, strength: 0, length: 0, decay: 0 }
+  private readonly flareLight: FlareLight = { x: 0, y: 0, strength: 0, r: 1, g: 1, b: 1, radius: 0 }
+  private lastRender = 0
   private readonly inverseViewProj = mat4.create()
   /** The sunlight through the atmosphere at the cloud layer, for `sunlightHeight`. */
   private readonly sunlight = [1, 1, 1]
@@ -269,7 +285,7 @@ export class Renderer {
     this.materials = new MaterialTable(device)
     this.textures = new TextureStore(device)
     this.resources = new MaterialResources(device, this.textures)
-    this.timer = new GpuTimer(device)
+    this.timer = new GpuTimer(device, 12)
     this.frameBuffer = device.createBuffer({ label: 'frame', size: FRAME_FLOATS * 4, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
     this.reflectionFrameBuffer = device.createBuffer({ label: 'reflection frame', size: FRAME_FLOATS * 4, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
     this.objects = new ObjectTable(device)
@@ -333,7 +349,10 @@ export class Renderer {
     this.bloom = new Bloom(device)
     this.halfResolution = new HalfResolution(device, HDR_FORMAT)
     this.bloomSampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' })
-    this.outputUniform = device.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
+    this.outputUniform = device.createBuffer({ size: this.outputData.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
+    this.shafts = new LightShafts(device, this.sampleCount > 1)
+    this.adaptation = new EyeAdaptation(device)
+    this.flare = new LensFlarePass(device, this.format, this.sampleCount > 1)
     this.hudPass = new HudPass(device, this.format, this.textures)
     this.setSize(canvas.clientWidth || 1, canvas.clientHeight || 1, 1)
   }
@@ -370,6 +389,9 @@ export class Renderer {
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
     })
     this.bloom.resize(w, h, this.hdrTarget)
+    this.shafts.resize(w, h, this.hdrTarget, this.depthTarget)
+    this.adaptation.resize(this.hdrTarget)
+    this.flare.resize(this.depthTarget)
     this.halfResolution.release()
     this.outputGroup = this.device.createBindGroup({
       layout: this.outputPipeline.getBindGroupLayout(0),
@@ -379,6 +401,8 @@ export class Renderer {
         { binding: 2, resource: this.depthTarget.createView() },
         { binding: 3, resource: this.bloom.view },
         { binding: 4, resource: this.bloomSampler },
+        { binding: 5, resource: this.shafts.view! },
+        { binding: 6, resource: { buffer: this.adaptation.state } },
       ],
     })
   }
@@ -456,13 +480,22 @@ export class Renderer {
       if (half) this.halfResolutionPass(encoder, effects)
       this.effectsPass(encoder, effects, half)
     }
+    const dt = this.lastRender ? (start - this.lastRender) / 1000 : 0
+    this.lastRender = start
+    this.adaptation.encode(encoder, scene.adaptation, dt, this.timer.pass('adaptation'))
+    const light = this.placeLight(scene, camera)
+    this.shafts.encode(encoder, light && scene.shafts ? this.shaftLight : null, this.width / this.height, (name) => this.timer.pass(name))
     const bloom = scene.bloom
     if (bloom && bloom.strength > 0) this.bloom.encode(encoder, bloom.threshold, bloom.knee, bloom.radius)
     const screen = this.context.getCurrentTexture().createView()
-    this.outputPass(encoder, scene, camera, screen)
+    this.outputPass(encoder, scene, camera, screen, light)
     this.timer.resolve(encoder)
+    const reading = scene.adaptation !== null && this.frameNumber % 30 === 0 && this.adaptation.copyOut(encoder)
     this.device.queue.submit([encoder.finish()])
     this.timer.read()
+    if (reading) this.adaptation.read()
+    stats.exposure = scene.adaptation ? this.adaptation.exposure : scene.exposure
+    stats.luminance = this.adaptation.luminance
     for (const effect of this.effects) effect.afterSubmit()
     this.materials.collect()
     this.arena.collect()
@@ -1207,7 +1240,57 @@ export class Renderer {
     pass.end()
   }
 
-  private outputPass(encoder: GPUCommandEncoder, scene: Scene, camera: PerspectiveCamera, screen: GPUTextureView) {
+  /**
+   * Where the light that casts shafts and flares stands on screen this frame: the sun, or by night a
+   * little of the moon. Fills `shaftLight` and `flareLight` and returns whether there is one at all.
+   */
+  private placeLight(scene: Scene, camera: PerspectiveCamera): boolean {
+    const sky = scene.sky
+    if (!sky || (!scene.shafts && !scene.flare)) return false
+    const s = sky.sunDir
+    const length = Math.hypot(s.x, s.y, s.z) || 1
+    const sunUp = smoothstep(-0.02, 0.06, s.y / length)
+    let dx: number, dy: number, dz: number, weight: number
+    const light = this.flareLight
+    if (sunUp > 0) {
+      dx = s.x / length; dy = s.y / length; dz = s.z / length
+      weight = sunUp
+      const peak = Math.max(this.sunlight[0]!, this.sunlight[1]!, this.sunlight[2]!, 1e-6)
+      light.r = this.sunlight[0]! / peak
+      light.g = this.sunlight[1]! / peak
+      light.b = this.sunlight[2]! / peak
+    } else if (sky.moon > 0) {
+      const m = sky.moonDir
+      const l = Math.hypot(m.x, m.y, m.z) || 1
+      dx = m.x / l; dy = m.y / l; dz = m.z / l
+      weight = sky.moon * MOON_SHAFTS
+      light.r = 0.75; light.g = 0.83; light.b = 1
+    } else {
+      return false
+    }
+    // A direction is a point at infinity: w = 0 into the view-projection.
+    const m = camera.viewProjection
+    const cw = m[3]! * dx + m[7]! * dy + m[11]! * dz
+    if (cw <= 1e-4) return false
+    const x = (m[0]! * dx + m[4]! * dy + m[8]! * dz) / cw
+    const y = (m[1]! * dx + m[5]! * dy + m[9]! * dz) / cw
+    const off = Math.max(Math.abs(x), Math.abs(y))
+    const shafts = scene.shafts
+    const shaft = this.shaftLight
+    shaft.u = x * 0.5 + 0.5
+    shaft.v = 0.5 - y * 0.5
+    shaft.strength = shafts ? shafts.strength * weight * (1 - smoothstep(1, 1.7, off)) : 0
+    shaft.length = shafts?.length ?? 0
+    shaft.decay = shafts?.decay ?? 0
+    light.x = x
+    light.y = y
+    // Only the sun flares; the moon's light is too faint to.
+    light.strength = scene.flare && sunUp > 0 ? scene.flare.strength * weight * (1 - smoothstep(0.85, 1.15, off)) : 0
+    light.radius = SUN_RADIUS / (2 * Math.tan((camera.fov * Math.PI) / 360))
+    return shaft.strength > 0 || light.strength > 0
+  }
+
+  private outputPass(encoder: GPUCommandEncoder, scene: Scene, camera: PerspectiveCamera, screen: GPUTextureView, light: boolean) {
     const o = this.outputData
     const ink = scene.ink
     o[0] = scene.toneMapping === 'neutral' ? 1 : 0
@@ -1220,6 +1303,18 @@ export class Renderer {
     o[8] = camera.near
     o[9] = camera.far
     o[12] = scene.bloom?.strength ?? 0
+    o[13] = light && scene.shafts ? 1 : 0
+    const grade = scene.grade
+    o[14] = grade?.vignette ?? 0
+    o[15] = grade?.purkinje ?? 0
+    o[16] = grade?.shadows.r ?? 1
+    o[17] = grade?.shadows.g ?? 1
+    o[18] = grade?.shadows.b ?? 1
+    o[19] = grade?.saturation ?? 1
+    o[20] = grade?.highlights.r ?? 1
+    o[21] = grade?.highlights.g ?? 1
+    o[22] = grade?.highlights.b ?? 1
+    o[23] = scene.adaptation ? 1 : 0
     this.device.queue.writeBuffer(this.outputUniform, 0, o)
     const pass = encoder.beginRenderPass({
       label: 'output',
@@ -1229,6 +1324,7 @@ export class Renderer {
     pass.setPipeline(this.outputPipeline)
     pass.setBindGroup(0, this.outputGroup!)
     pass.draw(3)
+    if (light && this.flareLight.strength > 0) this.stats.drawCalls += this.flare.draw(pass, this.flareLight, this.width / this.height)
     if (this.hud.size) this.stats.drawCalls += this.hudPass.draw(pass, this.hud)
     pass.end()
   }
@@ -1252,8 +1348,16 @@ export class Renderer {
 
   destroy() {
     this.sky.destroy()
+    this.shafts.destroy()
+    this.adaptation.destroy()
+    this.flare.destroy()
     this.device.destroy()
   }
+}
+
+function smoothstep(edge0: number, edge1: number, x: number) {
+  const t = Math.min(1, Math.max(0, (x - edge0) / (edge1 - edge0)))
+  return t * t * (3 - 2 * t)
 }
 
 function byStateThenGeometry(a: DrawItem, b: DrawItem) {

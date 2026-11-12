@@ -1,4 +1,4 @@
-import { Bloom, Color, Fog, Ink, PerspectiveCamera, Renderer, Scene as EngineScene, Sky } from '@ragnarok/engine'
+import { Adaptation, Bloom, Color, Fog, Grade, Ink, LensFlare, PerspectiveCamera, Renderer, Scene as EngineScene, Shafts, Sky } from '@ragnarok/engine'
 import { GunSightView } from './gunsight'
 import { HeldMapView } from './heldmap'
 import { ContactShadows } from './contact'
@@ -7,7 +7,7 @@ import { setTreeDetail } from './trees'
 import { CLASSIC, SOFT, loadLook, wintry, type Look, type Palette } from './look'
 import { winter } from './season'
 import { loadQuality, PRESETS, resolveQuality, type Preset } from './quality'
-import { cloudsAt, createSky, drawnSky, moonPhaseAt, nightAt, skyAt } from './daynight'
+import { cloudsAt, createSky, drawnSky, gradeAt, moonPhaseAt, nightAt, skyAt } from './daynight'
 import { mistAt } from './marshmist'
 import { clearArm, lookDir } from '../aimline'
 import { GUNNER_BACK, GUNNER_UP, MOUNT_EYE_CLEARANCE, ON_FOOT_HEIGHT, ON_FOOT_SHOULDER } from '../sim/consts'
@@ -134,6 +134,8 @@ export class Scene {
 
     this.scene.fog = new Fog(this.currentPreset.fogNear, this.currentPreset.fogFar)
     this.scene.sky = this.drawn
+    this.scene.adaptation = new Adaptation()
+    this.scene.grade = new Grade()
     this.drawn.coverage = cloudsAt(0, winter, this.drawn.drift)
     this.scene.sun.shadow.enabled = true
     this.contact = new ContactShadows((x, z) => this.groundAt(x, z))
@@ -260,6 +262,8 @@ export class Scene {
     this.setShadowReach(look.far)
     scene.ink = look.ink ? (scene.ink ?? new Ink()) : null
     scene.bloom = look.bloom ? (scene.bloom ?? new Bloom()) : null
+    scene.shafts = look.rays ? (scene.shafts ?? new Shafts()) : null
+    scene.flare = look.rays ? (scene.flare ?? new LensFlare()) : null
     scene.craters.visible = look.scorch
   }
 
@@ -274,6 +278,7 @@ export class Scene {
     scene.background.copy(sky.sky)
     scene.fog!.color.copy(sky.sky)
     drawnSky(sky, this.palette, phase, this.moonPhase, this.drawn)
+    gradeAt(sky, scene.grade!)
     this.drawn.fogDensity = MIST_DENSITY * mistAt(phase)
     this.drawn.fogFalloff = MIST_FALLOFF
     scene.hemisphere.sky.copy(sky.hemiSky)

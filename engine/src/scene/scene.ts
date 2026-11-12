@@ -66,6 +66,56 @@ export class Bloom {
   radius = 1
 }
 
+/**
+ * Shafts of light from the sun (or the moon) through gaps in whatever stands against the sky: trees,
+ * buildings, cloud edges. A radial blur toward the light at a quarter of the screen's size. Needs `Scene.sky`.
+ */
+export class Shafts {
+  /** How much of the shafts' light is added. */
+  strength = 0.4
+  /** How far toward the light each pixel gathers, as a share of the way there. */
+  length = 0.9
+  /** What each step toward the light keeps of the one before: lower is shorter shafts. */
+  decay = 0.965
+}
+
+/** Glare and ghosts of the sun in a lens, dimmed as the sun goes behind things. Needs `Scene.sky`. */
+export class LensFlare {
+  /** How bright the glare and the ghosts are, 0 to about 2. */
+  strength = 1
+}
+
+/**
+ * The eye adapting to how bright the view is: a dark forest opens up, a bright sky shuts down a
+ * little. The exposure is `(key / average luminance) ^ strength`, held between `min` and `max`, and
+ * eases to that at `brighten` per second when the view darkens and `darken` when it brightens.
+ */
+export class Adaptation {
+  /** The average luminance (linear, before exposure) that gets an exposure of 1. */
+  key = 0.3
+  strength = 0.4
+  min = 0.8
+  max = 1.6
+  brighten = 1.2
+  darken = 2.5
+}
+
+/** Colour grading before tone mapping: split toning, saturation, the night's blue shift and a vignette. */
+export class Grade {
+  /** Multiplies the dark parts of the picture and the bright parts (linear), blended by luminance. */
+  readonly shadows = new Color(1, 1, 1)
+  readonly highlights = new Color(1, 1, 1)
+  /** 1 leaves colours as they are, 0 is grey. */
+  saturation = 1
+  /**
+   * How far dim colours shift toward the blue-grey of rod vision, 0 to 1: the Purkinje effect, by
+   * moonlight. Bright things (lamps, fire) keep their colour.
+   */
+  purkinje = 0
+  /** How much the corners darken, 0 to 1. */
+  vignette = 0
+}
+
 /** The root of what is drawn, with the lighting and atmosphere that apply to all of it. */
 export class Scene extends Node {
   readonly background = new Color(0, 0, 0)
@@ -76,6 +126,10 @@ export class Scene extends Node {
   sky: Sky | null = null
   ink: Ink | null = null
   bloom: Bloom | null = null
+  shafts: Shafts | null = null
+  flare: LensFlare | null = null
+  adaptation: Adaptation | null = null
+  grade: Grade | null = null
   /** Short-lived point lights (blasts, flashes); call `lights.update(dt)` each frame. */
   readonly lights = new PointLights()
   /** Craters the ground's materials (`craters: true`) are marked by: SCORCH.md. */

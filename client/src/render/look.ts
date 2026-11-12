@@ -12,6 +12,8 @@ export interface Look {
   ink: boolean
   /** A glow around fire, tracers and flashes. */
   bloom: boolean
+  /** Shafts of sunlight through trees and cloud edges, and the sun's glare in a lens. */
+  rays: boolean
   /** Water mirrors the scene: the world is drawn a second time, mirrored, at half size. */
   reflect: boolean
   /** Grass that sways and parts around whoever goes through it; thinner on phones and tablets. */
@@ -31,6 +33,7 @@ export const LOOK_OPTIONS: { key: keyof Look; label: string; about: string; heav
   { key: 'far', label: 'Far shadows', about: 'Sun shadows reach further from you, a little coarser.', heavy: true },
   { key: 'ink', label: 'Ink outlines', about: 'Dark cartoon outlines where one thing meets another.' },
   { key: 'bloom', label: 'Bloom', about: 'A glow around fire, tracers and flashes.', heavy: true },
+  { key: 'rays', label: 'Sun rays', about: 'Shafts of sunlight through trees and clouds, and the sun\'s glare.', heavy: true },
   { key: 'reflect', label: 'Water reflections', about: 'Water mirrors the world, which draws it a second time.', heavy: true },
   { key: 'grass', label: 'Grass', about: 'Grass that sways and parts as you go through it.' },
   { key: 'scorch', label: 'Scorched craters', about: 'Char and rays on the ground where something blew up.' },
@@ -50,7 +53,7 @@ const RESET_ON_BUMP: (keyof Look)[] = ['ink']
 /** The long shadows are off on phones and tablets, where they cost fill rate and memory. */
 export function defaultLook(): Look {
   const coarse = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches
-  return { soft: true, contact: true, far: !coarse, ink: true, bloom: !coarse, reflect: !coarse, grass: true, scorch: true, adaptive: true, netStats: false }
+  return { soft: true, contact: true, far: !coarse, ink: true, bloom: !coarse, rays: !coarse, reflect: !coarse, grass: true, scorch: true, adaptive: true, netStats: false }
 }
 
 export function loadLook(): Look {

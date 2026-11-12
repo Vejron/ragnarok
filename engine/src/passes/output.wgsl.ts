@@ -1,6 +1,8 @@
 /**
- * The last pass, from the resolved HDR image to the canvas: ink outlines (optional), then tone mapping
- * and the linear-to-sRGB encode. `multisampled` says whether the scene depth it reads for the ink is.
+ * The last pass, from the resolved HDR image to the canvas: ink outlines (optional), bloom and light
+ * shafts added, the exposure (fixed, or the eye's adaptation), colour grading, tone mapping, a
+ * vignette and the linear-to-sRGB encode. `multisampled` says whether the scene depth it reads for the
+ * ink is.
  */
 export function outputWgsl(multisampled: boolean) {
   return /* wgsl */ `
@@ -11,8 +13,12 @@ struct Output {
   ink: vec4f,
   // camera near, camera far, unused, unused.
   clip: vec4f,
-  // bloom strength, unused, unused, unused.
+  // bloom strength, light shafts' strength, vignette (0 to 1), Purkinje shift (0 to 1).
   bloom: vec4f,
+  // Grading: what the shadows are multiplied by (rgb), saturation.
+  shadows: vec4f,
+  // What the highlights are multiplied by (rgb), whether the exposure is the eye's adaptation (0 or 1).
+  highlights: vec4f,
 }
 
 @group(0) @binding(0) var<uniform> output: Output;
@@ -20,6 +26,9 @@ struct Output {
 @group(0) @binding(2) var depth: ${multisampled ? 'texture_depth_multisampled_2d' : 'texture_depth_2d'};
 @group(0) @binding(3) var bloom: texture_2d<f32>;
 @group(0) @binding(4) var bloomSampler: sampler;
+@group(0) @binding(5) var shafts: texture_2d<f32>;
+// The eye's adaptation (passes/exposure.ts): its exposure is element 1.
+@group(0) @binding(6) var<storage, read> adaptation: array<f32, 4>;
 
 @vertex
 fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
@@ -55,6 +64,20 @@ fn neutral(c: vec3f) -> vec3f {
   return mix(color, vec3f(newPeak), g);
 }
 
+// Split toning by luminance, saturation, and by night the shift of dim colours toward the blue-grey of
+// rod vision (the Purkinje effect): bright lamps and fire keep their colour.
+fn grade(rgb: vec3f) -> vec3f {
+  var c = rgb;
+  let luminance = dot(c, vec3f(0.2126, 0.7152, 0.0722));
+  c *= mix(output.shadows.rgb, output.highlights.rgb, smoothstep(0.03, 0.7, luminance));
+  c = max(mix(vec3f(luminance), c, output.shadows.w), vec3f(0.0));
+  if (output.bloom.w > 0.0) {
+    let dim = 1.0 - smoothstep(0.02, 0.35, luminance);
+    c = mix(c, vec3f(luminance) * vec3f(0.72, 0.86, 1.3), output.bloom.w * dim * 0.75);
+  }
+  return c;
+}
+
 fn toSrgb(c: vec3f) -> vec3f {
   let lo = c * 12.92;
   let hi = 1.055 * pow(c, vec3f(1.0 / 2.4)) - 0.055;
@@ -80,13 +103,21 @@ fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
     // The line darkens what it is drawn over, so the hue carries through.
     c = mix(c, c * output.ink.x, edge * output.ink.y);
   }
+  let uv = (vec2f(p) + 0.5) / vec2f(textureDimensions(hdr));
   if (output.bloom.x > 0.0) {
-    let uv = (vec2f(p) + 0.5) / vec2f(textureDimensions(hdr));
     c += textureSampleLevel(bloom, bloomSampler, uv, 0.0).rgb * output.bloom.x;
   }
-  c *= output.params.y;
+  if (output.bloom.y > 0.0) {
+    c += textureSampleLevel(shafts, bloomSampler, uv, 0.0).rgb * output.bloom.y;
+  }
+  c *= output.params.y * select(1.0, adaptation[1], output.highlights.w > 0.5);
+  c = grade(c);
   if (output.params.x == 1.0) {
     c = neutral(c);
+  }
+  if (output.bloom.z > 0.0) {
+    let off = (uv - 0.5) * vec2f(f32(textureDimensions(hdr).x) / f32(textureDimensions(hdr).y), 1.0);
+    c *= 1.0 - output.bloom.z * smoothstep(0.35, 1.05, length(off));
   }
   return vec4f(toSrgb(clamp(c, vec3f(0.0), vec3f(1.0))), 1.0);
 }

@@ -1,4 +1,4 @@
-import { Color, hueOf, skyRadiance, transmittance, type Sky as EngineSky } from '@ragnarok/engine'
+import { Color, hueOf, skyRadiance, transmittance, type Grade, type Sky as EngineSky } from '@ragnarok/engine'
 import { flatGroundLight } from './groundlight'
 import type { Palette } from './look'
 import { smoothstep } from '@/math'
@@ -319,6 +319,31 @@ export function cloudsAt(seconds: number, wintry: boolean, drift: [number, numbe
 
 /** A whole number of cloud map tiles (`CLOUD_TILE`, 6 km), past which the drift wraps unseen. */
 const CLOUD_REPEAT = 60000
+
+const GOLDEN_HIGHLIGHTS = Color.hex(0xffeedd)
+const GOLDEN_SHADOWS = Color.hex(0xe4ecff)
+const DAY_SHADOWS = Color.hex(0xf8fbff)
+const WHITE = new Color(1, 1, 1)
+/** How much the corners darken, all day. */
+const VIGNETTE = 0.16
+/** How far dim colours go toward the blue of rod vision at full night (`Grade.purkinje`). */
+const PURKINJE = 0.85
+
+/**
+ * The colour grade for the light at this hour (`light`, from `skyAt`): warm highlights and cool
+ * shadows round the golden hour, a touch more colour then, a slight cool in the day's shade, and by
+ * night dim colours drifting toward the blue-grey of moonlit vision.
+ */
+export function gradeAt(light: Sky, grade: Grade): Grade {
+  const height = light.sunDir[1]
+  const golden = 1 - smoothstep(0.0, 0.3, Math.abs(height - 0.06))
+  grade.highlights.copy(WHITE).lerp(GOLDEN_HIGHLIGHTS, golden)
+  grade.shadows.copy(WHITE).lerp(DAY_SHADOWS, 1 - light.night).lerp(GOLDEN_SHADOWS, golden)
+  grade.saturation = 1 + 0.1 * golden
+  grade.purkinje = PURKINJE * light.night
+  grade.vignette = VIGNETTE
+  return grade
+}
 
 /**
  * The moon's phase angle (see `Sky.moonPhase`) `seconds` into the server's clock: full on the first

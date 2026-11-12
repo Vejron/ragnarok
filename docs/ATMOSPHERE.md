@@ -1,6 +1,6 @@
 # Atmosphere: sky, sun, moon, stars, clouds and mist
 
-The world has a sky behind it. A physical atmosphere is lit by the real sun, so sunrises and sunsets
+The world has a sky behind it, and the light looks as it does through an eye or a lens. A physical atmosphere is lit by the real sun, so sunrises and sunsets
 come from the same scattering that turns a real sky red. On top of it are a sun disc, a moon that
 shows its phase, stars that turn through the night, and a layer of clouds that drift with the wind
 and shade the ground. The fog takes its colour from that sky, so distant hills fade into the sky
@@ -142,6 +142,44 @@ In SOLO the clock never syncs, so the clouds stand still.
   blue, not the afterglow's red.
 
 At noon both are the palette's exactly, as the tests check.
+
+## Light: shafts, glare, the eye and the grade
+
+These run after the effects pass, on the resolved HDR image. Together they cost about 0.08 ms a frame:
+100 renders timed to the GPU's finish, on against off.
+
+- **Light shafts** (`passes/shafts.ts`, `Scene.shafts`): Mitchell's post-process god rays, at a quarter
+  of the screen's size.
+  - A mask holds the sky's light near the light source. Whatever stands in front of the sky (depth
+    above 0) is black, and the disc's glare is held down to 3.
+  - A blur gathers the mask along 32 jittered steps toward the light, each step keeping 0.965 of the
+    last.
+  - The output pass adds the result. Gaps in trees, the edges of buildings and clouds become shafts.
+  - The light is the sun, fading in as it clears the horizon. Once it is down it is the moon, at 0.3
+    of the moonlight. Either fades out as it leaves the screen (`Renderer.placeLight`).
+- **Lens flare** (`passes/flare.ts`, `Scene.flare`): a starburst of glare on the sun and six ghosts
+  along the line through the middle of the screen, added over the finished picture.
+  - The vertex stage reads 25 depth taps round the sun, so the flare dims as the sun goes behind
+    something, with no pass of its own.
+  - The sun only: the moon does not flare.
+- **Eye adaptation** (`passes/exposure.ts`, `Scene.adaptation`):
+  - One compute workgroup meters the log-average luminance of a 32 × 32 grid, weighted toward the
+    middle of the screen.
+  - It eases toward the metering at 1.2 per second when the view darkens and 2.5 when it brightens.
+  - The exposure is `(key / luminance) ^ 0.4`, between 0.8 and 1.6. The key, 0.3, is noon's metering,
+    so noon keeps an exposure of about 1. Midnight (about 0.016) gets the most, 1.6.
+  - A dark forest opens up, and looking into a bright sky dims the ground a little.
+  - Everything stays on the GPU. `stats.exposure` and `stats.luminance` are read back every 30 frames.
+- **Grade** (`Scene.grade`, set by `gradeAt` in `daynight.ts`), in the output pass before tone mapping:
+  - **Golden hour:** split toning, with warm highlights (`#ffeedd`) and cool shadows (`#e4ecff`), and
+    10% more saturation.
+  - **Day:** a faint cool in the shade.
+  - **Night:** the Purkinje shift, where dim colours go toward the blue-grey of rod vision (up to 0.85
+    of the way) while lamps and fire keep their colour.
+  - **Vignette:** a 0.16 vignette after tone mapping.
+
+The shafts and the flare are the **Sun rays** look option (`Look.rays`), off by default on phones.
+Adaptation and grading are always on.
 
 ## Checking it
 
