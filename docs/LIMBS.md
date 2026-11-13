@@ -65,6 +65,9 @@ The legs' effects are `legged()` in `crates/sim/src/lib.rs`. The server copies t
 - A bandage can be started whenever any part is hurt or lost, and with no arms.
 - A finished bandage heals the torso, the head and every remaining limb by its 40, stops all bleeding
   and puts one limb back whole, a leg before an arm.
+- A soldier mends by themselves (`mechanics/mend.rs`): after `MEND_DELAY_SECONDS` (5) without being
+  hurt, the torso and the head heal evenly, from nothing to full in `MEND_SECONDS` (60). Any new hurt
+  starts the wait again. Limbs never mend this way, and zombies do not mend at all.
 - Carrying the backpack mends the head and limbs as fast as the torso.
 - A new life has every part whole.
 

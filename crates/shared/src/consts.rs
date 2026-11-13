@@ -288,6 +288,10 @@ pub const HEAD_ZONE_Y: f32 = 0.45;
 /// left over is lost. A sniper round to the head kills, as do three revolver rounds or seven AK5 rounds.
 pub const HEAD_HP: u8 = 75;
 pub const LIMB_HP: u8 = 60;
+/// A soldier mends by themselves: once they have gone `MEND_DELAY_SECONDS` unhurt, the torso and the head
+/// heal evenly back to full over `MEND_SECONDS` from nothing. Limbs do not; a lost one needs a bandage.
+pub const MEND_SECONDS: f32 = 60.0;
+pub const MEND_DELAY_SECONDS: f32 = 5.0;
 
 /// Limbs. A round below this height over the capsule centre hit a leg (the hips are about 0.75 m up),
 /// and one between there and the head this far or more to the side of the body's middle (the outer

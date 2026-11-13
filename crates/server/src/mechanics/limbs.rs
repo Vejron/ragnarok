@@ -196,6 +196,18 @@ pub fn heal(world: &mut World, id: u32, amount: u8) {
     store(world, id, wounds);
 }
 
+/// What player `id`'s head has taken.
+pub fn head_taken(world: &World, id: u32) -> u8 {
+    world.entities.get::<Wounds>(id).map_or(0, |wounds| wounds.taken[HEAD])
+}
+
+/// Heals player `id`'s head, and nothing else, by `amount`.
+pub fn heal_head(world: &mut World, id: u32, amount: u8) {
+    let Some(mut wounds) = world.entities.get::<Wounds>(id).copied() else { return };
+    wounds.taken[HEAD] = wounds.taken[HEAD].saturating_sub(amount);
+    store(world, id, wounds);
+}
+
 /// A bandage finished on player `id`: the bleeding stops and one limb comes back whole, a leg before an
 /// arm. (Healing is `heal`'s.)
 pub fn bandaged(world: &mut World, id: u32) {

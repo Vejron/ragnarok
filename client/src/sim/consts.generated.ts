@@ -404,6 +404,13 @@ export const HEAD_HP = 75
 export const LIMB_HP = 60
 
 /**
+ * A soldier mends by themselves: once they have gone `MEND_DELAY_SECONDS` unhurt, the torso and the head
+ * heal evenly back to full over `MEND_SECONDS` from nothing. Limbs do not; a lost one needs a bandage.
+ */
+export const MEND_SECONDS = 60.0
+export const MEND_DELAY_SECONDS = 5.0
+
+/**
  * Limbs. A round below this height over the capsule centre hit a leg (the hips are about 0.75 m up),
  * and one between there and the head this far or more to the side of the body's middle (the outer
  * edge of the chest), an arm.
