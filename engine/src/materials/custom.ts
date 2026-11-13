@@ -80,6 +80,9 @@ struct Surface {
   extra: array<vec4f, 3>,
 }
 
+// Which draw of a material with a depth pre-pass this is: 0 the only one, 1 depth only, 2 shaded after it.
+override PREPASS: u32 = 0u;
+
 ${material.wgsl}
 
 @fragment
@@ -91,6 +94,9 @@ fn fs(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4f {
   let flags = materials[in.ids.x].params.x;
   let extra = ${material.vertex !== undefined ? 'array<vec4f, 3>(in.extra0, in.extra1, in.extra2)' : 'array<vec4f, 3>()'};
   let c = surface(Surface(in.world, n, in.color, in.uv, in.custom, front, in.viewDepth, extra));
+  if (PREPASS == 1u) {
+    return vec4f(0.0);
+  }
   if (frame.lightCount.z > 0.5 && in.world.y < frame.lightCount.y) {
     discard;
   }

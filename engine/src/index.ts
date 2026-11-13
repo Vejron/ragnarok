@@ -9,6 +9,7 @@ export { Scene, Sun, SunShadow, Hemisphere, Fog, Ink, Bloom, Shafts, Beams, Lens
 export { Sky } from './scene/sky'
 export { ATMOSPHERE, transmittance, skyRadiance, hueOf } from './scene/atmosphere'
 export { CLOUD_HEIGHT } from './materials/sky.wgsl'
+export { PANORAMA_SIZE } from './passes/sky'
 export { boxGeometry, sphereGeometry, planeGeometry, quadGeometry, ringGeometry, icosphereGeometry, cylinderGeometry } from './scene/shapes'
 export { Vec3, Quat, Euler, Color, srgbToLinear, type EulerOrder, type XYZ, type XYZW } from './math/vec'
 export { Vector3, Quaternion, Matrix4 } from './math/linear'

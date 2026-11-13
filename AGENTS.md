@@ -63,6 +63,26 @@ To iterate faster:
 - In zsh, `grep --include=*.rs` fails with "no matches found". Quote the glob, or leave it out.
 - Blender is at `/Applications/Blender.app/Contents/MacOS/Blender`. To build one car and look at it: `Blender -b -P tools/vehicles/build_car.py -- --only <kind> --preview <dir>`.
 
+## Working on the renderer
+
+The engine (`engine/`) is judged by what the GPU spends per frame, and on the high-resolution laptops it
+is played on that is pixels and memory traffic, not draw calls. [docs/GPU-PERFORMANCE.md](docs/GPU-PERFORMANCE.md)
+has the numbers.
+
+- **Measure with `node client/scripts/gpu-bench.mjs`** before and after a change: whole frames to the
+  GPU's finish at Retina size, each variant timed alternately with the full frame (`--extra`, `--parts`,
+  `--breakdown`). Don't trust the per-pass GPU timers on headless Metal, and don't compare against an
+  older run. A change that doesn't measure faster is reverted.
+- **The GPU is tile-based (Apple).** It skips hidden opaque pixels itself, so overdraw of opaque,
+  non-discarding surfaces is nearly free, and a depth pre-pass only pays for materials that `discard`
+  (`ShaderMaterial.depthPrepass`). Never store a multisampled attachment: resolve it in the pass that
+  draws it. After the main pass, read the single-sample `sceneDepth` and draw at one sample a pixel.
+- **Pixels cost more than triangles.** Solid trees are cheaper than impostors, and the pixel ratio is
+  the biggest lever. `rgba16float` was faster than `rg11b10ufloat`.
+- **Work that repeats across the screen goes in a texture made once a frame**, by compute where it can
+  (the sky panorama the water mirrors), not in every pixel's shader.
+- [RENDERING.md](docs/RENDERING.md)'s "Measuring, and traps" lists the headless and WGSL traps.
+
 ## Deploying
 
 The README's "Deploying" section has the full steps. In short: commit first, because the image is tagged with `HEAD`, then load `.env.local` and run `scripts/deploy.sh`.

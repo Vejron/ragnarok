@@ -26,7 +26,8 @@ struct VertexIn {
 }
 
 struct VertexOut {
-  @builtin(position) clip: vec4f,
+  // Invariant: a depth pre-pass and the pass after it must land every pixel at the same depth.
+  @builtin(position) @invariant clip: vec4f,
   @location(0) world: vec3f,
   @location(1) normal: vec3f,
   @location(2) color: vec4f,

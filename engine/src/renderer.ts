@@ -49,6 +49,26 @@ const DEPTH_FORMAT: GPUTextureFormat = 'depth32float'
 /** The reflection holds nothing smaller than this share of the view's distance. */
 const REFLECT_MIN_SIZE = 0.01
 
+/**
+ * Copies sample 0 of the multisampled scene depth into a single-sample depth texture, so what reads the
+ * depth after the main pass (effects, ink, shafts, beams, the flare) reads a quarter of the memory, and
+ * the effects can draw at one sample a pixel onto the resolved image.
+ */
+const DEPTH_COPY_WGSL = /* wgsl */ `
+@group(0) @binding(0) var depth: texture_depth_multisampled_2d;
+
+@vertex
+fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
+  let uv = vec2f(f32((i << 1u) & 2u), f32(i & 2u));
+  return vec4f(uv * 2.0 - 1.0, 0.0, 1.0);
+}
+
+@fragment
+fn fs(@builtin(position) pos: vec4f) -> @builtin(frag_depth) f32 {
+  return textureLoad(depth, vec2i(pos.xy), 0);
+}
+`
+
 export interface RendererOptions {
   /** Multisampling for the main pass: 4 (default) or 1. */
   sampleCount?: 1 | 4
@@ -126,6 +146,11 @@ export class Renderer {
   height = 1
   /** Drawing-buffer pixels per CSS pixel, from the last `setSize`. */
   pixelRatio = 1
+  /**
+   * How much the output pass sharpens (0 none, up to 1), for a picture drawn at fewer pixels than the
+   * screen has, which the browser stretches to fit and so softens.
+   */
+  sharpen = 0
   /** Tints lit surfaces by how many lights their light-grid cell lists, instead of lighting them. */
   showLightGrid = false
   /**
@@ -197,6 +222,13 @@ export class Renderer {
   private outputGroup: GPUBindGroup | null = null
   private colorTarget: GPUTexture | null = null
   private depthTarget: GPUTexture | null = null
+  /**
+   * The scene's depth at one sample a pixel: a copy of the multisampled depth's first sample, or the
+   * depth target itself without multisampling. Everything after the main pass reads this one.
+   */
+  private sceneDepth: GPUTexture | null = null
+  private readonly depthCopyPipeline: GPURenderPipeline | null = null
+  private depthCopyGroup: GPUBindGroup | null = null
   private hdrTarget: GPUTexture | null = null
   private shadowMap: GPUTexture
   private readonly frustum = new Frustum()
@@ -220,6 +252,8 @@ export class Renderer {
   private levelFadeFrom2 = new Float64Array(8)
   private levelFadeTo2 = new Float64Array(8)
   private readonly opaque: DrawItem[] = []
+  /** Depth-only draws of materials with `depthPrepass`, first in the main pass. */
+  private readonly prepass: DrawItem[] = []
   private readonly transparent: DrawItem[] = []
   private readonly overlay: DrawItem[] = []
   /** Held meshes: the end of the main pass, over the scene but writing depth (`Mesh.held`). */
@@ -234,6 +268,11 @@ export class Renderer {
    */
   readonly reflection = new Texture({ data: new Uint8Array(4), width: 1, height: 1 }, { srgb: false, wrap: 'clamp', mipmaps: false })
   reflectionHeight: number | null = null
+  /**
+   * The sky above the horizon folded into a square, redrawn each frame there is a sky, for materials
+   * that mirror it: sample it at `skyPanoramaUv(dir)` and pass that to `skyFrom(dir, sample)`.
+   */
+  readonly skyPanorama = new Texture({ data: new Uint8Array(4), width: 1, height: 1 }, { srgb: false, wrap: 'clamp', mipmaps: false })
   reflectionScale = 0.5
   reflectionRange = 300
   private reflectionOn = false
@@ -301,7 +340,9 @@ export class Renderer {
     this.comparisonSampler = device.createSampler({ compare: 'less-equal', magFilter: 'linear', minFilter: 'linear' })
     this.shadowMap = this.makeShadowMap(1)
 
-    const both = GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT
+    // Compute sees the scene group too: the sky panorama is worked out from the frame's sky.
+    const both = GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT | GPUShaderStage.COMPUTE
+    const fragment = GPUShaderStage.FRAGMENT | GPUShaderStage.COMPUTE
     this.sceneLayout = device.createBindGroupLayout({
       label: 'scene',
       entries: [
@@ -314,13 +355,14 @@ export class Renderer {
         { binding: 6, visibility: both, buffer: { type: 'read-only-storage' } },
         { binding: 7, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } },
         { binding: 8, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } },
-        { binding: 9, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-        { binding: 10, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-        { binding: 11, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
-        { binding: 12, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
+        { binding: 9, visibility: fragment, texture: { sampleType: 'float' } },
+        { binding: 10, visibility: fragment, texture: { sampleType: 'float' } },
+        { binding: 11, visibility: fragment, sampler: { type: 'filtering' } },
+        { binding: 12, visibility: fragment, sampler: { type: 'filtering' } },
       ],
     })
     this.sky = new SkyPass(device, this.sceneLayout, this.sampleCount, HDR_FORMAT, DEPTH_FORMAT)
+    this.skyPanorama.gpu = { texture: this.sky.panorama, view: this.sky.panorama.createView(), version: this.skyPanorama.version, device } satisfies TextureSlot
     this.lightingLayout = device.createBindGroupLayout({
       label: 'lighting',
       entries: [
@@ -343,7 +385,18 @@ export class Renderer {
       }),
     )
 
-    const outputModule = device.createShaderModule({ label: 'output', code: outputWgsl(this.sampleCount > 1) })
+    if (this.sampleCount > 1) {
+      const copy = device.createShaderModule({ label: 'depth copy', code: DEPTH_COPY_WGSL })
+      this.depthCopyPipeline = device.createRenderPipeline({
+        label: 'depth copy',
+        layout: 'auto',
+        vertex: { module: copy, entryPoint: 'vs' },
+        fragment: { module: copy, entryPoint: 'fs', targets: [] },
+        primitive: { topology: 'triangle-list' },
+        depthStencil: { format: DEPTH_FORMAT, depthWriteEnabled: true, depthCompare: 'always' },
+      })
+    }
+    const outputModule = device.createShaderModule({ label: 'output', code: outputWgsl(false) })
     this.outputPipeline = device.createRenderPipeline({
       label: 'output',
       layout: 'auto',
@@ -355,10 +408,10 @@ export class Renderer {
     this.halfResolution = new HalfResolution(device, HDR_FORMAT)
     this.bloomSampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' })
     this.outputUniform = device.createBuffer({ size: this.outputData.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
-    this.shafts = new LightShafts(device, this.sampleCount > 1)
+    this.shafts = new LightShafts(device, false)
     this.adaptation = new EyeAdaptation(device)
-    this.flare = new LensFlarePass(device, this.format, this.sampleCount > 1)
-    this.beams = new LampBeams(device, this.sampleCount > 1)
+    this.flare = new LensFlarePass(device, this.format, false)
+    this.beams = new LampBeams(device, false)
     this.hudPass = new HudPass(device, this.format, this.textures)
     this.setSize(canvas.clientWidth || 1, canvas.clientHeight || 1, 1)
   }
@@ -375,6 +428,7 @@ export class Renderer {
     this.canvas.height = h
     this.colorTarget?.destroy()
     this.depthTarget?.destroy()
+    if (this.sceneDepth !== this.depthTarget) this.sceneDepth?.destroy()
     this.hdrTarget?.destroy()
     const size = [w, h]
     this.colorTarget = this.sampleCount > 1
@@ -387,6 +441,12 @@ export class Renderer {
       sampleCount: this.sampleCount,
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
     })
+    this.sceneDepth = this.sampleCount > 1
+      ? this.device.createTexture({ label: 'scene depth', size, format: DEPTH_FORMAT, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING })
+      : this.depthTarget
+    this.depthCopyGroup = this.depthCopyPipeline
+      ? this.device.createBindGroup({ layout: this.depthCopyPipeline.getBindGroupLayout(0), entries: [{ binding: 0, resource: this.depthTarget.createView() }] })
+      : null
     this.targetsVersion++
     this.hdrTarget = this.device.createTexture({
       label: 'hdr',
@@ -395,17 +455,17 @@ export class Renderer {
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
     })
     this.bloom.resize(w, h, this.hdrTarget)
-    this.shafts.resize(w, h, this.hdrTarget, this.depthTarget)
+    this.shafts.resize(w, h, this.hdrTarget, this.sceneDepth)
     this.adaptation.resize(this.hdrTarget)
-    this.flare.resize(this.depthTarget)
-    this.beams.resize(w, h, this.depthTarget)
+    this.flare.resize(this.sceneDepth)
+    this.beams.resize(w, h, this.sceneDepth)
     this.halfResolution.release()
     this.outputGroup = this.device.createBindGroup({
       layout: this.outputPipeline.getBindGroupLayout(0),
       entries: [
         { binding: 0, resource: { buffer: this.outputUniform } },
         { binding: 1, resource: this.hdrTarget.createView() },
-        { binding: 2, resource: this.depthTarget.createView() },
+        { binding: 2, resource: this.sceneDepth.createView() },
         { binding: 3, resource: this.bloom.view },
         { binding: 4, resource: this.bloomSampler },
         { binding: 5, resource: this.shafts.view! },
@@ -433,6 +493,7 @@ export class Renderer {
     this.scratchUsed = 0
     this.reflected.length = 0
     this.opaque.length = 0
+    this.prepass.length = 0
     this.transparent.length = 0
     this.overlay.length = 0
     this.held.length = 0
@@ -441,6 +502,7 @@ export class Renderer {
     this.collect(scene)
     this.effects.sort((a, b) => a.renderOrder - b.renderOrder)
     this.opaque.sort(byStateThenGeometry)
+    this.prepass.sort(byStateThenGeometry)
     this.transparent.sort(byOrderThenFarToNear)
     this.overlay.sort(byOrderThenFarToNear)
     this.held.sort(byOrderThenFarToNear)
@@ -451,6 +513,7 @@ export class Renderer {
     this.mainBatches.length = 0
     this.reflectionBatches.length = 0
     this.shadowBatches.length = 0
+    this.writeBatches(this.prepass, this.mainBatches, true)
     this.writeBatches(this.opaque, this.mainBatches, true)
     this.translucentFrom = this.mainBatches.length
     this.writeBatches(this.transparent, this.mainBatches, false)
@@ -480,11 +543,13 @@ export class Renderer {
     if (scene.sky) {
       this.sky.update(encoder, scene.sky)
       if (inverted) this.sky.setView(this.inverseViewProj)
+      this.sky.drawPanorama(encoder, this.sceneGroup!)
     }
     if (this.shadowsOn) this.shadowPass(encoder)
     if (this.reflectionOn) this.reflectionPass(encoder, scene)
     this.mainPass(encoder, scene)
-    if (this.effects.length) {
+    if (this.depthCopyPipeline) this.depthCopyPass(encoder)
+    if (this.effects.length || this.overlayFrom < this.mainBatches.length) {
       const half = this.effects.some((e) => e.halfResolution)
       if (half) this.halfResolutionPass(encoder, effects)
       this.effectsPass(encoder, effects, half)
@@ -596,7 +661,7 @@ export class Renderer {
       if (inView) {
         const item = this.item(mesh, slot, record, count, pipeline, group)
         item.depth = distance2
-        ;(layer === 'overlay' ? this.overlay : layer === 'held' ? this.held : material.transparent ? this.transparent : this.opaque).push(item)
+        this.place(item, material, layer)
       }
       if (inReflection) this.reflected.push(this.item(mesh, slot, record, count, pipeline, group))
     }
@@ -638,14 +703,13 @@ export class Renderer {
       if (inReflection) this.reflected.push(this.item(mesh, slots[last]!, record, mesh.count, pipeline, group))
     }
     if (!inView && !inShadow) return
-    const into = layer === 'overlay' ? this.overlay : layer === 'held' ? this.held : material.transparent ? this.transparent : this.opaque
     // All of it past the last change of level (and the fade into it): one draw of the whole mesh, with no instance looked at.
     const lastFade = last > 0 && levels[last - 1]!.fade ? FADE_MARGIN : 0
     if (last > 0 && levelAt(nearest * nearest, levels, this.detail) === last && nearest >= levels[last - 1]!.from * this.detail + lastFade) {
       if (inView) {
         const item = this.item(mesh, slots[last]!, record, mesh.count, pipeline, group)
         item.depth = distance2
-        into.push(item)
+        this.place(item, material, layer)
       }
       if (inShadow) this.casters.push(this.item(mesh, shadowSlots[last]!, record, mesh.count, shadowPipeline, 0))
       return
@@ -707,7 +771,7 @@ export class Renderer {
         item.depth = distance2
         item.list = scratch
         item.listFirst = first + level * count
-        into.push(item)
+        this.place(item, material, layer)
       }
       const cast = counts[lists + level]!
       if (cast) {
@@ -717,6 +781,25 @@ export class Renderer {
         this.casters.push(item)
       }
     }
+  }
+
+  /**
+   * Lists a draw in the view under its layer. A material with a depth pre-pass is listed twice: depth only
+   * with the pre-pass, and shaded where its depth is equal with the rest of the opaque draws.
+   */
+  private place(item: DrawItem, material: Material, layer: Layer) {
+    if (layer === 'overlay') return this.overlay.push(item)
+    if (layer === 'held') return this.held.push(item)
+    if (material.transparent) return this.transparent.push(item)
+    if (material instanceof ShaderMaterial && material.depthPrepass && layer === 'world') {
+      const pre = this.item(item.mesh, item.slot, item.record, item.count, this.pipelineFor(material, layer, 1), item.group)
+      pre.depth = item.depth
+      pre.list = item.list
+      pre.listFirst = item.listFirst
+      this.prepass.push(pre)
+      item.pipeline = this.pipelineFor(material, layer, 2)
+    }
+    this.opaque.push(item)
   }
 
   /** `entries` of `scratch` for this frame, as the index of the first. Lists handed out before a growth keep the old array. */
@@ -782,8 +865,9 @@ export class Renderer {
 
   // ---- pipelines ----
 
-  private pipelineFor(material: Material, layer: Layer): number {
-    const cached = this.materialPipelines.get(material.id)
+  /** The pipeline for `material` in `layer`; `prepass` 1 is its depth-only draw, 2 its draw after that (`depthPrepass`). */
+  private pipelineFor(material: Material, layer: Layer, prepass: 0 | 1 | 2 = 0): number {
+    const cached = this.materialPipelines.get(material.id * 3 + prepass)
     if (cached && cached.version === material.version && cached.layer === layer) return cached.pipeline
     const program = material instanceof ShaderMaterial ? this.resources.program(material) : null
     // An overlay ignores depth: it neither tests nor writes, which also lets it draw against a read-only depth.
@@ -791,22 +875,22 @@ export class Renderer {
     const state = layer !== 'world'
       ? `${material.blend}|${material.side}|${layer}`
       : `${material.blend}|${material.side}|${material.depthTest}|${material.depthWrite}|${material.depthBias}|${material.depthBiasSlope}`
-    const key = program ? `${program.shader.key}|${state}` : state
+    const key = program ? `${program.shader.key}|${state}|${prepass}` : state
     let pipeline = this.pipelineKeys.get(key)
     if (pipeline === undefined) {
       pipeline = this.pipelines.length
       const layout = program
         ? this.device.createPipelineLayout({ bindGroupLayouts: (material as ShaderMaterial).shadows ? [this.sceneLayout, program.groupLayout, this.lightingLayout] : [this.sceneLayout, program.groupLayout] })
         : this.mainLayout
-      this.pipelines.push(this.makePipeline(material, layer, program ? 'shader material' : state, program?.module ?? this.standardModule, layout))
+      this.pipelines.push(this.makePipeline(material, layer, program ? 'shader material' : state, program?.module ?? this.standardModule, layout, prepass))
       this.pipelineKind.push(program === null ? 'standard' : (material as ShaderMaterial).shadows ? 'shadowed' : 'custom')
       this.pipelineKeys.set(key, pipeline)
     }
-    this.materialPipelines.set(material.id, { version: material.version, layer, pipeline })
+    this.materialPipelines.set(material.id * 3 + prepass, { version: material.version, layer, pipeline })
     return pipeline
   }
 
-  private makePipeline(m: Material, layer: Layer, label: string, module: GPUShaderModule, layout: GPUPipelineLayout): GPURenderPipeline {
+  private makePipeline(m: Material, layer: Layer, label: string, module: GPUShaderModule, layout: GPUPipelineLayout, prepass: 0 | 1 | 2 = 0): GPURenderPipeline {
     let blend: GPUBlendState | undefined
     if (m.blend === 'alpha') {
       blend = {
@@ -823,18 +907,24 @@ export class Renderer {
       label,
       layout,
       vertex: { module, entryPoint: 'vs', buffers: [VERTEX_LAYOUT] },
-      fragment: { module, entryPoint: 'fs', targets: [{ format: HDR_FORMAT, blend }] },
+      fragment: {
+        module,
+        entryPoint: 'fs',
+        targets: [{ format: HDR_FORMAT, blend, writeMask: prepass === 1 ? 0 : GPUColorWrite.ALL }],
+        constants: prepass ? { PREPASS: prepass } : undefined,
+      },
       primitive: { topology: 'triangle-list', cullMode: m.side === 'front' ? 'back' : m.side === 'back' ? 'front' : 'none' },
       depthStencil: {
         format: DEPTH_FORMAT,
-        depthWriteEnabled: layer === 'held' || (m.depthWrite && layer === 'world'),
-        // Reversed depth: nearer is larger.
-        depthCompare: m.depthTest && layer === 'world' ? 'greater-equal' : 'always',
+        depthWriteEnabled: prepass === 2 ? false : layer === 'held' || (m.depthWrite && layer === 'world'),
+        // Reversed depth: nearer is larger. After a depth pre-pass, only where it left this surface.
+        depthCompare: prepass === 2 ? 'equal' : m.depthTest && layer === 'world' ? 'greater-equal' : 'always',
         // Positive bias pulls toward the camera, which with reversed depth means a larger value.
         depthBias: layer !== 'world' ? 0 : Math.round(m.depthBias),
         depthBiasSlopeScale: layer !== 'world' ? 0 : m.depthBiasSlope,
       },
-      multisample: { count: this.sampleCount },
+      // The overlay draws in the effects pass, onto the resolved image.
+      multisample: { count: layer === 'overlay' ? 1 : this.sampleCount },
     })
   }
 
@@ -1076,9 +1166,9 @@ export class Renderer {
       device: this.device,
       sceneLayout: this.sceneLayout,
       sceneGroup: this.sceneGroup!,
-      depthView: this.depthTarget!.createView(),
-      sampleCount: this.sampleCount,
-      depthSamples: this.sampleCount,
+      depthView: this.sceneDepth!.createView(),
+      sampleCount: 1,
+      depthSamples: 1,
       half: false,
       colorFormat: HDR_FORMAT,
       depthFormat: DEPTH_FORMAT,
@@ -1149,32 +1239,47 @@ export class Renderer {
     pass.end()
   }
 
+  /**
+   * The scene, multisampled and resolved as the pass ends: the multisampled colour is never written to
+   * memory (on a tiled GPU it stays in the tile), only the resolved image and the depth are.
+   */
   private mainPass(encoder: GPUCommandEncoder, scene: Scene) {
     const bg = scene.background
     const msaa = this.colorTarget !== null
-    // With effects to come the multisampled image is kept for them and resolved at the end of their pass.
-    const resolveHere = msaa && !this.effects.length
     const pass = encoder.beginRenderPass({
       label: 'main',
       colorAttachments: [{
         view: msaa ? this.colorTarget!.createView() : this.hdrTarget!.createView(),
-        resolveTarget: resolveHere ? this.hdrTarget!.createView() : undefined,
+        resolveTarget: msaa ? this.hdrTarget!.createView() : undefined,
         clearValue: { r: bg.r, g: bg.g, b: bg.b, a: 1 },
         loadOp: 'clear',
-        storeOp: resolveHere ? 'discard' : 'store',
+        storeOp: msaa ? 'discard' : 'store',
       }],
       depthStencilAttachment: { view: this.depthTarget!.createView(), depthClearValue: 0, depthLoadOp: 'clear', depthStoreOp: 'store' },
       timestampWrites: this.timer.pass('main'),
     })
-    // Without effects the overlay goes last in this pass; with them, last in theirs. The sky goes in where
-    // nothing opaque drew, before anything translucent is laid over it.
-    const end = this.effects.length ? this.overlayFrom : this.mainBatches.length
+    // The sky goes in where nothing opaque drew, before anything translucent is laid over it. The overlay
+    // waits for the effects pass.
     this.drawBatches(pass, this.mainBatches, this.sceneGroup!, 0, this.translucentFrom)
     if (scene.sky) {
       this.sky.draw(pass, this.sceneGroup!)
       this.stats.drawCalls++
     }
-    this.drawBatches(pass, this.mainBatches, this.sceneGroup!, this.translucentFrom, end)
+    this.drawBatches(pass, this.mainBatches, this.sceneGroup!, this.translucentFrom, this.overlayFrom)
+    pass.end()
+  }
+
+  /** The multisampled depth's first sample into `sceneDepth`, for everything after the main pass. */
+  private depthCopyPass(encoder: GPUCommandEncoder) {
+    const pass = encoder.beginRenderPass({
+      label: 'depth copy',
+      colorAttachments: [],
+      depthStencilAttachment: { view: this.sceneDepth!.createView(), depthClearValue: 0, depthLoadOp: 'clear', depthStoreOp: 'store' },
+      timestampWrites: this.timer.pass('depthCopy'),
+    })
+    pass.setPipeline(this.depthCopyPipeline!)
+    pass.setBindGroup(0, this.depthCopyGroup!)
+    pass.draw(3)
     pass.end()
   }
 
@@ -1220,25 +1325,18 @@ export class Renderer {
   }
 
   /**
-   * Particles and other effects, over everything else, with the scene's depth bound read-only; then the
-   * overlay, which ignores depth, and the image resolves. The overlay has no pass of its own because
-   * storing and reloading the multisampled HDR image between them costs far more than its few draws.
+   * Particles and other effects, over everything else, at one sample a pixel onto the resolved image, with
+   * the scene's single-sample depth bound read-only; then the overlay, which ignores depth.
    */
   private effectsPass(encoder: GPUCommandEncoder, ctx: EffectContext, composite: boolean) {
-    const msaa = this.colorTarget !== null
     const pass = encoder.beginRenderPass({
       label: 'effects',
-      colorAttachments: [{
-        view: msaa ? this.colorTarget!.createView() : this.hdrTarget!.createView(),
-        resolveTarget: msaa ? this.hdrTarget!.createView() : undefined,
-        loadOp: 'load',
-        storeOp: msaa ? 'discard' : 'store',
-      }],
+      colorAttachments: [{ view: this.hdrTarget!.createView(), loadOp: 'load', storeOp: 'store' }],
       depthStencilAttachment: { view: ctx.depthView, depthReadOnly: true },
       timestampWrites: this.timer.pass('effects'),
     })
     if (composite) {
-      this.halfResolution.composite(pass, this.sampleCount, DEPTH_FORMAT)
+      this.halfResolution.composite(pass, 1, DEPTH_FORMAT)
       this.stats.drawCalls++
     }
     for (const effect of this.effects) if (!effect.halfResolution) this.stats.drawCalls += effect.draw(ctx, pass)
@@ -1254,7 +1352,7 @@ export class Renderer {
       colorAttachments: [{ view: this.halfResolution.view!, loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 0 } }],
       timestampWrites: this.timer.pass('effectsHalf'),
     })
-    const half: EffectContext = { ...ctx, sampleCount: 1, half: true }
+    const half: EffectContext = { ...ctx, sampleCount: 1, half: true, colorFormat: HDR_FORMAT }
     for (const effect of this.effects) if (effect.halfResolution) this.stats.drawCalls += effect.draw(half, pass)
     pass.end()
   }
@@ -1337,6 +1435,7 @@ export class Renderer {
     o[22] = grade?.highlights.b ?? 1
     o[23] = scene.adaptation ? 1 : 0
     o[24] = this.beamsDrawn ? 1 : 0
+    o[25] = this.sharpen
     this.device.queue.writeBuffer(this.outputUniform, 0, o)
     const pass = encoder.beginRenderPass({
       label: 'output',

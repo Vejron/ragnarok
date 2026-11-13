@@ -245,30 +245,63 @@ fn moonDisc(dir: vec3f) -> vec3f {
   return MOON_COLOR * albedo * (lit * 2.2 + 0.03) * edge + halo;
 }
 
-// Everything in the sky toward \`dir\`: the atmosphere, the stars, moon and sun, and the clouds over them.
-// \`lod\` is the cloud map's mip level there.
-fn skyColor(dir: vec3f, lod: f32) -> vec3f {
+// The sun's and the moon's discs toward \`dir\`, as bright as the sky shows them, before clouds cover them.
+fn skyDiscs(dir: vec3f) -> vec3f {
+  let above = smoothstep(-0.005, 0.02, dir.y);
+  var c = vec3f(0.0);
+  if (frame.skyLight.w > 0.0) {
+    c += moonDisc(dir) * frame.skyLight.w * above * mix(0.25, 1.0, 1.0 - overcast());
+  }
+  // Behind a full overcast there is no sun to see.
+  return c + sunDisc(dir) * above * (1.0 - smoothstep(0.6, 0.92, frame.clouds.x));
+}
+
+// The sky toward \`dir\` without the sun's and the moon's discs and before its glare is held back: the
+// atmosphere, the stars, the clouds, a rainbow and lightning. Alpha is how much of a disc there would
+// show through the clouds. \`lod\` is the cloud map's mip level there.
+fn skyBackdrop(dir: vec3f, lod: f32) -> vec4f {
   let haze = skyHaze(dir);
   var c = haze;
   let above = smoothstep(-0.005, 0.02, dir.y);
-  let clear = 1.0 - overcast();
   if (frame.skyTint.w > 0.0) {
-    c += starField(dir) * frame.skyTint.w * above * clear;
+    c += starField(dir) * frame.skyTint.w * above * (1.0 - overcast());
   }
-  if (frame.skyLight.w > 0.0) {
-    c += moonDisc(dir) * frame.skyLight.w * above * mix(0.25, 1.0, clear);
-  }
-  // Behind a full overcast there is no sun to see.
-  c += sunDisc(dir) * above * (1.0 - smoothstep(0.6, 0.92, frame.clouds.x));
   let cloud = cloudLayer(dir, lod, haze);
   c = mix(c, cloud.rgb, cloud.a);
   if (frame.weather.y > 0.0) {
     c += rainbow(dir) * above;
   }
-  // Lightning lights the whole sky, the clouds most, held under the bloom's threshold so it flashes
-  // rather than glows.
-  c = softCap(c + frame.weather.z * vec3f(0.7, 0.75, 0.95) * (0.25 + cloud.a * 0.45), CLOUD_KNEE, CLOUD_ROOM);
-  return c;
+  // Lightning lights the whole sky, the clouds most.
+  c += frame.weather.z * vec3f(0.7, 0.75, 0.95) * (0.25 + cloud.a * 0.45);
+  return vec4f(c, 1.0 - cloud.a);
+}
+
+// The sky from its backdrop and the discs behind it, its glare held under the bloom's threshold so
+// lightning flashes rather than glows.
+fn skyFrom(dir: vec3f, backdrop: vec4f) -> vec3f {
+  return softCap(backdrop.rgb + skyDiscs(dir) * backdrop.a, CLOUD_KNEE, CLOUD_ROOM);
+}
+
+// Everything in the sky toward \`dir\`: the atmosphere, the stars, moon and sun, and the clouds over them.
+// \`lod\` is the cloud map's mip level there.
+fn skyColor(dir: vec3f, lod: f32) -> vec3f {
+  return skyFrom(dir, skyBackdrop(dir, lod));
+}
+
+// Where \`dir\` lies in the sky panorama (\`passes/sky.ts\`): the upper half of the sphere folded flat
+// into a square, a diamond at the zenith's centre and the horizon round its edge. Below the horizon is
+// the horizon.
+fn skyPanoramaUv(dir: vec3f) -> vec2f {
+  let d = vec3f(dir.x, max(dir.y, 0.0), dir.z);
+  let p = d.xz / max(abs(d.x) + d.y + abs(d.z), 1e-6);
+  return vec2f(p.x + p.y, p.x - p.y) * 0.5 + 0.5;
+}
+
+// The direction a texel of the panorama looks, at \`uv\` (0 to 1): the inverse of \`skyPanoramaUv\`.
+fn skyPanoramaDir(uv: vec2f) -> vec3f {
+  let ab = uv * 2.0 - 1.0;
+  let p = vec2f(ab.x + ab.y, ab.x - ab.y) * 0.5;
+  return normalize(vec3f(p.x, max(0.0, 1.0 - abs(p.x) - abs(p.y)), p.y));
 }
 
 // The rainbow opposite the sun: the primary bow from violet at 40.6° to red at 42.3° from the point

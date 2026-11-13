@@ -169,7 +169,7 @@ export class Scene {
 
   private async createRenderer(): Promise<Renderer> {
     const renderer = await Renderer.create(this.canvas, { sampleCount: this.currentPreset.msaa, onDeviceLost: (info) => this.deviceLost(info) })
-    setWaterReflection(renderer.reflection)
+    setWaterReflection(renderer.reflection, renderer.skyPanorama)
     renderer.detail = this.currentPreset.treeDetail
     setTreeDetail(this.currentPreset.treeDetail)
     return renderer
@@ -354,7 +354,11 @@ export class Scene {
   private resize() {
     const { clientWidth: width, clientHeight: height } = this.container
     if (width === 0 || height === 0) return
-    this.renderer?.setSize(width, height, Math.min(window.devicePixelRatio, this.currentPreset.maxPixelRatio) * this.scale)
+    const screen = window.devicePixelRatio
+    const ratio = Math.min(screen, this.currentPreset.maxPixelRatio) * this.scale
+    this.renderer?.setSize(width, height, ratio)
+    // Fewer pixels than the screen has are stretched to fit, which softens them: sharpen in step.
+    if (this.renderer) this.renderer.sharpen = Math.min(1, Math.max(0, (screen - ratio) / (screen * 0.5)))
     this.camera.aspect = width / height
   }
 

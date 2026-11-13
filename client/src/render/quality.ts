@@ -41,7 +41,7 @@ export interface Preset {
 }
 
 export const PRESETS: Record<Level, Preset> = {
-  high: { msaa: 4, maxPixelRatio: 2, minScale: 0.7, shadowNear: 2048, shadowFar: 4096, shadowTaps: 9, grass: 'full', fogNear: 150, fogFar: 600, loadRadius: 450, unloadRadius: 550, treeDetail: 1, animateRadius: 60, heldMapMs: 125, cloudShadows: true },
+  high: { msaa: 4, maxPixelRatio: 1.5, minScale: 0.7, shadowNear: 2048, shadowFar: 4096, shadowTaps: 9, grass: 'full', fogNear: 150, fogFar: 600, loadRadius: 450, unloadRadius: 550, treeDetail: 1, animateRadius: 60, heldMapMs: 125, cloudShadows: true },
   medium: { msaa: 4, maxPixelRatio: 1.5, minScale: 0.6, shadowNear: 2048, shadowFar: 2048, shadowTaps: 9, grass: 'lite', fogNear: 130, fogFar: 500, loadRadius: 380, unloadRadius: 460, treeDetail: 0.7, animateRadius: 40, heldMapMs: 125, cloudShadows: true },
   low: { msaa: 1, maxPixelRatio: 1.25, minScale: 0.5, shadowNear: 1024, shadowFar: 2048, shadowTaps: 1, grass: 'lite', fogNear: 110, fogFar: 400, loadRadius: 320, unloadRadius: 400, treeDetail: 0.5, animateRadius: 25, heldMapMs: 250, cloudShadows: false },
 }

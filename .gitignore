@@ -36,3 +36,6 @@ __pycache__/
 # built by embed/umeloppet (npm run build, scripts/course.ts, scripts/assets.sh); see its README
 worlds/*/course.json
 embed/umeloppet/upload/
+
+# GPU benchmark screenshots and timings (client/scripts/gpu-bench.mjs)
+client/bench-out/

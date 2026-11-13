@@ -9,6 +9,7 @@ The docs are in [docs/](docs/).
 - [design.md](docs/design.md): architecture, netcode, world pipeline and roadmap
 - [NETWORKING.md](docs/NETWORKING.md): wire protocol
 - [RENDERING.md](docs/RENDERING.md): the client renderer: toon shading, light, effects, contact shadows, ink, far shadows
+- [GPU-PERFORMANCE.md](docs/GPU-PERFORMANCE.md): the GPU's cost on Retina screens: a benchmark, the multisampled image kept in the tile, a depth pre-pass for tree impostors, a lower pixel ratio with sharpening, and a sky panorama for the water to mirror
 - [ATMOSPHERE.md](docs/ATMOSPHERE.md): the sky: a physical atmosphere with sunsets, the sun, a moon with phases, stars, drifting clouds and their shadows, sky-coloured fog and dawn mist, god rays, lens flare, eye adaptation and grading by the hour, lamp beams in the night air, and weather from the server's clock: rain, wet ground and puddles, lightning and rainbows
 - [engine/README.md](engine/README.md): the WebGPU render engine the client draws with, a package of its own
 - [SERVER-PERFORMANCE.md](docs/SERVER-PERFORMANCE.md): what a full room costs per tick, how it is measured, what is and is not worth optimising

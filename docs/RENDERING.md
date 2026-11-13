@@ -477,7 +477,10 @@ frame, materials, pipelines, and GPU milliseconds per pass when the browser expo
   but the pictures are far enough apart that it speckled. Triangles do not go with
   the resolution, so neither adaptive resolution nor a lower pixel ratio helped a GPU that was slow on
   them.
-- Pixel ratio is capped at 2.
+- Pixel ratio is capped at 1.5 at quality high and medium, and the output pass sharpens what the browser
+  stretches. On high-resolution screens the cost is pixels, not draws: see
+  [GPU-PERFORMANCE.md](GPU-PERFORMANCE.md) for the benchmark (`client/scripts/gpu-bench.mjs`), the
+  multisampled image that no longer leaves the tile, and the trees' depth pre-pass.
 - The expensive options are far shadows (4096 map) and ink (one full-screen depth read, most of the
   output pass). Far shadows are off by default on touch devices.
 - Everything here is a rendering concern only: none of it touches the simulation, so options can be
@@ -508,6 +511,22 @@ Its own README gives the benchmark against three's two renderers, from when a co
 - Headless Chrome with software rendering is about 100× too slow for timings. Use a real GPU.
 - Two dev servers sharing one `node_modules` share Vite's dependency cache; give the second its own
   `cacheDir`, or the two builds' dependency bundles clash.
+- GPU timings come from `client/scripts/gpu-bench.mjs`
+  ([GPU-PERFORMANCE.md](GPU-PERFORMANCE.md)). Headless Metal's per-pass timestamps are misattributed:
+  a quarter-size pass can show 2.7 ms. Time whole frames to `onSubmittedWorkDone`, with the thing on
+  and off alternately.
+- On a heavy world (Kläppudden) at device scale 2, both the page's screenshot and reading the canvas
+  back wedge headless Chrome. Time with `--no-shots`, and take pictures at `--scale 1`.
+- Editing the client while a headless run is going can make Vite reload the page under it. The
+  DevTools replies in flight are then lost, so the bench gives up on each after two minutes.
+- WGSL traps:
+  - `from` is a reserved word.
+  - A variable named `length` (or another builtin's name) shadows the builtin for the rest of its
+    scope.
+  - Code that shaders share goes in `COMMON_WGSL` (or a file it includes), or materials compiled
+    without it fail.
+  - The sky's functions (`sky.wgsl.ts`) use no derivatives, so the panorama's compute pass can call
+    them. Keep `dpdx`/`fwidth` out of them, and pass a mip level in instead.
 
 ## The HUD
 

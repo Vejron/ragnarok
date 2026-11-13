@@ -19,7 +19,7 @@ struct Output {
   shadows: vec4f,
   // What the highlights are multiplied by (rgb), whether the exposure is the eye's adaptation (0 or 1).
   highlights: vec4f,
-  // Whether lamps' beams were drawn this frame (0 or 1), unused, unused, unused.
+  // Whether lamps' beams were drawn this frame (0 or 1), how much to sharpen (0 to 1), unused, unused.
   beams: vec4f,
 }
 
@@ -81,6 +81,29 @@ fn grade(rgb: vec3f) -> vec3f {
   return c;
 }
 
+// Contrast-adaptive sharpening (AMD's CAS) of the HDR image around \`p\`, for a picture drawn at fewer
+// pixels than the screen has and stretched to it: the four neighbours are taken away in a measure that
+// shrinks where the contrast is already high, so edges sharpen without ringing. The measure is worked
+// out on luminance squeezed into 0 to 1, as CAS expects; the sharpening itself is on the linear colour.
+fn sharpened(p: vec2i, amount: f32) -> vec3f {
+  let last = vec2i(textureDimensions(hdr)) - 1;
+  let c = textureLoad(hdr, p, 0).rgb;
+  let n = textureLoad(hdr, clamp(p + vec2i(0, -1), vec2i(0), last), 0).rgb;
+  let s = textureLoad(hdr, clamp(p + vec2i(0, 1), vec2i(0), last), 0).rgb;
+  let e = textureLoad(hdr, clamp(p + vec2i(1, 0), vec2i(0), last), 0).rgb;
+  let w = textureLoad(hdr, clamp(p + vec2i(-1, 0), vec2i(0), last), 0).rgb;
+  let weights = vec3f(0.2126, 0.7152, 0.0722);
+  let l5 = vec4f(dot(n, weights), dot(s, weights), dot(e, weights), dot(w, weights));
+  let lc = dot(c, weights);
+  let q = l5 / (1.0 + l5);
+  let qc = lc / (1.0 + lc);
+  let lo = min(qc, min(min(q.x, q.y), min(q.z, q.w)));
+  let hi = max(qc, max(max(q.x, q.y), max(q.z, q.w)));
+  let amp = sqrt(clamp(min(lo, 1.0 - hi) / max(hi, 1e-4), 0.0, 1.0));
+  let lobe = -amp * mix(0.125, 0.2, amount);
+  return max((c + (n + s + e + w) * lobe) / (1.0 + 4.0 * lobe), vec3f(0.0));
+}
+
 fn toSrgb(c: vec3f) -> vec3f {
   let lo = c * 12.92;
   let hi = 1.055 * pow(c, vec3f(1.0 / 2.4)) - 0.055;
@@ -90,7 +113,12 @@ fn toSrgb(c: vec3f) -> vec3f {
 @fragment
 fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
   let p = vec2i(pos.xy);
-  var c = textureLoad(hdr, p, 0).rgb;
+  var c: vec3f;
+  if (output.beams.y > 0.0) {
+    c = sharpened(p, output.beams.y);
+  } else {
+    c = textureLoad(hdr, p, 0).rgb;
+  }
   if (output.params.z > 0.0) {
     // Ink (client/src/render/ink.ts): a silhouette or occluding edge bends depth sharply across the
     // pixel; a smooth surface, even a long slope seen at a low angle, only changes its rate.

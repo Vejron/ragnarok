@@ -242,6 +242,32 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
 }
 `
 
+/** Texels a side of the sky panorama: the upper half of the sky, folded into a square (`skyPanoramaUv`). */
+export const PANORAMA_SIZE = 256
+
+/**
+ * The sky panorama: the sky's backdrop in every direction above the horizon, once a frame, for what
+ * mirrors the sky (water) to read in one sample where working the sky out cost every one of its pixels
+ * as much as the sky's own. The discs of the sun and the moon are left out, being too small for its
+ * texels, and alpha says how much of them would show: a reader adds them exactly (`skyFrom`).
+ */
+const PANORAMA_WGSL = /* wgsl */ `
+${COMMON_WGSL}
+
+@group(1) @binding(0) var panorama: texture_storage_2d<rgba16float, write>;
+
+@compute @workgroup_size(8, 8)
+fn main(@builtin(global_invocation_id) id: vec3u) {
+  let size = textureDimensions(panorama);
+  if (id.x >= size.x || id.y >= size.y) {
+    return;
+  }
+  let uv = (vec2f(id.xy) + 0.5) / vec2f(size);
+  // The clouds a little blurred, as rippled water shows them.
+  textureStore(panorama, id.xy, skyBackdrop(skyPanoramaDir(uv), 2.0));
+}
+`
+
 /** The sky drawn behind the world: a triangle over the screen at the far plane, so only where nothing else drew. */
 const DRAW_WGSL = /* wgsl */ `
 ${COMMON_WGSL}
@@ -291,6 +317,10 @@ export class SkyPass {
   readonly cloudMap: GPUTexture
   readonly skySampler: GPUSampler
   readonly cloudSampler: GPUSampler
+  /** The sky panorama (\`PANORAMA_WGSL\`), redrawn by \`drawPanorama\`. */
+  readonly panorama: GPUTexture
+  private readonly panoramaPipeline: GPUComputePipeline
+  private readonly panoramaGroup: GPUBindGroup
   private readonly transmittance: GPUTexture
   private readonly multiScatter: GPUTexture
   private readonly transmittancePipeline: GPUComputePipeline
@@ -361,6 +391,17 @@ export class SkyPass {
       multisample: { count: sampleCount },
     })
     this.drawUniform = device.createBuffer({ label: 'sky draw', size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
+    this.panorama = device.createTexture({ label: 'sky panorama', size: [PANORAMA_SIZE, PANORAMA_SIZE], format: 'rgba16float', usage })
+    const panoramaLayout = device.createBindGroupLayout({
+      label: 'sky panorama',
+      entries: [{ binding: 0, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: 'write-only', format: 'rgba16float' } }],
+    })
+    this.panoramaPipeline = device.createComputePipeline({
+      label: 'sky panorama',
+      layout: device.createPipelineLayout({ bindGroupLayouts: [sceneLayout, panoramaLayout] }),
+      compute: { module: device.createShaderModule({ label: 'sky panorama', code: PANORAMA_WGSL }), entryPoint: 'main' },
+    })
+    this.panoramaGroup = device.createBindGroup({ layout: panoramaLayout, entries: [{ binding: 0, resource: this.panorama.createView() }] })
     this.drawGroup = device.createBindGroup({ layout: drawLayout, entries: [{ binding: 0, resource: { buffer: this.drawUniform } }] })
   }
 
@@ -394,6 +435,16 @@ export class SkyPass {
     this.device.queue.writeBuffer(this.drawUniform, 0, this.drawData)
   }
 
+  /** Redraws the sky panorama for this frame's sky (the scene group holds the frame's uniforms). */
+  drawPanorama(encoder: GPUCommandEncoder, sceneGroup: GPUBindGroup) {
+    const pass = encoder.beginComputePass({ label: 'sky panorama' })
+    pass.setPipeline(this.panoramaPipeline)
+    pass.setBindGroup(0, sceneGroup)
+    pass.setBindGroup(1, this.panoramaGroup)
+    pass.dispatchWorkgroups(PANORAMA_SIZE / 8, PANORAMA_SIZE / 8)
+    pass.end()
+  }
+
   /** Draws the sky into `pass` (after the opaque world, before anything translucent). */
   draw(pass: GPURenderPassEncoder, sceneGroup: GPUBindGroup) {
     pass.setPipeline(this.drawPipeline)
@@ -407,6 +458,7 @@ export class SkyPass {
     this.multiScatter.destroy()
     this.skyView.destroy()
     this.cloudMap.destroy()
+    this.panorama.destroy()
   }
 }
 

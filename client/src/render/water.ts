@@ -1,4 +1,4 @@
-import { Color, Geometry, Group, Mesh, ShaderMaterial, Texture } from '@ragnarok/engine'
+import { Color, Geometry, Group, Mesh, PANORAMA_SIZE, ShaderMaterial, Texture } from '@ragnarok/engine'
 import type { TileGround } from '@/sim/terrain'
 import type { TileData } from '@/world'
 import type { HeightSource } from './shade'
@@ -104,11 +104,14 @@ fn gusts(p: vec2f, t: f32) -> f32 {
   return clamp(0.55 + 0.6 * a + 0.35 * b, 0.0, 1.0);
 }
 
-// What the water mirrors: the sky the engine draws (sky.wgsl), its clouds a little blurred by the ripples,
-// or without one a horizon-to-zenith sky with a few soft clouds and the sun's halo.
+// What the water mirrors: the sky the engine draws (sky.wgsl), read from its panorama with the sun's and
+// the moon's discs added exactly, or without one a horizon-to-zenith sky with a few soft clouds and the
+// sun's halo.
 fn skyAt(r: vec3f, t: f32) -> vec3f {
   if (frame.heightFog.w > 0.5) {
-    return skyColor(r, 2.0);
+    let edge = 0.5 / ${PANORAMA_SIZE.toFixed(1)};
+    let uv = clamp(skyPanoramaUv(r), vec2f(edge), vec2f(1.0 - edge));
+    return skyFrom(r, textureSampleLevel(skyPanorama, materialSampler, uv, 0.0));
   }
   let up = clamp(r.y, 0.0, 1.0);
   var c = mix(params.sky, params.sky * vec3f(0.55, 0.75, 1.05), pow(up, 0.55));
@@ -270,7 +273,7 @@ function material(): ShaderMaterial {
       wakeArea: [0, 0, 1, 0],
     },
     // Mid-grey until the wakes are handed over: no height, no slope.
-    textures: { reflection: blank, wakeMap: still },
+    textures: { reflection: blank, wakeMap: still, skyPanorama: blank },
     blend: 'alpha',
     // Written, so the ink (which reads depth) outlines the surface and not the bed seen through it.
     depthWrite: true,
@@ -304,9 +307,10 @@ export function setWaterTime(time: number) {
   material().needsUpdate()
 }
 
-/** Has the water sample `texture`, the renderer's mirror image of the scene. */
-export function setWaterReflection(texture: Texture) {
+/** Has the water sample `texture`, the renderer's mirror image of the scene, and `sky`, its sky panorama. */
+export function setWaterReflection(texture: Texture, sky: Texture) {
   material().textures.reflection = texture
+  material().textures.skyPanorama = sky
   material().needsUpdate()
 }
 

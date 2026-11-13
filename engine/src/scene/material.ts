@@ -228,6 +228,13 @@ export interface ShaderMaterialParams extends Omit<MaterialParams, 'lit' | 'map'
    * standard materials take it) and the cheaper single-tap `sunShadowTap` in scope: 0 in shadow, 1 lit.
    */
   shadows?: boolean
+  /**
+   * Draws the material twice in the main pass: first depth only (`PREPASS` is 1, and `surface` should
+   * only decide what it discards, and return), then shaded where its depth won (`PREPASS` is 2, and it
+   * need discard nothing). For alpha-tested surfaces stacked many deep, such as tree impostors, where
+   * shading every layer costs far more than drawing the shape twice. The reflection draws it once.
+   */
+  depthPrepass?: boolean
 }
 
 /**
@@ -241,6 +248,7 @@ export class ShaderMaterial extends Material {
   readonly uniforms: Record<string, UniformValue>
   readonly textures: Record<string, Texture>
   readonly shadows: boolean
+  readonly depthPrepass: boolean
 
   constructor(params: ShaderMaterialParams) {
     super({ ...params, lit: false })
@@ -249,5 +257,6 @@ export class ShaderMaterial extends Material {
     this.uniforms = { ...params.uniforms }
     this.textures = { ...params.textures }
     this.shadows = params.shadows ?? false
+    this.depthPrepass = params.depthPrepass ?? false
   }
 }

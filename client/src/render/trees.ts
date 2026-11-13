@@ -343,8 +343,13 @@ fn picture(cell: vec2f, weight: f32, q: vec3f, sight: vec3f, extent: f32, tile: 
   if (albedo.a <= 0.0) {
     return out;
   }
-  let nd = textureSampleLevel(impostorNormalDepth, materialSampler, uv, lod);
   let share = weight * albedo.a;
+  // The depth pre-pass needs only the coverage.
+  if (PREPASS == 1u) {
+    out.albedo = vec4f(0.0, 0.0, 0.0, share);
+    return out;
+  }
+  let nd = textureSampleLevel(impostorNormalDepth, materialSampler, uv, lod);
   out.albedo = vec4f(albedo.rgb * share, share);
   out.normal = (nd.rgb * 2.0 - 1.0) * share;
   out.hit = (onPlane + v * ((nd.a * 2.0 - 1.0) * extent)) * share;
@@ -369,8 +374,10 @@ fn surface(given: Surface) -> vec4f {
   let fade = s.extra[0].w;
   let dither = (f32(ditherAt(given.world)) + 0.5) / 16.0;
   let impostor = s.custom.w > 0.0;
+  // After the depth pre-pass, a pixel drawn at all is one the pre-pass kept: nothing to discard.
+  let keep = PREPASS == 2u;
   if (impostor) {
-    if (dither >= fade) {
+    if (dither >= fade && !keep) {
       discard;
     }
     let q = s.extra[0].xyz;
@@ -400,23 +407,29 @@ fn surface(given: Surface) -> vec4f {
     }
     let cover = a.albedo.a + b.albedo.a + c.albedo.a;
     // The coverage is a distance to the silhouette, a half on it.
-    if (cover < 0.5) {
+    if (cover < 0.5 && !keep) {
       discard;
     }
-    let n = (a.normal + b.normal + c.normal) / cover;
+    if (PREPASS == 1u) {
+      return vec4f(0.0);
+    }
+    let n = (a.normal + b.normal + c.normal) / max(cover, 1e-4);
     s.normal = normalize(treeToWorld(n / vec3f(e.w * e.w, e.z * e.z, e.w * e.w), e));
-    s.world = given.world + treeToWorld((a.hit + b.hit + c.hit) / cover - q, e);
-    s.color = vec4f(s.color.rgb * (a.albedo.rgb + b.albedo.rgb + c.albedo.rgb) / cover, s.color.a);
+    s.world = given.world + treeToWorld((a.hit + b.hit + c.hit) / max(cover, 1e-4) - q, e);
+    s.color = vec4f(s.color.rgb * (a.albedo.rgb + b.albedo.rgb + c.albedo.rgb) / max(cover, 1e-4), s.color.a);
   } else {
-    if (dither < fade) {
+    if (dither < fade && !keep) {
       discard;
     }
     // Where a fading solid really is: its corners were pressed toward the impostor's card.
     s.world = given.world + s.extra[1].xyz;
   }
   let eye = distance(s.world, frame.cameraPos.xyz) / ${NEAR_FADE.toFixed(1)};
-  if (eye < dither) {
+  if (eye < dither && !keep) {
     discard;
+  }
+  if (PREPASS == 1u) {
+    return vec4f(0.0);
   }
   let band = u32(clamp(dot(s.normal, frame.sunDir.xyz) * 0.5 + 0.5, 0.0, 0.999) * 4.0);
   let hemi = mix(frame.hemiGround.rgb, frame.hemiSky.rgb, 0.5 * s.normal.y + 0.5);
@@ -532,6 +545,9 @@ function foliage(atlas: { albedo: Texture; normalDepth: Texture }, fadeFrom: num
     vertexColors: true,
     uniforms: { fadeFrom, fadeBand },
     textures: { impostorAlbedo: atlas.albedo, impostorNormalDepth: atlas.normalDepth },
+    // Impostors stack many deep in a forest, each pixel three pictures' reads: settle what is in front
+    // first, then shade only that.
+    depthPrepass: true,
   })
 }
 
