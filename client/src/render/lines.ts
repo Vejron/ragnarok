@@ -205,7 +205,11 @@ fn surface(s: Surface) -> vec4f {
   let sun = 1.0 - abs(dot(along, frame.sunDir.xyz));
   let shade = sunShadowTap(s.world, vec3f(0.0, 1.0, 0.0));
   let lit = frame.sunColor.rgb * (0.3 + 0.55 * sun) * shade + mix(frame.hemiGround.rgb, frame.hemiSky.rgb, 0.7);
-  return vec4f(s.color.rgb / PI * lit, pow(cover, 0.75));
+  // Gone where the distance fog is whole, rather than drawn in its colour: past the fog the ground a
+  // wire hangs over is not drawn (a ski lift's cable runs far beyond it), and a fogged wire on its own
+  // would be a line of clear sky across the clouds.
+  let seen = select(1.0, 1.0 - smoothstep(frame.fog.x, frame.fog.y, s.viewDepth), frame.fog.z != 0.0);
+  return vec4f(s.color.rgb / PI * lit, pow(cover, 0.75) * seen);
 }
 `
 

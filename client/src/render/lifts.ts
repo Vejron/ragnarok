@@ -11,8 +11,13 @@ import { toonMaterial } from './toon'
  * Ski lifts (`WorldData.lifts`), every one drawn as a chair lift: its pylons and stations as the
  * physics stands them (`shared::lifts::structure`, through the WASM's `liftParts`, so what is drawn
  * is what is hit), the cable loop, and the chairs on it where the server's clock has them
- * (`sim/lifts.ts`). The pylons, stations and cable are one mesh a lift, built once; the chairs are
- * one instanced mesh for all lifts, placed every frame. LIFTS.md.
+ * (`sim/lifts.ts`). Each pylon and station is a mesh of its own and the cable one mesh a lift, built
+ * once; the chairs are one instanced mesh for all lifts, placed every frame.
+ *
+ * A lift reaches far past the tiles that are loaded, and the ground under it is not drawn there, so
+ * nothing of it is drawn past the distance fog either: the pylons and stations are hidden beyond it
+ * and the cable fades out with it (`lines.ts`). Drawn in the fog's colour, they would stand in the
+ * sky as clear-sky lines across the clouds. LIFTS.md.
  */
 
 const STEEL = 0x7d8488
@@ -55,21 +60,42 @@ function chairGeometry(seats: number): Geometry {
   return Geometry.merge(parts)
 }
 
+/** A pylon or a station: its mesh, and where it stands, metres across the ground from its middle. */
+interface Piece {
+  mesh: Mesh
+  x: number
+  z: number
+  /** How far its parts reach from `(x, z)` across the ground, metres. */
+  reach: number
+}
+
 /**
  * The pylons and stations of `lift` as the physics stands them: each part of `liftParts` (nine numbers:
- * shape, middle, turn, size, look) as a box or a post in its look's colour.
+ * shape, middle, turn, size, look) as a box or a post in its look's colour, gathered into one piece
+ * for each of the lift's points, a part going to the point nearest it.
  */
-function structure(lift: Lift): Geometry[] {
+function structure(lift: Lift): Piece[] {
   const cm = (metres: number) => Math.round(metres * 100)
   const flat = ClientSim.liftParts(new Int32Array(lift.points.flatMap(([x, z]) => [cm(x), cm(z)])), new Int32Array(lift.base.map(cm)), new Int32Array(lift.cable.map(cm)))
-  const parts: Geometry[] = []
+  const groups = lift.points.map(() => ({ parts: [] as Geometry[], reach: 0 }))
   for (let i = 0; i + 9 <= flat.length; i += 9) {
     const [shape, x, y, z, turn, a, b, c, look] = flat.slice(i, i + 9) as unknown as number[]
     const color = LOOKS[look!] ?? STEEL
     const geometry = shape === 0 ? boxGeometry(a! * 2, b! * 2, c! * 2).rotateY(turn!) : cylinderGeometry(a!, a!, b! * 2, a! > 1 ? 24 : 8)
-    parts.push(painted(geometry.translate(x!, y!, z!), color))
+    let nearest = 0
+    let best = Infinity
+    for (const [k, [px, pz]] of lift.points.entries()) {
+      const d = Math.hypot(px - x!, pz - z!)
+      if (d < best) [nearest, best] = [k, d]
+    }
+    const group = groups[nearest]!
+    group.parts.push(painted(geometry.translate(x!, y!, z!), color))
+    group.reach = Math.max(group.reach, best + Math.hypot(a!, shape === 0 ? c! : a!))
   }
-  return parts
+  const { solid } = lineMaterials()
+  return groups.flatMap(({ parts, reach }, k) =>
+    parts.length === 0 ? [] : [{ mesh: new Mesh(Geometry.merge(parts), solid), x: lift.points[k]![0], z: lift.points[k]![1], reach }],
+  )
 }
 
 /** The world's ski lifts, drawn, and where on them their riders sit. */
@@ -77,18 +103,21 @@ export class LiftView {
   readonly root = new Group()
   readonly paths: LiftPath[]
   private readonly chairs: InstancedMesh | null = null
+  private readonly pieces: Piece[] = []
   private readonly matrix = mat4.create()
   private readonly chair: Chair = { x: 0, y: 0, z: 0, yaw: 0, along: 0, stretch: 0 }
 
   constructor(readonly lifts: readonly Lift[]) {
     this.paths = lifts.map((lift) => new LiftPath(lift))
     if (lifts.length === 0) return
-    const { solid, wire } = lineMaterials()
+    const { wire } = lineMaterials()
     for (const [index, lift] of lifts.entries()) {
       const path = this.paths[index]!
       if (path.chairs === 0) continue
-      const parts = structure(lift)
-      if (parts.length > 0) this.root.add(new Mesh(Geometry.merge(parts), solid))
+      for (const piece of structure(lift)) {
+        this.pieces.push(piece)
+        this.root.add(piece.mesh)
+      }
       const wires = new Wires()
       const p = path.points
       const corners = p.length / 3
@@ -108,15 +137,19 @@ export class LiftView {
     this.root.add(this.chairs)
   }
 
-  /** Places every chair near the eye at server tick `tick` (fractional). */
-  update(tick: number, eye: { x: number; z: number }) {
+  /**
+   * Places every chair near the eye at server tick `tick` (fractional), and shows the pylons and
+   * stations nearer the eye than `fog` metres, where the distance fog is whole.
+   */
+  update(tick: number, eye: { x: number; z: number }, fog: number) {
+    for (const piece of this.pieces) piece.mesh.visible = Math.hypot(piece.x - eye.x, piece.z - eye.z) - piece.reach < fog
     const mesh = this.chairs
     if (!mesh) return
     let count = 0
     for (const path of this.paths) {
       for (let index = 0; index < path.chairs; index++) {
         const chair = path.chair(index, tick, this.chair)
-        if (Math.hypot(chair.x - eye.x, chair.z - eye.z) > CHAIR_REACH) continue
+        if (Math.hypot(chair.x - eye.x, chair.z - eye.z) > Math.min(CHAIR_REACH, fog)) continue
         const half = chair.yaw / 2
         mat4.compose(this.matrix, chair.x, chair.y, chair.z, 0, Math.sin(half), 0, Math.cos(half), 1, 1, 1)
         mesh.setMatrixAt(count++, this.matrix)

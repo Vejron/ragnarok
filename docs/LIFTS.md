@@ -80,11 +80,17 @@ fells them, as with rocks.
 
 ## Drawing
 
-`client/src/render/lifts.ts` (`LiftView`) draws the same parts, one mesh a lift, so what is seen is
-what is hit. The parts come through the WASM's `liftParts`, so the view is built once the sim is up.
-The cable is `lines.ts`'s wire ribbons, with no sag, so it matches the chairs. The chairs, which have
-no safety bar, are one instanced mesh for all lifts, placed every frame within `CHAIR_REACH` of the
-eye. The hint reads "E: ride the lift" beside a boardable chair and "Space: jump off" on one.
+`client/src/render/lifts.ts` (`LiftView`) draws the same parts, one mesh for each pylon and station,
+so what is seen is what is hit. The parts come through the WASM's `liftParts`, so the view is built
+once the sim is up. The cable is `lines.ts`'s wire ribbons, with no sag, so it matches the chairs. The
+chairs, which have no safety bar, are one instanced mesh for all lifts, placed every frame within
+`CHAIR_REACH` of the eye.
+
+A lift runs far past the loaded tiles, and the ground under it is not drawn there. Nothing of a lift
+is drawn past the distance fog either: pylons, stations and chairs beyond it are hidden, and the
+wire shader fades a wire out with the fog. Before this was done, fog drew them in the colour of a
+clear sky, and on a cloudy day a gondola's cable up the mountain stood in the sky as a blue line
+across the clouds. The hint reads "E: ride the lift" beside a boardable chair and "Space: jump off" on one.
 
 ## Not done
 

@@ -856,7 +856,7 @@ export class Game {
     const ticks = this.runTicks(dt)
     const renderTick = this.clock.tickAt(now) - this.clock.interpDelay
     this.followClock(renderTick)
-    this.liftView?.update(this.liftTick(now), eye)
+    this.liftView?.update(this.liftTick(now), eye, this.scene.scene.fog?.far ?? Infinity)
 
     const seat = this.seat
     const view = seat ? seatView(seat.kind, seat.index) : null
