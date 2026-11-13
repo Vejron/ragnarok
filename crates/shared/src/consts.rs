@@ -17,6 +17,7 @@ pub use crate::vehicles::seaplane::*;
 pub use crate::vehicles::ship::*;
 pub use crate::vehicles::ship_gun::*;
 pub use crate::vehicles::snowmobile::*;
+pub use crate::vehicles::snowracer::*;
 pub use crate::vehicles::sports::*;
 pub use crate::vehicles::strv::*;
 pub use crate::vehicles::strf::*;
@@ -88,6 +89,9 @@ pub const KIND_SEAPLANE: u8 = 27;
 /// The Strf 90: a tracked infantry fighting vehicle with a 40 mm autocannon in its turret and two
 /// troops in the back, who get out by the rear ramp.
 pub const KIND_STRF: u8 = 28;
+/// The snowracer: a steerable sled for two with a small motor, which slides down a ski slope as fast
+/// as a snowmobile drives and creeps back up it.
+pub const KIND_SNOWRACER: u8 = 29;
 
 /// Fixed simulation rate, in ticks per second.
 pub const TICK_RATE: u32 = 60;

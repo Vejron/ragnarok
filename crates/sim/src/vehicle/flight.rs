@@ -43,6 +43,59 @@ pub(crate) fn assist(body: &mut RigidBody, (throttle, steer): (f32, f32), ground
     }
 }
 
+/// Slows a sled (`Runners`) as its runners slide: the snow's friction while it is down, against the
+/// way it slides over the ground and in proportion to how squarely it presses on it, and the air's
+/// drag, on the ground or off it. Friction never reverses the slide, so it holds a sled still on a
+/// slope gentler than `mu` and lets go on a steeper one. It leaves alone the speed along the hull's
+/// up axis, which on the ground is the springs' to take: a resting car's wheels keep a little of it.
+pub(crate) fn on_runners(body: &mut RigidBody, runners: &Runners, (throttle, steer): (f32, f32), grounded: bool, dt: f32) {
+    if !grounded {
+        fly_runners(body, runners, throttle, steer, dt);
+    }
+    let mut velocity = body.linvel();
+    let up = *body.rotation() * Vector::new(0.0, 1.0, 0.0);
+    if grounded {
+        let sliding = velocity - up * velocity.dot(up);
+        let speed = sliding.length();
+        if speed > 1e-4 {
+            let friction = (runners.mu * GRAVITY_SAG * up.y.max(0.0) * dt).min(speed);
+            velocity -= sliding * (friction / speed);
+        }
+    }
+    let speed = velocity.length();
+    if speed > 1e-4 {
+        velocity *= 1.0 - (runners.drag * speed * dt).min(1.0);
+    }
+    body.set_linvel(velocity, true);
+}
+
+/// How quickly a sled's spin in the air comes round to what its rider and its line ask for, per second.
+const RUNNERS_AIR_GRIP: f32 = 8.0;
+
+/// A sled in the air: its nose swings onto the line it flies (`Runners::follow`), leaned forward or
+/// back by the throttle (`lean`), and its roll comes back to level. The steering turns it (`air_turn`),
+/// banking it into the turn. A share of its weight is held up (`float`), so it sails far off a bump.
+fn fly_runners(body: &mut RigidBody, runners: &Runners, throttle: f32, steer: f32, dt: f32) {
+    let rotation = *body.rotation();
+    let velocity = body.linvel();
+    let nose = rotation * Vector::new(0.0, 0.0, -1.0);
+    let right = rotation * Vector::new(1.0, 0.0, 0.0);
+    let (throttle, steer) = (throttle.clamp(-1.0, 1.0), steer.clamp(-1.0, 1.0));
+    // The line it flies, and how far its nose is above it; W leans the nose down, S lifts it.
+    let line = if velocity.length() > 1.0 { (velocity.y / velocity.length()).clamp(-1.0, 1.0).asin() } else { nose.y.clamp(-1.0, 1.0).asin() };
+    let pitch = nose.y.clamp(-1.0, 1.0).asin();
+    let wanted_pitch = line - throttle * runners.lean;
+    // Its right side's height, against level banked into the turn: steering right drops the right side.
+    let roll = right.y.clamp(-1.0, 1.0).asin();
+    let wanted_roll = -steer * runners.lean;
+    // + about X lifts the nose and + about Z lifts the right side; a right turn is negative about Y.
+    let local = Vector::new((wanted_pitch - pitch) * runners.follow, 0.0, (wanted_roll - roll) * runners.follow);
+    let wanted = rotation * local + Vector::new(0.0, -steer * runners.air_turn, 0.0);
+    let spin = body.angvel();
+    body.set_angvel(spin + (wanted - spin) * (1.0 - (-RUNNERS_AIR_GRIP * dt).exp()), true);
+    body.set_linvel(velocity + Vector::new(0.0, runners.float * GRAVITY_SAG * dt, 0.0), true);
+}
+
 /// One tick of a Roadster's cold-gas thrusters; returns the `THRUST_*` nozzles that fired.
 ///
 /// Boost pushes along the nose, past what the tyres could. Hop, with a wheel down, adds a burst of

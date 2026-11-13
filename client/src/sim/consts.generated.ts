@@ -104,6 +104,12 @@ export const KIND_SEAPLANE = 27
  */
 export const KIND_STRF = 28
 
+/**
+ * The snowracer: a steerable sled for two with a small motor, which slides down a ski slope as fast
+ * as a snowmobile drives and creeps back up it.
+ */
+export const KIND_SNOWRACER = 29
+
 /** Fixed simulation rate, in ticks per second. */
 export const TICK_RATE = 60
 
@@ -1996,6 +2002,65 @@ export const SNOWMOBILE_BOOST_REFILL = 0.17
 
 /** The driver sits up front, the passenger behind and a little higher on the seat's rise. */
 export const SNOWMOBILE_SEAT_HEADS = [[0.0, 1.05, 0.1], [0.0, 1.15, 0.8]] as const
+
+/**
+ * The snowracer (`KIND_SNOWRACER`): a steerable sled, a short steel frame on three skis, with a seat
+ * for a rider who steers by a little wheel and one more behind. It is built for the ski slopes: down
+ * one it slides as fast as a snowmobile drives, with nothing but gravity pulling it. A small motor
+ * under the seat takes it about on the flat and up a piste again at a crawl. The physics drives it
+ * as a car: the front pair of wheels, close together, are its one steering ski, and the rear pair its
+ * two runners. It slides on them rather than rolls (`Runners`).
+ */
+export const SNOWRACER_SEATS = 2
+export const SNOWRACER_HALF_EXTENTS = [0.3, 0.15, 0.75] as const
+export const SNOWRACER_WHEEL_RADIUS = 0.1
+
+/** Half the runners' stance: they are 0.5 m apart. The front ski stands on the same pair of points. */
+export const SNOWRACER_TRACK_HALF = 0.25
+
+/** The front ski is under the nose, and the runners' middle under the passenger. */
+export const SNOWRACER_AXLE_Z = 0.55
+export const SNOWRACER_HARD_POINT_Y = -0.05
+
+/** A little give in the skis' mounts, for bumps. */
+export const SNOWRACER_SUSPENSION_REST = 0.15
+export const SNOWRACER_RIDE_HEIGHT = 0.202
+
+/** The front ski turns far at a crawl, and the lock fades with speed, fast (`SNOWRACER_STEER_FADE`). */
+export const SNOWRACER_MAX_STEER = 0.5
+
+/** The speed at which the ski's lock has halved, m/s: at a slope's pace it steers a little. */
+export const SNOWRACER_STEER_FADE = 8.0
+
+/**
+ * The motor's top speed on the flat, m/s. Downhill the motor gives nothing past it, and gravity
+ * takes the sled on to as fast as its drag lets it (`SNOWRACER_DRAG`).
+ */
+export const SNOWRACER_MAX_SPEED = 6.0
+
+/** Sliding friction on snow, as a waxed ski's (`SKI_MU_SNOW`). */
+export const SNOWRACER_MU = 0.05
+
+/** Air drag per (m/s)², m/s² per (m/s)², of two riders sitting up on a sled. */
+export const SNOWRACER_DRAG = 0.0006
+
+/**
+ * In the air the nose swings onto the line it flies at this rate, per second, so it neither dives
+ * nor tumbles off a bump.
+ */
+export const SNOWRACER_AIR_FOLLOW = 5.0
+
+/** How far the rider leans the nose down (W) or up (S) off that line in the air, radians (20°). */
+export const SNOWRACER_AIR_LEAN = 0.35
+
+/** How fast the rider turns it in the air at full stick, rad/s. */
+export const SNOWRACER_AIR_TURN = 1.5
+
+/** The share of its weight it is spared in the air, so that it flies far off a bump. */
+export const SNOWRACER_AIR_FLOAT = 0.45
+
+/** Both riders sit low on the seat, the passenger behind the rider with their legs either side of them. */
+export const SNOWRACER_SEAT_HEADS = [[0.0, 0.85, 0.0], [0.0, 0.85, 0.5]] as const
 
 /** The speed at which a car's steering lock has halved, m/s: the usual `Spec::steer_fade`. */
 export const STEER_FADE = 20.0

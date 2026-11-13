@@ -80,6 +80,7 @@ pub(super) const JEEP: VehicleDef = VehicleDef {
         bow: 0.0,
         springs: Springs::FIRM,
         airframe: None,
+        runners: None,
     },
     armor: ARMOR,
     drone: None,

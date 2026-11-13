@@ -13,7 +13,7 @@ use crate::consts::*;
 use crate::mounts::{Aim, Ammo, Eye, Fire, MountDef, Muzzle, Need, Refill, Show};
 use crate::items::*;
 use crate::protocol::{
-    KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MISSILE, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_SEAPLANE, KIND_SHIP, KIND_SHIP_GUN, KIND_SNOWMOBILE, KIND_SPORTS, KIND_STRF, KIND_STRV, KIND_SUBMARINE, KIND_TANK, KIND_TECHNICAL, KIND_TUPP, KIND_WALKER, PROJECTILE_BALL, PROJECTILE_BOMB, PROJECTILE_CANNON, PROJECTILE_CANNON_AP,
+    KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MISSILE, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_SEAPLANE, KIND_SHIP, KIND_SHIP_GUN, KIND_SNOWMOBILE, KIND_SNOWRACER, KIND_SPORTS, KIND_STRF, KIND_STRV, KIND_SUBMARINE, KIND_TANK, KIND_TECHNICAL, KIND_TUPP, KIND_WALKER, PROJECTILE_BALL, PROJECTILE_BOMB, PROJECTILE_CANNON, PROJECTILE_CANNON_AP,
     PROJECTILE_EGG, PROJECTILE_HE, PROJECTILE_MORTAR, PROJECTILE_SHELL, WEAPON_AUTOCANNON, WEAPON_DRONE, WEAPON_LASER, WEAPON_LOITER, WEAPON_MG, WEAPON_MISSILE, WEAPON_ROCKET, WEAPON_SHELL,
 };
 
@@ -32,6 +32,7 @@ pub mod seaplane;
 pub mod ship;
 pub mod ship_gun;
 pub mod snowmobile;
+pub mod snowracer;
 mod spec;
 pub mod sports;
 pub mod strf;
@@ -42,7 +43,7 @@ pub mod technical;
 pub mod tupp;
 pub mod walker;
 
-pub use spec::{Airframe, Buttons, Floats, Lift, Role, Shape, Skim, Solid, Spec, Springs, STEER_FADE};
+pub use spec::{Airframe, Buttons, Floats, Lift, Role, Runners, Shape, Skim, Solid, Spec, Springs, STEER_FADE};
 pub use crate::armor::{ALLOY, Armor, Box3, Module, On, Part, Pen, Plate, SHEET, SOFT, Zone};
 
 #[derive(Clone, Copy, Debug)]
@@ -228,6 +229,8 @@ const WINGS: Body = Body { drop_y: 1.5, crash: 2.0, flies: true, ..CAR };
 /// A walker's, a hen's or a tupp's hull starts as high as its legs hold it up.
 const LEGS: Body = Body { drop_y: WALKER_LEG_LENGTH + WALKER_HALF_EXTENTS[1], legs: WALKER_LEG_LENGTH, ..CAR };
 const TOWED: Body = Body { towed: true, ..CAR };
+/// A sled is bent steel tube on runners, built to be slammed about: crashes do it no harm at all.
+const SLED: Body = Body { crash: 0.0, ..CAR };
 
 /// Every vehicle kind, in id order.
 pub static VEHICLES: &[VehicleDef] = &[
@@ -254,6 +257,7 @@ pub static VEHICLES: &[VehicleDef] = &[
     missile::MISSILE,
     seaplane::SEAPLANE,
     strf::STRF,
+    snowracer::SNOWRACER,
 ];
 
 /// Where each kind id's definition is in `VEHICLES`: 0, the jeep's, for ids that are not a vehicle.

@@ -1,7 +1,7 @@
 use shared::vec3;
 use super::*;
 use shared::consts::TICK_DT;
-use shared::protocol::{KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MISSILE, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_SEAPLANE, KIND_SPORTS, KIND_STRF, KIND_STRV, KIND_TANK, KIND_TECHNICAL, KIND_WALKER};
+use shared::protocol::{KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MISSILE, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_SEAPLANE, KIND_SNOWMOBILE, KIND_SNOWRACER, KIND_SPORTS, KIND_STRF, KIND_STRV, KIND_TANK, KIND_TECHNICAL, KIND_WALKER};
 use shared::world::{CollisionMesh, WORLD_VERSION, WorldFile};
 
 fn flat() -> WorldFile {
@@ -155,7 +155,7 @@ fn a_car_climbs_a_slope_like_wasm() {
 #[test]
 fn ride_heights_differ_between_cars() {
     let mut heights = vec![];
-    for (kind, ride) in [(KIND_JEEP, JEEP_RIDE_HEIGHT), (KIND_SPORTS, SPORTS_RIDE_HEIGHT), (KIND_GOLF_CART, GOLF_CART_RIDE_HEIGHT), (KIND_TECHNICAL, TECHNICAL_RIDE_HEIGHT)] {
+    for (kind, ride) in [(KIND_JEEP, JEEP_RIDE_HEIGHT), (KIND_SPORTS, SPORTS_RIDE_HEIGHT), (KIND_GOLF_CART, GOLF_CART_RIDE_HEIGHT), (KIND_TECHNICAL, TECHNICAL_RIDE_HEIGHT), (KIND_SNOWRACER, SNOWRACER_RIDE_HEIGHT)] {
         let mut physics = Physics::new(&flat()).unwrap();
         physics.add_car(1, kind, [0.0, 1.5, 0.0], 0.0);
         let pose = run(&mut physics, COAST, 240);
@@ -1865,4 +1865,209 @@ fn a_tracked_vehicle_holds_its_heading_across_a_side_slope() {
         // It does not swing round downhill (towards -X), so it ends up about where it pointed.
         assert!(yaw(&pose).abs() < 0.1 && pose.position[0].abs() < 3.0, "kind {kind}: yaw {} at {pose:?}", yaw(&pose));
     }
+}
+
+/// A ski slope: flat ground for z > 0, then a `deg` slope rising towards -Z for `length` m (along the
+/// ground), then flat again at its top, on 4 m cells.
+fn piste(deg: f32, length: f32) -> WorldFile {
+    let cell = 400;
+    let side = (100_000 / cell + 1) as u32;
+    let (tan, run) = (deg.to_radians().tan(), length * deg.to_radians().cos());
+    let heights = (0..side)
+        .flat_map(|j| (0..side).map(move |_| j))
+        .map(|j| ((-((-50_000 + j as i32 * cell) as f32 / 100.0)).clamp(0.0, run) * tan * 100.0).round() as i32)
+        .collect();
+    WorldFile { half_extent: 50_000, ground: shared::terrain::Ground { origin: -50_000, cell, side, heights }, ..flat() }
+}
+
+/// Puts vehicle 1, a `kind`, at the top of a `piste(deg, length)`, `back` m short of its edge,
+/// facing down it, and lets it settle there.
+fn atop(kind: u8, deg: f32, length: f32, back: f32) -> Physics {
+    let across = length * deg.to_radians().cos();
+    let top = across * deg.to_radians().tan();
+    let mut physics = Physics::new(&piste(deg, length)).unwrap();
+    // Facing +Z, down the slope.
+    physics.add_car(1, kind, [0.0, top + 1.0, -across - back], std::f32::consts::PI);
+    run(&mut physics, CarControls { handbrake: true, ..COAST }, 60);
+    physics
+}
+
+/// Runs vehicle 1 under `controls` until it reaches the foot of the slope (z = 0) or `seconds` pass,
+/// and returns its pose there.
+fn to_the_foot(physics: &mut Physics, controls: CarControls, seconds: f32) -> CarPose {
+    let mut pose = physics.car_pose(1).unwrap();
+    for _ in 0..(seconds * 60.0) as u32 {
+        pose = run(physics, controls, 1);
+        if pose.position[2] > 0.0 {
+            break;
+        }
+    }
+    pose
+}
+
+#[test]
+fn down_a_piste_a_coasting_snowracer_runs_about_as_fast_as_a_snowmobile_flat_out() {
+    for deg in [10.0, 20.0, 30.0] {
+        // A second of its motor takes the sled over the edge; from there it coasts.
+        let mut physics = atop(KIND_SNOWRACER, deg, 300.0, 2.0);
+        run(&mut physics, FORWARD, 60);
+        let sled = to_the_foot(&mut physics, COAST, 60.0);
+        let snowmobile = to_the_foot(&mut atop(KIND_SNOWMOBILE, deg, 300.0, 2.0), FORWARD, 60.0);
+        assert!(sled.position[2] > 0.0 && sled.up_y > 0.95, "{deg}°: the sled reaches the foot upright: {sled:?}");
+        // Gravity takes it far past its motor's top speed, to within a fifth of the snowmobile's.
+        let share = sled.forward_speed / snowmobile.forward_speed;
+        assert!(sled.forward_speed > 3.0 * SNOWRACER_MAX_SPEED && (0.8..1.1).contains(&share), "{deg}°: sled {sled:?}, snowmobile {snowmobile:?}");
+    }
+}
+
+#[test]
+fn a_snowracers_little_motor_creeps_up_a_25_degree_piste_but_not_a_30_degree_one() {
+    let climb = |deg: f32| {
+        let mut physics = Physics::new(&hill(deg)).unwrap();
+        physics.add_car(1, KIND_SNOWRACER, [0.0, 1.0, 10.0], 0.0);
+        run(&mut physics, COAST, 60);
+        run(&mut physics, FORWARD, 60 * 12)
+    };
+    let (gentle, steep) = (climb(25.0), climb(30.0));
+    assert!(gentle.position[2] < -25.0 && (2.5..5.0).contains(&gentle.forward_speed), "it creeps up 25°: {gentle:?}");
+    assert!(steep.forward_speed < 0.5, "and stalls on 30°: {steep:?}");
+}
+
+#[test]
+fn on_the_flat_a_snowracer_tops_out_at_its_motors_speed_and_slides_to_a_stop() {
+    let mut physics = Physics::new(&flat()).unwrap();
+    physics.add_car(1, KIND_SNOWRACER, [0.0, 1.0, 0.0], 0.0);
+    run(&mut physics, COAST, 60);
+    let top = run(&mut physics, FORWARD, 60 * 6);
+    assert!((top.forward_speed - SNOWRACER_MAX_SPEED).abs() < 0.5, "{top:?}");
+    // The snow's friction stops it, in about the time `mu·g` takes.
+    let sliding = run(&mut physics, COAST, 60 * 6);
+    assert!(sliding.forward_speed > 1.5, "still sliding after six seconds: {sliding:?}");
+    let stopped = run(&mut physics, COAST, 60 * 8);
+    assert!(stopped.forward_speed.abs() < 0.05, "and stopped by fourteen: {stopped:?}");
+}
+
+#[test]
+fn a_snowracer_carves_and_spins_but_stays_upright_at_any_lock_down_a_piste() {
+    for steer in [0.5, 1.0] {
+        let mut physics = atop(KIND_SNOWRACER, 20.0, 300.0, 2.0);
+        run(&mut physics, FORWARD, 60);
+        let fast = run(&mut physics, COAST, 60 * 6);
+        assert!(fast.forward_speed > 15.0, "{fast:?}");
+        let mut pose = fast;
+        for _ in 0..60 * 3 {
+            pose = run(&mut physics, CarControls { steer, ..COAST }, 1);
+            assert!(pose.up_y > 0.5, "lock {steer}: it stays on its runners: {pose:?}");
+        }
+        assert!(yaw(&pose).abs() > 0.3, "lock {steer}: and turns: {pose:?}");
+    }
+}
+
+#[test]
+fn a_snowracer_rests_still_on_a_gentle_slope_and_slides_off_a_steeper_one() {
+    let rest = |deg: f32| {
+        let mut physics = Physics::new(&hill(deg)).unwrap();
+        // Up the slope, facing down it, held on its brake while it settles, then let go.
+        let at = [0.0, 20.0 * deg.to_radians().tan() + 0.4, -20.0];
+        physics.add_car(1, KIND_SNOWRACER, at, std::f32::consts::PI);
+        physics.set_car_dive(1, at, std::f32::consts::PI, -deg.to_radians(), 0.0);
+        let settled = run(&mut physics, CarControls { handbrake: true, ..COAST }, 60 * 2);
+        let after = run(&mut physics, COAST, 60 * 3);
+        after.position[2] - settled.position[2]
+    };
+    let (gentle, steep) = (rest(2.0), rest(10.0));
+    assert!(gentle.abs() < 0.1, "friction holds it on 2°: it moved {gentle} m");
+    assert!(steep > 3.0, "but not on 10°: it moved {steep} m");
+}
+
+/// A kicker: flat ground, then a ramp rising towards -Z from z = -10 to `height` m over `length` m,
+/// ending in a drop back to flat ground, on 0.5 m cells.
+fn kicker(height: f32, length: f32) -> WorldFile {
+    let cell = 50;
+    let side = (20_000 / cell + 1) as u32;
+    let heights = (0..side)
+        .flat_map(|j| (0..side).map(move |_| j))
+        .map(|j| {
+            let z = (-10_000 + j as i32 * cell) as f32 / 100.0;
+            let up = -10.0 - z;
+            if (0.0..=length).contains(&up) { (up / length * height * 100.0).round() as i32 } else { 0 }
+        })
+        .collect();
+    WorldFile { ground: shared::terrain::Ground { origin: -10_000, cell, side, heights }, ..flat() }
+}
+
+/// What a jump off a kicker came to.
+#[derive(Debug)]
+struct Jump {
+    /// How far past the lip it first came down, metres.
+    landed: f32,
+    /// How long it was off the ground, seconds.
+    air: f32,
+    /// The most its nose pointed above (+) and below (-) the line it flew, radians.
+    above: f32,
+    below: f32,
+    /// How far it turned in the air, radians, + left.
+    turned: f32,
+    /// Where it was two seconds after landing.
+    after: CarPose,
+}
+
+/// Sends vehicle 1, a `kind`, at `speed` m/s along -Z over a `kicker(height, length)` under
+/// `controls` once it is off the lip.
+fn jump(kind: u8, speed: f32, height: f32, length: f32, controls: CarControls) -> Jump {
+    let mut physics = Physics::new(&kicker(height, length)).unwrap();
+    physics.add_car(1, kind, [0.0, 1.0, 20.0], 0.0);
+    run(&mut physics, COAST, 60);
+    physics.set_car_dive(1, physics.car_pose(1).unwrap().position, 0.0, 0.0, speed);
+    let lip = -10.0 - length;
+    let ground = |z: f32| { let up = -10.0 - z; if (0.0..=length).contains(&up) { up / length * height } else { 0.0 } };
+    let rest = spec(kind).half_extents[1] + 0.25;
+    let mut jump = Jump { landed: f32::NAN, air: 0.0, above: 0.0, below: 0.0, turned: 0.0, after: physics.car_pose(1).unwrap() };
+    let (mut flying, mut start) = (false, 0.0);
+    for _ in 0..60 * 6 {
+        let past = pose_past(&physics, lip);
+        let pose = run(&mut physics, if past { controls } else { COAST }, 1);
+        let off = pose.position[1] - ground(pose.position[2]) > rest + 0.3;
+        if off && pose.position[2] < lip && jump.landed.is_nan() {
+            if !flying {
+                (flying, start) = (true, yaw(&pose));
+            }
+            jump.air += TICK_DT;
+            let [vx, vy, vz] = pose.velocity;
+            let line = (vy / (vx * vx + vy * vy + vz * vz).sqrt()).asin();
+            jump.above = jump.above.max(nose_pitch(&pose) - line);
+            jump.below = jump.below.min(nose_pitch(&pose) - line);
+            jump.turned = yaw(&pose) - start;
+        } else if flying && jump.landed.is_nan() {
+            jump.landed = lip - pose.position[2];
+            jump.after = run(&mut physics, COAST, 120);
+            break;
+        }
+    }
+    jump
+}
+
+/// Whether vehicle 1 is past the lip at `lip` (z).
+fn pose_past(physics: &Physics, lip: f32) -> bool {
+    physics.car_pose(1).is_some_and(|pose| pose.position[2] < lip)
+}
+
+#[test]
+fn off_a_kicker_a_snowracer_sails_nose_along_its_line_further_than_a_snowmobile_and_lands_upright() {
+    let sled = jump(KIND_SNOWRACER, 20.0, 1.0, 5.0, COAST);
+    let snowmobile = jump(KIND_SNOWMOBILE, 20.0, 1.0, 5.0, COAST);
+    assert!(sled.landed > snowmobile.landed && sled.air > 1.0, "it flies further: {sled:?} against {snowmobile:?}");
+    // Its nose neither dives nor rears off the line it flies.
+    assert!(sled.above < 0.25 && sled.below > -0.25, "{sled:?}");
+    assert!(sled.after.up_y > 0.9 && sled.after.forward_speed > 10.0, "and it rides on: {sled:?}");
+}
+
+#[test]
+fn in_the_air_the_rider_turns_a_snowracer_and_leans_it_forward_or_back() {
+    let turned = jump(KIND_SNOWRACER, 20.0, 1.0, 5.0, CarControls { steer: -1.0, ..COAST });
+    assert!(turned.turned > 0.6, "full stick left turns it left in the air: {turned:?}");
+    assert!(turned.after.up_y > 0.9, "and it lands upright: {turned:?}");
+    let forward = jump(KIND_SNOWRACER, 20.0, 1.0, 5.0, FORWARD);
+    let back = jump(KIND_SNOWRACER, 20.0, 1.0, 5.0, CarControls { throttle: -1.0, ..COAST });
+    assert!(forward.below < -0.25 && back.above > 0.2, "W leans the nose down, S lifts it: {forward:?}, {back:?}");
 }

@@ -32,13 +32,13 @@ mod sail;
 mod spec;
 mod water;
 
-use flight::{LOITER_GLIDE, MISSILE_GLIDE, assist, boost, flap, fly, fly_drone, glide, pull, roll_plane, thrust, walk, wing};
+use flight::{LOITER_GLIDE, MISSILE_GLIDE, assist, boost, flap, fly, fly_drone, glide, pull, on_runners, roll_plane, thrust, walk, wing};
 use dive::dive;
 use floats::float;
 use sail::sail;
 use water::{wade, water_under};
 pub use spec::half_extents;
-pub(super) use spec::{Airframe, Buttons, Floats, Lift, Role, Shape, Solid, Spec, spec};
+pub(super) use spec::{Airframe, Buttons, Floats, Lift, Role, Runners, Shape, Solid, Spec, spec};
 
 
 /// How quickly a tank's yaw rate follows the stick, rad/s².
@@ -803,7 +803,8 @@ impl Physics {
         // Pushing against the direction of travel brakes instead of reversing the engine.
         let against = controls.throttle * speed < -1.0;
         let (engine, brake) = if controls.throttle == 0.0 {
-            (0.0, COAST_BRAKE_PER_KG * mass)
+            // A sled's runners have no rolling to resist: its runners' friction slows it instead (`on_runners`).
+            (0.0, if car.spec.runners.is_some() { 0.0 } else { COAST_BRAKE_PER_KG * mass })
         } else if against {
             (0.0, BRAKE_PER_KG * mass)
         } else {
@@ -1026,7 +1027,10 @@ impl Physics {
                 let boosted = car.spec.buttons == Buttons::Sled && boosting(car.flight, car.tank);
                 grounded |= wade(body, car.spec, car.flight, car.steer, car.condition, boosted, &water, dt);
             }
-            if car.spec.steer_lock > 0.0 {
+            // A sled has no downforce to hold it down over a crest, and steers itself in the air.
+            if let Some(runners) = &car.spec.runners {
+                on_runners(body, runners, car.air, grounded, dt);
+            } else if car.spec.steer_lock > 0.0 {
                 assist(body, car.air, grounded, dt);
             }
             let speed = body.linvel().dot(*body.rotation() * Vector::new(0.0, 0.0, -1.0));

@@ -47,6 +47,7 @@ The docs are in [docs/](docs/).
 - [VEHICLES-X.md](docs/VEHICLES-X.md): the submarine, which dives, looks through its periscope and fires guided missiles its officer flies from the nose
 - [VEHICLES-XI.md](docs/VEHICLES-XI.md): the seaplane, an amphibious biplane on pontoons that lands on water, armed as the triplane is
 - [VEHICLES-XII.md](docs/VEHICLES-XII.md): the Strf 90, a CV90-style infantry fighting vehicle with a 40 mm autocannon firing armour-piercing or high explosive, and two troops who leave by the rear ramp
+- [VEHICLES-XIII.md](docs/VEHICLES-XIII.md): the snowracer, a steerable sled for two that slides down ski slopes about as fast as a snowmobile drives, with a small motor to creep back up
 - [LIFTS.md](docs/LIFTS.md): ski lifts from OpenStreetMap, every one built as a chair lift whose chairs run on the server's clock, boarded with E at a station and ridden round until you jump off
 
 ## Requirements

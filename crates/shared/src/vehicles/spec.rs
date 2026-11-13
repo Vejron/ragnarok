@@ -103,6 +103,30 @@ pub struct Spec {
     pub springs: Springs,
     /// How its wings fly, for a `Lift::Wing` kind. `None` for everything else.
     pub airframe: Option<Airframe>,
+    /// What holds back a kind that slides on runners (a sled): its friction and its air drag, which
+    /// set how fast it runs downhill. `None` for a kind on wheels, which rolls with only a light brake
+    /// when coasting.
+    pub runners: Option<Runners>,
+}
+
+/// A kind on runners (a sled): what holds it back as it slides, in place of a wheel's rolling. It is
+/// the soldier's skis' model (`SKI_MU_SNOW`, `SKI_DRAG`), so down a slope it reaches the speed at which
+/// gravity's pull, `g·(sin θ − mu·cos θ)`, equals `drag·v²`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Runners {
+    /// Sliding friction on snow: the share of its weight on the ground that holds it back.
+    pub mu: f32,
+    /// Air drag per (m/s)², m/s² for every (m/s)² of speed. Felt in the air as well as on the ground.
+    pub drag: f32,
+    /// In the air its nose turns towards the way it is flying, and its roll back to level, at this
+    /// rate, per second: it sails off a bump nose first rather than diving or tumbling.
+    pub follow: f32,
+    /// How far forward (W) or back (S) the rider leans its nose off that line in the air, radians.
+    pub lean: f32,
+    /// How fast the rider turns it in the air at full stick, rad/s, banking into the turn.
+    pub air_turn: f32,
+    /// The share of its weight it is spared in the air: it floats further off a bump than it would fall.
+    pub float: f32,
 }
 
 /// How a winged kind (`Lift::Wing`) flies: its engine, its wings and how fast it turns. What every

@@ -168,6 +168,7 @@ pub(super) const PLANE: VehicleDef = VehicleDef {
         bow: 0.0,
         springs: Springs::FIRM,
         airframe: Some(PLANE_AIRFRAME),
+        runners: None,
     },
     armor: ARMOR,
     drone: None,

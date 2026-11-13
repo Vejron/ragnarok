@@ -60,6 +60,8 @@ export const VEHICLE_KINDS: { kind: number; name: string; icon: string }[] = [
   { kind: 9, name: 'Mortar', icon: 'M' },
   { kind: 14, name: 'Pak 38', icon: 'K' },
   { kind: 17, name: 'Snowmobile', icon: 'N' },
+  // For the ski slopes: it slides down them fast and creeps back up.
+  { kind: 29, name: 'Snowracer', icon: 'Z' },
   { kind: 22, name: 'Golf cart', icon: 'G' },
   { kind: 23, name: 'Technical', icon: 'Q' },
   // Her guns come with her. Only on open water, in summer.

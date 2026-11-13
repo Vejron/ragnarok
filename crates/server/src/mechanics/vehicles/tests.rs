@@ -803,3 +803,21 @@ fn troops_in_a_strf_leave_by_the_rear_ramp() {
     let (dx, dz) = (at[0] - pose.position[0], at[2] - pose.position[2]);
     assert!(dz > STRF_HALF_EXTENTS[2] && dx.abs() < 0.5, "out of the ramp: {dx} {dz}");
 }
+
+#[test]
+fn a_snowracer_driven_nose_first_into_the_ground_comes_off_unhurt_where_a_jeep_would_not() {
+    let slam = |kind: u8| {
+        let mut game = game();
+        let vid = add_vehicle(&mut game.world, kind, [15.0, 8.0, 30.0], 0.0);
+        // Pointed steeply down, at 25 m/s along its nose.
+        game.world.physics.set_car_dive(vid, [15.0, 8.0, 30.0], 0.0, -1.0, 25.0);
+        let events = crash_events(&mut game, 120);
+        let crashed = events.iter().any(|shot| shot.shooter == vid && shot.weapon == WEAPON_CRASH);
+        (crashed, game.world.entities.of::<Health>(vid).hp, game.world.entities.of::<Vehicle>(vid).damage)
+    };
+    let (jeep_crashed, jeep_hp, _) = slam(KIND_JEEP);
+    assert!(jeep_crashed && jeep_hp < vehicle_hp(KIND_JEEP), "it is a crash that hurts a jeep: {jeep_hp}");
+    let (crashed, hp, damage) = slam(KIND_SNOWRACER);
+    assert!(crashed, "the sled crashes too");
+    assert_eq!((hp, damage), (vehicle_hp(KIND_SNOWRACER), [0; shared::protocol::DAMAGE_SLOTS]), "but takes no harm");
+}

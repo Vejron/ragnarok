@@ -3,7 +3,7 @@ Builds the three cars, an open jeep, a low sports car and the thruster Roadster,
 to client/public/models/.
 
     /Applications/Blender.app/Contents/MacOS/Blender -b -P tools/vehicles/build_car.py -- \
-        [--out DIR] [--only jeep|sports|roadster|snowmobile|golf_cart|technical] [--preview DIR]
+        [--out DIR] [--only jeep|sports|roadster|snowmobile|golf_cart|technical|snowracer] [--preview DIR]
 
 Everything is procedural and flat-shaded: about a thousand triangles each.
 
@@ -57,6 +57,8 @@ SPECS = {
     "golf_cart": dict(half=(0.6, 0.28, 1.2), wheel_radius=0.23, wheel_width=0.18, track=0.5, axle=0.82, ride=0.397),
     # TECHNICAL_*: big tyres on a tall truck, its belly high off the ground.
     "technical": dict(half=(0.95, 0.4, 2.45), wheel_radius=0.58, wheel_width=0.36, track=0.85, axle=1.6, ride=1.08),
+    # SNOWRACER_*: `track` is half the runners' stance, `axle` where the steering ski is.
+    "snowracer": dict(half=(0.3, 0.15, 0.75), wheel_radius=0.1, wheel_width=0.1, track=0.25, axle=0.55, ride=0.202),
 }
 
 MATERIAL_COLORS = {
@@ -510,7 +512,88 @@ def build_technical():
     return [body_obj, turret_obj, gun_obj, *wheels]
 
 
-BUILDERS = {"jeep": build_jeep, "sports": build_sports, "roadster": build_roadster, "snowmobile": build_snowmobile, "golf_cart": build_golf_cart, "technical": build_technical}
+# --------------------------------------------------------------------------------------------------
+# The snowracer: a steerable sled. A frame of bent steel tube in the car's paint, two long black
+# runners whose tails curl up behind, a padded black seat for two along the top of the frame, a
+# sprung steering column up to BMX-style bars, one short ski under it, toothed brake claws either
+# side, and a small motor slung under the seat. The ski hangs from `pivot_FL`, in the middle, and
+# steers but does not roll (there is no `wheel_*`, and no `pivot_FR`: the physics' front pair both
+# stand for this one ski). The runners are part of the body.
+# --------------------------------------------------------------------------------------------------
+def tube(part, a, b, radius, mat, segments=6):
+    """A round tube from point `a` to point `b`."""
+    a, b = Vector(a), Vector(b)
+    turn = Vector((0.0, 0.0, 1.0)).rotation_difference(b - a).to_matrix().to_4x4()
+    m = Matrix.Translation((a + b) / 2) @ turn
+    verts = bmesh.ops.create_cone(part.bm, cap_ends=True, cap_tris=False, segments=segments, radius1=radius, radius2=radius, depth=(b - a).length, matrix=m)["verts"]
+    part._tag(verts, mat)
+
+
+def build_snowracer():
+    spec = SPECS["snowracer"]
+    g = -spec["ride"]
+    head_y = spec["axle"] - 0.02
+    body = Part("body")
+    for side in (-1, 1):
+        x = side * 0.23
+        # The runner: a long flat strip, its tip turned up a little in front and its tail curled up behind.
+        body.box((x, -0.2, g + 0.008), (0.075, 1.1, 0.016), DARK)
+        body.box((x, 0.38, g + 0.025), (0.07, 0.1, 0.014), DARK, rx=0.35)
+        body.box((x, -0.8, g + 0.05), (0.07, 0.14, 0.014), DARK, rx=-0.9)
+        # The frame: a low rail riveted along the runner, swept in to the steering head in front, and
+        # a hoop rising from the runner's tail to carry the seat.
+        tube(body, (x, -0.72, g + 0.035), (x, 0.2, g + 0.035), 0.016, PAINT)
+        tube(body, (x, 0.2, g + 0.035), (side * 0.05, head_y - 0.03, g + 0.12), 0.016, PAINT)
+        tube(body, (x, -0.72, g + 0.035), (side * 0.17, -0.8, g + 0.2), 0.016, PAINT)
+        tube(body, (side * 0.17, -0.8, g + 0.2), (side * 0.17, 0.05, g + 0.2), 0.016, PAINT)
+        tube(body, (side * 0.17, 0.05, g + 0.2), (side * 0.04, head_y - 0.03, g + 0.2), 0.016, PAINT)
+        # Rivets of the rail to the runner.
+        for y in (-0.55, -0.15, 0.15):
+            body.box((x, y, g + 0.022), (0.03, 0.03, 0.02), STEEL)
+        # The brake claw: a toothed steel plate on a lever beside the frame, held up off the snow.
+        body.box((side * 0.33, 0.22, g + 0.06), (0.1, 0.13, 0.008), STEEL, rx=0.4)
+        for k in range(3):
+            body.box((side * (0.29 + 0.04 * k), 0.165, g + 0.025), (0.012, 0.012, 0.03), STEEL)
+        tube(body, (side * 0.3, 0.27, g + 0.08), (side * 0.2, 0.12, g + 0.2), 0.01, STEEL)
+    tube(body, (-0.17, -0.8, g + 0.2), (0.17, -0.8, g + 0.2), 0.016, PAINT)
+    tube(body, (-0.23, 0.0, g + 0.035), (0.23, 0.0, g + 0.035), 0.012, PAINT)
+    # The padded seat for two along the top of the frame, with a white flash on its top.
+    body.box((0.0, -0.36, g + 0.27), (0.34, 0.92, 0.12), DARK)
+    body.box((0.0, -0.4, g + 0.25), (0.36, 0.86, 0.08), DARK)
+    body.box((0.0, -0.36, g + 0.331), (0.2, 0.42, 0.004), WHITE)
+    # The steering head: a short tube in the paint with the column's spring below it, and a little lamp.
+    tube(body, (0.0, head_y, g + 0.12), (0.0, head_y - 0.03, g + 0.4), 0.032, PAINT, segments=8)
+    tube(body, (0.0, head_y + 0.005, g + 0.07), (0.0, head_y, g + 0.12), 0.022, STEEL, segments=8)
+    body.box((0.0, head_y - 0.05, g + 0.4), (0.09, 0.08, 0.04), PAINT)
+    body.box((0.0, head_y + 0.035, g + 0.31), (0.06, 0.02, 0.04), LAMP)
+    # BMX-style bars: a stem, two uprights splayed out and back, a padded crossbar and the grips.
+    tube(body, (0.0, head_y - 0.03, g + 0.4), (0.0, head_y - 0.06, g + 0.47), 0.018, DARK)
+    for side in (-1, 1):
+        tube(body, (side * 0.06, head_y - 0.06, g + 0.47), (side * 0.2, head_y - 0.12, g + 0.7), 0.013, DARK)
+        tube(body, (side * 0.2, head_y - 0.12, g + 0.7), (side * 0.32, head_y - 0.14, g + 0.71), 0.022, DARK, segments=8)
+    tube(body, (-0.06, head_y - 0.06, g + 0.47), (0.06, head_y - 0.06, g + 0.47), 0.013, DARK)
+    body.box((0.0, head_y - 0.1, g + 0.6), (0.3, 0.06, 0.06), DARK)
+    body.box((0.0, head_y - 0.069, g + 0.6), (0.18, 0.002, 0.03), WHITE)
+    # The motor under the seat, between the runners, and its little exhaust out to the side.
+    body.box((0.0, -0.4, g + 0.13), (0.2, 0.26, 0.1), DARK)
+    body.box((0.0, -0.26, g + 0.13), (0.16, 0.03, 0.08), STEEL)
+    tube(body, (0.1, -0.45, g + 0.12), (0.2, -0.5, g + 0.12), 0.015, STEEL)
+    body_obj = body.build()
+
+    # The steering ski: short and broad, an upturned tip, a binding block and the post up into the spring.
+    z = spec["wheel_radius"] - spec["ride"]
+    pivot = empty("pivot_FL", (0.0, spec["axle"], z))
+    ski = Part("ski_F", parent=pivot)
+    floor = -spec["wheel_radius"]
+    ski.box((0.0, -0.05, floor + 0.01), (0.17, 0.46, 0.02), DARK)
+    ski.box((0.0, 0.24, floor + 0.05), (0.16, 0.14, 0.018), DARK, rx=0.6)
+    ski.box((0.0, -0.06, floor + 0.04), (0.08, 0.14, 0.04), DARK)
+    ski.box((0.0, -0.02, floor + 0.08), (0.03, 0.03, 0.1), STEEL)
+    add_seats([(0.0, 0.0, 0.85), (0.0, -0.5, 0.85)])
+    return [body_obj, ski.build()]
+
+
+BUILDERS = {"jeep": build_jeep, "sports": build_sports, "roadster": build_roadster, "snowmobile": build_snowmobile, "golf_cart": build_golf_cart, "technical": build_technical, "snowracer": build_snowracer}
 
 
 # --------------------------------------------------------------------------------------------------
