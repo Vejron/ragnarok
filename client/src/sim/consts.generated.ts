@@ -2,7 +2,7 @@
 // change the Rust and run `npm run gen:consts`. Client-only constants live in consts.ts.
 
 /** Wire schema version. Bumped on any incompatible protocol or world-format change. */
-export const PROTOCOL_VERSION = 75
+export const PROTOCOL_VERSION = 76
 
 /**
  * Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
@@ -1110,6 +1110,60 @@ export const GOLF_BALL_TTL_TICKS = 300 * TICK_RATE
 
 /** Golf balls in the world at once. */
 export const MAX_GOLF_BALLS = 32
+
+/**
+ * Speed of a ski lift's cable and its chairs, m/s: quicker than a real chair lift, so a ride up a
+ * hill takes minutes, not a quarter of an hour (LIFTS.md).
+ */
+export const LIFT_SPEED = 4.0
+
+/** Distance between chairs along the cable, metres, about: a lift's loop holds a whole number of them. */
+export const LIFT_CHAIR_SPACING = 40.0
+
+/** Distance between the cable going up and the one coming down, metres: the bull wheel's diameter. */
+export const LIFT_GAUGE = 4.4
+
+/** How far a chair's seat hangs under the cable, metres. */
+export const LIFT_CHAIR_DROP = 2.6
+
+/** Height of the cable over the ground at a station, metres: the seat is at a rider's knees there. */
+export const LIFT_STATION_CABLE = 3.1
+
+/** Height of the cable over the ground at a pylon, metres, at the least, and at the most. */
+export const LIFT_PYLON_CABLE = 9.0
+export const LIFT_PYLON_MAX = 30.0
+
+/**
+ * Height a chair's seat keeps over the ground between the pylons, metres, at the least, once it is
+ * clear of the stations.
+ */
+export const LIFT_CLEARANCE = 2.5
+
+/** Longest span between two pylons, metres: a longer one gets pylons put in. */
+export const LIFT_SPAN = 220.0
+
+/** Width of one rider's place on a chair, metres. */
+export const LIFT_SEAT_PITCH = 0.6
+
+/** Riders a chair carries when OpenStreetMap does not say, and the most it carries. */
+export const LIFT_SEATS = 2
+export const LIFT_MAX_SEATS = 4
+
+/**
+ * A soldier this near a chair's seat (metres, across the ground), where the seat is no higher
+ * than `LIFT_BOARD_HEIGHT` (metres) over the ground, can sit down on it: only at the stations.
+ */
+export const LIFT_BOARD_RADIUS = 2.2
+export const LIFT_BOARD_HEIGHT = 1.3
+
+/** Segments of the half circle a chair goes round a station's bull wheel on. */
+export const LIFT_WHEEL_SEGMENTS = 8
+
+/**
+ * Height of a riding soldier's capsule centre over the chair's seat, metres: the legs hang below it,
+ * and the eye (crouched) is a sitting one's.
+ */
+export const LIFT_RIDER_CENTRE = 0.45
 
 /**
  * The FPV drone: a quadcopter the size of a dinner plate. It is flown by velocity: forward stick asks

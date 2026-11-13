@@ -12,6 +12,7 @@ pub mod construct;
 pub mod facade;
 pub mod golf;
 pub mod items;
+pub mod lifts;
 pub mod lambert93;
 pub mod mounts;
 pub mod movement;

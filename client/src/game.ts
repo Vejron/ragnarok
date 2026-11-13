@@ -8,7 +8,7 @@ import { Transport } from './net/transport'
 import {
   BUTTON_CROUCH, BUTTON_FIRE, BUTTON_RELOAD, BUTTON_RUN, CROUCH_EYE_DROP, PRONE_EYE_HEIGHT, SLIDE_MIN_SPEED, EYE_HEIGHT, INPUT_REDUNDANCY, PLAYER_MAX_HP, PROTOCOL_VERSION,
   SHELL_COOLDOWN_TICKS, STANDING_Y, STANCE_CHUTE, STANCE_DIVE, STANCE_DOWN, STANCE_PRONE, STANCE_SWIM,
-  TICK_MS, TICK_RATE, BLOOM_RECOVER, STAMINA_FULL, ONE_ARM_SWAY, BACKPACK_SPEED, CARRY_SKIS, SUB_LAUNCH_DEPTH } from './sim/consts'
+  TICK_MS, TICK_RATE, LIFT_RIDER_CENTRE, BLOOM_RECOVER, STAMINA_FULL, ONE_ARM_SWAY, BACKPACK_SPEED, CARRY_SKIS, SUB_LAUNCH_DEPTH } from './sim/consts'
 import { easeSway, sway, swayAmplitude } from './sway'
 import { mayPlace } from './sim/bricks'
 import { crewGun, vehicleDef } from './sim/vehicles'
@@ -95,6 +95,8 @@ import { Backpacks } from './entities/presenters/backpacks'
 import { LyingBackpacks } from './render/backpack'
 import { Soldiers } from './entities/presenters/people'
 import { Riders, seatFrame } from './entities/presenters/riders'
+import { LiftRiders } from './entities/presenters/liftriders'
+import { LiftView } from './render/lifts'
 import { Seating } from './entities/presenters/seating'
 import { poseOf, Vehicles, type Placed, type VehicleWorld } from './entities/presenters/vehicles'
 import { PlaneGuns, RoofGuns, Turrets } from './entities/presenters/guns'
@@ -239,6 +241,7 @@ export class Game {
   private readonly people = new Presenters<Frame>()
   private readonly soldiers: Soldiers
   private readonly riders: Riders
+  private readonly liftRiders: LiftRiders
   /** The vehicles and what they carry, first in the frame: the camera follows them. */
   private readonly machines = new Presenters<Frame>()
   private readonly vehicles: Vehicles
@@ -361,6 +364,10 @@ export class Game {
   private readonly bricks: Bricklayer
   /** The vehicle seat the server says the local player sits in; null when on foot. */
   private seat: { vehicle: number; kind: number; index: number } | null = null
+  /** The ski lift's chair the server says the local player rides (LIFTS.md); null when not on one. */
+  private lifted: { lift: number; chair: number; seat: number } | null = null
+  /** The world's ski lifts, drawn, once the world is known. */
+  private liftView: LiftView | null = null
   /** Where the camera goes while seated, by the seat's rig. */
   private readonly cameras: Cameras
   private predictor: Predictor | null = null
@@ -471,6 +478,7 @@ export class Game {
     const blobFoot = (x: number, y: number, z: number) => this.surroundings.blobFoot(x, y, z)
     this.soldiers = this.people.add(new Soldiers({ avatars: this.avatars, blobFoot, wade: (id, x, y, z, speed, dt) => this.surroundings.wade(id, x, y, z, speed, dt), skiRun: (id, x, z, vx, vz, grounded, dt) => this.skiTracks?.run(id, x, z, vx, vz, grounded, dt), headlamp: (avatar) => this.shine(avatar), zombie: (id, x, y, z, clawing, dt) => this.zombieVoices.hear(id, x, y, z, clawing, dt) }))
     this.riders = this.people.add(new Riders(this.avatars, this.vehicles))
+    this.liftRiders = this.people.add(new LiftRiders(this.avatars, () => this.liftView, () => this.liftTick()))
     this.people.add(new Roosters({ root: this.scene.scene, listener: () => this.predictor?.state.position ?? [0, 0, 0], blobFoot }))
     this.people.add(new Animals({ root: this.scene.scene, blobFoot, gore: this.gore }))
     // Dev-only handle for poking at the game from the console or a test driver.
@@ -511,6 +519,9 @@ export class Game {
     this.applyGrass(this.scene.look)
     if (!world.bytes) throw new Error('the manifest came without its bytes')
     const motor = await SimMotor.create(world.bytes)
+    // The lifts' pylons and stations come from the sim's own shapes, so the WASM must be up first.
+    this.liftView = new LiftView(world.lifts)
+    this.scene.scene.add(this.liftView.root)
     this.motor = this.view.motor = motor
     this.ragdolls = new Ragdolls(motor)
     this.driver = new VehicleDriver(motor)
@@ -556,6 +567,7 @@ export class Game {
     this.localId = null
     this.awaitingCatchUp = false
     this.seat = null
+    this.lifted = null
     this.player.reset()
     this.bodies.clear()
     this.board.clear()
@@ -745,8 +757,10 @@ export class Game {
       this.driver?.leave()
       this.driver?.acknowledge(message.ack)
     }
-    if (this.seat) {
-      // The soldier is parked inside the car. Inputs still go out; the server just applies them to the car.
+    this.lifted = (own?.lifted && !this.seat) ? { ...own.lifted } : null
+    if (this.seat || this.lifted) {
+      // The soldier is parked inside the car, or carried on a lift's chair. Inputs still go out; the
+      // server just applies them to the car, or to their aim.
       this.predictor?.acknowledge(message.ack)
     } else if (own) {
       // The replayed steps float a swimmer on the waves as they were then: near enough the snapshot's tick.
@@ -790,7 +804,7 @@ export class Game {
     }
     // In a car the soldier does not walk, and nor does a dead one; the frame is kept for replay
     // in case it steps out or respawns.
-    if (this.seat || !this.player.alive) this.predictor!.record(frame)
+    if (this.seat || this.lifted || !this.player.alive) this.predictor!.record(frame)
     else {
       // A swimmer floats on the waves, which run on the server's tick: the one it is about now.
       const tick = Math.floor(this.clock.tickAt(performance.now()))
@@ -842,6 +856,7 @@ export class Game {
     const ticks = this.runTicks(dt)
     const renderTick = this.clock.tickAt(now) - this.clock.interpDelay
     this.followClock(renderTick)
+    this.liftView?.update(this.liftTick(now), eye)
 
     const seat = this.seat
     const view = seat ? seatView(seat.kind, seat.index) : null
@@ -878,7 +893,7 @@ export class Game {
     }
     this.surroundings.bendGrass(standing ? position : null, this.soldiers.nearby, cars)
     this.stones?.update(this.scene.camera.position.x, this.scene.camera.position.z)
-    const nearby = [...this.soldiers.nearby, ...this.riders.seated]
+    const nearby = [...this.soldiers.nearby, ...this.riders.seated, ...this.liftRiders.seated]
     this.avatars.sweep((key) => this.surroundings.dry(key))
     this.zombieVoices.sweep()
     this.voice.setTalking(this.localId !== null && this.player.alive && this.input.talkHeld)
@@ -926,6 +941,15 @@ export class Game {
     return ticks
   }
 
+  /**
+   * The server tick the ski lifts' chairs are drawn at: now, as the server has it, not the render tick
+   * behind it, so the local rider's chair is where the server aims their shots from. Riders are put on
+   * the chairs by the same clock, so nobody sits beside one.
+   */
+  private liftTick(now = performance.now()): number {
+    return this.clock.synced ? this.clock.tickAt(now) : 0
+  }
+
   /** The time of day runs on the server's clock, so every player sees the same sky. */
   private followClock(renderTick: number) {
     if (!this.clock.synced) return
@@ -940,7 +964,10 @@ export class Game {
   private momentOf(now: number, dt: number, renderTick: number, seat: Game['seat'], view: SeatView | null): Moment {
     const predictor = this.predictor!
     const local = predictor.state
-    const position = this.ridden(predictor.renderPosition(this.accumulator / TICK_MS, dt), local.ride, renderTick)
+    // On a lift's chair the soldier is where the chair is now, as the server has them.
+    const lifted = this.lifted
+    const chairSeat = lifted && seat === null ? this.liftView?.seatOf(lifted.lift, lifted.chair, lifted.seat, this.liftTick(now)) : null
+    const position: Vec3 = chairSeat ? [chairSeat[0], chairSeat[1] + LIFT_RIDER_CENTRE, chairSeat[2]] : this.ridden(predictor.renderPosition(this.accumulator / TICK_MS, dt), local.ride, renderTick)
     this.localAt = position
     const velocity: [number, number] = [(local.position[0] - predictor.previous.position[0]) / (TICK_MS / 1000), (local.position[2] - predictor.previous.position[2]) / (TICK_MS / 1000)]
     const seated = seat !== null
@@ -953,7 +980,8 @@ export class Game {
     const handy = able && hands
     // Where the local player sits, when they show in their seat: their head, and the vehicle's turn.
     const mount = seated && !flying ? this.vehicles.model(seat.vehicle) : undefined
-    const sitting = mount !== undefined && seatFrame(mount, seat!.kind, seat!.index, this.seatAt, this.seatTurn, this.vehicles.placed.get(seat!.vehicle)?.turret?.yaw)
+    const sitting = (mount !== undefined && seatFrame(mount, seat!.kind, seat!.index, this.seatAt, this.seatTurn, this.vehicles.placed.get(seat!.vehicle)?.turret?.yaw))
+      || (chairSeat !== null && chairSeat !== undefined && this.liftView!.rider(lifted!.lift, lifted!.chair, lifted!.seat, this.liftTick(now), this.seatAt, this.seatTurn))
     const item = itemDef(this.held().item)
     // The map is read on foot or from a passenger's seat, alive; anywhere else it is put away.
     if (this.input.mapUp && !(able && (!seated || view?.role === 'passenger'))) this.input.lowerMap()
@@ -1173,6 +1201,7 @@ export class Game {
       warning: this.warning,
       prompt: this.localId === null ? null : prompt({
         position, ground: this.terrain?.heightAt(position[0]!, position[2]!) ?? 0, alive: player.alive, grounded: local.grounded, chute: local.chute, seat,
+        lift: this.lifted ? 'off' : player.alive && !seated && this.liftView?.boardable(position, (x, z) => this.terrain?.heightAt(x, z) ?? 0, STANDING_Y, this.liftTick(now)) ? 'ride' : null,
       }, this.lying.lying, cars),
       seat: view?.role ?? null,
       canSwitchSeat: seat !== null && (cars.get(seat.vehicle)?.seats.includes(0) ?? false),

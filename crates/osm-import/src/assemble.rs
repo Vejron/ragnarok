@@ -617,7 +617,7 @@ pub fn frame([south, west, north, east]: [f64; 4]) -> ((f64, f64), f64) {
 #[allow(clippy::too_many_arguments)]
 /// `lidar` holds the returns that can be roof, `decks` the bridge deck returns of a classified cloud,
 /// and `photo` the aerial photo the buildings' colours come from.
-pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::BTreeSet<(u16, u16)>>, osm: &Osm, planted: &[Planted], ground: Ground, water: Placed, lidar: Option<&Cloud>, decks: Option<&Cloud>, photo: Option<&crate::paint::Photo>, ski: &[Vec<crate::overpass::LatLon>], ocad: Option<&crate::ocad::Source>, golf: Option<&shared::golf::Course>) -> Built {
+pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::BTreeSet<(u16, u16)>>, osm: &Osm, planted: &[Planted], ground: Ground, water: Placed, lidar: Option<&Cloud>, decks: Option<&Cloud>, photo: Option<&crate::paint::Photo>, ski: &[Vec<crate::overpass::LatLon>], ocad: Option<&crate::ocad::Source>, golf: Option<&shared::golf::Course>, lifts: &[crate::osm_lifts::Mapped]) -> Built {
     let (frame, half) = (place.frame, place.half);
     let source = |x: f64, z: f64| place.source(x, z);
     let mut buildings = Vec::new();
@@ -748,7 +748,10 @@ pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::B
         }
         eprintln!("roof colours: {roofs:?}");
     }
-    let mut trees: Vec<_> = planted.iter().map(|tree| (frame.project(tree.lat, tree.lon), tree.kind, tree.height, tree.crown, tree.registered)).collect();
+    let lifts: Vec<(u8, u8, Vec<P>)> = lifts.iter().map(|lift| (lift.kind, lift.seats, line(&lift.line))).collect();
+    // A lift runs up a cleared lane through the forest.
+    let in_lane = |p: P| lifts.iter().any(|(.., points)| points.windows(2).any(|pair| distance_to_segment(p, pair[0], pair[1]) < LIFT_LANE));
+    let mut trees: Vec<_> = planted.iter().map(|tree| (frame.project(tree.lat, tree.lon), tree.kind, tree.height, tree.crown, tree.registered)).filter(|(p, ..)| !in_lane(*p)).collect();
     let mut course = Vec::new();
     if let Some(golf) = golf {
         course.extend(golf.surfaces.iter().map(|surface| (surface.kind, vec![surface.ring.iter().map(|&[x, z]| [f64::from(x), f64::from(z)]).collect::<Vec<P>>()])));
@@ -767,8 +770,15 @@ pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::B
     // After the map's own, which would cut them away where it covers the course.
     covers.extend(course);
     // The lines are laid on the ground once the tiles are built, so it is kept for them.
-    let kept = ocad.filter(|ocad| !ocad.lines.is_empty()).map(|_| ground.clone());
+    let kept = (ocad.is_some_and(|ocad| !ocad.lines.is_empty()) || !lifts.is_empty()).then(|| ground.clone());
+    // A lift's own station stands at each of its ends: the station building OSM or the laser has there goes.
+    let ends: Vec<P> = lifts.iter().flat_map(|(.., points)| points.first().into_iter().chain(points.last())).copied().collect();
+    let over_station = |ring: &[P]| ends.iter().any(|&end| point_in_polygon(end, ring) || (0..ring.len()).any(|i| distance_to_segment(end, ring[i], ring[(i + 1) % ring.len()]) < LIFT_STATION_CLEAR));
+    buildings.retain(|(ring, ..)| !over_station(ring));
     let mut built = assemble(frame, half, tile_size, mask, buildings, roads, bridges, rails, rail_bridges, ski, covers, trees, &mapped, ground, water);
+    if let Some(ground) = &kept {
+        lay_lifts(&mut built, &lifts, half, ground);
+    }
     if let (Some(ocad), Some(ground)) = (ocad, kept) {
         lay_lines(&mut built, &ocad.lines, half, tile_size, &ground);
     }
@@ -888,6 +898,106 @@ fn poles(points: &[P], span: f64) -> Vec<P> {
         }));
     }
     poles
+}
+
+/// Half the width of the lane cleared through the forest under a ski lift, metres.
+const LIFT_LANE: f64 = 7.0;
+/// A building this near a lift's end (metres) is its station building, taken away for the lift's own.
+const LIFT_STATION_CLEAR: f64 = 8.0;
+
+/// Puts the ski lifts (`(LIFT_*, seats, line)`) in the manifest: the ones wholly in the world, each
+/// from its lower end, with pylons put in where a span is longer than `LIFT_SPAN` and every pylon tall
+/// enough that a chair clears the ground (LIFTS.md).
+fn lay_lifts(built: &mut Built, lifts: &[(u8, u8, Vec<P>)], half: f64, ground: &Ground) {
+    use shared::consts::{LIFT_CHAIR_DROP, LIFT_CLEARANCE, LIFT_GAUGE, LIFT_PYLON_CABLE, LIFT_PYLON_MAX, LIFT_SPAN, LIFT_STATION_CABLE};
+    let inner = half - EDGE_MARGIN;
+    let Built { manifest, tiles } = built;
+    for (kind, seats, line) in lifts {
+        let mut points: Vec<P> = Vec::new();
+        for &p in line {
+            if points.last().is_none_or(|q: &P| (p[0] - q[0]).hypot(p[1] - q[1]) > 1.0) {
+                points.push(p);
+            }
+        }
+        let inside = |p: &P| p[0].abs() < inner && p[1].abs() < inner && tiles.contains_key(&manifest.tile_at(cm(p[0]), cm(p[1])));
+        if points.len() < 2 || !points.iter().all(inside) {
+            continue;
+        }
+        // The ground under the line and under both cables.
+        let height = |p: P, across: [f64; 2]| {
+            let at = |s: f64| f64::from(ground.height_at((p[0] + across[0] * s) as f32, (p[1] + across[1] * s) as f32));
+            at(0.0).max(at(f64::from(LIFT_GAUGE) / 2.0)).max(at(-f64::from(LIFT_GAUGE) / 2.0))
+        };
+        let floor = |p: P| f64::from(ground.height_at(p[0] as f32, p[1] as f32));
+        if floor(points[0]) > floor(*points.last().unwrap()) {
+            points.reverse();
+        }
+        // Pylons on the long spans.
+        let mut line = vec![points[0]];
+        for pair in points.windows(2) {
+            let (a, b) = (pair[0], pair[1]);
+            let spans = ((b[0] - a[0]).hypot(b[1] - a[1]) / f64::from(LIFT_SPAN)).ceil().max(1.0) as usize;
+            line.extend((1..=spans).map(|i| {
+                let t = i as f64 / spans as f64;
+                [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]
+            }));
+        }
+        let n = line.len();
+        let base: Vec<f64> = line.iter().map(|&p| floor(p)).collect();
+        let mut cable: Vec<f64> = (0..n).map(|i| base[i] + f64::from(if i == 0 || i + 1 == n { LIFT_STATION_CABLE } else { LIFT_PYLON_CABLE })).collect();
+        let from_start: Vec<f64> = line.iter().scan((0.0, line[0]), |(run, last), &p| {
+            *run += (p[0] - last[0]).hypot(p[1] - last[1]);
+            *last = p;
+            Some(*run)
+        }).collect();
+        let total = from_start[n - 1];
+        // The seat rises from a rider's knees at a station to the full clearance a few metres out.
+        let seat_at_station = f64::from(LIFT_STATION_CABLE - LIFT_CHAIR_DROP);
+        let wanted = |run: f64| (seat_at_station + run.min(total - run) * 0.3).min(f64::from(LIFT_CLEARANCE));
+        for _ in 0..64 {
+            let mut raised = false;
+            for i in 0..n - 1 {
+                let (a, b) = (line[i], line[i + 1]);
+                let length = (b[0] - a[0]).hypot(b[1] - a[1]);
+                let across = [-(b[1] - a[1]) / length.max(1e-6), (b[0] - a[0]) / length.max(1e-6)];
+                let steps = (length / 4.0).ceil().max(1.0) as usize;
+                for k in 1..steps {
+                    let t = k as f64 / steps as f64;
+                    let p = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+                    let seat = cable[i] + (cable[i + 1] - cable[i]) * t - f64::from(LIFT_CHAIR_DROP);
+                    let short = height(p, across) + wanted(from_start[i] + length * t) - seat;
+                    if short <= 0.01 {
+                        continue;
+                    }
+                    // Raise the pylons at the span's ends, never a station.
+                    match (i == 0, i + 2 == n) {
+                        (true, true) => {}
+                        (true, false) => cable[i + 1] += short / t,
+                        (false, true) => cable[i] += short / (1.0 - t),
+                        (false, false) => {
+                            cable[i] += short;
+                            cable[i + 1] += short;
+                        }
+                    }
+                    raised = true;
+                    for j in 1..n - 1 {
+                        cable[j] = cable[j].min(base[j] + f64::from(LIFT_PYLON_MAX));
+                    }
+                    break;
+                }
+            }
+            if !raised {
+                break;
+            }
+        }
+        manifest.lifts.push(Lift {
+            kind: *kind,
+            seats: *seats,
+            points: line.iter().map(|p| [cm(p[0]), cm(p[1])]).collect(),
+            base: base.iter().map(|&h| cm(h)).collect(),
+            cable: cable.iter().map(|&h| cm(h)).collect(),
+        });
+    }
 }
 
 /// Puts fences and power lines (`(LINE_*, line)`) in the tiles they cross, which must exist already.
@@ -1431,6 +1541,41 @@ mod tests {
         assert_eq!(power.iter().filter(|line| line.end).count(), 1, "only the last run ends on a pole of its own");
         let fences = built.tiles.values().flat_map(|tile| &tile.lines).filter(|line| line.kind == LINE_FENCE).count();
         assert_eq!(fences, 3);
+    }
+
+    #[test]
+    fn a_lift_runs_uphill_and_its_chairs_clear_a_hump_between_the_pylons() {
+        use shared::consts::{LIFT_CLEARANCE, LIFT_PYLON_CABLE, LIFT_STATION_CABLE};
+        // A slope rising 0.2 m a metre to the north (-Z), with a 10 m hump at z = -60.
+        let (side, cell) = (61u32, 500);
+        let heights = (0..side * side)
+            .map(|k| {
+                let z = -15_000.0 + f64::from(k / side) * 500.0;
+                let hump = 1_000.0 * (1.0 - ((z + 6_000.0) / 2_000.0).powi(2)).max(0.0);
+                (-z * 0.2 + hump) as i32
+            })
+            .collect();
+        let ground = Ground { origin: -15_000, cell, side, heights };
+        let manifest = Manifest { version: WORLD_VERSION, half_extent: cm(150.0), tile_size: cm(100.0), ..Default::default() };
+        let mut built = Built { manifest, tiles: (0..3).flat_map(|c| (0..3).map(move |r| ((c, r), Tile::default()))).collect() };
+        // Drawn from the top down, with one pylon at z = -20.
+        let lifts = vec![(LIFT_CHAIR, 2, vec![[0.0, -120.0], [0.0, -20.0], [0.0, 120.0]]), (LIFT_CHAIR, 2, vec![[0.0, 0.0], [400.0, 0.0]])];
+        lay_lifts(&mut built, &lifts, 150.0, &ground);
+        assert_eq!(built.manifest.lifts.len(), 1, "the one that leaves the world is dropped");
+        let lift = &built.manifest.lifts[0];
+        assert_eq!(lift.points[0], [0, 12_000], "it starts at the bottom");
+        // Both spans are shorter than `LIFT_SPAN`: no pylon is put in.
+        assert_eq!(lift.points.len(), 3, "{:?}", lift.points);
+        assert_eq!(lift.cable[0] - lift.base[0], cm(f64::from(LIFT_STATION_CABLE)));
+        assert!(lift.cable[1] - lift.base[1] >= cm(f64::from(LIFT_PYLON_CABLE)));
+        let path = shared::lifts::Path::new(lift);
+        let mut along = 30.0;
+        while along < path.up - 30.0 {
+            let chair = path.at(along);
+            let under = ground.height_at(chair.seat[0], chair.seat[2]);
+            assert!(chair.seat[1] - under >= LIFT_CLEARANCE - 0.05, "{} m over the ground at {along}", chair.seat[1] - under);
+            along += 2.0;
+        }
     }
 
     #[test]

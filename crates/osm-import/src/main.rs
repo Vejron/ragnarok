@@ -458,7 +458,7 @@ fn bake_world(path: &std::path::Path) -> Result<()> {
             struct Old(u8, (f64, f64), i32, i32, Vec<[i32; 2]>, Vec<TileRef>, i32);
             let Old(version, origin, half_extent, tile_size, spawns, tiles, ground_cell) =
                 rmp_serde::from_slice(&bytes).map_err(|_| error).with_context(|| format!("decoding {}", path.display()))?;
-            Manifest { version, frame: shared::world::Frame::Equirect { origin }, half_extent, tile_size, spawns, tiles, ground_cell, theme: 0 }
+            Manifest { version, frame: shared::world::Frame::Equirect { origin }, half_extent, tile_size, spawns, tiles, ground_cell, theme: 0, lifts: Vec::new() }
         }
     };
     anyhow::ensure!(
@@ -701,7 +701,12 @@ fn main() -> Result<()> {
                 None
             }
         };
-        let mut built = assemble::from_osm(&place, args.tile, mask, &osm, &planted, ground, placed, cloud.as_ref(), decks.as_ref(), photo.as_ref(), &ski, ocad.as_ref(), course.as_ref());
+        progress::stage("lifts");
+        // A nicety: a world whose lifts cannot be fetched is a world without lifts.
+        let lifts = osm_import::osm_lifts::fetch_pieces(&args.overpass, pieces.unwrap_or(&split), 3, 15).inspect_err(|error| eprintln!("no lifts: {error:#}")).unwrap_or_default();
+        eprintln!("lifts: {} from OpenStreetMap", lifts.len());
+        let mut built = assemble::from_osm(&place, args.tile, mask, &osm, &planted, ground, placed, cloud.as_ref(), decks.as_ref(), photo.as_ref(), &ski, ocad.as_ref(), course.as_ref(), &lifts);
+        eprintln!("lifts: {} in the world", built.manifest.lifts.len());
         if let (Some(coarse), Some(source)) = (coarse, dem.as_ref()) {
             progress::stage("detail");
             let model = |half: f64| {

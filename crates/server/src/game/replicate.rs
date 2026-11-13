@@ -4,7 +4,8 @@
 //! but gun rounds (clients fly those from their `BulletSpawn`), and items lying on the ground.
 //! A seated player is a soldier with `seated` and no `place`, sent wherever their vehicle is
 //! (`Replica::snapshot`); one whose crew shows also says where they look and what they hold. A drone's
-//! pilot stands where they were as well, with their seat.
+//! pilot stands where they were as well, with their seat. A soldier riding a ski lift is a standing
+//! one, crouched, with `lifted` naming their chair.
 //!
 //! Every player also carries their own `vitals` and `hotbar`, and a driven vehicle its `drive`: the
 //! `[owner]` components, which `Replica::snapshot` sends to the owner alone (`Game::owned`).
@@ -32,7 +33,8 @@ impl Game {
             let poling = c.skis && c.grounded && c.down == 0 && !c.winded && !shared::items::fills_hands(player.held().item) && player.input.forward > 0 && player.input.buttons() & (BUTTON_RUN | BUTTON_CROUCH | BUTTON_ALT) == BUTTON_RUN;
             let what = if poling { CARRY_POLING } else { 0 } | if crate::mechanics::carries(&self.world, id) { CARRY_BACKPACK } else { 0 } | if player.character.skis { CARRY_SKIS } else { 0 } | if player.lamp { CARRY_LAMP } else { 0 };
             let carry = (what != 0).then_some(wire::Carry { what });
-            let mut shown = Replicated { seated, limbs, struck, carry, ..shown };
+            let lifted = player.lift.map(|ride| wire::Lifted { lift: ride.lift, chair: ride.chair, seat: ride.seat });
+            let mut shown = Replicated { seated, limbs, struck, carry, lifted, ..shown };
             if crate::mechanics::is_zombie(&self.world, id) && player.embodied() {
                 shown.kind = Some(wire::Kind { kind: KIND_ZOMBIE });
                 if let Some(flags) = &mut shown.flags
@@ -204,7 +206,7 @@ fn soldier(player: &Player, alive: bool, under: bool) -> Replicated {
     if !alive {
         flags |= FLAG_DEAD;
     }
-    if (player.input.buttons() & BUTTON_CROUCH != 0 && !c.swimming) || player.seat.is_some() {
+    if (player.input.buttons() & BUTTON_CROUCH != 0 && !c.swimming) || player.seat.is_some() || player.lift.is_some() {
         flags |= FLAG_CROUCHING;
     }
     if !c.swimming {

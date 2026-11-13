@@ -66,6 +66,10 @@ impl Physics {
         for wall in walls(&world) {
             physics.insert_static(wall, None);
         }
+        // The lifts are whole in the manifest, not cut into tiles: they stand from the start.
+        for lift in crate::lift_colliders(&manifest.lifts) {
+            physics.insert_static(lift, None);
+        }
         physics.step_pipeline();
         physics
     }

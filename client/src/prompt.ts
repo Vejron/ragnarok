@@ -1,6 +1,6 @@
 /**
  * The key hint for what E (or G) does where the local player stands, judged as the server will judge
- * it: the parachute first while falling, then an item within reach, then the nearest vehicle with a
+ * it: a ski lift's chair first, then the parachute while falling, then an item within reach, then the nearest vehicle with a
  * free seat, which the server boards into its lowest free seat.
  */
 
@@ -26,6 +26,8 @@ export interface Where {
   chute: boolean
   /** The seat they are in, if any. */
   seat: { kind: number; index: number } | null
+  /** Riding a ski lift's chair (`off`), or beside one they can sit on (`ride`), as the server judges it. */
+  lift?: 'ride' | 'off' | null
 }
 
 /** The nearest item on the ground within reach of `position`, as the server will judge it. */
@@ -48,6 +50,9 @@ export function prompt(where: Where, lying: readonly Lying[], cars: ReadonlyMap<
   const { position, seat } = where
   // A drone is flown from afar: there is no getting out of it.
   if (seat) return seatView(seat.kind, seat.index).board ? 'E: get out' : null
+  // On a lift's chair only a jump does anything; beside one, E sits on it before it takes an item.
+  if (where.lift === 'off') return 'Space: jump off'
+  if (where.lift === 'ride') return 'E: ride the lift'
   if (where.alive && !where.grounded && position[1]! - where.ground > CHUTE_PROMPT_HEIGHT) return where.chute ? 'G: cut the parachute' : 'G: open the parachute'
   // The server hands over an item before it boards a car, so the hint follows the same order.
   const item = itemInReach(lying, position)

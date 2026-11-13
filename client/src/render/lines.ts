@@ -60,7 +60,7 @@ export function along(points: readonly Point2[], step: number): Point2[] {
 }
 
 /** A part in `color`, without uvs, so the parts merge. */
-function painted(geometry: Geometry, color: number): Geometry {
+export function painted(geometry: Geometry, color: number): Geometry {
   geometry.uvs = undefined
   const c = Color.hex(color)
   const colors = new Float32Array(geometry.vertexCount * 3)
@@ -76,12 +76,12 @@ function post(x: number, y: number, z: number, height: number, radius: number, c
 }
 
 /** A box `width` across the line at `yaw`, centred at `(x, y, z)`. */
-function beam(x: number, y: number, z: number, yaw: number, width: number, height: number, depth: number, color: number): Geometry {
+export function beam(x: number, y: number, z: number, yaw: number, width: number, height: number, depth: number, color: number): Geometry {
   return painted(boxGeometry(depth, height, width).rotateY(yaw).translate(x, y, z), color)
 }
 
 /** Wire ribbons: each vertex on the wire's centre line, pushed out to the side in the shader. */
-class Wires {
+export class Wires {
   positions: number[] = []
   colors: number[] = []
   custom: number[] = []
@@ -237,7 +237,8 @@ fn surface(s: Surface) -> vec4f {
 
 let materials: { solid: ReturnType<typeof toonMaterial>; wire: ShaderMaterial; net: ShaderMaterial } | undefined
 
-function shared() {
+/** The materials of every tile's lines, made once: solid parts with vertex colours, wires and netting. */
+export function lineMaterials() {
   materials ??= {
     solid: toonMaterial({ vertexColors: true, snow: winter }),
     wire: new ShaderMaterial({ wgsl: WIRE_WGSL, vertex: WIRE_VERTEX_WGSL, vertexColors: true, blend: 'alpha', side: 'double', shadows: true }),
@@ -339,7 +340,7 @@ export function buildLines(lines: readonly Line[] | undefined, ground: TileGroun
       }
     }
   }
-  const { solid, wire, net: netting } = shared()
+  const { solid, wire, net: netting } = lineMaterials()
   const meshes: Mesh[] = []
   if (parts.length > 0) {
     const mesh = new Mesh(Geometry.merge(parts), solid)

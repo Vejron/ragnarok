@@ -448,6 +448,11 @@ replicated! {
     /// the tubes loaded (bit `n` for `SUB_TUBE_AT[n]`), the periscope's yaw from the hull (+ turns
     /// left), and `SUB_*` flags (`SUB_MAST_UP`: the periscope is raised).
     Sub { tubes: u8, scope: i16 as mrad, flags: u8 }
+
+    set 27 lifted
+    /// A soldier riding chair `chair` of ski lift `lift` (`Manifest::lifts`) in place `seat` (0 on the
+    /// left): the client puts them on the chair it draws, which is where their `place` is too (LIFTS.md).
+    Lifted { lift: u16, chair: u16, seat: u8 }
 }
 
 /// The structs a component field can hold a list of, with their fields in wire order and each one's

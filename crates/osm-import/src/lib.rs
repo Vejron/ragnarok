@@ -18,6 +18,7 @@ pub mod minimap;
 pub mod ocad;
 pub mod paint;
 pub mod osm_golf;
+pub mod osm_lifts;
 pub mod osm_ski;
 pub mod osm_water;
 pub mod overpass;

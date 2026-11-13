@@ -135,7 +135,38 @@ pub struct Manifest {
     /// `THEME_*`: what the season is.
     #[serde(default)]
     pub theme: u8,
+    /// The ski lifts, whole: both the server (riders) and the client (chairs) need every one of them
+    /// wherever the player is, so they are not cut into the tiles.
+    #[serde(default)]
+    pub lifts: Vec<Lift>,
 }
+
+/// A ski lift: a cable loop between two stations over a line of pylons. Every lift is built as a
+/// chair lift, whatever OpenStreetMap calls it (`LIFT_*` keeps what it was).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Lift {
+    /// `LIFT_*`: what OpenStreetMap maps it as.
+    pub kind: u8,
+    /// Riders a chair carries.
+    pub seats: u8,
+    /// The line of the lift, centimetres: the bottom station first, then each pylon, then the top
+    /// station. Chairs go up on the right of it and come down on the left.
+    pub points: Vec<[i32; 2]>,
+    /// Height of the ground under each of `points`, centimetres.
+    pub base: Vec<i32>,
+    /// Height of the cable over each of `points`, centimetres above the world's zero (not the
+    /// ground): low at the stations, so a chair's seat is at a rider's knees there.
+    pub cable: Vec<i32>,
+}
+
+/// A chair lift, as OpenStreetMap's `aerialway=chair_lift` (and `mixed_lift`).
+pub const LIFT_CHAIR: u8 = 0;
+/// A surface lift that drags skiers up: a T-bar, a button lift or a rope tow.
+pub const LIFT_DRAG: u8 = 1;
+/// A cabin lift: a gondola or a cable car.
+pub const LIFT_CABIN: u8 = 2;
+/// Any other lift, such as a magic carpet.
+pub const LIFT_OTHER: u8 = 3;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TileRef {
@@ -406,6 +437,9 @@ pub struct WorldFile {
     /// `THEME_*`, from the manifest.
     #[serde(skip)]
     pub theme: u8,
+    /// The ski lifts, from the manifest.
+    #[serde(skip)]
+    pub lifts: Vec<Lift>,
     /// Every ski track. Filled by `assemble`.
     #[serde(skip)]
     pub ski: Vec<SkiTrail>,
@@ -906,6 +940,7 @@ impl WorldFile {
             spawns: manifest.spawns.clone(),
             tile_size: manifest.tile_size,
             theme: manifest.theme,
+            lifts: manifest.lifts.clone(),
             ..Default::default()
         };
         let grid = manifest.grid() as usize;
@@ -1068,6 +1103,7 @@ mod tests {
             tiles: vec![TileRef { col: 1, row: 0, hash: 7 }],
             ground_cell: 5_000,
             theme: THEME_WINTER,
+            lifts: vec![Lift { kind: LIFT_CHAIR, seats: 4, points: vec![[0, 0], [5_000, 20_000]], base: vec![100, 900], cable: vec![410, 1_210] }],
         };
         assert_eq!(Manifest::decode(&manifest.encode()).unwrap(), manifest);
         let tile = Tile {

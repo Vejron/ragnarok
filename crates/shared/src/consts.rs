@@ -25,7 +25,7 @@ pub use crate::vehicles::tank::*;
 pub use crate::vehicles::walker::*;
 
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
-pub const PROTOCOL_VERSION: u8 = 75;
+pub const PROTOCOL_VERSION: u8 = 76;
 
 /// Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
 /// `crate::vehicles`.
@@ -800,3 +800,37 @@ pub const GOLF_CUP_SPEED: f32 = 1.8;
 pub const GOLF_BALL_TTL_TICKS: u32 = 300 * TICK_RATE;
 /// Golf balls in the world at once.
 pub const MAX_GOLF_BALLS: usize = 32;
+
+/// Speed of a ski lift's cable and its chairs, m/s: quicker than a real chair lift, so a ride up a
+/// hill takes minutes, not a quarter of an hour (LIFTS.md).
+pub const LIFT_SPEED: f32 = 4.0;
+/// Distance between chairs along the cable, metres, about: a lift's loop holds a whole number of them.
+pub const LIFT_CHAIR_SPACING: f32 = 40.0;
+/// Distance between the cable going up and the one coming down, metres: the bull wheel's diameter.
+pub const LIFT_GAUGE: f32 = 4.4;
+/// How far a chair's seat hangs under the cable, metres.
+pub const LIFT_CHAIR_DROP: f32 = 2.6;
+/// Height of the cable over the ground at a station, metres: the seat is at a rider's knees there.
+pub const LIFT_STATION_CABLE: f32 = 3.1;
+/// Height of the cable over the ground at a pylon, metres, at the least, and at the most.
+pub const LIFT_PYLON_CABLE: f32 = 9.0;
+pub const LIFT_PYLON_MAX: f32 = 30.0;
+/// Height a chair's seat keeps over the ground between the pylons, metres, at the least, once it is
+/// clear of the stations.
+pub const LIFT_CLEARANCE: f32 = 2.5;
+/// Longest span between two pylons, metres: a longer one gets pylons put in.
+pub const LIFT_SPAN: f32 = 220.0;
+/// Width of one rider's place on a chair, metres.
+pub const LIFT_SEAT_PITCH: f32 = 0.6;
+/// Riders a chair carries when OpenStreetMap does not say, and the most it carries.
+pub const LIFT_SEATS: u8 = 2;
+pub const LIFT_MAX_SEATS: u8 = 4;
+/// A soldier this near a chair's seat (metres, across the ground), where the seat is no higher
+/// than `LIFT_BOARD_HEIGHT` (metres) over the ground, can sit down on it: only at the stations.
+pub const LIFT_BOARD_RADIUS: f32 = 2.2;
+pub const LIFT_BOARD_HEIGHT: f32 = 1.3;
+/// Segments of the half circle a chair goes round a station's bull wheel on.
+pub const LIFT_WHEEL_SEGMENTS: usize = 8;
+/// Height of a riding soldier's capsule centre over the chair's seat, metres: the legs hang below it,
+/// and the eye (crouched) is a sitting one's.
+pub const LIFT_RIDER_CENTRE: f32 = 0.45;

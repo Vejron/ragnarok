@@ -133,6 +133,7 @@ An `update` is `[id u32, set u32, (cleared u32), fields…]`:
 | 21 | `look` | diff | `pitch` i16 | how far a rider whose crew show looks up (+) or down, mrad; their `heading` is where they look about, in the world |
 | 22 | `carry` | whole | `what` u8 | a soldier carrying the backpack (`CARRY_BACKPACK`); the client's own prediction walks twice as fast with it. The backpack on the ground is an entity of `kind` 15 with a `place` |
 | 26 | `sub` | whole | `tubes` u8, `scope` i16, `flags` u8 | a submarine's launch tubes loaded (bit `n` for tube `n`), its periscope's yaw from the hull (mrad, + turns left), and `SUB_MAST_UP` (bit 0) while the periscope is raised ([VEHICLES-X.md](VEHICLES-X.md)) |
+| 27 | `lifted` | whole | `lift` u16, `chair` u16, `seat` u8 | a soldier riding chair `chair` of ski lift `lift` (`Manifest::lifts`) in place `seat`, 0 on the left; the client sits them on the chair it draws at the server's clock, so no chair is replicated (protocol 76, [LIFTS.md](LIFTS.md)) |
 
 What each carries today:
 

@@ -185,6 +185,28 @@ fn a_fence_stops_a_soldier_and_a_power_pole_stops_them_and_a_ray() {
 }
 
 #[test]
+fn a_ski_lifts_pylon_and_station_are_solid_on_the_server_and_streamed_alike() {
+    use shared::world::{LIFT_CHAIR, Lift, Manifest};
+    // A lift north (-Z) from (0, -10) m over a pylon at (0, -50) m to (0, -90) m, on flat ground.
+    let lift = Lift { kind: LIFT_CHAIR, seats: 2, points: vec![[0, -1_000], [0, -5_000], [0, -9_000]], base: vec![0, 0, 0], cable: vec![310, 900, 310] };
+    let world = WorldFile { lifts: vec![lift.clone()], ..flat_world() };
+    let manifest = Manifest { version: WORLD_VERSION, half_extent: 10_000, tile_size: 20_000, lifts: vec![lift], ..Default::default() };
+    for physics in [Physics::new(&world).unwrap(), Physics::streamed(&manifest)] {
+        // A round fired at the pylon from 5 m off meets its 0.35 m tube.
+        let hit = physics.cast_ray_static([0.0, 1.0, -45.0], [0.0, 0.0, -1.0], 10.0);
+        assert!(hit.is_some_and(|d| (d - 4.65).abs() < 0.02), "{hit:?}");
+        // The bottom station's deck is underfoot: a soldier dropped on it stands on its top, 10 cm up.
+        let mut character = Character { position: [0.0, 2.0, -12.0], ..Default::default() };
+        for _ in 0..TICK_RATE {
+            physics.move_character(&mut character, &InputFrame::default(), TICK_DT);
+        }
+        assert!(character.grounded && (character.position[1] - STANDING_Y - 0.1).abs() < 0.05, "{:?}", character.position);
+        // Beside the line, nothing.
+        assert_eq!(physics.cast_ray_static([20.0, 1.0, -45.0], [0.0, 0.0, -1.0], 10.0), None);
+    }
+}
+
+#[test]
 fn walls_block_movement() {
     let physics = Physics::new(&world_with_wall()).unwrap();
     let mut character = standing();

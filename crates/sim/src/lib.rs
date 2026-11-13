@@ -223,6 +223,22 @@ fn walls(world: &WorldFile) -> Vec<Collider> {
     boundary_walls(world).into_iter().map(|(x, z, hx, hz)| ColliderBuilder::cuboid(hx, wall, hz).translation(Vector::new(x, wall, z)).build()).collect()
 }
 
+/// The ski lifts' pylons and stations (`shared::lifts::structure`): standing like rocks, nothing fells them.
+pub(crate) fn lift_colliders(lifts: &[shared::world::Lift]) -> Vec<Collider> {
+    use shared::lifts::Shape;
+    lifts
+        .iter()
+        .flat_map(shared::lifts::structure)
+        .map(|part| {
+            let builder = match part.shape {
+                Shape::Box([hx, hy, hz]) => ColliderBuilder::cuboid(hx, hy, hz).rotation(Vector::new(0.0, part.turn, 0.0)),
+                Shape::Post { radius, half } => ColliderBuilder::cylinder(half, radius),
+            };
+            builder.translation(Vector::from(part.centre)).build()
+        })
+        .collect()
+}
+
 /// The buildings, the rest of the collision mesh (bridges) and the tree trunks of `world`, each
 /// building or tree with the [`Obj`] it is.
 fn object_colliders(world: &WorldFile) -> Result<Vec<(Collider, Option<Obj>)>> {
@@ -517,6 +533,9 @@ impl Physics {
         physics.terrain_cells = block_cells(&world.ground, world.tile_size);
         for wall in walls(world) {
             physics.insert_static(wall, None);
+        }
+        for lift in lift_colliders(&world.lifts) {
+            physics.insert_static(lift, None);
         }
         for (collider, object) in object_colliders(world)? {
             physics.insert_static(collider, object);

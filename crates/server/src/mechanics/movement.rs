@@ -29,7 +29,8 @@ impl Mechanic for Movement {
             let skis = player.input.buttons() & BUTTON_SKIS != 0;
             let switch_skis = skis && !player.ski_held;
             player.ski_held = skis;
-            if player.seat.is_some() || !alive {
+            // A lift's rider is carried by `Lifts`, which ran before this.
+            if player.seat.is_some() || player.lift.is_some() || !alive {
                 continue;
             }
             let character = &mut player.character;

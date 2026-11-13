@@ -163,6 +163,12 @@ export interface Sub {
   flags: number
 }
 
+export interface Lifted {
+  lift: number
+  chair: number
+  seat: number
+}
+
 /** An entity as it is replicated: the components it has. */
 export interface Components {
   place?: Place
@@ -191,6 +197,7 @@ export interface Components {
   pintle?: Pintle
   fell?: Fell
   sub?: Sub
+  lifted?: Lifted
 }
 
 export type ComponentName = keyof Components
@@ -230,4 +237,5 @@ export const SCHEMA: readonly { id: number; name: ComponentName; diff: boolean; 
   { id: 24, name: 'pintle', diff: false, owner: false, fields: [{ name: 'yaw', unit: 'mrad' }, { name: 'pitch', unit: 'mrad' }, { name: 'shots' }, { name: 'heat', unit: 'byte' }, { name: 'flags' }] },
   { id: 25, name: 'fell', diff: false, owner: false, fields: [{ name: 'style' }] },
   { id: 26, name: 'sub', diff: false, owner: false, fields: [{ name: 'tubes' }, { name: 'scope', unit: 'mrad' }, { name: 'flags' }] },
+  { id: 27, name: 'lifted', diff: false, owner: false, fields: [{ name: 'lift' }, { name: 'chair' }, { name: 'seat' }] },
 ]

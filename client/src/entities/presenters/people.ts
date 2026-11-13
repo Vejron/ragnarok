@@ -32,7 +32,7 @@ export interface PeopleWorld {
  * Everyone else on foot: their soldier, running, crouching, lying down or hanging from a parachute as
  * their flags say, holding what they hold. A zombie is a soldier too, drawn in rags and clawing when
  * its flags say so. The local player is drawn from their prediction instead,
- * and riders by `Riders`, in their seats.
+ * riders by `Riders`, in their seats, and those on a ski lift by `LiftRiders`, on its chairs.
  */
 export class Soldiers implements Presenter<Frame> {
   /** Who stands about this frame; the vehicles add their riders. */
@@ -43,7 +43,7 @@ export class Soldiers implements Presenter<Frame> {
   constructor(private readonly world: PeopleWorld) {}
 
   wants(entity: Entity, id: number, frame: Frame) {
-    return id !== frame.localId && (entity.kind?.kind === KIND_SOLDIER || entity.kind?.kind === KIND_ZOMBIE) && entity.orientation === undefined && entity.place !== undefined && entity.flags !== undefined
+    return id !== frame.localId && (entity.kind?.kind === KIND_SOLDIER || entity.kind?.kind === KIND_ZOMBIE) && entity.orientation === undefined && entity.place !== undefined && entity.flags !== undefined && entity.lifted === undefined
   }
 
   begin() {

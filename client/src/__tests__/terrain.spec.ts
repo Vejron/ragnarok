@@ -56,7 +56,7 @@ describe('terrain sampling', () => {
 
   it('places a tile by its column and row, and ignores flat worlds', () => {
     const world: WorldData = {
-      frame: [0, 0, 0], halfExtent: 100, tileSize: 40, spawns: [], tiles: [], groundCell: 5, theme: 0,
+      frame: [0, 0, 0], halfExtent: 100, tileSize: 40, spawns: [], tiles: [], groundCell: 5, theme: 0, lifts: [],
       collision: { vertices: new Float32Array(), triangles: new Uint32Array() },
     }
     const tile: TileData = { buildings: [], roads: [], cover: [], trees: [], collision: world.collision, ground: bumpy().heights, water: new Float32Array(), streams: [], bridges: [], rails: [], ski: [] }

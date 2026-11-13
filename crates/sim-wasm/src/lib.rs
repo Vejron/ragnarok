@@ -285,6 +285,47 @@ impl ClientSim {
         vec![wave.height, wave.slope[0], wave.slope[1], wave.rise]
     }
 
+    /// The solid parts of a lift's pylons and stations (`shared::lifts::structure`), nine numbers a
+    /// part: shape (0 a box, 1 an upright post), its middle x, y, z (metres), its turn about the
+    /// vertical (radians), then a box's half extents or a post's radius, half height and 0, and its
+    /// `LOOK_*`. `points` is the lift's `[x, z]` pairs, `base` and `cable` its heights, centimetres. The
+    /// client draws these, so what is drawn is what the physics stands.
+    #[wasm_bindgen(js_name = liftParts)]
+    pub fn lift_parts(points: &[i32], base: &[i32], cable: &[i32]) -> Vec<f32> {
+        use shared::lifts::Shape;
+        let lift = shared::world::Lift { kind: 0, seats: 1, points: points.chunks_exact(2).map(|p| [p[0], p[1]]).collect(), base: base.to_vec(), cable: cable.to_vec() };
+        shared::lifts::structure(&lift)
+            .into_iter()
+            .flat_map(|part| {
+                let (shape, size) = match part.shape {
+                    Shape::Box(half) => (0.0, half),
+                    Shape::Post { radius, half } => (1.0, [radius, half, 0.0]),
+                };
+                [shape, part.centre[0], part.centre[1], part.centre[2], part.turn, size[0], size[1], size[2], f32::from(part.look)]
+            })
+            .collect()
+    }
+
+    /// Chair `index` of a lift at `tick` (`shared::lifts`): its seat's middle, yaw, distance round the
+    /// loop and stretch (0 up, 1 round the top, 2 down, 3 round the bottom), then where rider `seat`
+    /// sits. `points` is the lift's `[x, z]` pairs and `cable` its cable heights, centimetres. For
+    /// checking the client's copy against.
+    #[wasm_bindgen(js_name = liftChair)]
+    pub fn lift_chair(points: &[i32], cable: &[i32], seats: u8, index: u32, tick: u32, seat: u8) -> Vec<f32> {
+        use shared::lifts::{Path, Stretch};
+        let lift = shared::world::Lift { kind: 0, seats, points: points.chunks_exact(2).map(|p| [p[0], p[1]]).collect(), base: vec![0; cable.len()], cable: cable.to_vec() };
+        let path = Path::new(&lift);
+        let chair = path.chair(index, tick);
+        let stretch = match chair.stretch {
+            Stretch::Up => 0.0,
+            Stretch::Top => 1.0,
+            Stretch::Down => 2.0,
+            Stretch::Bottom => 3.0,
+        };
+        let place = path.place(&chair, seat);
+        vec![chair.seat[0], chair.seat[1], chair.seat[2], chair.yaw, chair.along, stretch, place[0], place[1], place[2], path.chairs as f32]
+    }
+
     /// Which way the wind blows at `tick` (`[x, z]`), and the share of a full sail a ship heading along
     /// `(fx, fz)` gets from it and how far its boom swings out (`shared::wind`), for checking the
     /// client's copy against.

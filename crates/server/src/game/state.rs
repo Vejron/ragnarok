@@ -40,6 +40,15 @@ pub struct Seat {
     pub from: Option<(u32, usize)>,
 }
 
+/// Where a soldier riding a ski lift sits: the lift (`WorldFile::lifts`), the chair and the place on
+/// it (0 on the left).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LiftRide {
+    pub lift: u16,
+    pub chair: u16,
+    pub seat: u8,
+}
+
 /// A hotbar of `items`, one a slot, with full magazines and full stacks. `ITEM_NONE` is an empty slot.
 pub fn hotbar_of(items: [u8; HOTBAR_SLOTS]) -> [ItemSlot; HOTBAR_SLOTS] {
     items.map(|item| def(item).map_or(ItemSlot::default(), |d| ItemSlot { item, count: d.stack, ammo: d.mag }))
@@ -70,6 +79,8 @@ pub struct Player {
     pub drowning: u16,
     /// While seated the soldier is hidden and rides with the vehicle; input drives the seat.
     pub seat: Option<Seat>,
+    /// Riding a ski lift's chair (`mechanics::lifts`): carried, not walking, but out in the world.
+    pub lift: Option<LiftRide>,
     /// Ticks until a car can hit this player again.
     pub hit_cooldown: u32,
     /// The input applied this tick.
@@ -379,6 +390,7 @@ impl Player {
         Player {
             character: Character::default(),
             seat: None,
+            lift: None,
             hit_cooldown: 0,
             input: InputFrame::default(),
             inputs: JitterBuffer::default(),
@@ -410,11 +422,12 @@ impl Player {
         self.hands.selected.map_or(ItemSlot::default(), |slot| self.hands.hotbar[slot])
     }
 
-    /// Whether the soldier is down in a crouch, kneeling over a drone's controls included: not lying
+    /// Whether the soldier is down in a crouch, kneeling over a drone's controls or sitting on a ski
+    /// lift's chair included: not lying
     /// down, hanging under a canopy, swimming, or with a leg gone, which rules a crouch out.
     pub fn crouched(&self) -> bool {
         let c = &self.character;
-        (self.input.buttons() & BUTTON_CROUCH != 0 || self.seat.is_some()) && !c.prone && !c.chute && !c.swimming && c.down == 0 && c.lost & LIMB_LEGS == 0
+        (self.input.buttons() & BUTTON_CROUCH != 0 || self.seat.is_some() || self.lift.is_some()) && !c.prone && !c.chute && !c.swimming && c.down == 0 && c.lost & LIMB_LEGS == 0
     }
 
     /// How the soldier holds themself, for a round to meet.

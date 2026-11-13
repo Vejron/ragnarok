@@ -35,6 +35,7 @@ export function toGame(w: Components): Entity {
     pintle: w.pintle && { yaw: w.pintle.yaw / 1000, pitch: w.pintle.pitch / 1000, shots: w.pintle.shots, heat: w.pintle.heat / 255, flags: w.pintle.flags },
     fell: w.fell,
     sub: w.sub && { tubes: w.sub.tubes, scope: w.sub.scope / 1000, flags: w.sub.flags },
+    lifted: w.lifted,
   }
 }
 
@@ -72,5 +73,6 @@ export function blend(a: Entity, b: Entity, t: number): Entity {
     pintle: a.pintle && b.pintle ? (a.pintle === b.pintle || (a.pintle.yaw === b.pintle.yaw && a.pintle.pitch === b.pintle.pitch && a.pintle.shots === b.pintle.shots && a.pintle.heat === b.pintle.heat && a.pintle.flags === b.pintle.flags) ? b.pintle : { yaw: angle(a.pintle.yaw, b.pintle.yaw, t), pitch: angle(a.pintle.pitch, b.pintle.pitch, t), shots: t < 0.5 ? a.pintle.shots : b.pintle.shots, heat: t < 0.5 ? a.pintle.heat : b.pintle.heat, flags: t < 0.5 ? a.pintle.flags : b.pintle.flags }) : near.pintle,
     fell: near.fell,
     sub: a.sub && b.sub ? (a.sub === b.sub || (a.sub.tubes === b.sub.tubes && a.sub.scope === b.sub.scope && a.sub.flags === b.sub.flags) ? b.sub : { tubes: t < 0.5 ? a.sub.tubes : b.sub.tubes, scope: angle(a.sub.scope, b.sub.scope, t), flags: t < 0.5 ? a.sub.flags : b.sub.flags }) : near.sub,
+    lifted: near.lifted,
   }
 }

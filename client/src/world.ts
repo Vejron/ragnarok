@@ -271,6 +271,19 @@ export interface SkiTrail {
   points: Point2[]
 }
 
+/**
+ * A ski lift (`Lift` in `crates/shared/src/world.rs`), in metres: its line from the bottom station
+ * over the pylons to the top, the ground under each point and the cable's height over each, from the
+ * world's zero. Every lift is drawn as a chair lift; `kind` is what OpenStreetMap calls it (`LIFT_*`).
+ */
+export interface Lift {
+  kind: number
+  seats: number
+  points: Point2[]
+  base: number[]
+  cable: number[]
+}
+
 export interface WorldData {
   /**
    * How local metres lie on the Earth (`Frame` in `crates/shared/src/world.rs`): `[0, lat, lon]` for
@@ -286,6 +299,8 @@ export interface WorldData {
   groundCell: number
   /** `THEME_*`: 0 is the world as it always was. */
   theme: number
+  /** The ski lifts, whole (`Manifest::lifts`): drawn wherever the player is. */
+  lifts: Lift[]
   /**
    * Which tiles of the square grid are part of the world, `grid × grid` row-major, or `null` when
    * every one is. Tiles outside it have no ground and are walled off.
@@ -361,7 +376,7 @@ export function trunkRadiusCm(kind: number, heightCm: number, crownCm: number): 
 const noCollision = (): CollisionMesh => ({ vertices: new Float32Array(), triangles: new Uint32Array() })
 
 export function decodeManifest(bytes: Uint8Array): WorldData {
-  const [version, frame, halfExtent, tileSize, spawns, tiles, groundCell, theme] = decode(bytes) as [number, [number, number, number], number, number, number[][], number[][], number, number?]
+  const [version, frame, halfExtent, tileSize, spawns, tiles, groundCell, theme, lifts] = decode(bytes) as [number, [number, number, number], number, number, number[][], number[][], number, number?, [number, number, number[][], number[], number[]][]?]
   if (version !== WORLD_VERSION) throw new Error(`world version ${version}, expected ${WORLD_VERSION}`)
   const refs = tiles.map(([col, row, hash]) => ({ col: col!, row: row!, hash: hash! }))
   const grid = Math.max(1, Math.ceil((2 * halfExtent) / Math.max(tileSize, 1)))
@@ -378,6 +393,7 @@ export function decodeManifest(bytes: Uint8Array): WorldData {
     tiles: refs,
     groundCell: metres(groundCell),
     theme: theme ?? 0,
+    lifts: (lifts ?? []).map(([kind, seats, points, base, cable]) => ({ kind, seats, points: points.map(point), base: base.map(metres), cable: cable.map(metres) })),
     inside,
     collision: noCollision(),
     bytes,
