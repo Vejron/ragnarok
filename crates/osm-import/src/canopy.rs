@@ -12,6 +12,10 @@ use shared::world::*;
 const CELL: f64 = 1.0;
 /// Lowest thing that counts as a tree, metres above the terrain. Shrubs and hedges stay below.
 pub const MIN_HEIGHT: f64 = 3.0;
+/// Highest a return can stand above the terrain and still be canopy, metres. Sweden's tallest
+/// trees are about 50 m; above that the unclassified cloud holds low cloud and other noise (Åre has
+/// patches of returns some 400 m over the lake), which would otherwise stand as giant trees.
+const MAX_HEIGHT: f32 = 50.0;
 /// Crown cells are those at least this fraction of the treetop's height.
 const CROWN_FRACTION: f64 = 0.5;
 /// A crown never reaches farther than this from its top, metres.
@@ -126,7 +130,11 @@ impl Canopy {
                 let (e, n) = centre(c, r);
                 if let Some(g) = ground(e, n) {
                     terrain[i] = g;
-                    chm[i] = (self.top[i] - g).max(0.0);
+                    // Too high to be a tree: the cell is left empty and filled from its neighbours.
+                    let above = self.top[i] - g;
+                    if above <= MAX_HEIGHT {
+                        chm[i] = above.max(0.0);
+                    }
                 }
             }
         }
@@ -408,6 +416,21 @@ mod tests {
         assert!((trees[0].height - 12.0).abs() < 1.0, "{}", trees[0].height);
         assert!((trees[1].height - 18.0).abs() < 1.0);
         assert!(trees[0].crown > 1.2 && trees[0].crown < 4.0, "{}", trees[0].crown);
+    }
+
+    #[test]
+    fn a_patch_of_cloud_far_overhead_is_not_a_tree() {
+        let mut canopy = Canopy::new([0.0, 0.0, 60.0, 60.0]);
+        crown(&mut canopy, 15.0, 15.0, 12.0, 3.0);
+        // A cloud 400 m up, as dense as a crown.
+        crown(&mut canopy, 40.0, 40.0, 400.0, 4.0);
+        // And a few cloud returns over the real tree, which must not lift it.
+        for d in [-0.5, 0.0, 0.5] {
+            canopy.add(&Point { e: 15.0 + d, n: 15.0, z: 400.0, class: 1, ret: 1, returns: 1, intensity: 100 });
+        }
+        let trees = canopy.detect(flat, MIN_HEIGHT);
+        assert_eq!(trees.len(), 1, "{trees:?}");
+        assert!((trees[0].height - 12.0).abs() < 1.0, "{}", trees[0].height);
     }
 
     #[test]
