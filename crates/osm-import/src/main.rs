@@ -101,7 +101,7 @@ struct Args {
     #[arg(long)]
     synthetic: bool,
     /// Overpass API endpoints, tried in order (the public servers are often busy).
-    #[arg(long, value_delimiter = ',', default_value = "https://overpass-api.de/api/interpreter,https://overpass.kumi.systems/api/interpreter,https://overpass.private.coffee/api/interpreter,https://maps.mail.ru/osm/tools/overpass/api/interpreter")]
+    #[arg(long, value_delimiter = ',', default_value = "https://overpass-api.de/api/interpreter,https://lz4.overpass-api.de/api/interpreter,https://overpass.openstreetmap.fr/api/interpreter,https://overpass.kumi.systems/api/interpreter,https://overpass.private.coffee/api/interpreter,https://maps.mail.ru/osm/tools/overpass/api/interpreter")]
     overpass: Vec<String>,
     /// Overpass is asked for squares of about this many metres and the answers merged, so a big
     /// box does not time out. Finished squares are cached.

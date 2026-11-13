@@ -54,8 +54,10 @@ pub struct Area {
 }
 
 /// The public Overpass servers, tried in order.
-pub const DEFAULT_ENDPOINTS: [&str; 4] = [
+pub const DEFAULT_ENDPOINTS: [&str; 6] = [
     "https://overpass-api.de/api/interpreter",
+    "https://lz4.overpass-api.de/api/interpreter",
+    "https://overpass.openstreetmap.fr/api/interpreter",
     "https://overpass.kumi.systems/api/interpreter",
     "https://overpass.private.coffee/api/interpreter",
     "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
