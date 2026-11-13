@@ -35,6 +35,9 @@ impl Lift {
     }
 }
 
+/// The speed at which a car's steering lock has halved, m/s: the usual `Spec::steer_fade`.
+pub const STEER_FADE: f32 = 20.0;
+
 /// How the physics moves a kind.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Spec {
@@ -87,6 +90,9 @@ pub struct Spec {
     /// Seconds its steering takes to swing from straight to full lock, so that a key held down eases
     /// into a turn rather than snapping to it. 0 swings at the usual rate, which is all but at once.
     pub steer_time: f32,
+    /// The speed at which its steering lock has halved, m/s: the lock is `steer_lock / (1 + speed /
+    /// steer_fade)`, so a smaller number steers less the faster it goes. `STEER_FADE` for most kinds.
+    pub steer_fade: f32,
     /// How it does on open water, for a kind light and quick enough to plane over it. `None` sinks
     /// straight to the bed and wades there, as every other wheeled kind does.
     pub skim: Option<Skim>,

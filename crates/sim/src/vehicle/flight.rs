@@ -14,7 +14,7 @@ pub(crate) fn pull(speed: f32, max: f32) -> f32 {
 pub(crate) fn roll_plane(car: &mut Car, controls: CarControls, body: &RigidBody, speed: f32, mass: f32, dt: f32) {
     let _ = body;
     let wanted = if controls.powered { controls.steer.clamp(-1.0, 1.0) } else { 0.0 };
-    let lock = car.spec.steer_lock / (1.0 + speed.abs() / STEER_FADE_SPEED);
+    let lock = car.spec.steer_lock / (1.0 + speed.abs() / car.spec.steer_fade);
     let target = wanted * lock;
     let returning = target.abs() < car.steer.abs() || target * car.steer < 0.0;
     let step = STEER_RATE * if returning { STEER_RETURN } else { 1.0 } * dt;

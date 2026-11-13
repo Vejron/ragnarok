@@ -42,7 +42,7 @@ pub mod technical;
 pub mod tupp;
 pub mod walker;
 
-pub use spec::{Airframe, Buttons, Floats, Lift, Role, Shape, Skim, Solid, Spec, Springs};
+pub use spec::{Airframe, Buttons, Floats, Lift, Role, Shape, Skim, Solid, Spec, Springs, STEER_FADE};
 pub use crate::armor::{ALLOY, Armor, Box3, Module, On, Part, Pen, Plate, SHEET, SOFT, Zone};
 
 #[derive(Clone, Copy, Debug)]

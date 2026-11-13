@@ -106,6 +106,7 @@ pub(super) const TECHNICAL: VehicleDef = VehicleDef {
         roll: 0.0,
         nose: 0.0,
         steer_time: 0.0,
+        steer_fade: STEER_FADE,
         // Too heavy to skip over water: it sinks and wades along the bed.
         skim: None,
         bow: 0.0,

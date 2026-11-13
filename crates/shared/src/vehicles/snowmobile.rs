@@ -19,8 +19,11 @@ pub const SNOWMOBILE_HARD_POINT_Y: f32 = -0.05;
 /// Long-travel suspension, for bumps and drifts.
 pub const SNOWMOBILE_SUSPENSION_REST: f32 = 0.35;
 pub const SNOWMOBILE_RIDE_HEIGHT: f32 = 0.559;
-/// Skis turn far: tight at a crawl, and the lock fades with speed as every car's does.
+/// Skis turn far at a crawl, and the lock fades with speed, fast (`SNOWMOBILE_STEER_FADE`).
 pub const SNOWMOBILE_MAX_STEER: f32 = 0.6;
+/// The speed at which the skis' lock has halved, m/s: far lower than a car's, so a sled at speed
+/// steers a little and a sled at a crawl steers a lot (0.3 rad at 7 m/s, 0.16 at 20).
+pub const SNOWMOBILE_STEER_FADE: f32 = 7.0;
 pub const SNOWMOBILE_MAX_SPEED: f32 = 20.0;
 /// The boost: holding run opens the engine right up, multiplying its pull and its top speed, while
 /// the boost lasts (a share of full, `Spec::tank`). It runs down in about four seconds held and
@@ -85,8 +88,9 @@ pub(super) const SNOWMOBILE: VehicleDef = VehicleDef {
         roll: 1.0,
         // The hood sweeps up from the front of the seat to over the ski tips, so it rides up a slope.
         nose: 0.6,
-        // The skis are leaned and steered into a turn, not flicked.
-        steer_time: 0.2,
+        // The skis answer at once; it is speed that calms them (`SNOWMOBILE_STEER_FADE`).
+        steer_time: 0.0,
+        steer_fade: SNOWMOBILE_STEER_FADE,
         // Light and powerful, it planes over open water from a modest speed and carves on it.
         skim: Some(Skim { sink_speed: 6.0, plane_speed: 10.0, thrust: 0.15, grip: 0.6, bank_drag: 1.0 }),
         bow: 0.0,

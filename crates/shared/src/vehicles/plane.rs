@@ -163,6 +163,7 @@ pub(super) const PLANE: VehicleDef = VehicleDef {
         roll: 0.0,
         nose: 0.0,
         steer_time: 0.0,
+        steer_fade: STEER_FADE,
         skim: None,
         bow: 0.0,
         springs: Springs::FIRM,

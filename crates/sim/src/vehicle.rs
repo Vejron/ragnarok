@@ -55,8 +55,6 @@ const BROKEN_TRACK_DRAG: f32 = 0.5;
 const STEER_RATE: f32 = 7.0;
 /// Wheels straighten this much faster than they turn in.
 const STEER_RETURN: f32 = 1.5;
-/// Steering lock shrinks with speed: `steer_lock / (1 + speed / STEER_FADE_SPEED)`.
-const STEER_FADE_SPEED: f32 = 20.0;
 /// The engine pulls with full force up to this fraction of the top speed, then fades to nothing at it.
 const FULL_POWER: f32 = 0.65;
 /// Side grip of a car's rear wheels while the handbrake is held, against 1 normally. Grip is the share
@@ -426,7 +424,7 @@ fn boosting(controls: CarControls, tank: Option<f32>) -> bool {
 
 /// How far a car's front wheels can turn at `speed` m/s, radians: the lock narrows at speed.
 fn lock(spec: &Spec, speed: f32) -> f32 {
-    spec.steer_lock / (1.0 + speed.abs() / STEER_FADE_SPEED)
+    spec.steer_lock / (1.0 + speed.abs() / spec.steer_fade)
 }
 
 /// How far a car's front wheels are turned (`steer`, radians) at `speed`, as a share of its lock there.

@@ -1973,8 +1973,14 @@ export const SNOWMOBILE_HARD_POINT_Y = -0.05
 export const SNOWMOBILE_SUSPENSION_REST = 0.35
 export const SNOWMOBILE_RIDE_HEIGHT = 0.559
 
-/** Skis turn far: tight at a crawl, and the lock fades with speed as every car's does. */
+/** Skis turn far at a crawl, and the lock fades with speed, fast (`SNOWMOBILE_STEER_FADE`). */
 export const SNOWMOBILE_MAX_STEER = 0.6
+
+/**
+ * The speed at which the skis' lock has halved, m/s: far lower than a car's, so a sled at speed
+ * steers a little and a sled at a crawl steers a lot (0.3 rad at 7 m/s, 0.16 at 20).
+ */
+export const SNOWMOBILE_STEER_FADE = 7.0
 export const SNOWMOBILE_MAX_SPEED = 20.0
 
 /**
@@ -1990,6 +1996,9 @@ export const SNOWMOBILE_BOOST_REFILL = 0.17
 
 /** The driver sits up front, the passenger behind and a little higher on the seat's rise. */
 export const SNOWMOBILE_SEAT_HEADS = [[0.0, 1.05, 0.1], [0.0, 1.15, 0.8]] as const
+
+/** The speed at which a car's steering lock has halved, m/s: the usual `Spec::steer_fade`. */
+export const STEER_FADE = 20.0
 
 /**
  * The sports car (`KIND_SPORTS`): a low two-seater with small wheels and a big engine. Quick in a

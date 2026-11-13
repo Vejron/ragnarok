@@ -298,6 +298,22 @@ fn steering_left_mirrors_it() {
     assert!(yaw(&pose) > 0.3 && pose.position[0] < -1.0, "{pose:?}");
 }
 
+#[test]
+fn a_snowmobiles_steering_has_no_delay() {
+    assert_eq!(spec(shared::protocol::KIND_SNOWMOBILE).steer_time, 0.0);
+}
+
+#[test]
+fn a_snowmobiles_lock_narrows_much_faster_with_speed_than_a_jeeps() {
+    let sled = spec(shared::protocol::KIND_SNOWMOBILE);
+    let jeep = spec(KIND_JEEP);
+    let share = |spec: &Spec, speed: f32| lock(spec, speed) / lock(spec, 0.0);
+    assert!(share(sled, 20.0) < 0.3, "{}", share(sled, 20.0));
+    assert!(share(sled, 7.0) < 0.55 && share(sled, 7.0) > 0.45);
+    assert!((share(jeep, 20.0) - 0.5).abs() < 1e-3);
+    assert!(lock(sled, 0.0) > lock(jeep, 0.0));
+}
+
 /// Angle between where the car points and where it is going, radians.
 fn slip_angle(pose: &CarPose) -> f32 {
     let heading = pose.yaw();
