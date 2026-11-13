@@ -3,7 +3,7 @@
 //! same levels, so a crossing is predicted. Frozen water is left out: winter drives on the bed as before.
 
 use shared::quant::from_cm;
-use shared::world::{NO_WATER, THEME_WINTER, WorldFile};
+use shared::world::{NO_WATER, WorldFile};
 use std::collections::BTreeMap;
 
 /// Water surface heights over a square of ground samples.
@@ -55,7 +55,7 @@ impl Waters {
         let per_tile = if ground.cell > 0 && world.tile_size > 0 && world.tile_size % ground.cell == 0 { (world.tile_size / ground.cell) as u32 } else { 0 };
         let cells = ground.side.saturating_sub(1);
         let tiled = per_tile > 0 && cells.is_multiple_of(per_tile) && ground.origin == -world.half_extent;
-        let mut waters = Waters::new(world.half_extent, if tiled { world.tile_size } else { 0 }, ground.cell, world.theme == THEME_WINTER);
+        let mut waters = Waters::new(world.half_extent, if tiled { world.tile_size } else { 0 }, ground.cell, world.frozen());
         if world.water.len() != ground.heights.len() {
             return waters;
         }
@@ -193,8 +193,10 @@ mod tests {
         assert_eq!(waters.level_at(0.4, 0.3), Some(1.2));
         assert_eq!(waters.level_at(-0.4, -0.3), Some(1.2), "the edge sample is in both tiles");
         assert_eq!(waters.level_at(3.0, 3.0), None);
-        world.theme = THEME_WINTER;
+        world.theme = shared::world::THEME_WINTER;
         assert_eq!(Waters::of_world(&world).level_at(0.4, 0.3), None, "winter water is ice");
+        world.open_water = true;
+        assert_eq!(Waters::of_world(&world).level_at(0.4, 0.3), Some(1.2), "unless it was left open");
     }
 
     #[test]

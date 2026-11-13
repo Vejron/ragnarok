@@ -108,7 +108,7 @@ import { Headlights } from './entities/presenters/headlights'
 import { Roosters } from './entities/presenters/roosters'
 import { Animals } from './entities/presenters/animals'
 import { TileStreamer } from './stream'
-import { loadManifest, NO_WATER, THEME_WINTER, WORLD_BASE, type WorldData } from './world'
+import { frozen, loadManifest, NO_WATER, THEME_WINTER, WORLD_BASE, type WorldData } from './world'
 import { updateNow } from './pwa'
 import { HudLayer } from '@ragnarok/engine'
 import { InGameHud } from './hud/index'
@@ -493,7 +493,7 @@ export class Game {
     this.hud.loadMap(WORLD_BASE)
     this.worldHash = hash
     this.world = world
-    if (world.theme === THEME_WINTER) this.startWinter()
+    if (world.theme === THEME_WINTER) this.startWinter(frozen(world))
     else {
       this.marshMist = new MarshMist()
       this.rainfall = new Rainfall()
@@ -509,7 +509,7 @@ export class Game {
     this.surfaces = this.view.surfaces = new Surfaces(world.halfExtent, world.tileSize)
     this.waters = this.view.waters = this.surroundings.waters = new Waters(world.halfExtent, world.tileSize)
     // Frozen lakes have no waves.
-    this.waters.calm = world.theme === THEME_WINTER
+    this.waters.calm = frozen(world)
     this.scene.groundAt = (x, z) => this.terrain?.heightAt(x, z) ?? 0
     const terrain = this.terrain
     this.grass = this.view.grass = this.surroundings.grass = new Grass(world.halfExtent, world.tileSize, (x, z) => terrain.sample(x, z))
@@ -1456,11 +1456,14 @@ export class Game {
   }
 
   /** Switches the soft-lighting options and remembers them for next time. */
-  /** Before the first tile: colours, ice and the snow in the air, for the whole of a winter world. */
-  private startWinter() {
+  /**
+   * Before the first tile: colours, ice (unless the world's water was left open) and the snow in the
+   * air, for the whole of a winter world.
+   */
+  private startWinter(ice: boolean) {
     setWinter(true)
     snowOnBuildings()
-    freezeWater()
+    if (ice) freezeWater()
     this.scene.setLook(this.scene.look)
     this.snowfall = new Snowfall()
     this.skiTracks = new SkiTracks((x, z) => this.scene.groundAt(x, z), this.smoke)

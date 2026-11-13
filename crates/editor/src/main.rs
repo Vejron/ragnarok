@@ -42,6 +42,10 @@ struct Area {
     /// Winter: groom the forest paths and tracks too (`groomed_paths` in the importer).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     groomed_paths: bool,
+    /// Winter: leave the lakes and the sea open (`open_water` in the importer), so boats and
+    /// submarines still sail.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    open_water: bool,
     /// Take the water from OpenStreetMap (`osm_water` in the importer), for a world on the coast:
     /// Hydrografi has no sea. Absent from the page, the file's own is kept; `false` is written as
     /// nothing at all.
@@ -77,6 +81,7 @@ impl Area {
             if self.theme.is_none() {
                 self.theme = old.theme;
                 self.groomed_paths = old.groomed_paths;
+                self.open_water = old.open_water;
             }
             for (key, value) in old.rest {
                 self.rest.entry(key).or_insert(value);
@@ -85,6 +90,7 @@ impl Area {
         if self.theme.as_deref() == Some("summer") {
             self.theme = None;
             self.groomed_paths = false;
+            self.open_water = false;
         }
         if self.osm_water == Some(false) {
             self.osm_water = None;
@@ -171,7 +177,7 @@ async fn list_worlds(res: &mut Response) {
 async fn get_world(req: &mut Request, res: &mut Response) {
     let Some(name) = name_of(req, res) else { return };
     match read_area(&name) {
-        Some(area) => res.render(Json(serde_json::json!({ "name": name, "region": area.region.name(), "tiles": area.tiles, "cell": area.cell, "theme": area.theme, "groomed_paths": area.groomed_paths, "osm_water": area.osm_water.unwrap_or(false), "spawns": area.spawns, "vehicles": area.vehicles, "items": area.items, "bots": area.bots, "animals": area.animals }))),
+        Some(area) => res.render(Json(serde_json::json!({ "name": name, "region": area.region.name(), "tiles": area.tiles, "cell": area.cell, "theme": area.theme, "groomed_paths": area.groomed_paths, "open_water": area.open_water, "osm_water": area.osm_water.unwrap_or(false), "spawns": area.spawns, "vehicles": area.vehicles, "items": area.items, "bots": area.bots, "animals": area.animals }))),
         None => fail(res, StatusCode::NOT_FOUND, "no such world"),
     }
 }
@@ -565,19 +571,19 @@ mod tests {
 
     #[test]
     fn a_save_from_the_page_keeps_the_season() {
-        let old: Area = serde_json::from_str(r#"{"tiles":[],"theme":"winter","groomed_paths":true}"#).unwrap();
+        let old: Area = serde_json::from_str(r#"{"tiles":[],"theme":"winter","groomed_paths":true,"open_water":true}"#).unwrap();
         let mut sent: Area = serde_json::from_str(r#"{"tiles":[{"gx":1,"gy":2}]}"#).unwrap();
         sent.keep_options(Some(old));
-        assert_eq!((sent.theme.as_deref(), sent.groomed_paths), (Some("winter"), true));
+        assert_eq!((sent.theme.as_deref(), sent.groomed_paths, sent.open_water), (Some("winter"), true, true));
         assert_eq!(sent.tiles.len(), 1);
         let mut new: Area = serde_json::from_str(r#"{"tiles":[]}"#).unwrap();
         new.keep_options(None);
         assert_eq!((new.theme, new.groomed_paths), (None, false));
         // The snow switch turned off on the page: no theme, nothing groomed.
         let old: Area = serde_json::from_str(r#"{"tiles":[],"theme":"winter","groomed_paths":true}"#).unwrap();
-        let mut summer: Area = serde_json::from_str(r#"{"tiles":[],"theme":"summer"}"#).unwrap();
+        let mut summer: Area = serde_json::from_str(r#"{"tiles":[],"theme":"summer","open_water":true}"#).unwrap();
         summer.keep_options(Some(old));
-        assert_eq!((summer.theme, summer.groomed_paths), (None, false));
+        assert_eq!((summer.theme, summer.groomed_paths, summer.open_water), (None, false, false));
     }
 
     #[test]

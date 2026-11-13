@@ -61,7 +61,7 @@ impl Physics {
         let world = bare(manifest);
         let mut physics = Self::empty(from_cm(manifest.half_extent));
         physics.stones = crate::stones::Stones::new(manifest.half_extent, manifest.tile_size);
-        physics.waters = crate::waters::Waters::new(manifest.half_extent, manifest.tile_size, manifest.ground_cell, manifest.theme == shared::world::THEME_WINTER);
+        physics.waters = crate::waters::Waters::new(manifest.half_extent, manifest.tile_size, manifest.ground_cell, manifest.frozen());
         physics.insert_static(slab(&world, manifest.ground_cell > 0), None);
         for wall in walls(&world) {
             physics.insert_static(wall, None);

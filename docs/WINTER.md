@@ -6,6 +6,7 @@ A world is a winter one when its `area.json` says `"theme": "winter"`. In the ma
 
 - **Snow** is drawn in the shader (`MAT_SNOW`): what faces up turns white, so steep ground and walls stay bare. It covers terrain and buildings. Trees have their own version in `render/trees.ts`, broken into clumps by noise.
 - **Ice** is not a sim feature. `osm_import::winter::freeze` raises the ground to 3 cm under the water surface, so the lake is flat ground to physics, and the client still draws the surface, in its frozen colours (`freezeWater`).
+- **Open water.** `"open_water": true` in `area.json` (the editor's **Open water** box under the snow switch) skips the freeze: the lakes and the sea stay water, with waves, so boats and submarines sail and soldiers swim. It is carried in `Manifest::open_water`; `Manifest::frozen()` (and `frozen()` in `client/src/world.ts`) is what the physics' `Waters` and the client's ice and calm read, not the theme alone.
 - **Ski tracks** are `Tile::ski`: `piste:type=nordic` ways and `route=ski` relations, from a query of their own (`osm_ski.rs`). `"groomed_paths": true` in `area.json` grooms forest paths and tracks too, for places OSM maps few ski tracks. Kulla needs it.
 - `render/season.ts` holds the one flag everything picks colours by. Both the main thread and the tile worker set it before the first tile.
 

@@ -11,6 +11,11 @@ export const THEME_WINTER = 1
 /** Where `world.msgpack`, `tiles/` and `minimap.webp` are served from: `/` normally, `/dev/` for the dev world. */
 export let WORLD_BASE: string = withSlash(import.meta.env.VITE_WORLD_BASE || '/')
 
+/** Whether a world's water is ice: a winter world whose water was not left open (`Manifest::frozen`). */
+export function frozen(world: Pick<WorldData, 'theme' | 'openWater'>): boolean {
+  return world.theme === THEME_WINTER && !world.openWater
+}
+
 function withSlash(base: string): string {
   return base.endsWith('/') ? base : `${base}/`
 }
@@ -301,6 +306,8 @@ export interface WorldData {
   theme: number
   /** The ski lifts, whole (`Manifest::lifts`): drawn wherever the player is. */
   lifts: Lift[]
+  /** Winter with the lakes and the sea left open (`Manifest::open_water`), so boats still sail. */
+  openWater?: boolean
   /**
    * Which tiles of the square grid are part of the world, `grid × grid` row-major, or `null` when
    * every one is. Tiles outside it have no ground and are walled off.
@@ -376,7 +383,7 @@ export function trunkRadiusCm(kind: number, heightCm: number, crownCm: number): 
 const noCollision = (): CollisionMesh => ({ vertices: new Float32Array(), triangles: new Uint32Array() })
 
 export function decodeManifest(bytes: Uint8Array): WorldData {
-  const [version, frame, halfExtent, tileSize, spawns, tiles, groundCell, theme, lifts] = decode(bytes) as [number, [number, number, number], number, number, number[][], number[][], number, number?, [number, number, number[][], number[], number[]][]?]
+  const [version, frame, halfExtent, tileSize, spawns, tiles, groundCell, theme, lifts, openWater] = decode(bytes) as [number, [number, number, number], number, number, number[][], number[][], number, number?, [number, number, number[][], number[], number[]][]?, boolean?]
   if (version !== WORLD_VERSION) throw new Error(`world version ${version}, expected ${WORLD_VERSION}`)
   const refs = tiles.map(([col, row, hash]) => ({ col: col!, row: row!, hash: hash! }))
   const grid = Math.max(1, Math.ceil((2 * halfExtent) / Math.max(tileSize, 1)))
@@ -394,6 +401,7 @@ export function decodeManifest(bytes: Uint8Array): WorldData {
     groundCell: metres(groundCell),
     theme: theme ?? 0,
     lifts: (lifts ?? []).map(([kind, seats, points, base, cable]) => ({ kind, seats, points: points.map(point), base: base.map(metres), cable: cable.map(metres) })),
+    openWater: openWater ?? false,
     inside,
     collision: noCollision(),
     bytes,

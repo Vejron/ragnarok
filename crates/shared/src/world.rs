@@ -139,6 +139,17 @@ pub struct Manifest {
     /// wherever the player is, so they are not cut into the tiles.
     #[serde(default)]
     pub lifts: Vec<Lift>,
+    /// Winter: the lakes and the sea stay open rather than freezing, so boats and submarines still
+    /// sail. Nothing in any other season.
+    #[serde(default)]
+    pub open_water: bool,
+}
+
+impl Manifest {
+    /// Whether the world's water is ice: a winter world whose water was not left open.
+    pub fn frozen(&self) -> bool {
+        self.theme == THEME_WINTER && !self.open_water
+    }
 }
 
 /// A ski lift: a cable loop between two stations over a line of pylons. Every lift is built as a
@@ -440,6 +451,9 @@ pub struct WorldFile {
     /// The ski lifts, from the manifest.
     #[serde(skip)]
     pub lifts: Vec<Lift>,
+    /// Winter with the water left open, from the manifest.
+    #[serde(skip)]
+    pub open_water: bool,
     /// Every ski track. Filled by `assemble`.
     #[serde(skip)]
     pub ski: Vec<SkiTrail>,
@@ -897,6 +911,11 @@ impl Tile {
 }
 
 impl WorldFile {
+    /// Whether the world's water is ice, as `Manifest::frozen`.
+    pub fn frozen(&self) -> bool {
+        self.theme == THEME_WINTER && !self.open_water
+    }
+
     /// Tiles per side of the square grid, as `Manifest::grid`.
     pub fn grid(&self) -> u16 {
         ((2 * self.half_extent as i64 + self.tile_size as i64 - 1) / self.tile_size.max(1) as i64).max(1) as u16
@@ -941,6 +960,7 @@ impl WorldFile {
             tile_size: manifest.tile_size,
             theme: manifest.theme,
             lifts: manifest.lifts.clone(),
+            open_water: manifest.open_water,
             ..Default::default()
         };
         let grid = manifest.grid() as usize;
@@ -1104,8 +1124,12 @@ mod tests {
             ground_cell: 5_000,
             theme: THEME_WINTER,
             lifts: vec![Lift { kind: LIFT_CHAIR, seats: 4, points: vec![[0, 0], [5_000, 20_000]], base: vec![100, 900], cable: vec![410, 1_210] }],
+            open_water: true,
         };
         assert_eq!(Manifest::decode(&manifest.encode()).unwrap(), manifest);
+        // A winter world whose water was left open is not frozen; one that was not, is.
+        assert!(!manifest.frozen());
+        assert!(Manifest { open_water: false, ..manifest.clone() }.frozen());
         let tile = Tile {
             buildings: vec![Building { height: 800, footprint: vec![[0, 0], [100, 0], [100, 100]], base: 250, first: 0, walls: 6, roof: 2, roof_kind: ROOF_GABLE, cells: Cells { origin: [-100, 0, 200], dims: [2, 1, 5], solid: Bits(vec![0b1011, 3]), roof: Bits(vec![1, 0]) }, paint: Some([0xeee3c8, 0x4f5866]) }, Building { height: 300, ..Default::default() }],
             roads: vec![Road { width: 600, kind: ROAD_MINOR, points: vec![[0, 0], [500, 500]] }],

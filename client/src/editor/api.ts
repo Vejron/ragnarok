@@ -48,10 +48,13 @@ const json = (method: string, body: unknown): RequestInit => ({
 export const api = {
   grid: (region: Region) => call<import('./grid').GridInfo>(`/grid?region=${region}`),
   worlds: async () => (await call<{ worlds: WorldSummary[] }>('/worlds')).worlds,
-  world: (name: string) => call<{ tiles: TileId[]; region?: Region; cell?: number | null; theme?: string | null; groomed_paths?: boolean; osm_water?: boolean } & Partial<Placements>>(`/worlds/${name}`),
-  /** `winter` is the snow switch; `groomed` grooms forest paths for skiing too; `osmWater` takes the water, sea and all, from OpenStreetMap. */
-  save: (name: string, region: Region, tiles: TileId[], cell: number, winter: boolean, groomed: boolean, osmWater: boolean, placements: Placements) =>
-    call(`/worlds/${name}`, json('PUT', { tiles, region, cell, theme: winter ? 'winter' : 'summer', groomed_paths: winter && groomed, osm_water: osmWater, ...placements })),
+  world: (name: string) => call<{ tiles: TileId[]; region?: Region; cell?: number | null; theme?: string | null; groomed_paths?: boolean; open_water?: boolean; osm_water?: boolean } & Partial<Placements>>(`/worlds/${name}`),
+  /**
+   * `winter` is the snow switch; `groomed` grooms forest paths for skiing too; `openWater` leaves a winter
+   * world's water unfrozen; `osmWater` takes the water, sea and all, from OpenStreetMap.
+   */
+  save: (name: string, region: Region, tiles: TileId[], cell: number, winter: boolean, groomed: boolean, openWater: boolean, osmWater: boolean, placements: Placements) =>
+    call(`/worlds/${name}`, json('PUT', { tiles, region, cell, theme: winter ? 'winter' : 'summer', groomed_paths: winter && groomed, open_water: winter && openWater, osm_water: osmWater, ...placements })),
   remove: (name: string) => call(`/worlds/${name}`, { method: 'DELETE' }),
   activate: (name: string) => call(`/worlds/${name}/activate`, { method: 'POST' }),
   generate: (name: string) => call<Job>(`/worlds/${name}/generate`, { method: 'POST' }),

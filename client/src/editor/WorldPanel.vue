@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { activate, cell, chooseRegion, clearAll, dirty, grid, groomedPaths, name, newWorld, openWorld, osmWater, painted, region, remove, save, winter, worlds } from './state'
+import { activate, cell, chooseRegion, clearAll, dirty, grid, groomedPaths, name, newWorld, openWater, openWorld, osmWater, painted, region, remove, save, winter, worlds } from './state'
 import type { Region } from './grid'
 
 const tile = computed(() => grid.value?.tile ?? 256)
@@ -50,6 +50,14 @@ const regions: { label: string; value: Region }[] = [
       class="ml-6"
       title="For places OSM maps few ski tracks. Generate the world again to apply."
       @update:model-value="(v: boolean | 'indeterminate') => { groomedPaths = checked(v); dirty = true }"
+    />
+    <UCheckbox
+      v-if="winter"
+      :model-value="openWater"
+      label="Open water (lakes and sea not frozen)"
+      class="ml-6"
+      title="Boats and submarines still sail, and soldiers swim. Generate the world again to apply."
+      @update:model-value="(v: boolean | 'indeterminate') => { openWater = checked(v); dirty = true }"
     />
     <UCheckbox
       v-if="region === 'sweden'"
