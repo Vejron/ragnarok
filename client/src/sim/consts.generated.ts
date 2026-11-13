@@ -488,7 +488,7 @@ export const CAR_GRAVITY = 9.81
  * importer refuses more; the boundary walls reach above it, and fliers find the terrain under them by
  * a ray from just over it.
  */
-export const MAX_RELIEF = 1000.0
+export const MAX_RELIEF = 1500.0
 
 export const ROCKET_ACCEL = 110.0
 export const ROCKET_MAX_SPEED = 170.0

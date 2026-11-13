@@ -220,7 +220,7 @@ heavy.
 - [x] **Heights are `i32` centimetres** (`WORLD_VERSION` 16): `Tile::ground` and `::water`, the merged
       `Ground` and the client's `Int32Array` views. `NO_WATER` is `i32::MIN`. Ground and water take
       twice the bytes they did. `fixtures/world` was converted in place; other worlds are regenerated.
-- [x] **`MAX_RELIEF` is 1000 m** (`shared::consts`), used by the importer's check.
+- [x] **`MAX_RELIEF` is 1500 m (raised from 1000 m for Åre, 1048 m of relief)** (`shared::consts`), used by the importer's check.
 - [x] **Boundary walls** reach `MAX_RELIEF + 1000` m above the lowest ground, the same in every world,
       since the streaming client builds them before it knows the ground.
 - [x] **Ceilings above the terrain:** every flier's ceiling (helicopter, drones, plane, the hover car)

@@ -346,7 +346,7 @@ pub const CAR_GRAVITY: f32 = 9.81;
 /// Highest relief a world may have, metres from its lowest dry ground (y = 0) to its highest. The
 /// importer refuses more; the boundary walls reach above it, and fliers find the terrain under them by
 /// a ray from just over it.
-pub const MAX_RELIEF: f32 = 1000.0;
+pub const MAX_RELIEF: f32 = 1500.0;
 
 pub const ROCKET_ACCEL: f32 = 110.0;
 pub const ROCKET_MAX_SPEED: f32 = 170.0;

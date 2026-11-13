@@ -24,7 +24,7 @@ cargo run -p osm-import               # 8.6 km square of central Umeå, Backen t
 scripts/world.sh                      # the same: loads .env.local, builds in release mode
 ```
 
-Restart the server afterwards: it reads the whole world at start. The importer checks the terrain first (relief is limited to 1000 m, `MAX_RELIEF`, and the error says where the extremes are), then fetches. It wipes
+Restart the server afterwards: it reads the whole world at start. The importer checks the terrain first (relief is limited to 1500 m, `MAX_RELIEF`, and the error says where the extremes are), then fetches. It wipes
 `client/public/tiles/` and writes the manifest last.
 
 | Flag | Meaning |
