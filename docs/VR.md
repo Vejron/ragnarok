@@ -43,6 +43,34 @@ The game can be shown in a VR headset, and a Titan ([VEHICLES-XIV.md](VEHICLES-X
 - **The hands** (`client/src/xr/hands.ts`): each controller is measured from where the pilot's shoulder is taken to be (19 cm out from the eyes and 22 cm down), and that reach, 40 times over (the Titan's arm of 24 m against a pilot's of 0.6 m), is asked of the fist from the Titan's shoulder, in its hull's frame. It goes to the server as the same `hands` message the mouse and keyboard send, so the server knows nothing of VR.
 - **The cost.** Everything is drawn twice. Measured on the screen's path, the frame is the same as before this was added (forest 3.5 ms and water 3.0 ms at 2268×1258 on the M-series laptop, old and new alternated three times with `gpu-bench.mjs`). What two eyes at a headset's size cost on the PC is not known yet: start with Graphics on Low.
 
+## Picking it up
+
+Where to start reading, and what to do first.
+
+- **The code, in the order a frame goes through it:**
+  - `client/src/App.vue`: the **Enter VR** chip, shown when `Game.vrSupported()` says so.
+  - `client/src/game.ts`: `enterVr` and `leaveVr` start and end the session; `nextFrame` takes frames from it; `readHeadset` turns the thumbsticks and a ducked head (`VR_DUCK`) into the ordinary input; `moveFists` sends the hands.
+  - `client/src/xr/headset.ts`: everything that touches WebXR. Nothing else in the client names an XR type.
+  - `client/src/xr/hands.ts`: the arithmetic, with no browser in it (`fistsFromHands`, `reversedDepth`), tested in `client/src/__tests__/titan.spec.ts`.
+  - `client/src/render/scene.ts`: `see(eyes)`, `worn`, and `render`, which places the camera for each eye.
+  - `engine/src/renderer.ts`: `renderEye` and `EyeTarget` ([RENDERING.md](RENDERING.md), "A headset's two eyes").
+  - `client/src/cameras.ts`: the `titan` rig puts the camera in the head when `scene.worn`.
+- **The server has no VR in it.** A headset's pilot sends the same `hands` message as the mouse does (`crates/server/src/mechanics/titans.rs`), so anything about what fists do is tested there without a headset.
+- **Checking the drawing without a headset.** Run the dev page in headless Chrome (`--headless=new --remote-debugging-port=9333 --enable-unsafe-webgpu --use-angle=metal`, the page on port 5287), then:
+  ```sh
+  node client/scripts/cdp.mjs eval "$(cat client/scripts/vr-eyes.js)"
+  node client/scripts/cdp.mjs shot eyes.png
+  ```
+  It draws two eyes from one spot into one texture and reports validation errors and the share of pixels that differ, which should be none and 0. Give the eyes different `position`s in the script to see the two pictures part.
+- **The first run on a headset.** What is most likely to be wrong, in the order to look:
+  1. *No **Enter VR** button*: `XRGPUBinding` is not in the page (the flags), or `isSessionSupported('immersive-vr')` said no (the runtime).
+  2. *`requestSession` or `createProjectionLayer` throws*: the binding is a draft (the immersive-web group's WebXR-WebGPU-Binding), and `headset.ts` was written in November 2026 from what was published then, without a browser to try it in. Compare its local type declarations with what Chrome has now (the layer's options, `getViewSubImage`, the sub-image's `colorTexture`, `viewport` and `getViewDescriptor`).
+  3. *A black or a doubled picture*: how the layer's texture holds the two eyes. `headset.ts` takes both the view descriptor (an array's layer) and the viewport (a place in a wide texture) from each sub-image, and `EyeTarget.x/y` carry the second; look at which the headset really gives.
+  4. *The world inside out, or nothing but sky*: the depth range of the projection (`reversedDepth` takes it to be 0..1).
+  5. *The fists going the wrong way*: the signs and the heading in `fistsFromHands`; the test beside it says what is meant.
+  6. *Too slow*: Graphics on Low, then a preset of its own (reflections, shafts and flare off first).
+- **What to build next**, roughly by worth: predicting the pilot's own fists in the WASM mirror (they lag a round trip, which a headset will make plain); a way to board without the keyboard; the HUD on a panel in the cockpit; calibrating the arm's length; a graphics preset.
+
 ## Not yet
 
 - **It has not run on a headset** (above).
