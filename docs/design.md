@@ -28,7 +28,7 @@ This document describes how the game is built and why. The wire format is specif
 │   ▼                              │                         ▲
 │ Scene: tiles, soldiers, camera   │  world.msgpack + tiles/ ┘ (same files on both sides)
 └──────────────────────────────────┘             ▲
-                                         osm-import (CLI): Overpass API ─► world.msgpack, tiles/
+                                         osm-import (CLI): OSM extract/Overpass ─► world.msgpack, tiles/
 ```
 
 | Crate or directory | Role |
@@ -260,7 +260,7 @@ Datagrams are capped at 1200 bytes (`MAX_PACKET`). Interest management and delta
 
 **The full pipeline is documented in [WORLD.md](WORLD.md)**: every data source and licence (OpenStreetMap, Lantmäteriet's height model and laser data, Umeå's tree register), where the credentials go (`.env.local`), all flags, and the download cache (`.cache/osm-import/`, git-ignored; `--refresh`, `--clear-cache`). This section covers what the output means.
 
-1. **Fetch:** an Overpass query for buildings, highways and ground cover (`way` and multipolygon `relation` with `landuse`, `natural` or `leisure`; `out geom`; water is not among them: it comes from Lantmäteriet's Hydrografi, see [WORLD.md](WORLD.md)), with a fallback mirror and a few retry rounds, since the public servers shed load.
+1. **Fetch:** one OpenStreetMap read of the box (`osm::load`) for buildings, highways, ground cover, water, golf, lifts and ski tracks, from a local Geofabrik extract (`--fetch-osm sweden`) or else from Overpass, with fallback mirrors and a few retry rounds, since the public servers shed load. Each pass takes its own view of it; see [WORLD.md](WORLD.md).
 2. **Project:** to local metres from the world's centre (+X east, +Z south, +Y up), in the world's *frame* (`shared::world::Frame`, kept in the manifest): a Swedish world is equirectangular with longitude scaled at one fixed latitude (`SCALE_LATITUDE`), a French one is Lambert-93 (EPSG:2154) itself, shifted to its centre (`shared::lambert93`; see WORLD.md, Regions).
 3. **Buildings:**
    - Footprints with at least 4 m² of area, fully inside the playable square.

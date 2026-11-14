@@ -9,7 +9,7 @@
 
 use osm_import::grid::{self, BLOCK_TILES, Block, Tile};
 use osm_import::region::Region;
-use osm_import::{cache, hydro, overpass, progress, trees};
+use osm_import::{cache, hydro, osm, overpass, progress, trees};
 use salvo::prelude::*;
 use serde::{Deserialize, Serialize};
 use shared::world::plain_world_name;
@@ -344,8 +344,9 @@ fn run(region: Region, blocks: Vec<Block>, tiles: Vec<Tile>, credentials: Option
     let swedish = region == Region::Sweden;
     for block in blocks {
         let bbox = block.bbox(region);
-        progress::stage("overpass");
-        if let Err(error) = overpass::fetch_pieces(&endpoints, &[bbox], 3, 15) {
+        progress::stage("openstreetmap");
+        // Nothing to fetch where a local extract has the block.
+        if let Err(error) = osm::load(&[bbox], &endpoints, 3, 15) {
             let mut job = job();
             job.state = "failed";
             job.ended = Some(Instant::now());

@@ -1,22 +1,13 @@
 //! Golf courses from OpenStreetMap: the mown surfaces (`golf=fairway|green|tee|bunker`), the holes
-//! (`golf=hole` lines from tee to green) and the pins. A query of its own, as `osm_ski`'s is, because
-//! the main one is its own cache key, and because a green or a tee mapped with no landuse is not cover
-//! to it.
+//! (`golf=hole` lines from tee to green) and the pins. A green or a tee mapped with no landuse is no
+//! cover to the main view, so the surfaces are read here.
 
-use crate::overpass::LatLon;
-use anyhow::{Context, Result};
-use serde_json::Value;
+use crate::osm::{Data, LatLon};
 use shared::golf::{Course, Hole, Surface};
 use shared::world::{COVER_GOLF_BUNKER, COVER_GOLF_FAIRWAY, COVER_GOLF_GREEN, COVER_GOLF_TEE};
 use std::collections::HashSet;
 
 type P = [f64; 2];
-
-/// The Overpass QL for a box: also the cache key.
-pub fn query([south, west, north, east]: [f64; 4]) -> String {
-    let bbox = format!("{south},{west},{north},{east}");
-    format!(r#"[out:json][timeout:120];(way["golf"]({bbox});node["golf"="pin"]({bbox}););out geom;"#)
-}
 
 /// A hole as mapped: its line from the tee to the green, and its number and par if they are tagged.
 #[derive(Clone, Debug, Default)]
@@ -46,59 +37,35 @@ pub fn surface_kind(value: &str) -> Option<u8> {
     }
 }
 
-fn line(value: &Value) -> Vec<LatLon> {
-    value.as_array().map(|a| a.iter().filter_map(|p| Some(LatLon { lat: p["lat"].as_f64()?, lon: p["lon"].as_f64()? })).collect()).unwrap_or_default()
-}
-
 /// A tag's leading number, as in `ref=7` or `name=Hål 1`.
 fn number(text: Option<&str>) -> Option<u8> {
     let digits: String = text?.chars().skip_while(|c| !c.is_ascii_digit()).take_while(char::is_ascii_digit).collect();
     digits.parse().ok().filter(|&n| n > 0)
 }
 
-/// Adds one answer's elements to `mapped`, each way once.
-fn read(response: &Value, mapped: &mut Mapped, seen: &mut HashSet<(bool, u64)>) {
-    for element in response["elements"].as_array().map(Vec::as_slice).unwrap_or_default() {
-        let id = element["id"].as_u64().unwrap_or(0);
-        let tags = &element["tags"];
-        let tag = |key: &str| tags[key].as_str();
-        match element["type"].as_str() {
-            Some("node") if tag("golf") == Some("pin") && seen.insert((false, id)) => {
-                if let (Some(lat), Some(lon)) = (element["lat"].as_f64(), element["lon"].as_f64()) {
-                    mapped.pins.push(LatLon { lat, lon });
+/// The golf of `data`: every way tagged `golf` and every pin.
+pub fn from(data: &Data) -> Mapped {
+    let mut mapped = Mapped::default();
+    for node in data.nodes.iter().filter(|node| crate::osm::is_golf_node(&node.tags)) {
+        mapped.pins.push(node.at);
+    }
+    for way in &data.ways {
+        let tag = |key: &str| way.tags.get(key).map(String::as_str);
+        let points = &way.geometry;
+        match tag("golf") {
+            Some("hole") if points.len() >= 2 => mapped.holes.push(HoleLine { number: number(tag("ref")), par: number(tag("par")), line: points.clone() }),
+            Some(value) => {
+                if let Some(kind) = surface_kind(value)
+                    && points.len() >= 4
+                    && points.first() == points.last()
+                {
+                    mapped.surfaces.push((way.id, kind, points.clone()));
                 }
             }
-            Some("way") if seen.insert((true, id)) => {
-                let points = line(&element["geometry"]);
-                match tag("golf") {
-                    Some("hole") if points.len() >= 2 => mapped.holes.push(HoleLine { number: number(tag("ref")), par: number(tag("par")), line: points }),
-                    Some(value) => {
-                        if let Some(kind) = surface_kind(value)
-                            && points.len() >= 4
-                            && points.first().map(|p| (p.lat, p.lon)) == points.last().map(|p| (p.lat, p.lon))
-                        {
-                            mapped.surfaces.push((id, kind, points));
-                        }
-                    }
-                    None => {}
-                }
-            }
-            _ => {}
+            None => {}
         }
     }
-}
-
-/// Fetches the golf of each of `pieces` (`[south, west, north, east]`) and merges the answers.
-pub fn fetch_pieces(endpoints: &[String], pieces: &[[f64; 4]], retries: usize, pause: u64) -> Result<Mapped> {
-    let mut seen = HashSet::new();
-    let mut mapped = Mapped::default();
-    for (index, piece) in pieces.iter().enumerate() {
-        let text = crate::overpass::run(endpoints, &query(*piece), retries, pause)?;
-        let response: Value = serde_json::from_str(&text).context("Overpass returned invalid JSON")?;
-        read(&response, &mut mapped, &mut seen);
-        crate::progress::steps(index + 1, pieces.len());
-    }
-    Ok(mapped)
+    mapped
 }
 
 fn centroid(ring: &[P]) -> P {
@@ -183,11 +150,8 @@ mod tests {
             { "type": "node", "id": 6, "lat": 12.0, "lon": 18.0, "tags": { "golf": "pin" } },
             { "type": "way", "id": 7, "tags": { "golf": "cartpath" }, "geometry": [{ "lat": 0.0, "lon": 0.0 }, { "lat": 5.0, "lon": 5.0 }] },
         ] });
-        let mut mapped = Mapped::default();
-        let mut seen = HashSet::new();
-        read(&response, &mut mapped, &mut seen);
-        read(&response, &mut mapped, &mut seen);
-        assert_eq!(mapped.surfaces.len(), 3, "each way once, and the cart path is no surface");
+        let mapped = from(&crate::overpass::parse(&response.to_string()).unwrap());
+        assert_eq!(mapped.surfaces.len(), 3, "the cart path is no surface");
         assert_eq!(mapped.holes.len(), 2);
         // Latitude and longitude taken as metres, as z and x.
         let course = lay_out(&mapped, |lat, lon| [lon, lat]);

@@ -5,10 +5,7 @@
 //! right (land is on the left), so it is built here: the coastline chains are cut at the edge of
 //! the world and closed along that edge, clockwise, into polygons (`sea`).
 
-use crate::overpass::LatLon;
-use anyhow::{Context, Result};
-use serde_json::Value;
-use std::collections::HashSet;
+use crate::osm::{Data, LatLon, Relation, Way};
 
 type P = [f64; 2];
 
@@ -24,83 +21,52 @@ pub struct Found {
     pub coast: Vec<Vec<LatLon>>,
 }
 
-/// The Overpass QL for a box: also the cache key.
-pub fn query([south, west, north, east]: [f64; 4]) -> String {
-    let bbox = format!("{south},{west},{north},{east}");
-    let mut query = String::from("[out:json][timeout:120];(");
-    for filter in [r#"["natural"="water"]"#, r#"["waterway"="riverbank"]"#, r#"["landuse"="reservoir"]"#] {
-        query.push_str(&format!("way{filter}({bbox});relation{filter}({bbox});"));
-    }
-    query.push_str(&format!(r#"way["waterway"~"^(river|stream|canal)$"]({bbox});way["natural"="coastline"]({bbox});"#));
-    query.push_str(");out geom;");
-    query
-}
 
-/// Fetches the water of each of `pieces` (`[south, west, north, east]`) and merges the answers.
-pub fn fetch_pieces(endpoints: &[String], pieces: &[[f64; 4]], retries: usize, pause: u64) -> Result<Found> {
-    let mut seen = HashSet::new();
+/// The water of `data`: its lakes, river polygons, streams and coast.
+pub fn from(data: &Data) -> Found {
     let mut found = Found::default();
     let mut coast = Vec::new();
-    for (index, piece) in pieces.iter().enumerate() {
-        eprintln!("water: OSM part {} of {}", index + 1, pieces.len());
-        let text = crate::overpass::run(endpoints, &query(*piece), retries, pause)?;
-        let response: Value = serde_json::from_str(&text).context("Overpass returned invalid JSON")?;
-        for element in response["elements"].as_array().map(Vec::as_slice).unwrap_or_default() {
-            // A way or relation that crosses a border comes back from both sides.
-            let key = (element["type"].as_str().unwrap_or("").to_string(), element["id"].as_u64().unwrap_or(0));
-            if !seen.insert(key) {
-                continue;
-            }
-            read(element, &mut found, &mut coast);
-        }
-        crate::progress::steps(index + 1, pieces.len());
+    for way in data.ways.iter().filter(|way| crate::osm::is_water_way(&way.tags)) {
+        read_way(way, &mut found, &mut coast);
+    }
+    for relation in data.relations.iter().filter(|relation| crate::osm::is_water_body(&relation.tags)) {
+        read_relation(relation, &mut found);
     }
     let (closed, open) = join(coast, true);
     found.coast = open.into_iter().chain(closed).collect();
-    Ok(found)
+    found
 }
 
-fn points(value: &Value) -> Vec<LatLon> {
-    value.as_array().map(|a| a.iter().filter_map(|p| Some(LatLon { lat: p["lat"].as_f64()?, lon: p["lon"].as_f64()? })).collect()).unwrap_or_default()
+/// Whether a water body is drawn from its banks as a river: a riverbank, or a wide `water=river` polygon.
+fn is_river(tags: &crate::osm::Tags) -> bool {
+    let tag = |key: &str| tags.get(key).map_or("", String::as_str);
+    tag("waterway") == "riverbank" || matches!(tag("water"), "river" | "canal" | "stream")
 }
 
-fn read(element: &Value, found: &mut Found, coast: &mut Vec<Vec<LatLon>>) {
-    let tag = |key: &str| element["tags"][key].as_str().unwrap_or("");
-    // Rivers are drawn from their banks; a wide `water=river` polygon is one too.
-    let river = tag("waterway") == "riverbank" || matches!(tag("water"), "river" | "canal" | "stream");
-    match element["type"].as_str() {
-        Some("way") => {
-            let geometry = points(&element["geometry"]);
-            if geometry.len() < 2 {
-                return;
-            }
-            if tag("natural") == "coastline" {
-                coast.push(geometry);
-            } else if matches!(tag("waterway"), "river" | "stream" | "canal") {
-                found.streams.push(geometry);
-            } else if is_closed(&geometry) {
-                (if river { &mut found.rivers } else { &mut found.lakes }).push(vec![geometry]);
-            }
-        }
-        Some("relation") => {
-            let members = |role: &str| -> Vec<Vec<LatLon>> {
-                element["members"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .filter(|m| m["type"] == "way" && (m["role"] == role || (role == "outer" && m["role"] == "")))
-                    .map(|m| points(&m["geometry"]))
-                    .filter(|g| g.len() >= 2)
-                    .collect()
-            };
-            let (outer, inner) = (join(members("outer"), false).0, join(members("inner"), false).0);
-            for ring in outer {
-                let holes = inner.iter().filter(|hole| contains(&ring, hole[0])).cloned();
-                let polygon: Polygon = std::iter::once(ring.clone()).chain(holes).collect();
-                (if river { &mut found.rivers } else { &mut found.lakes }).push(polygon);
-            }
-        }
-        _ => {}
+fn read_way(way: &Way, found: &mut Found, coast: &mut Vec<Vec<LatLon>>) {
+    let tag = |key: &str| way.tags.get(key).map_or("", String::as_str);
+    let geometry = &way.geometry;
+    if geometry.len() < 2 {
+        return;
+    }
+    if tag("natural") == "coastline" {
+        coast.push(geometry.clone());
+    } else if matches!(tag("waterway"), "river" | "stream" | "canal") {
+        found.streams.push(geometry.clone());
+    } else if is_closed(geometry) {
+        (if is_river(&way.tags) { &mut found.rivers } else { &mut found.lakes }).push(vec![geometry.clone()]);
+    }
+}
+
+fn read_relation(relation: &Relation, found: &mut Found) {
+    let members = |role: &str| -> Vec<Vec<LatLon>> {
+        relation.members.iter().filter(|m| m.role == role || (role == "outer" && m.role.is_empty())).map(|m| m.geometry.clone()).filter(|g| g.len() >= 2).collect()
+    };
+    let (outer, inner) = (join(members("outer"), false).0, join(members("inner"), false).0);
+    for ring in outer {
+        let holes = inner.iter().filter(|hole| contains(&ring, hole[0])).cloned();
+        let polygon: Polygon = std::iter::once(ring.clone()).chain(holes).collect();
+        (if is_river(&relation.tags) { &mut found.rivers } else { &mut found.lakes }).push(polygon);
     }
 }
 

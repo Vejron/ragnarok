@@ -8,8 +8,8 @@ they jump off. Docksta's lift up Skuleberget, Skulebergets Linbana, is the first
 
 ## Import
 
-`crates/osm-import/src/osm_lifts.rs` asks Overpass for the lifts with a query of its own, so its
-cache key is new and nothing else is fetched again. It keeps what OSM calls the lift (`LIFT_*`) and
+`crates/osm-import/src/osm_lifts.rs` takes the lifts (`osm::LIFTS`) from the world's one OpenStreetMap
+read (WORLD.md, OpenStreetMap). It keeps what OSM calls the lift (`LIFT_*`) and
 how many a chair carries (`aerialway:occupancy`, at most `LIFT_MAX_SEATS`, else `LIFT_SEATS`).
 
 `assemble::lay_lifts` keeps the lifts wholly inside the world's tiles and turns each one so it runs

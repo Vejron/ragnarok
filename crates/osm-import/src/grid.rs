@@ -83,13 +83,14 @@ impl Block {
         rect(region, self.bx * BLOCK_TILES, self.by * BLOCK_TILES, BLOCK_TILES)
     }
 
-    /// The block's cache state, from the keys the downloads would use. Hydrografi and the tree
+    /// The block's cache state, from the keys the downloads would use. Its OpenStreetMap is there when a
+    /// local extract covers it. Hydrografi and the tree
     /// register are Swedish: a French block never has them.
     pub fn status(self, region: Region) -> Status {
         let bbox = self.bbox(region);
         let swedish = region == Region::Sweden;
         Status {
-            overpass: cache::has("overpass", &overpass::query(bbox)),
+            overpass: crate::pbf::Index::covering(&[bbox]).is_some() || overpass::cached(bbox),
             hydro: swedish && cache::has("hydro", &hydro::first_url("StandingWater", bbox)),
             trees: swedish && cache::has("trees", &trees::filter(bbox)),
         }

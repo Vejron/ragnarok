@@ -14,12 +14,13 @@
 //!     cargo run -p osm-import -- --no-trees                    # skip Umeå's tree register
 //!     cargo run -p osm-import -- --refresh                     # download everything again
 //!     cargo run -p osm-import -- --clear-cache                 # delete .cache/osm-import
+//!     cargo run -p osm-import -- --fetch-osm sweden             # OpenStreetMap offline, from Geofabrik
 //!     cargo run -p osm-import -- --bake worlds/x/world.msgpack  # bake the cubes into an older world
 //!
 //! Credentials, data sources and the cache are described in `WORLD.md`.
 
 use osm_import::region::{Place, Region};
-use osm_import::{assemble, bushes, cache, canopy, dem, detail, grid, ground, hydro, ign, lidar, minimap, overpass, paint, progress, roof, species, trees, voxels, water};
+use osm_import::{assemble, bushes, cache, canopy, dem, detail, grid, ground, hydro, ign, lidar, minimap, osm, overpass, paint, pbf, progress, roof, species, trees, voxels, water};
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use std::path::PathBuf;
@@ -121,6 +122,11 @@ struct Args {
     /// Delete the download cache and exit.
     #[arg(long)]
     clear_cache: bool,
+    /// Download a Geofabrik extract (`sweden`, or a path such as `europe/france/bretagne`), or take a
+    /// local `.osm.pbf`, index it into `.cache/osm`, and exit. Worlds it covers then read OpenStreetMap
+    /// from it, with no Overpass. With `--refresh`, downloads it again. See WORLD.md.
+    #[arg(long, value_name = "REGION|FILE")]
+    fetch_osm: Option<String>,
     /// Print a `@progress {json}` line on stderr as the stage, its steps and the download rate
     /// change. The map editor runs the importer with this.
     #[arg(long)]
@@ -223,11 +229,9 @@ fn water_map(args: &Args, place: &Place, pieces: Option<&[[f64; 4]]>) -> Result<
         eprintln!("water: {} lakes, {} river polygons, {} stream lines from Hydrografi", found.lakes.len(), found.rivers.len(), found.streams.len());
         return Ok(map);
     }
-    let found = match pieces {
-        Some(pieces) => osm_import::osm_water::fetch_pieces(&args.overpass, pieces, 3, 15),
-        None => osm_import::osm_water::fetch_pieces(&args.overpass, &overpass::split([south, west, north, east], args.overpass_chunk), 3, 15),
-    }
-    .context("OpenStreetMap water failed; retry later, use Hydrografi or --no-water")?;
+    let split = overpass::split([south, west, north, east], args.overpass_chunk);
+    let data = osm::load(pieces.unwrap_or(&split), &args.overpass, 3, 15).context("OpenStreetMap water failed; retry later, use Hydrografi or --no-water")?;
+    let found = osm_import::osm_water::from(&data);
     polygons(&found.lakes, water::Kind::Lake, &mut map);
     polygons(&found.rivers, water::Kind::River, &mut map);
     map.streams = found.streams.iter().map(|line| local(line)).collect();
@@ -558,6 +562,11 @@ fn main() -> Result<()> {
     if args.progress {
         progress::events();
     }
+    if let Some(what) = &args.fetch_osm {
+        let path = pbf::fetch(what, args.refresh)?;
+        eprintln!("wrote {}", path.display());
+        return Ok(());
+    }
     anyhow::ensure!(args.tile >= 20.0, "--tile must be at least 20 m");
     anyhow::ensure!(args.cell == 0.0 || args.cell >= 0.5, "--cell must be 0 or at least 0.5 m");
     let mut print = None;
@@ -626,13 +635,12 @@ fn main() -> Result<()> {
         }
         let (landforms, cliffs) = ocad.as_ref().map_or((&[][..], &[][..]), |ocad| (ocad.landforms.as_slice(), ocad.cliffs.as_slice()));
         let (ground, datum, dem, placed) = terrain(&args, &place, mask, &map, landforms, cliffs)?;
-        // The public servers shed load with 504s; a few rounds over all of them usually get through.
-        progress::stage("overpass");
-        let osm = match pieces {
-            Some(pieces) => overpass::fetch_pieces(&args.overpass, pieces, 3, 15),
-            None => overpass::fetch_chunked(&args.overpass, bbox, args.overpass_chunk, 3, 15),
-        }
-        .context("Overpass failed; retry later or use --synthetic")?;
+        // Everything the passes below want, in one read: from the local extract, or from Overpass, whose
+        // public servers shed load with 504s (a few rounds over all of them usually get through).
+        progress::stage("openstreetmap");
+        let split = overpass::split(bbox, args.overpass_chunk);
+        let data = osm::load(pieces.unwrap_or(&split), &args.overpass, 3, 15).context("OpenStreetMap failed; retry later, `--fetch-osm sweden`, or --synthetic")?;
+        let osm = data.main();
         let osm = match &mut ocad {
             Some(ocad) => {
                 eprintln!("ocad: {} roads and paths, {} buildings, {} covers, {} rocks and shrubs over OSM", ocad.roads.len(), ocad.ways.len(), ocad.covers.len(), ocad.planted.len());
@@ -674,9 +682,7 @@ fn main() -> Result<()> {
         let photo = photo(&args, &place, mask);
         progress::stage("assemble");
         let ski = if winter {
-            progress::stage("ski tracks");
-            let split = overpass::split(bbox, args.overpass_chunk);
-            let found = osm_import::osm_ski::fetch_pieces(&args.overpass, pieces.unwrap_or(&split), 3, 15).context("OpenStreetMap ski tracks failed; retry later")?;
+            let found = osm_import::osm_ski::from(&data);
             eprintln!("ski: {} tracks from OpenStreetMap", found.len());
             let mut found = found;
             if options.groomed_paths {
@@ -688,26 +694,17 @@ fn main() -> Result<()> {
         } else {
             Vec::new()
         };
-        progress::stage("golf");
-        let split = overpass::split(bbox, args.overpass_chunk);
-        // A nicety: a world whose golf cannot be fetched is a world without a course.
-        course = match osm_import::osm_golf::fetch_pieces(&args.overpass, pieces.unwrap_or(&split), 3, 15) {
-            Ok(mapped) => {
-                let laid = osm_import::osm_golf::lay_out(&mapped, |lat, lon| place.frame.project(lat, lon));
-                let inside = |[x, z]: [f32; 2]| f64::from(x).abs() < place.half && f64::from(z).abs() < place.half;
-                let holes = laid.holes.iter().filter(|hole| inside(hole.tee) && inside(hole.cup)).count();
-                eprintln!("golf: {} holes ({holes} inside the world), {} surfaces, {} pins from OpenStreetMap", laid.holes.len(), laid.surfaces.len(), mapped.pins.len());
-                let laid = shared::golf::Course { holes: laid.holes.into_iter().filter(|hole| inside(hole.tee) && inside(hole.cup)).collect(), ..laid };
-                (!laid.holes.is_empty() || !laid.surfaces.is_empty()).then_some(laid)
-            }
-            Err(error) => {
-                eprintln!("no golf: {error:#}");
-                None
-            }
+        course = {
+            let mapped = osm_import::osm_golf::from(&data);
+            let laid = osm_import::osm_golf::lay_out(&mapped, |lat, lon| place.frame.project(lat, lon));
+            let inside = |[x, z]: [f32; 2]| f64::from(x).abs() < place.half && f64::from(z).abs() < place.half;
+            let holes = laid.holes.iter().filter(|hole| inside(hole.tee) && inside(hole.cup)).count();
+            eprintln!("golf: {} holes ({holes} inside the world), {} surfaces, {} pins from OpenStreetMap", laid.holes.len(), laid.surfaces.len(), mapped.pins.len());
+            let laid = shared::golf::Course { holes: laid.holes.into_iter().filter(|hole| inside(hole.tee) && inside(hole.cup)).collect(), ..laid };
+            (!laid.holes.is_empty() || !laid.surfaces.is_empty()).then_some(laid)
         };
-        progress::stage("lifts");
-        // A nicety: a world whose lifts cannot be fetched is a world without lifts.
-        let lifts = osm_import::osm_lifts::fetch_pieces(&args.overpass, pieces.unwrap_or(&split), 3, 15).inspect_err(|error| eprintln!("no lifts: {error:#}")).unwrap_or_default();
+        let lifts = osm_import::osm_lifts::from(&data);
+        drop(data);
         eprintln!("lifts: {} from OpenStreetMap", lifts.len());
         let mut built = assemble::from_osm(&place, args.tile, mask, &osm, &planted, ground, placed, cloud.as_ref(), decks.as_ref(), photo.as_ref(), &ski, ocad.as_ref(), course.as_ref(), &lifts);
         eprintln!("lifts: {} in the world", built.manifest.lifts.len());

@@ -27,7 +27,7 @@ Any world with a golf course in OpenStreetMap can be played. Kläppudden has Nor
 
 ## The course
 
-`osm-import` fetches `golf=*` ways and `golf=pin` nodes in a query of its own (`crates/osm-import/src/osm_golf.rs`). The result is cached like the main query, and a failed fetch leaves the world without a course rather than failing the import.
+`osm-import` takes `golf=*` ways and `golf=pin` nodes from the world's one OpenStreetMap read (`crates/osm-import/src/osm_golf.rs`; WORLD.md, OpenStreetMap).
 
 - **Surfaces.** `golf=fairway`, `driving_range`, `green`, `tee` and `bunker` become the covers `COVER_GOLF_FAIRWAY`, `GREEN`, `TEE` and `BUNKER` (14–17). They are painted over the park and kept clear of trees, rocks and bushes. An orienteering map does not cut them away.
 - **Holes.** Each `golf=hole` line is played from where it starts to a cup on the green it ends on (or the nearest green within 40 m). The cup is at the green's `golf=pin` if it has one, else in the green's middle. Holes take their `ref` and `par`. Holes without a `ref` take the lowest free numbers, so their numbering is OSM's order, not the course's.

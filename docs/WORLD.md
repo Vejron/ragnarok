@@ -5,7 +5,9 @@ how to run, cache and debug it. The format itself is described in [design.md](de
 file is about the *pipeline*. The code is `crates/osm-import`.
 
 ```
-OpenStreetMap (Overpass) ─┐  buildings, roads, railways, ground cover
+OpenStreetMap ────────────┐  buildings, roads, railways, cover, golf, lifts, ski tracks
+  (Geofabrik extract,      │
+   else Overpass)          │
 Lantmäteriet DTM  ────────┤  terrain heights ──► ground grid
 Lantmäteriet Hydrografi ──┤  lakes, rivers, streams ► water surface, carved beds
 Lantmäteriet laser ───────┤  roof shapes ──────► buildings' roofs
@@ -35,7 +37,7 @@ Restart the server afterwards: it reads the whole world at start. The importer c
 | `--cell m` | Terrain sample spacing, default 4 m (or an `--area` world's `cell`), must divide `--tile`; 1, 2 or 4 m make a 256 m tile `2^k + 1` samples a side, which the client simplifies best. `0` is flat ground and needs no credentials. |
 | `--dem file.tif` | Take elevation from a local DTM GeoTIFF instead of Lantmäteriet. |
 | `--no-water` | Leave out lakes, rivers and streams (skips the water download). |
-| `--osm-water` | Take lakes, rivers, streams and the sea from OpenStreetMap instead of Hydrografi. Slower (Overpass, one query per block), but it has the sea. |
+| `--osm-water` | Take lakes, rivers, streams and the sea from OpenStreetMap instead of Hydrografi. It has the sea. Instant from a local extract; from Overpass, part of the one query per block. |
 | `--no-roofs` | Buildings stay boxes of their tagged height. The point cloud (the slowest and biggest download) is then only read for trees; add `--no-lidar-trees` to skip it completely. |
 | `--no-trees` | Skip the tree register. |
 | `--no-minimap` | Skip `minimap.webp`, the pre-rendered top-down map (2048 px, 4096 under a `minimap_image`; a lossy WebP written next to `world.msgpack`, replacing the `minimap.png` older imports wrote) that the client shows as minimap and map. |
@@ -44,6 +46,7 @@ Restart the server afterwards: it reads the whole world at start. The importer c
 | `--species dir` | Where the unpacked NMD2023 species layers are, default `temp-maps/nmd2023`. See [Tree species](#tree-species). |
 | `--ocad map.ocd` | An orienteering map to build from where it reaches. See [Orienteering maps](#orienteering-maps). |
 | `--synthetic` | Offline procedural grid city with hills and a few trees. Needs no network at all. |
+| `--fetch-osm sweden` | Download Geofabrik's extract (or take a local `.osm.pbf`), index it into `.cache/osm/` and exit. Worlds it covers then need no Overpass. See [Local OpenStreetMap extract](#local-openstreetmap-extract). |
 | `--overpass url,url` | Overpass endpoints, tried in order (the public ones are often busy; four mirrors by default, since city-sized boxes failed on two). |
 | `--overpass-chunk m` | Ask Overpass for squares of about this many metres (default 2000) and merge, so a city-sized box doesn't time out. Each square is cached, so an interrupted run resumes. |
 | `--cache dir`, `--no-cache`, `--refresh`, `--clear-cache` | The download cache, below. |
@@ -354,8 +357,13 @@ auth. They are never written to the cache or to the world files. OSM and Umeå's
 | Street and park trees | Umeå kommun open data, [`trad-som-forvaltas-av-gator-och-parker`](https://opendata.umea.se/explore/assets/trad-som-forvaltas-av-gator-och-parker/) | CC0 | `Tile.trees` |
 
 ### OpenStreetMap
-One Overpass query for the bounding box returns buildings, highways, railways and cover (landuse, natural,
-leisure, riverbanks) as ways with inline geometry, plus multipolygon relations for cover. Heights
+One read of the box (`osm::load`) returns everything any pass wants (`osm::wants_way`, `wants_relation`,
+`wants_node`): buildings, highways, railways and cover (landuse, natural, leisure) as ways with inline
+geometry and multipolygon relations for cover, and also water, golf, lifts and ski tracks. Each pass then
+takes its own view of the answer with the tag filter its own Overpass query once had (`Data::main`,
+`osm_water::from`, `osm_golf::from`, `osm_lifts::from`, `osm_ski::from`), so a world comes out the same
+whichever source served it. The read comes from a local extract when one covers every block of the world,
+else from Overpass. Heights
 come from the `height` tag, else `building:levels` × 3 + 1, else a guess of 6–12 m. `natural=wetland` is
 marsh, by its `wetland` tag: `bog`, `swamp` and `fen` are `COVER_MARSH_DEEP`, `wet_meadow` is
 `COVER_MARSH_FAINT` and the rest `COVER_MARSH` (docs/ORIENTEERING.md has how the client draws them). A
@@ -542,12 +550,41 @@ merge into one tree; hedges and tall shrubs over 3 m count as trees; trees under
 (`Tree::solid`) are the register's and those within 20 m of a road or a building; the rest are
 scenery you drive through. Client and server both skip non-solid trees.
 
+### Local OpenStreetMap extract
+
+```sh
+cargo run --release -p osm-import -- --fetch-osm sweden     # once, and again to update it
+```
+
+downloads Geofabrik's `sweden-latest.osm.pbf` (about 950 MB) and `sweden.poly` (its border) into
+**`.cache/osm/`**, then indexes it into `sweden.osmidx` (`pbf.rs`). After that every world inside Sweden
+reads its OpenStreetMap from the index in under a second, with no network: the import says `osm: local
+extract sweden of 2026-11-13`. A world the extract does not cover (France, or a block over the border)
+falls back to Overpass, and says so. `--fetch-osm` also takes another Geofabrik region
+(`europe/france/bretagne`) or the path of any `.osm.pbf` (its `.poly`, if beside it, sets what it covers;
+else its header's bounding box). `--refresh` with it downloads again. `.cache/osm/` is not the download
+cache, so `--clear-cache` leaves it.
+
+The index keeps only what `osm::wants_*` keeps, with every way's geometry resolved. Indexing is three
+parallel passes over the file: relations (and the ids of their member ways), ways (and their node ids),
+then the nodes' coordinates. Each element is filed by the middle of its bounding box in a fine cell
+(0.05° × 0.1°) if it fits in one, in a coarse cell (1° × 2°) if it fits in that, else among the few huge
+ones (Vänern). Reading a box reads the cells of each level around it and keeps the elements whose lines
+cross it, as Overpass's `(bbox)` does. Bump `pbf::VERSION` when what it keeps changes (a new tag in
+`osm::wants_*`): an index of another version is skipped, with a message, until `--fetch-osm` is run again.
+
+The map editor's block status counts a block covered by an extract as having its OpenStreetMap, and its
+download job skips Overpass for such blocks. It opens the indexes once, at start: restart it after
+`--fetch-osm`.
+
 ## The download cache
 
 Re-running the importer would otherwise re-download hundreds of MiB each time. Everything fetched
 goes through `cache.rs`:
 
-- the Overpass answer (keyed by query, so any endpoint's answer serves);
+- the Overpass answer (keyed by query, so any endpoint's answer serves). Blocks were once asked for in five
+  queries (main, water, golf, lifts, ski); a block with all five cached is still read from them, and one
+  with only some is asked for again as the one query;
 - the tree register answer (keyed by bounding box);
 - every STAC search;
 - every 512 KiB block of DTM and point-cloud files, and each file's length.
@@ -609,8 +646,8 @@ cargo test -p osm-import lidar_probe -- --ignored --nocapture
 ```
 
 ### Water from OpenStreetMap (`--osm-water`)
-Lakes (`natural=water`, riverbanks, reservoirs), rivers and streams come from Overpass, one query per
-2 km block. **The sea** has no polygon in OSM: coastline ways (land on the left) are joined, cut at the
+Lakes (`natural=water`, riverbanks, reservoirs), rivers and streams come from the OpenStreetMap read
+(the local extract, or Overpass per 2 km block). **The sea** has no polygon in OSM: coastline ways (land on the left) are joined, cut at the
 edge of the world's grid and closed clockwise along it (`osm_water::sea`); islands become holes. The
 height model leaves the sea out, so its surface is fixed at 0 m. Its bed is not a lake's bowl: it
 follows only the distance `s` from land, `0.3 + 11.7·t·(1.5 − 0.5·t)` m with `t = s / max(S, 600 m)`
