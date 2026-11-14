@@ -722,6 +722,10 @@ pub struct World {
     pub fresh: Fresh,
     /// Carved buildings waiting to have their structure checked (`settle`), by the tick they are due.
     pub strained: HashMap<ObjId, u32>,
+    /// Carved buildings whose colliders are out of date: rebuilt once at the end of the tick
+    /// (`flush_buildings`) however many cuts they took in it, as the physics only takes a new shape
+    /// at the start of its next step anyway.
+    pub reshaped: std::collections::BTreeSet<ObjId>,
     /// Cells that have lost their hold and are still falling: where each column of them lands and when.
     pub rubble: Vec<Rubble>,
     /// The craters dug in the last `CRATER_FADE_SECONDS` (at most `CRATER_MAX_KEPT`), oldest first, with
@@ -811,10 +815,7 @@ impl World {
         if cut.is_empty() {
             return None;
         }
-        let carving = self.carves.get(&id)?;
-        let index = *self.buildings_by_id.get(&id)?;
-        let standing = sim::building_solid(&self.map, index, Some((&carving.shell, &carving.removed)), &carving.floor);
-        self.physics.replace_building(Obj::Building(id), standing);
+        self.reshaped.insert(id);
         self.fresh.carved.push((id, at, cut.clone()));
         self.drop_rubble(id, &cut.fell);
         self.loosen_beside_cells(id, &cut);
@@ -868,6 +869,15 @@ impl World {
             let n = cut.fell.len() as i64;
             let at = [(x / n) as i32, (y / n) as i32, (z / n) as i32];
             self.finish_cut(id, at, cut);
+        }
+    }
+
+    /// Gives every building cut this tick its new collider: what still stands of it.
+    pub fn flush_buildings(&mut self) {
+        for id in std::mem::take(&mut self.reshaped) {
+            let (Some(carving), Some(&index)) = (self.carves.get(&id), self.buildings_by_id.get(&id)) else { continue };
+            let standing = sim::building_solid(&self.map, index, Some((&carving.shell, &carving.removed)), &carving.floor);
+            self.physics.replace_building(Obj::Building(id), standing);
         }
     }
 

@@ -245,8 +245,9 @@ pub fn blast_at(world: &mut World, blast: Blast, direct: Option<Direct>) {
     world.blast_cubes(blast.point, blast.radius * CARVE_REACH);
 }
 
-/// How much of a blast's radius is a bite out of a wall: the rest is heat and noise.
-const CARVE_REACH: f32 = 0.6;
+/// How much of a blast's radius is a bite out of a wall: the rest is heat and noise. A tank's HE
+/// shell (7 m) bites 3.2 m. Lowered from 0.6 so it takes more shells to bring a house down.
+pub(crate) const CARVE_REACH: f32 = 0.45;
 /// A bite smaller than this, metres, is not worth a collider: splash from far away.
 const CARVE_MIN_RADIUS: f32 = 0.8;
 

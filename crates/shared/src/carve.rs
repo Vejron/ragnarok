@@ -77,12 +77,14 @@ const UNHELD: u16 = u16::MAX;
 /// than that read as a roof floating in the air once buildings were drawn from their own walls.
 const SPAN_SLACK: u16 = 6;
 /// A cell fails when it carries more than `LOAD_FACTOR_PERCENT` percent of what it did in the whole building,
-/// plus `LOAD_SLACK`: the pillar left holding up a roof that a wall shared with it.
-const LOAD_FACTOR_PERCENT: u32 = 200;
+/// plus `LOAD_SLACK`: the pillar left holding up a roof that a wall shared with it. Raised from 200 and
+/// 4 so houses stand up to more shelling and big collapses are rarer; past about 250 a house with
+/// three walls blown out kept its roof on its corners (`a_roof_coming_down_hurts_whoever_is_under_it_and_nobody_else`).
+const LOAD_FACTOR_PERCENT: u32 = 250;
 /// Most that one check takes of the cells standing, percent, and at least this many cells.
 const SHED_SHARE: usize = 5;
 const SHED_LEAST: usize = 40;
-const LOAD_SLACK: u32 = 4;
+const LOAD_SLACK: u32 = 6;
 
 /// Longest gap between the points a wall or roof is sampled at to find the cells it passes
 /// through, centimetres: half a cell, so it misses no cell it crosses by much.

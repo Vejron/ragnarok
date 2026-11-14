@@ -79,6 +79,11 @@ const tileOf = (key: number) => ({ col: key % 65536, row: Math.floor(key / 65536
  */
 /** How far under the lowest ground loaded the grass plane under the world sits, metres. */
 const BACKDROP_GAP = 0.05
+/**
+ * How near the viewer a cut building has to be, metres from its footprint, for the prediction's
+ * physics to be given its new shape at once; one further off is given it when the viewer comes this near.
+ */
+const RESHAPE_NEAR = 60
 
 export class WorldView {
   world: WorldData | null = null
@@ -167,14 +172,47 @@ export class WorldView {
   update(dt: number, effects: Effects, camera: Vector3, fx: TreeFx) {
     this.fallingTrees.update(dt, fx)
     this.damage.update(dt, effects, camera, fx.smoke)
-    for (const [key, indices] of this.reshape) this.reshapeBuildings(key, indices)
-    this.reshape.clear()
+    this.reshapeNear(camera)
     this.updateCubes(dt, effects)
     // Marks that have faded out are dropped from the ground's shader.
     this.scene.craters.expire(performance.now() / 1000 - CRATER_FADE)
     if (this.scorch) this.smoulders.update(performance.now() / 1000, fx.smoke)
     else this.smoulders.clear()
     this.focus(camera.x, camera.z)
+  }
+
+  /**
+   * Gives the prediction's physics the new shapes of the buildings cut since the last frame that are
+   * within `RESHAPE_NEAR` of `camera`. One further off waits until the viewer comes near: it costs
+   * milliseconds a time to remake, and nothing here touches it until then.
+   */
+  private reshapeNear(camera: Vector3) {
+    for (const [key, indices] of this.reshape) {
+      const loaded = this.loaded.get(key)
+      if (!loaded) {
+        // Its tile went: when it comes back it is given every building's shape (`attach`).
+        this.reshape.delete(key)
+        continue
+      }
+      const now = new Set<number>()
+      for (const index of indices) {
+        const footprint = loaded.tile.buildings[index]?.footprint ?? []
+        let [x0, x1, z0, z1] = [Infinity, -Infinity, Infinity, -Infinity]
+        for (const [x, z] of footprint) {
+          x0 = Math.min(x0, x)
+          x1 = Math.max(x1, x)
+          z0 = Math.min(z0, z)
+          z1 = Math.max(z1, z)
+        }
+        const dx = Math.max(x0 - camera.x, 0, camera.x - x1)
+        const dz = Math.max(z0 - camera.z, 0, camera.z - z1)
+        if (footprint.length === 0 || dx * dx + dz * dz <= RESHAPE_NEAR * RESHAPE_NEAR) now.add(index)
+      }
+      if (now.size === 0) continue
+      this.reshapeBuildings(key, now)
+      for (const index of now) indices.delete(index)
+      if (indices.size === 0) this.reshape.delete(key)
+    }
   }
 
   /** The viewer is at `(x, z)`: tiles that came nearer or went further are meshed at their new level of detail. */

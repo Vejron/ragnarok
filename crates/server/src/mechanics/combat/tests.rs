@@ -1214,6 +1214,8 @@ fn a_rocket_bites_a_hole_in_the_wall_that_a_ray_goes_through() {
     assert!((hit - 2.4).abs() < 0.1, "the near wall is at x = 14.4, where its cubes start: {hit}");
     rocket_at(&mut game, [14.5, 1.0, 0.0]);
     game.step();
+    // The new collider is made at the end of the tick and taken by the physics in the next.
+    game.step();
     // The wall is open at the hole, and the ray carries on to the far wall: its cubes, x = 24.48 to 25.2.
     let (hit, _) = game.world.physics.cast_ray_object([12.0, 1.0, 0.0], [1.0, 0.0, 0.0], 40.0).unwrap();
     assert!((hit - 12.48).abs() < 0.1, "the bite did not open the wall: {hit}");
@@ -1268,6 +1270,8 @@ fn a_piece_of_wall_takes_a_few_rounds_and_then_breaks_out() {
         assert!((ray(&game, 0.2) - 2.4).abs() < 0.1, "round {round} already broke it");
     }
     hit_object(&mut game.world, [12.0, 1.3, 0.2], [1.0, 0.0, 0.0], 3.0, 12);
+    game.step();
+    // The new collider is made at the end of the tick and taken by the physics in the next.
     game.step();
     assert!(ray(&game, 0.2) > 11.0, "the fourth round left no hole");
     // It is a small one: two metres to the side the wall stands.

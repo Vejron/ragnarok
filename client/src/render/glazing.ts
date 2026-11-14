@@ -136,7 +136,6 @@ export class Glazing {
     const building = tile.buildings[index]
     const shell = building?.look && tile.look ? shellOf(tile, index) : null
     if (!shell || !building?.look || !tile.look) return
-    const coords = [...removed].map((id) => shell.coords(id))
     const origin = shell.origin.map((v) => v / 100)
     const cell = shell.cell / 100
     openingsFor(tile.look, building.look).forEach((o, opening) => {
@@ -145,7 +144,13 @@ export class Glazing {
       if (this.isBroken(key, index, opening)) return
       const lo = [0, 1, 2].map((a) => Math.floor((Math.min(...o.corners.map((p) => p[a]!)) - origin[a]!) / cell) - 1)
       const hi = [0, 1, 2].map((a) => Math.floor((Math.max(...o.corners.map((p) => p[a]!)) - origin[a]!) / cell) + 1)
-      const near = coords.some((c) => c.every((v, a) => v >= lo[a]! && v <= hi[a]!))
+      // The few cells round the pane are looked up, not every cell that is gone held against it.
+      let near = false
+      for (let y = Math.max(0, lo[1]!); y <= Math.min(shell.dims[1] - 1, hi[1]!) && !near; y++) {
+        for (let z = Math.max(0, lo[2]!); z <= Math.min(shell.dims[2] - 1, hi[2]!) && !near; z++) {
+          for (let x = Math.max(0, lo[0]!); x <= Math.min(shell.dims[0] - 1, hi[0]!) && !near; x++) near = removed.has(shell.index(x, y, z))
+        }
+      }
       if (near) this.break(key, index, opening, o, false, null, live)
     })
   }

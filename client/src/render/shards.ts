@@ -68,7 +68,7 @@ const HEAP_PER_CELL = 0.12
  * ground (`groundAt`, metres, under a mound's middle): a low mound for each `HEAP_CELL` square they stood over, sized by how many stood
  * there, with a few broken plates on it. In world coordinates; the same for the same cells.
  */
-export function rubbleSoup(centres: readonly (readonly [number, number, number])[], roofs: readonly boolean[], groundAt: (x: number, z: number) => number, wall: readonly [number, number, number], roof: readonly [number, number, number]): ShardSoup {
+export function rubbleSoup(centres: readonly (readonly [number, number, number])[], roofs: readonly boolean[], groundAt: (x: number, z: number) => number, wall: readonly [number, number, number], roof: readonly [number, number, number], memo?: RubbleMemo): ShardSoup {
   const bins = new Map<string, { x: number; z: number; n: number; roofs: number }>()
   centres.forEach(([x, , z], i) => {
     const key = `${Math.floor(x / HEAP_CELL)},${Math.floor(z / HEAP_CELL)}`
@@ -79,18 +79,25 @@ export function rubbleSoup(centres: readonly (readonly [number, number, number])
     if (roofs[i]) bin.roofs++
     bins.set(key, bin)
   })
-  const positions: number[] = []
-  const colors: number[] = []
   const dark = (c: readonly [number, number, number], f: number) => [c[0] * f, c[1] * f, c[2] * f] as const
-  const put = (soup: ShardSoup, at: readonly [number, number, number], scale: readonly [number, number, number], yaw: number) => {
-    const [c, s] = [Math.cos(yaw), Math.sin(yaw)]
-    for (let i = 0; i < soup.positions.length; i += 3) {
-      const [x, y, z] = [soup.positions[i]! * scale[0], soup.positions[i + 1]! * scale[1], soup.positions[i + 2]! * scale[2]]
-      positions.push(at[0] + x * c - z * s, at[1] + y, at[2] + x * s + z * c)
-      colors.push(soup.colors[i]!, soup.colors[i + 1]!, soup.colors[i + 2]!)
-    }
-  }
+  const mounds: Mound[] = []
   for (const [key, bin] of [...bins].sort(([a], [b]) => (a < b ? -1 : 1))) {
+    // A square whose cells are as they were is heaped as it was: only the squares a fall reached are made again.
+    const kept = memo?.get(key)
+    if (kept && kept.n === bin.n && kept.roofs === bin.roofs && kept.x === bin.x && kept.z === bin.z) {
+      mounds.push(kept)
+      continue
+    }
+    const positions: number[] = []
+    const colors: number[] = []
+    const put = (soup: ShardSoup, at: readonly [number, number, number], scale: readonly [number, number, number], yaw: number) => {
+      const [c, s] = [Math.cos(yaw), Math.sin(yaw)]
+      for (let i = 0; i < soup.positions.length; i += 3) {
+        const [x, y, z] = [soup.positions[i]! * scale[0], soup.positions[i + 1]! * scale[1], soup.positions[i + 2]! * scale[2]]
+        positions.push(at[0] + x * c - z * s, at[1] + y, at[2] + x * s + z * c)
+        colors.push(soup.colors[i]!, soup.colors[i + 1]!, soup.colors[i + 2]!)
+      }
+    }
     const [x, z] = [bin.x / bin.n, bin.z / bin.n]
     const next = random(Math.floor(x * 7919) ^ Math.floor(z * 104729) ^ key.length)
     const volume = bin.n * HEAP_PER_CELL
@@ -110,6 +117,33 @@ export function rubbleSoup(centres: readonly (readonly [number, number, number])
       const [px, pz] = [x + Math.cos(angle) * out, z + Math.sin(angle) * out]
       put(shardSoup(next() * 1e9, dark(isRoof ? roof : wall, 0.9), isRoof ? 0.18 : 0.32), [px, Math.max(groundAt(px, pz), floor) + height * (1 - out / radius) * 0.8, pz], [size, size, size], next() * 6.28)
     }
+    const mound: Mound = { n: bin.n, roofs: bin.roofs, x: bin.x, z: bin.z, positions: Float32Array.from(positions), colors: Float32Array.from(colors) }
+    memo?.set(key, mound)
+    mounds.push(mound)
   }
-  return { positions: Float32Array.from(positions), colors: Float32Array.from(colors) }
+  if (memo) for (const key of memo.keys()) if (!bins.has(key)) memo.delete(key)
+  let length = 0
+  for (const mound of mounds) length += mound.positions.length
+  const positions = new Float32Array(length)
+  const colors = new Float32Array(length)
+  let at = 0
+  for (const mound of mounds) {
+    positions.set(mound.positions, at)
+    colors.set(mound.colors, at)
+    at += mound.positions.length
+  }
+  return { positions, colors }
 }
+
+/** One square's mound of rubble as `rubbleSoup` made it, and the cells it was made from (their count, roofs and summed `x`, `z`). */
+interface Mound {
+  n: number
+  roofs: number
+  x: number
+  z: number
+  positions: Float32Array
+  colors: Float32Array
+}
+
+/** The mounds `rubbleSoup` made for one building, by square, to be kept between heaps: a square nothing new fell on is not made again. */
+export type RubbleMemo = Map<string, Mound>

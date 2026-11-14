@@ -10,8 +10,6 @@ pub type P = [f64; 3];
 pub type Poly = Vec<P>;
 
 const EPS: f64 = 1e-4;
-/// Cells round a face's box within which a hole slices it.
-const SLICE_REACH: i64 = 2;
 /// How far below a door's foot its doorway is cut, metres: through the strip of wall under it.
 pub const DOOR_SILL: f64 = 0.5;
 /// How far above a door's top its doorway is cut, metres: the door of a house with rooms stands on
@@ -110,6 +108,16 @@ pub fn cut_windows(mut walls: Vec<Poly>, windows: &[Window], doorway: bool) -> V
         for wall in walls {
             let wn = normal_of(&wall);
             if dot(wn, n) < 0.999 || (dot(wall[0], n) - plane_d).abs() > 0.03 {
+                out.push(wall);
+                continue;
+            }
+            // A piece clear of the opening would only be cut into pieces that all stay: it stays whole,
+            // so the pieces do not multiply with every window along the wall.
+            let (lo_u, hi_u, lo_v, hi_v) = wall.iter().fold((f64::INFINITY, f64::NEG_INFINITY, f64::INFINITY, f64::NEG_INFINITY), |(a, b, c, e), p| {
+                let u = dot(*p, along);
+                (a.min(u), b.max(u), c.min(p[1]), e.max(p[1]))
+            });
+            if hi_u <= u0 + EPS || lo_u >= u1 - EPS || hi_v <= v0 + EPS || lo_v >= v1 - EPS {
                 out.push(wall);
                 continue;
             }
@@ -214,48 +222,97 @@ pub fn standing(walls: &[Tri], roof: &[Tri], windows: &[Window], inside: &[Tri],
         return out;
     };
     let grid = Grid { shell, cell: shell.cell as f64 / 100.0, origin: shell.origin.map(|v| v as f64 / 100.0) };
-    let near: Vec<[i64; 3]> = (0..removed.len()).filter(|&id| removed[id]).map(|id| shell.coords(id as u32).map(|v| v as i64)).collect();
+    let gone = Gone::new(shell, removed);
     for poly in &polys {
         let normal = normal_of(poly);
-        let lo: Vec<i64> = (0..3).map(|a| grid.of(poly.iter().map(|p| p[a]).fold(f64::INFINITY, f64::min), a) - SLICE_REACH).collect();
-        let hi: Vec<i64> = (0..3).map(|a| grid.of(poly.iter().map(|p| p[a]).fold(f64::NEG_INFINITY, f64::max), a) + SLICE_REACH).collect();
-        let close = near.iter().any(|c| (0..3).all(|a| c[a] >= lo[a] && c[a] <= hi[a]));
-        if !close {
-            emit(poly);
-            continue;
-        }
-        let mut pieces = vec![poly.clone()];
-        for axis in 0..3 {
-            let n = [(axis == 0) as i32 as f64, (axis == 1) as i32 as f64, (axis == 2) as i32 as f64];
-            let (lo, hi) = (poly.iter().map(|p| p[axis]).fold(f64::INFINITY, f64::min), poly.iter().map(|p| p[axis]).fold(f64::NEG_INFINITY, f64::max));
-            let mut k = ((lo - grid.origin[axis]) / grid.cell).floor() as i64 + 1;
-            while grid.origin[axis] + k as f64 * grid.cell < hi {
-                let at = grid.origin[axis] + k as f64 * grid.cell;
-                let mut next = Vec::new();
-                for piece in &pieces {
-                    let (behind, front) = split_plane(piece, n, at);
-                    for part in [behind, front] {
-                        if part.len() >= 3 {
-                            next.push(part);
-                        }
-                    }
-                }
-                pieces = next;
-                k += 1;
-            }
-        }
-        for piece in pieces {
-            let c = centre_of(&piece);
-            // A hair inside the wall, so a wall on a cell boundary is judged by the cell it is cut into.
-            let at: [i64; 3] = std::array::from_fn(|a| grid.of(c[a] - normal[a] * 0.01, a));
-            let gone = grid.has(at) && removed.get(grid.index(at) as usize).copied().unwrap_or(false);
-            if gone || orphan(&grid, removed, at) {
-                continue;
-            }
-            emit(&piece);
-        }
+        carve_poly(&grid, &gone, removed, poly.clone(), normal, &mut emit);
     }
     out
+}
+
+/// The cells taken out of a building, summed over boxes of its grid, so whether any lies in a box is
+/// a handful of lookups however big the box (a summed-volume table).
+struct Gone {
+    dims: [usize; 3],
+    /// How many removed cells lie in the box from the grid's corner to each cell, inclusive, with a
+    /// layer of zeros before each axis: `(dims[0] + 1) × (dims[1] + 1) × (dims[2] + 1)` counts.
+    sums: Vec<u32>,
+}
+
+impl Gone {
+    fn new(shell: &Shell, removed: &[bool]) -> Self {
+        let dims = shell.dims;
+        let [sx, sy, sz] = [dims[0] + 1, dims[1] + 1, dims[2] + 1];
+        let mut sums = vec![0u32; sx * sy * sz];
+        let at = |x: usize, y: usize, z: usize| (y * sz + z) * sx + x;
+        for y in 1..sy {
+            for z in 1..sz {
+                for x in 1..sx {
+                    let id = shell.index(x - 1, y - 1, z - 1) as usize;
+                    let own = u32::from(removed.get(id).copied().unwrap_or(false));
+                    sums[at(x, y, z)] = own + sums[at(x - 1, y, z)] + sums[at(x, y - 1, z)] + sums[at(x, y, z - 1)] - sums[at(x - 1, y - 1, z)] - sums[at(x - 1, y, z - 1)] - sums[at(x, y - 1, z - 1)] + sums[at(x - 1, y - 1, z - 1)];
+                }
+            }
+        }
+        Self { dims, sums }
+    }
+
+    /// Whether any removed cell lies in the box of cells `lo..=hi`, which may reach past the grid.
+    fn any(&self, lo: [i64; 3], hi: [i64; 3]) -> bool {
+        let mut a = [0usize; 3];
+        let mut b = [0usize; 3];
+        for k in 0..3 {
+            let l = lo[k].max(0);
+            let h = hi[k].min(self.dims[k] as i64 - 1);
+            if l > h {
+                return false;
+            }
+            (a[k], b[k]) = (l as usize, h as usize + 1);
+        }
+        let [sx, _, sz] = [self.dims[0] + 1, self.dims[1] + 1, self.dims[2] + 1];
+        let s = |x: usize, y: usize, z: usize| i64::from(self.sums[(y * sz + z) * sx + x]);
+        let total = s(b[0], b[1], b[2]) - s(a[0], b[1], b[2]) - s(b[0], a[1], b[2]) - s(b[0], b[1], a[2]) + s(a[0], a[1], b[2]) + s(a[0], b[1], a[2]) + s(b[0], a[1], a[2]) - s(a[0], a[1], a[2]);
+        total > 0
+    }
+}
+
+/// Emits what stands of `poly` (outward `normal`): whole where no removed cell lies within a cell of
+/// it, as nothing there can be gone (`orphan` looks no further); otherwise halved on the grid plane
+/// across its longest side and each half looked at again, down to pieces of one cell, which stand
+/// or go with their cell. The work and the triangles grow with the holes' edges, not with the face.
+fn carve_poly(grid: &Grid, gone: &Gone, removed: &[bool], poly: Poly, normal: P, emit: &mut impl FnMut(&[P])) {
+    // The cells the piece reaches into, a hair in from its edges so a face on a grid plane lies in one.
+    let mut lo = [0i64; 3];
+    let mut hi = [0i64; 3];
+    for a in 0..3 {
+        let (min, max) = poly.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(l, h), p| (l.min(p[a]), h.max(p[a])));
+        lo[a] = grid.of(min + EPS, a);
+        hi[a] = grid.of(max - EPS, a).max(lo[a]);
+    }
+    if !gone.any(lo.map(|v| v - 1), hi.map(|v| v + 1)) {
+        emit(&poly);
+        return;
+    }
+    let axis = (0..3).max_by_key(|&a| (hi[a] - lo[a], std::cmp::Reverse(a))).unwrap_or(0);
+    if hi[axis] == lo[axis] {
+        // One cell: it goes with it, or when it is left with nothing to hang from.
+        let c = centre_of(&poly);
+        // A hair inside the wall, so a wall on a cell boundary is judged by the cell it is cut into.
+        let at: [i64; 3] = std::array::from_fn(|a| grid.of(c[a] - normal[a] * 0.01, a));
+        let lost = grid.has(at) && removed.get(grid.index(at) as usize).copied().unwrap_or(false);
+        if !lost && !orphan(grid, removed, at) {
+            emit(&poly);
+        }
+        return;
+    }
+    let k = (lo[axis] + hi[axis] + 1) / 2;
+    let n = [(axis == 0) as i32 as f64, (axis == 1) as i32 as f64, (axis == 2) as i32 as f64];
+    let (behind, front) = split_plane(&poly, n, grid.origin[axis] + k as f64 * grid.cell);
+    for part in [behind, front] {
+        if part.len() >= 3 {
+            carve_poly(grid, gone, removed, part, normal, emit);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -332,5 +389,73 @@ mod tests {
         assert!(covered(&tris, 4.5, 0.3), "the far corner stands");
         let whole = standing(&walls, &roof, &[], &[], None);
         assert!(tris.len() > whole.len(), "sliced round the hole, so more triangles");
+    }
+
+    /// The area of `tris` (three corners a triangle, metres) by which way each faces, rounded: a
+    /// wall's area stays on its own side however it is cut up.
+    fn areas(tris: &[[f32; 3]]) -> std::collections::BTreeMap<[i32; 3], f64> {
+        let mut out = std::collections::BTreeMap::new();
+        for t in tris.chunks_exact(3) {
+            let [a, b, c] = [t[0], t[1], t[2]].map(|p| p.map(f64::from));
+            let (e, f) = (sub(b, a), sub(c, a));
+            let n = [e[1] * f[2] - e[2] * f[1], e[2] * f[0] - e[0] * f[2], e[0] * f[1] - e[1] * f[0]];
+            let twice = dot(n, n).sqrt();
+            *out.entry(n.map(|v| (v / twice * 10.0).round() as i32)).or_insert(0.0) += twice / 2.0;
+        }
+        out
+    }
+
+    /// What `standing` drew before it only cut where holes are: every face near a hole sliced on the
+    /// whole grid, each piece judged by its cell.
+    fn sliced_on_the_whole_grid(polys: &[Poly], shell: &Shell, removed: &[bool]) -> Vec<[f32; 3]> {
+        let grid = Grid { shell, cell: shell.cell as f64 / 100.0, origin: shell.origin.map(|v| v as f64 / 100.0) };
+        let mut out = Vec::new();
+        for poly in polys {
+            let normal = normal_of(poly);
+            let mut pieces = vec![poly.clone()];
+            for axis in 0..3 {
+                let n = [(axis == 0) as i32 as f64, (axis == 1) as i32 as f64, (axis == 2) as i32 as f64];
+                let (lo, hi) = (poly.iter().map(|p| p[axis]).fold(f64::INFINITY, f64::min), poly.iter().map(|p| p[axis]).fold(f64::NEG_INFINITY, f64::max));
+                let mut k = ((lo - grid.origin[axis]) / grid.cell).floor() as i64 + 1;
+                while grid.origin[axis] + k as f64 * grid.cell < hi {
+                    let at = grid.origin[axis] + k as f64 * grid.cell;
+                    pieces = pieces.iter().flat_map(|piece| { let (b, f) = split_plane(piece, n, at); [b, f] }).filter(|part| part.len() >= 3).collect();
+                    k += 1;
+                }
+            }
+            for piece in pieces {
+                let c = centre_of(&piece);
+                let at: [i64; 3] = std::array::from_fn(|a| grid.of(c[a] - normal[a] * 0.01, a));
+                let gone = grid.has(at) && removed[grid.index(at) as usize];
+                if gone || orphan(&grid, removed, at) {
+                    continue;
+                }
+                for i in 1..piece.len() - 1 {
+                    out.extend([piece[0], piece[i], piece[i + 1]].map(|p| p.map(|v| v as f32)));
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn cutting_only_round_the_holes_leaves_what_slicing_the_whole_grid_did() {
+        let (w, d, h) = (1300, 900, 700);
+        let walls: Vec<Tri> = [quad([0, 0, 0], [w, 0, 0], [w, h, 0], [0, h, 0]), quad([w, 0, 0], [w, 0, d], [w, h, d], [w, h, 0]), quad([w, 0, d], [0, 0, d], [0, h, d], [w, h, d]), quad([0, 0, d], [0, 0, 0], [0, h, 0], [0, h, d])].concat();
+        let roof = quad([0, h, 0], [w, h, 0], [w, h, d], [0, h, d]).to_vec();
+        let look = look_of(&walls, &roof);
+        let windows = openings_of(&look, look.buildings[0]);
+        let shell = Shell::new(&walls, &roof).unwrap();
+        let mut removed = shell.untouched();
+        let polys: Vec<Poly> = cut_windows(walls.iter().map(poly_of).collect(), &windows, false).into_iter().chain(roof.iter().map(poly_of)).collect();
+        for (n, at) in [[300, 150, 0], [1300, 400, 500], [700, 700, 450], [0, 200, 800], [650, 100, 900], [1000, 650, 0]].into_iter().enumerate() {
+            shell.blast(&mut removed, at, 120 + 40 * n as i32);
+            let now = areas(&standing(&walls, &roof, &windows, &[], Some((&shell, &removed))));
+            let then = areas(&sliced_on_the_whole_grid(&polys, &shell, &removed));
+            assert_eq!(now.keys().collect::<Vec<_>>(), then.keys().collect::<Vec<_>>(), "after blast {n}");
+            for (side, area) in &now {
+                assert!((area - then[side]).abs() < 1e-3, "after blast {n}, side {side:?}: {area} m² against {}", then[side]);
+            }
+        }
     }
 }

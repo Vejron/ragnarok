@@ -24,7 +24,7 @@ Bricks are a hotbar item. With them a player puts 72 cm cubes onto the world: ag
 
 - **Bullets** wear cubes down as they wear down a building's wall. Each round takes its damage off the cube it strikes, and a brick has 40 hp: about four AK5 rounds, two from a revolver, one sniper round. A cube that breaks goes as if dug, and whatever only it held up falls. Cubes your own rounds hurt are drawn darker, a step for each third of their health gone, as a building's wall is drawn dented for the shooter. Other players' hits are not shown until the cube breaks.
 - **Vehicles** break cubes as they break walls (`combat::ram_cubes`). The cube a vehicle hits takes 8 damage for each m/s the hit took out of it, so a 5 m/s knock breaks a brick. A hit harder than 6 m/s also bites a hole, as in a wall. Tanks and other heavy vehicles count for more (`body.ram`), and drones do not ram.
-- **Blasts.** Any blast takes out the cubes within 60% of its radius, the same reach it bites a wall with. That covers rockets, grenades, shells, bombs, mortar rounds, drone charges and a wreck going up.
+- **Blasts.** Any blast takes out the cubes within 45% of its radius, the same reach it bites a wall with. That covers rockets, grenades, shells, bombs, mortar rounds, drone charges and a wreck going up.
 - **Falling.** When a cube goes (dug, blasted, or the building cell under it blasted away), the cubes joined to it are checked. A piece of cubes that no longer reaches the ground or a standing building cell comes down whole. It lands on whoever is under it as rubble, with the same damage as falling building cells: cubes × metres fallen (counted up to 8 m) × 4, vehicles at 40%, credited to nobody (`WEAPON_RUBBLE`). The check looks through at most 4 096 cubes of a piece (`BUILD_SUPPORT_SEARCH`). A bigger piece is taken as held, so one blast never costs a long tick.
 - **No strength.** A cube holds anything that is joined to it: a beam can stick out as far as anyone builds it. Only the connection counts, not the weight.
 - **Restarts.** Cubes live in the room. They are gone when the server restarts, as carved holes are.
@@ -85,7 +85,7 @@ Bricks place `MATERIAL_BRICK`, the only material so far. A tougher block (concre
 | `MAX_BUILT` | `shared::consts` | 200 000 | Most cubes in the world. |
 | `BUILD_SUPPORT_SEARCH` | `shared::consts` | 4 096 | Most cubes of one piece looked through for a hold. |
 | `CHUNK` | `shared::construct` | 16 | Cubes a chunk is along each side. |
-| `CARVE_REACH` | `mechanics/combat.rs` | 0.6 | Share of a blast's radius that bites walls, and so cubes (times `blast_reach`). |
+| `CARVE_REACH` | `mechanics/combat.rs` | 0.45 | Share of a blast's radius that bites walls, and so cubes (times `blast_reach`). |
 | `MATERIALS` | `shared::construct` | brick | How tough each kind of cube is; see above. |
 
 ## Not done yet

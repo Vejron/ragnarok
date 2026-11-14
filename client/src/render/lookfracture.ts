@@ -144,54 +144,146 @@ class Buckets<T> {
 }
 
 /**
+ * Cells of a building's grid summed over boxes (a summed-volume table), over the box round `cells`
+ * grown by `margin`: whether any of them lies in a box of cells is a handful of lookups however big the box.
+ */
+class Near {
+  private readonly lo: [number, number, number] = [0, 0, 0]
+  private readonly size: [number, number, number] = [0, 0, 0]
+  private readonly sums: Uint32Array
+  constructor(cells: readonly (readonly number[])[], margin: number) {
+    if (cells.length === 0) {
+      this.sums = new Uint32Array(0)
+      return
+    }
+    const hi = [-Infinity, -Infinity, -Infinity]
+    for (let a = 0; a < 3; a++) this.lo[a] = Infinity
+    for (const c of cells) for (let a = 0; a < 3; a++) {
+      this.lo[a] = Math.min(this.lo[a]!, c[a]!)
+      hi[a] = Math.max(hi[a]!, c[a]!)
+    }
+    for (let a = 0; a < 3; a++) {
+      this.lo[a] = this.lo[a]! - margin
+      this.size[a] = hi[a]! + margin - this.lo[a]! + 1
+    }
+    const [sx, sy, sz] = [this.size[0] + 1, this.size[1] + 1, this.size[2] + 1]
+    const sums = new Uint32Array(sx * sy * sz)
+    for (const c of cells) sums[((c[1]! - this.lo[1] + 1) * sz + (c[2]! - this.lo[2] + 1)) * sx + (c[0]! - this.lo[0] + 1)] = 1
+    // Summed along x, then z, then y: each count is then of the box from the corner to it.
+    for (let y = 1; y < sy; y++) for (let z = 1; z < sz; z++) for (let x = 2; x < sx; x++) sums[(y * sz + z) * sx + x]! += sums[(y * sz + z) * sx + x - 1]!
+    for (let y = 1; y < sy; y++) for (let z = 2; z < sz; z++) for (let x = 1; x < sx; x++) sums[(y * sz + z) * sx + x]! += sums[(y * sz + z - 1) * sx + x]!
+    for (let y = 2; y < sy; y++) for (let z = 1; z < sz; z++) for (let x = 1; x < sx; x++) sums[(y * sz + z) * sx + x]! += sums[((y - 1) * sz + z) * sx + x]!
+    this.sums = sums
+  }
+
+  /** Whether any of the cells lies in the box of cells `lo..=hi`. */
+  any(lo: readonly number[], hi: readonly number[]): boolean {
+    if (this.sums.length === 0) return false
+    const a = [0, 0, 0]
+    const b = [0, 0, 0]
+    for (let k = 0; k < 3; k++) {
+      const l = Math.max(lo[k]! - this.lo[k]!, 0)
+      const h = Math.min(hi[k]! - this.lo[k]!, this.size[k]! - 1)
+      if (l > h) return false
+      a[k] = l
+      b[k] = h + 1
+    }
+    const [sx, sz] = [this.size[0] + 1, this.size[2] + 1]
+    const s = (x: number, y: number, z: number) => this.sums[(y * sz + z) * sx + x]!
+    const total = s(b[0]!, b[1]!, b[2]!) - s(a[0]!, b[1]!, b[2]!) - s(b[0]!, a[1]!, b[2]!) - s(b[0]!, b[1]!, a[2]!) + s(a[0]!, a[1]!, b[2]!) + s(a[0]!, b[1]!, a[2]!) + s(b[0]!, a[1]!, a[2]!) - s(a[0]!, a[1]!, a[2]!)
+    return total > 0
+  }
+}
+
+/** A hair, metres: a face on a grid plane is taken to lie in the cell on one side of it. */
+const ON_PLANE = 1e-4
+
+/**
  * The building's faces (`facadeFor`: its walls with the windows cut out, and its roof, wound
- * outwards): those further than `SLICE_REACH` cells from every cell of `near` whole, the rest sliced
- * along the grid so each piece lies in one cell, and split by whether `cut` holds for that cell.
+ * outwards), with what lies further than `SLICE_REACH` cells from every cell of `near` whole, and
+ * the rest sliced along the grid so each piece lies in one cell, split by whether `cut` holds for
+ * that cell. A face is halved on the grid plane across its longest side until each half is clear
+ * of `near` or a single cell, so the work grows with the holes, not with the faces round them.
  */
 function slice(facade: Facade, grid: Grid, near: readonly (readonly number[])[], cut: (id: number) => boolean) {
   const { cell, origin, shell } = grid
   const whole: Piece[] = []
-  const sliced: Piece[] = []
-  const faces: [Poly, boolean, number?][] = [
-    ...facade.walls.map((poly): [Poly, boolean] => [poly, false]),
-    ...facade.roof.map((poly): [Poly, boolean] => [poly, true]),
-    ...facade.inside.map(({ poly, kind }): [Poly, boolean, number] => [poly, false, kind]),
-  ]
-  for (const [poly, roof, inside] of faces) {
-    const piece: Piece = { poly, normal: normalOf(poly), roof, ...(inside === undefined ? {} : { inside }) }
-    const lo = [0, 1, 2].map((a) => grid.of(Math.min(...poly.map((p) => p[a]!)), a) - SLICE_REACH)
-    const hi = [0, 1, 2].map((a) => grid.of(Math.max(...poly.map((p) => p[a]!)), a) + SLICE_REACH)
-    const close = near.some((c) => c[0]! >= lo[0]! && c[0]! <= hi[0]! && c[1]! >= lo[1]! && c[1]! <= hi[1]! && c[2]! >= lo[2]! && c[2]! <= hi[2]!)
-    ;(close ? sliced : whole).push(piece)
-  }
   const kept: Piece[] = []
   const taken: Piece[] = []
-  for (const piece of sliced) {
-    let polys: Poly[] = [piece.poly]
-    for (let axis = 0; axis < 3; axis++) {
-      let lo = Infinity
-      let hi = -Infinity
-      for (const p of piece.poly) {
-        lo = Math.min(lo, p[axis]!)
-        hi = Math.max(hi, p[axis]!)
+  const close = new Near(near, SLICE_REACH)
+  const lo = [0, 0, 0]
+  const hi = [0, 0, 0]
+  const visit = (piece: Piece, poly: Poly, first: boolean) => {
+    for (let a = 0; a < 3; a++) {
+      let [min, max] = [Infinity, -Infinity]
+      for (const p of poly) {
+        min = Math.min(min, p[a]!)
+        max = Math.max(max, p[a]!)
       }
-      for (let k = Math.floor((lo - origin[axis]!) / cell) + 1; origin[axis]! + k * cell < hi; k++) {
-        const at = origin[axis]! + k * cell
-        const next: Poly[] = []
-        for (const poly of polys) for (const part of split(poly, axis, at)) if (part.length >= 3) next.push(part)
-        polys = next
-      }
+      lo[a] = grid.of(min + ON_PLANE, a)
+      hi[a] = Math.max(lo[a]!, grid.of(max - ON_PLANE, a))
     }
-    for (const poly of polys) {
+    if (!close.any([lo[0]! - SLICE_REACH, lo[1]! - SLICE_REACH, lo[2]! - SLICE_REACH], [hi[0]! + SLICE_REACH, hi[1]! + SLICE_REACH, hi[2]! + SLICE_REACH])) {
+      whole.push(first ? piece : { ...piece, poly })
+      return
+    }
+    let axis = 0
+    for (let a = 1; a < 3; a++) if (hi[a]! - lo[a]! > hi[axis]! - lo[axis]!) axis = a
+    if (hi[axis] === lo[axis]) {
       const c: P = [0, 0, 0]
       for (const p of poly) for (let a = 0; a < 3; a++) c[a]! += p[a]! / poly.length
       // A hair inside the wall, so a wall on a cell boundary is judged by the cell it is cut into.
       const [x, y, z] = [0, 1, 2].map((a) => grid.of(c[a]! - piece.normal[a]! * 0.01, a)) as P
       const inCut = grid.has(x, y, z) && cut(shell.index(x, y, z))
       ;(inCut || orphan(grid, x, y, z, cut) ? taken : kept).push({ ...piece, poly })
+      return
     }
+    const k = Math.floor((lo[axis]! + hi[axis]! + 1) / 2)
+    const parts = split(poly, axis, origin[axis]! + k * cell)
+    for (const part of parts) if (part.length >= 3) visit(piece, part, false)
+  }
+  for (const face of facesOf(facade, grid)) {
+    // Most faces are nowhere near: told by the box kept for each, without looking at its corners.
+    if (!close.any(face.lo, face.hi)) whole.push(face.piece)
+    else visit(face.piece, face.piece.poly, true)
   }
   return { whole, kept, taken }
+}
+
+/** A face of a facade as `slice` starts from it, and the cells its box reaches into grown by `SLICE_REACH`. */
+interface Face {
+  piece: Piece
+  lo: [number, number, number]
+  hi: [number, number, number]
+}
+
+const faceMemo = new WeakMap<Facade, Face[]>()
+
+/** The faces of `facade` (walls, roof and what stands in its rooms) with their normals and boxes, worked out once a facade. */
+function facesOf(facade: Facade, grid: Grid): Face[] {
+  let faces = faceMemo.get(facade)
+  if (faces) return faces
+  const all: [Poly, boolean, number?][] = [
+    ...facade.walls.map((poly): [Poly, boolean] => [poly, false]),
+    ...facade.roof.map((poly): [Poly, boolean] => [poly, true]),
+    ...facade.inside.map(({ poly, kind }): [Poly, boolean, number] => [poly, false, kind]),
+  ]
+  faces = all.map(([poly, roof, inside]) => {
+    const lo: [number, number, number] = [0, 0, 0]
+    const hi: [number, number, number] = [0, 0, 0]
+    for (let a = 0; a < 3; a++) {
+      let [min, max] = [Infinity, -Infinity]
+      for (const p of poly) {
+        min = Math.min(min, p[a]!)
+        max = Math.max(max, p[a]!)
+      }
+      lo[a] = grid.of(min + ON_PLANE, a) - SLICE_REACH
+      hi[a] = Math.max(grid.of(min + ON_PLANE, a), grid.of(max - ON_PLANE, a)) + SLICE_REACH
+    }
+    return { piece: { poly, normal: normalOf(poly), roof, ...(inside === undefined ? {} : { inside }) }, lo, hi }
+  })
+  faceMemo.set(facade, faces)
+  return faces
 }
 
 /**

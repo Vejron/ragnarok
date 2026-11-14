@@ -107,6 +107,7 @@ impl Game {
                 fresh: Default::default(),
                 carves: HashMap::new(),
                 strained: HashMap::new(),
+                reshaped: Default::default(),
                 rubble: Vec::new(),
                 craters: Default::default(),
                 dug_tiles: Default::default(),
@@ -396,6 +397,7 @@ impl Game {
 
     /// Tells everyone which cells blasts took out of buildings this tick, as one message.
     fn broadcast_carved(&mut self) {
+        self.world.flush_buildings();
         if self.world.fresh.carved.is_empty() {
             return;
         }
@@ -1124,5 +1126,96 @@ mod tests {
             std::hint::black_box(game.replicated());
         }
         println!("reading the world as components: {:?}", started.elapsed() / runs);
+    }
+
+    /// Not a regression test: what shelling one big house costs the server, shot by shot, to aim
+    /// optimisation at. The house with the most look triangles takes 40 bites the size a tank's
+    /// shell takes, 20 ticks of structure checks between them.
+    /// `RAGNAROK_WORLD=$PWD/worlds/home/world.msgpack cargo test --release -p server -- --ignored --nocapture demolition_cost`
+    /// (the path whole: tests run in the crate). `DEMOLITION_OUT=<file>` writes the cuts out for the client's `destruction.bench`.
+    #[test]
+    #[ignore]
+    fn demolition_cost() {
+        use std::time::Instant;
+        let path = std::env::var_os("RAGNAROK_WORLD")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/world/world.msgpack"));
+        let (map, _) = crate::read_world(&path).expect("a world to shell");
+        let mut game = Game::new(map, 0).unwrap();
+        let world = &mut game.world;
+        let size = |i: usize| world.map.looks.get(i).map_or(0, |l| l.walls.len() + l.roof.len() + l.inside.len());
+        // `HOUSE=n`: the n-th biggest house with a look instead (0, the default, is the biggest).
+        let rank: usize = std::env::var("HOUSE").ok().and_then(|n| n.parse().ok()).unwrap_or(0);
+        let mut houses: Vec<usize> = (0..world.map.buildings.len()).filter(|&i| size(i) > 0).collect();
+        houses.sort_by_key(|&i| std::cmp::Reverse(size(i)));
+        let index = houses[rank.min(houses.len() - 1)];
+        let id = world.map.building_ids[index];
+        let look = world.map.looks[index].clone();
+        let b = &world.map.buildings[index];
+        println!("building {index}: {} m tall, {} wall, {} roof, {} inside triangles", b.height / 100, look.walls.len(), look.roof.len(), look.inside.len());
+        let mut rand = 12345u64;
+        let mut next = move || {
+            rand ^= rand << 13;
+            rand ^= rand >> 7;
+            rand ^= rand << 17;
+            rand
+        };
+        // The bite a tank's HE shell takes of the wall it lands on.
+        let bite = shared::consts::EXPLOSION_RADIUS * crate::mechanics::CARVE_REACH;
+        let (mut carve_total, mut carve_max, mut settle_total, mut settle_max, mut solid_total) = (Duration::ZERO, Duration::ZERO, Duration::ZERO, Duration::ZERO, Duration::ZERO);
+        // Cells the shells took out, cells left with nothing under them at once, cells the structure checks let go, and checks that let go of 100 or more.
+        let (mut blasted, mut dropped, mut crumbled, mut big) = (0usize, 0usize, 0usize, 0usize);
+        let whole = world.carving(id).map_or(0, |c| c.shell.standing(&c.removed));
+        let shots = 60;
+        // Every cut in order, for the client's bench to replay (`DEMOLITION_OUT`).
+        let mut cuts = Vec::new();
+        for shot in 0..shots {
+            let t = look.walls[next() as usize % look.walls.len()];
+            let at = [0, 1, 2].map(|a| (t[a] + t[a + 3] + t[a + 6]) as f32 / 300.0);
+            let started = Instant::now();
+            if let Some(cut) = world.carve(id, at, bite) {
+                blasted += cut.blasted.len();
+                dropped += cut.fell.len();
+            }
+            world.flush_buildings();
+            let spent = started.elapsed();
+            carve_total += spent;
+            carve_max = carve_max.max(spent);
+            if let Some(carving) = world.carves.get(&id) {
+                let started = Instant::now();
+                std::hint::black_box(sim::building_solid(&world.map, index, Some((&carving.shell, &carving.removed)), &carving.floor));
+                solid_total += started.elapsed();
+            }
+            let mut worst = Duration::ZERO;
+            // Five seconds between shots, about a tank's reload.
+            for _ in 0..300 {
+                world.tick = world.tick.wrapping_add(1);
+                let before = world.fresh.carved.len();
+                let started = Instant::now();
+                world.settle();
+                world.flush_buildings();
+                worst = worst.max(started.elapsed());
+                settle_total += started.elapsed();
+                for (_, _, cut) in &world.fresh.carved[before..] {
+                    crumbled += cut.fell.len();
+                    if cut.fell.len() >= 100 {
+                        big += 1;
+                    }
+                }
+            }
+            settle_max = settle_max.max(worst);
+            for (cut_id, point, cut) in world.fresh.carved.drain(..) {
+                cuts.push(serde_json::json!({ "col": cut_id.col, "row": cut_id.row, "index": cut_id.index, "point": point, "blasted": cut.blasted, "fell": cut.fell }));
+            }
+            world.fresh = Default::default();
+            if shot % 10 == 9 {
+                let standing = world.carves.get(&id).map_or(0, |c| c.shell.standing(&c.removed));
+                println!("after {:2} shots: {:3}% standing; blasted {blasted}, dropped {dropped}, crumbled {crumbled} in checks ({big} of 100+); carve {:?}, settle worst tick {settle_max:?}", shot + 1, standing * 100 / whole.max(1), carve_total / (shot + 1));
+            }
+        }
+        println!("bite {bite:.1} m; carve avg {:?}, worst {carve_max:?}; collider alone {:?}; settle worst tick {settle_max:?}", carve_total / shots, solid_total / shots);
+        if let Some(out) = std::env::var_os("DEMOLITION_OUT") {
+            std::fs::write(out, serde_json::to_string(&cuts).unwrap()).unwrap();
+        }
     }
 }

@@ -7,7 +7,7 @@ import type { Effects } from './effects'
 import { dustCloud, type Particles } from './particles'
 import { Fracture, shardGeometry } from './fracture'
 import { lookChunk, lookFracture } from './lookfracture'
-import { rubbleSoup, shardSoup } from './shards'
+import { rubbleSoup, shardSoup, type RubbleMemo } from './shards'
 import { buildingColors, buildingSurfaces } from './buildingmesh'
 import { lookSlice, type LookWorker } from './lookworker'
 
@@ -123,6 +123,8 @@ interface Drawn {
   /** The rubble heaped round a building with a look, worked out from the cells that are gone; and seconds until it is next heaped, while what fell is still falling (0 when it is up to date). */
   rubble: Mesh | null
   rubbleDue: number
+  /** The mounds of `rubble` by square, so a heap only makes again the squares that changed. */
+  mounds: RubbleMemo
   /** The state the bricks in `dirty` are to be redrawn for at the next `update`: a barrage redraws a building once a frame, not once a hit. */
   stale: Hurt | null
   dirty: Set<number>
@@ -403,7 +405,7 @@ export class BuildingDamage {
     const walls = wallsOf(loaded.tile, index)
     if (walls.length === 0) return
     if (!drawn) {
-      drawn = { group: new Group(), fracture: null, bricks: new Map(), look: null, seen: null, asking: false, waiting: false, released: false, rubble: null, rubbleDue: 0, stale: null, dirty: new Set(), falling: [], puff: 0 }
+      drawn = { group: new Group(), fracture: null, bricks: new Map(), look: null, seen: null, asking: false, waiting: false, released: false, rubble: null, rubbleDue: 0, mounds: new Map(), stale: null, dirty: new Set(), falling: [], puff: 0 }
       buildings.set(index, drawn)
       this.root.add(drawn.group)
     }
@@ -489,7 +491,7 @@ export class BuildingDamage {
       const c = Color.hex(hex)
       return [c.r, c.g, c.b] as const
     }
-    const soup = rubbleSoup(centres, ids.map((id) => shell.isRoof(id)), (x, z) => this.groundUnder(x, z, building.base), rgb(wall), rgb(roof))
+    const soup = rubbleSoup(centres, ids.map((id) => shell.isRoof(id)), (x, z) => this.groundUnder(x, z, building.base), rgb(wall), rgb(roof), drawn.mounds)
     if (drawn.rubble) {
       drawn.rubble.geometry.dispose()
       drawn.rubble.geometry = shardGeometry(soup.positions, soup.colors)

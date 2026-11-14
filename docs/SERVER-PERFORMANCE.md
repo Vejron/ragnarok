@@ -177,3 +177,76 @@ items back to back, so the size with the nearest `k` kept is the size with the l
 kept items' sizes plus the header growth. That is exact, and a `debug_assert` checks it against
 the real encode. Sorting the delta by distance also looked each distance up in a `HashMap` at
 every comparison; it now looks each up once (`sort_by_cached_key`). Effects still shed first, in bulk.
+
+## Demolition
+
+Shelling a big house stuttered, on the server and worse on the clients: each cut cost more than the
+one before, and a house with floors and stairs inside was the worst case. Two benches measure it on
+one house, the one in the world with the most look triangles (in `home`, a 16 m block whose floors
+and stairs are 632 triangles):
+
+```sh
+# the server: 40 bites the size a tank shell takes, 20 ticks of structure checks between them
+DEMOLITION_OUT=/tmp/cuts.json RAGNAROK_WORLD=$PWD/worlds/home/world.msgpack cargo test --release -p server -- --ignored --nocapture demolition_cost
+# the client's main thread, replaying those cuts (from client/)
+BENCH=1 BENCH_WORLD=../worlds/home BENCH_CUTS=/tmp/cuts.json npx vitest run destruction.bench --silent=false
+```
+
+| Cost a cut | Before | After |
+|---|---|---|
+| Server: the building's new collider (`sim::building_solid`) | 27 ms | 4 ms |
+| Server: worst structure-check tick | 36 ms | 5 ms |
+| Client: `BuildingDamage.carve` (falling sections) | 27 ms, worst 117 | 4 ms, worst 16 |
+| Client: the collider, through WASM (the server's code) | not measured | 5 ms, and only within 60 m |
+| Client: the rubble heap, 1.1 s later | 17 ms | 4 ms |
+| Client: broken panes (`Glazing.holed`) | 2.4 ms | 0.4 ms |
+| Look worker: one redraw (off the main thread) | 118 ms | 80 ms |
+
+In headless Chrome on the same house (the cuts replayed through `WorldView.carved` every 0.4 s, the
+camera 25 m off), the old code dropped 13 to 15 frames past 50 ms, the worst 117 ms; the new code
+none, the worst 33 ms in one run and 17 ms in the next.
+
+What it was, and what was done:
+
+- **Slicing on the whole grid.** A face with a hole anywhere near it was cut along every grid plane
+  across all of it, and the cutting went through every piece for every plane, so a long wall or a
+  floor slab with one hole in it became thousands of pieces at a cost that grew with their square.
+  Now a face is halved on the grid plane across its longest side only while a removed cell lies
+  within a cell of it (a summed-volume table answers that in a few lookups), so the work and the
+  triangles grow with the holes' edges. The covered area is exactly what it was (a test holds the
+  two against each other). The server and the client's physics share this (`shared::facade::standing`);
+  the client's drawing does the same in `lookfracture.ts` (`slice`, with each face's box kept once a facade).
+- **Windows cut through every wall piece.** Each window cut every piece of its wall along four
+  infinite planes, so the pieces multiplied with every window along it: 6 ms for one house, every
+  cut. A piece clear of the window is now left whole (`cut_windows`).
+- **One collider a building a tick.** The server rebuilt a building's collider at every cut (each
+  broken cell of a burst, each blast). It now does so once, at the end of the tick
+  (`World::flush_buildings`), so the hole is solid one tick longer than it was.
+- **Far buildings wait.** The client gives its prediction's physics a cut building's new shape only
+  within `RESHAPE_NEAR` (60 m) of the camera; one further off gets it when the viewer comes near.
+- **Heaps made again whole.** Every heap rebuilt every mound from every cell gone; now only the
+  squares a fall reached are made again (`rubbleSoup`'s memo).
+- **Panes held against every cell gone.** Now each pane looks up the few cells round it.
+
+Not done: the look worker's redraw is still about 80 ms for a ruined block, which is how long a new
+hole takes to show. Its time is spread over the corners it writes (outline, shading, the soup), so
+it would take drawing less, not a faster loop.
+
+### Sturdier houses
+
+Measured with the same bench (`HOUSE=n` picks the n-th biggest house with a look; 60 HE shells, five
+seconds apart, on random spots of its walls), houses came down too easily: ten shells left an
+ordinary house 15 to 17% standing, and the structure checks dropped more of it than the shells blew
+out. Two numbers were changed:
+
+- `CARVE_REACH` (`mechanics/combat.rs`) 0.6 → 0.45: a shell bites 3.2 m of wall, not 4.2 m.
+- `LOAD_FACTOR_PERCENT` 200 → 250 and `LOAD_SLACK` 4 → 6 (`shared::carve`): a cell may carry more
+  than it did in the whole house before it fails. 275 was tried and kept the roof of a house with
+  three walls gone standing on its corners. `SPAN_SLACK` stays at 6, which keeps roofs from hanging
+  far past their supports.
+
+| House (`home`) | Standing after 10 shells, before → after | After 30 | Checks dropping 100+ cells in 60 shells |
+|---|---|---|---|
+| Biggest, 16 m block | 61% → 83% | 46% → 69% | 10 → 7 |
+| 30th biggest | 15% → 55% | 9% → 40% | 1 → 2 |
+| 150th biggest | 17% → 37% | 9% → 15% | 3 → 2 |

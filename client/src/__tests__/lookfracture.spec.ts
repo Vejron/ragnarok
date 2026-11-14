@@ -279,4 +279,17 @@ describe('lookFracture', () => {
       expect(low[1]).toBeLessThanOrEqual(ground(low[0], low[2]) + 0.6)
     }
   })
+
+  it('heaps rubble a fall at a time as it would all at once', () => {
+    const ground = () => 0
+    const centres = Array.from({ length: 60 }, (_, i) => [(i % 10) * 0.72, 3, Math.floor(i / 10) * 0.72] as const)
+    const memo = new Map()
+    for (const upTo of [12, 30, 31, 60]) {
+      const some = centres.slice(0, upTo)
+      const step = rubbleSoup(some, some.map((_, i) => i % 4 === 0), ground, white, white, memo)
+      const fresh = rubbleSoup(some, some.map((_, i) => i % 4 === 0), ground, white, white)
+      expect(Array.from(step.positions)).toEqual(Array.from(fresh.positions))
+      expect(Array.from(step.colors)).toEqual(Array.from(fresh.colors))
+    }
+  })
 })
