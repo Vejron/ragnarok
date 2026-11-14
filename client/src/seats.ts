@@ -25,6 +25,8 @@ export type Rig =
   | { name: 'tanker' }
   /** Behind a walker's guns or a tupp's eyes, which turn within its torso's or its head's travel. */
   | { name: 'walker' }
+  /** Behind and above a Titan's shoulders, looking along the look, which its fists follow. */
+  | { name: 'titan' }
   /** Behind a field mortar, looking where the mouse sets its bearing. */
   | { name: 'mortar' }
   /** Over the shoulder from where they sit, as on foot: a car's passenger, who fires their own guns. */

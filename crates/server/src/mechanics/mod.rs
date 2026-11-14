@@ -22,6 +22,7 @@ mod scores;
 mod spawn;
 mod structure;
 mod submarines;
+mod titans;
 mod vehicles;
 mod wildlife;
 mod zombies;
@@ -50,6 +51,7 @@ pub use scores::Scores;
 pub use spawn::{Spawn, usable as spawn_usable};
 pub use structure::Structure;
 pub use submarines::{Sub, Submarines};
+pub use titans::{Titans, held_in as held_in_fist};
 pub use vehicles::{Vehicles, add_tank, remove_vehicle, seat};
 pub use wildlife::{Wildlife, fell, grazing};
 pub use zombies::{Zombie, Zombies, clawing, is_zombie, rising, start_rising};
@@ -102,10 +104,13 @@ pub fn register_components(ecs: &mut bevy_ecs::world::World) {
     golf::register(ecs);
 }
 
-/// The mechanics a room runs, in tick order. `Bots` and `Zombies` go first: they write their input, which
+/// The mechanics a room runs, in tick order. `Titans` goes before `Lifts` and `Vehicles`, so that whoever
+/// a fist holds boards nothing.
+///
+/// More on the order: `Bots` and `Zombies` go first: they write their input, which
 /// everything after reads as it reads anyone's. `Life` brings the dead back before `Npcs` and `Wildlife` move them.
 pub fn default_mechanics() -> Vec<Box<dyn Mechanic>> {
-    vec![Box::<Bots>::default(), Box::<Zombies>::default(), Box::new(Spawn), Box::<Lifts>::default(), Box::new(Pickups), Box::new(Submarines), Box::new(Drones), Box::new(Vehicles), Box::new(Gunnery), Box::new(Movement), Box::new(Breath), Box::<Mend>::default(), Box::new(Backpack), Box::new(Life), Box::new(Npcs), Box::<Wildlife>::default(), Box::new(Combat), Box::new(Golf), Box::new(Structure), Box::new(Scores)]
+    vec![Box::<Bots>::default(), Box::<Zombies>::default(), Box::new(Spawn), Box::<Titans>::default(), Box::<Lifts>::default(), Box::new(Pickups), Box::new(Submarines), Box::new(Drones), Box::new(Vehicles), Box::new(Gunnery), Box::new(Movement), Box::new(Breath), Box::<Mend>::default(), Box::new(Backpack), Box::new(Life), Box::new(Npcs), Box::<Wildlife>::default(), Box::new(Combat), Box::new(Golf), Box::new(Structure), Box::new(Scores)]
 }
 
 /// What tests outside the mechanics reach in for: setting up a busy room without playing it.

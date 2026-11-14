@@ -1,6 +1,6 @@
 import { decode, encode } from '@msgpack/msgpack'
 import { PROTOCOL_VERSION } from '@/sim/consts'
-import { decodeMessage, writeClientInput, writePing, writeRtc, type InputFrame, type ServerMessage } from './messages.generated'
+import { decodeMessage, writeClientHands, writeClientInput, writePing, writeRtc, type ClientHands, type InputFrame, type ServerMessage } from './messages.generated'
 
 /**
  * Wire format: MessagePack arrays with a leading tag, fixed-point integers, no field names. The
@@ -9,7 +9,7 @@ import { decodeMessage, writeClientInput, writePing, writeRtc, type InputFrame, 
  */
 
 export type {
-  BulletSpawn, Built, CarvedBuilding, CraterEntry, DamagedBuilding, DestroyedObject, DugTile, HullMark, InputFrame, ProfileEntry, Score, ServerMessage, ShotEvent,
+  BulletSpawn, Built, CarvedBuilding, ClientHands, CraterEntry, DamagedBuilding, DestroyedObject, DugTile, HullMark, InputFrame, ProfileEntry, Score, ServerMessage, ShotEvent,
 } from './messages.generated'
 
 /** `Notice` kinds: what a world's scenario is telling everyone. */
@@ -24,7 +24,7 @@ export const OBJ_BUILDING = 1
 
 /** Entity kinds, generated from `consts.rs`. A vehicle kind's definition is `vehicleDef`. */
 export {
-  KIND_BACKPACK, KIND_DEER, KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MISSILE, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_ROOSTER, KIND_SEAPLANE, KIND_SHIP, KIND_SHIP_GUN, KIND_SNOWMOBILE, KIND_SNOWRACER, KIND_SPORTS, KIND_SOLDIER, KIND_STAG, KIND_STRF, KIND_STRV, KIND_SUBMARINE, KIND_TANK, KIND_TECHNICAL, KIND_TUPP, KIND_WALKER, KIND_ZOMBIE,
+  KIND_BACKPACK, KIND_DEER, KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MISSILE, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_ROOSTER, KIND_SEAPLANE, KIND_SHIP, KIND_SHIP_GUN, KIND_SNOWMOBILE, KIND_SNOWRACER, KIND_SPORTS, KIND_SOLDIER, KIND_STAG, KIND_STRF, KIND_STRV, KIND_SUBMARINE, KIND_TANK, KIND_TECHNICAL, KIND_TITAN, KIND_TUPP, KIND_WALKER, KIND_ZOMBIE,
 } from '@/sim/consts'
 export { isDrone } from '@/sim/vehicles'
 
@@ -102,6 +102,8 @@ export const WEAPON_GLASS = 33
 export const WEAPON_CLAW = 34
 /** A submarine's guided missile going off. */
 export const WEAPON_MISSILE = 35
+/** A Titan's fist or foot: punched, thrown or stepped on. */
+export const WEAPON_TITAN = 36
 
 /** `Limbs`'s lost limbs, the low four bits; the same bits above `LIMB_BLEED_SHIFT` still bleed. Mirrors `LIMB_*`. */
 export const LIMB_ARM_L = 1 << 0
@@ -192,6 +194,17 @@ export const ARMS_CUT = 1 << 0
 export const ARMS_JAMMED = 1 << 1
 export const ARMS_REAR_JAMMED = 1 << 2
 
+/**
+ * `ClientHands.flags` and `Titan.flags`: a hand is closed, and a hand is being moved by its pilot
+ * (otherwise it hangs). `Titan.flags` also says which hands hold something. Mirrors `HANDS_*`.
+ */
+export const HANDS_GRIP_LEFT = 1 << 0
+export const HANDS_GRIP_RIGHT = 1 << 1
+export const HANDS_REACH_LEFT = 1 << 2
+export const HANDS_REACH_RIGHT = 1 << 3
+export const HANDS_FULL_LEFT = 1 << 4
+export const HANDS_FULL_RIGHT = 1 << 5
+
 /** `Pintle.flags`: the gun is jammed. Mirrors `PINTLE_JAMMED`. */
 export const PINTLE_JAMMED = 1 << 0
 /** `Sub.flags`: the submarine's periscope is raised. Mirrors `SUB_MAST_UP`. */
@@ -230,6 +243,11 @@ export const RTC_ICE = 2
 /** Voice signaling for player `peer`. Goes down the signaling stream, not as a datagram. */
 export function encodeRtc(peer: number, kind: number, json: string): Uint8Array {
   return encode(writeRtc({ peer, kind, json }))
+}
+
+/** Where a Titan's pilot wants its fists, centimetres in its hull frame. */
+export function encodeHands(hands: ClientHands): Uint8Array {
+  return encode(writeClientHands(hands))
 }
 
 export function encodePing(nonce: number): Uint8Array {

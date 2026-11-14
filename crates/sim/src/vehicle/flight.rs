@@ -427,40 +427,47 @@ pub(crate) fn glide(body: &mut RigidBody, glide: Glide, controls: CarControls, f
 
 /// One tick of a walker: its two legs push the hull up from the ground, a torque keeps it upright and
 /// the driver walks and turns it. `feet` is how far below each hip the ground is, `None` where it is
-/// out of reach; a leg is a spring that pushes only while the foot is within `WALKER_LEG_LENGTH`.
+/// out of reach; a leg is a spring that pushes only while the foot is within its length. The legs are
+/// the kind's `Gait`.
 ///
 /// Everything is a force or a torque, so a blast or a ram that gives the hull more spin than the
-/// balance torque (capped at `WALKER_BALANCE_MAX`) can take out tips it over. Once it is past
-/// `WALKER_FALLEN_UP` the legs let go and the driver loses control, and a weak pull stands it up again
-/// by itself. `standing` is false for a wreck, which has no pull at all. Everything is a function of
-/// the body's state and the controls alone, so the client can replay it.
-pub(crate) fn walk(body: &mut RigidBody, controls: CarControls, standing: bool, feet: [Option<f32>; 2]) {
+/// balance torque (capped at `Gait::balance_max`) can take out tips it over. Once it is past
+/// `Gait::fallen_up` the legs let go and the driver loses control, and a weak pull stands it up again
+/// by itself. `standing` is false for a wreck, which has no pull at all. A kind that can crouch
+/// (`Gait::crouch`) does while its driver holds `lift` down: its legs shorten and it leans forward.
+/// Everything is a function of the body's state and the controls alone, so the client can replay it.
+pub(crate) fn walk(body: &mut RigidBody, spec: &Spec, gait: &Gait, controls: CarControls, standing: bool, feet: [Option<f32>; 2]) {
     let rotation = *body.rotation();
     let up = rotation * Vector::Y;
     let mass = body.mass();
-    let [_, hy, _] = WALKER_HALF_EXTENTS;
+    let [hx, hy, hz] = spec.half_extents;
     body.reset_forces(false);
     body.reset_torques(false);
 
     // Upright enough to stand on, and how much of the way from fallen to upright it is.
-    let upright = ((up.y - WALKER_FALLEN_UP) / (1.0 - WALKER_FALLEN_UP)).clamp(0.0, 1.0);
-    let fallen = up.y < WALKER_FALLEN_UP;
+    let upright = ((up.y - gait.fallen_up) / (1.0 - gait.fallen_up)).clamp(0.0, 1.0);
+    let fallen = up.y < gait.fallen_up;
+    // How far down it crouches, 0..1: only a driver's doing.
+    let crouch = if controls.powered { (-controls.lift).clamp(0.0, 1.0) } else { 0.0 };
+    let leg_length = gait.leg_length - gait.crouch * crouch;
 
     // The legs: springs from each hip, pushing the hull up and damped by the foot's own speed.
     let mut grounded = 0;
     if standing && !fallen {
-        let spring = WALKER_LEG_SPRING * mass / 2.0;
-        let damper = WALKER_LEG_DAMPING * mass / 2.0;
+        let spring = gait.spring * mass / 2.0;
+        let damper = gait.damping * mass / 2.0;
         for (index, reach) in feet.iter().enumerate() {
             let Some(distance) = *reach else { continue };
-            if distance >= WALKER_LEG_LENGTH {
+            if distance >= gait.leg_length {
                 continue;
             }
             grounded += 1;
             let side = if index == 0 { -1.0 } else { 1.0 };
-            let hip = rotation * Vector::new(side * WALKER_FOOT_HALF, -hy, 0.0);
+            let hip = rotation * Vector::new(side * gait.foot_half, -hy, 0.0);
             let rate = (body.linvel() + body.angvel().cross(hip)).y;
-            let push = (spring * (WALKER_LEG_LENGTH - distance) - damper * rate).max(0.0) * upright.sqrt();
+            // Legs that straighten at a set pace push no harder than holds it.
+            let bent = if gait.rise > 0.0 { (leg_length - distance).min((CAR_GRAVITY + gait.damping * gait.rise) / gait.spring) } else { leg_length - distance };
+            let push = (spring * bent - damper * rate).max(0.0) * upright.sqrt();
             body.add_force_at_point(Vector::new(0.0, push, 0.0), body.translation() + hip, true);
         }
     }
@@ -479,34 +486,36 @@ pub(crate) fn walk(body: &mut RigidBody, controls: CarControls, standing: bool, 
     // Planted feet hold it still when nobody drives: it stops where it stands, as a walker does.
     if standing_on {
         let throttle = if driven { controls.throttle.clamp(-1.0, 1.0) } else { 0.0 };
-        let top = if throttle >= 0.0 { WALKER_MAX_SPEED } else { WALKER_MAX_SPEED * WALKER_REVERSE_SHARE };
+        let top = if throttle >= 0.0 { gait.max_speed } else { gait.max_speed * gait.reverse_share };
         let along = velocity.dot(heading);
         let wanted = throttle * top;
         // Slowing down is quicker than speeding up: it plants its feet and leans back.
-        let limit = if wanted.abs() < along.abs() || wanted * along < 0.0 { WALKER_BRAKE } else { WALKER_ACCEL };
+        let limit = if wanted.abs() < along.abs() || wanted * along < 0.0 { gait.brake } else { gait.accel };
         let ahead = (wanted - along).clamp(-limit, limit);
         // Planted feet do not slide sideways.
-        let sideways = (-velocity.dot(right) * WALKER_GRIP_GAIN).clamp(-WALKER_GRIP, WALKER_GRIP);
+        let sideways = (-velocity.dot(right) * gait.grip_gain).clamp(-gait.grip, gait.grip);
         push = (heading * ahead + right * sideways) * share;
     }
 
     // Balance: an acceleration that turns the hull's up axis towards where it should point, damped by its
     // tilt rate. A walker leans into what it pushes with, as a person does, and a little more the faster it
-    // goes. Pitching is the axis it can fight best (`WALKER_BALANCE_MAX_PITCH`), and falling forwards or
+    // goes. Pitching is the axis it can fight best (`Gait::balance_max_pitch`), and falling forwards or
     // back it takes a catching step: a push under the top, so its feet get back under it. Fallen, only the
     // weak getting-up share is left.
     let mut catching = Vector::ZERO;
     if standing {
-        let share = if fallen { WALKER_GETUP_SHARE } else if grounded > 0 { 1.0 } else { 0.0 };
-        let cruise = (velocity.dot(heading) / WALKER_MAX_SPEED).clamp(-1.0, 1.0) * WALKER_CRUISE_LEAN;
-        let target = (Vector::Y + push * WALKER_ACCEL_LEAN / CAR_GRAVITY + heading * cruise).normalize();
+        // A kind that gets up with more than its standing pull eases back to it as it comes upright, so
+        // that it does not drop again the moment its legs take over.
+        let risen = if gait.getup_share > 1.0 { 1.0 + (gait.getup_share - 1.0) * (1.0 - upright) } else { 1.0 };
+        let share = if fallen { gait.getup_share } else if grounded > 0 { risen } else { 0.0 };
+        let cruise = (velocity.dot(heading) / gait.max_speed).clamp(-1.0, 1.0) * gait.cruise_lean + crouch * gait.crouch_lean;
+        let target = (Vector::Y + push * gait.accel_lean / CAR_GRAVITY + heading * cruise).normalize();
         let error = up.cross(target);
         let mut tilt_rate = body.angvel();
         tilt_rate.y = 0.0;
-        let raw = error * WALKER_BALANCE_GAIN - tilt_rate * WALKER_BALANCE_DAMP;
+        let raw = error * gait.balance_gain - tilt_rate * gait.balance_damp;
         let pitch = raw.dot(right);
-        let wanted = (raw - right * pitch).clamp_length_max(WALKER_BALANCE_MAX) + right * pitch.clamp(-WALKER_BALANCE_MAX_PITCH, WALKER_BALANCE_MAX_PITCH);
-        let [hx, hy, hz] = WALKER_HALF_EXTENTS;
+        let wanted = (raw - right * pitch).clamp_length_max(gait.balance_max) + right * pitch.clamp(-gait.balance_max_pitch, gait.balance_max_pitch);
         let inertia = mass * (hx * hx + hy * hy + hz * hz) / 3.0;
         body.add_torque(wanted * (share * inertia), true);
 
@@ -517,8 +526,8 @@ pub(crate) fn walk(body: &mut RigidBody, controls: CarControls, standing: bool, 
             let mut fall = body.angvel().cross(up);
             fall.y = 0.0;
             let dead = |x: f32, margin: f32| x.signum() * (x.abs() - margin).max(0.0);
-            let step = (dead(lean, WALKER_CATCH_LEAN_MARGIN) * WALKER_CATCH_GAIN + dead(fall.dot(heading), WALKER_CATCH_FALL_MARGIN) * WALKER_CATCH_DAMP)
-                .clamp(-WALKER_CATCH_MAX, WALKER_CATCH_MAX);
+            let step = (dead(lean, gait.catch_lean_margin) * gait.catch_gain + dead(fall.dot(heading), gait.catch_fall_margin) * gait.catch_damp)
+                .clamp(-gait.catch_max, gait.catch_max);
             catching = heading * (step * grounded as f32 / 2.0);
         }
     }
@@ -533,11 +542,10 @@ pub(crate) fn walk(body: &mut RigidBody, controls: CarControls, standing: bool, 
     }
     // Clockwise seen from above is a negative rotation about +Y.
     // It turns slower the faster it walks, so its feet can keep up with the heading.
-    let turn_rate = WALKER_TURN_RATE / (1.0 + velocity.dot(heading).abs() / WALKER_MAX_SPEED);
+    let turn_rate = gait.turn_rate / (1.0 + velocity.dot(heading).abs() / gait.max_speed);
     let yaw = (-controls.steer.clamp(-1.0, 1.0) * turn_rate - body.angvel().y) * 4.0;
-    let [hx, _, hz] = WALKER_HALF_EXTENTS;
     let inertia = mass * (hx * hx + hz * hz) / 3.0;
-    body.add_torque(Vector::new(0.0, yaw.clamp(-WALKER_TURN_ACCEL, WALKER_TURN_ACCEL) * inertia * share, 0.0), true);
+    body.add_torque(Vector::new(0.0, yaw.clamp(-gait.turn_accel, gait.turn_accel) * inertia * share, 0.0), true);
 }
 
 /// The share of a plane's thrust its throttle asks for. With the stick released it cruises in the

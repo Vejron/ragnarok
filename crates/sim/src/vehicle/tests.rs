@@ -1,7 +1,7 @@
 use shared::vec3;
 use super::*;
 use shared::consts::TICK_DT;
-use shared::protocol::{KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MISSILE, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_SEAPLANE, KIND_SNOWMOBILE, KIND_SNOWRACER, KIND_SPORTS, KIND_STRF, KIND_STRV, KIND_TANK, KIND_TECHNICAL, KIND_WALKER};
+use shared::protocol::{KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MISSILE, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_SEAPLANE, KIND_SNOWMOBILE, KIND_SNOWRACER, KIND_SPORTS, KIND_STRF, KIND_STRV, KIND_TANK, KIND_TECHNICAL, KIND_TITAN, KIND_WALKER};
 use shared::world::{CollisionMesh, WORLD_VERSION, WorldFile};
 
 fn flat() -> WorldFile {
@@ -2070,4 +2070,189 @@ fn in_the_air_the_rider_turns_a_snowracer_and_leans_it_forward_or_back() {
     let forward = jump(KIND_SNOWRACER, 20.0, 1.0, 5.0, FORWARD);
     let back = jump(KIND_SNOWRACER, 20.0, 1.0, 5.0, CarControls { throttle: -1.0, ..COAST });
     assert!(forward.below < -0.25 && back.above > 0.2, "W leans the nose down, S lifts it: {forward:?}, {back:?}");
+}
+
+/// `world`, a point in the world, in the hull frame of vehicle 1.
+fn in_hull(physics: &Physics, world: [f32; 3]) -> [f32; 3] {
+    let pose = physics.car_pose(1).unwrap();
+    pose.local_dir(vec3::sub(world, pose.position))
+}
+
+fn titan() -> Physics {
+    let mut physics = Physics::new(&flat()).unwrap();
+    physics.add_car(1, KIND_TITAN, [0.0, TITAN_LEG_LENGTH + TITAN_HALF_EXTENTS[1], 0.0], 0.0);
+    physics
+}
+
+#[test]
+fn a_titan_stands_fifty_metres_high_on_its_legs() {
+    let mut physics = titan();
+    let pose = run(&mut physics, COAST, 600);
+    println!("titan stands: {pose:?}");
+    assert!(pose.up_y > 0.995, "upright: {pose:?}");
+    assert!((pose.position[1] - TITAN_RIDE_HEIGHT).abs() < 0.1, "its hull rides {TITAN_RIDE_HEIGHT} m up: {pose:?}");
+    assert!(pose.velocity.iter().all(|v| v.abs() < 0.1), "at rest: {pose:?}");
+    // The top of its head is about fifty metres up.
+    let top = pose.position[1] + TITAN_EYE[1] + 3.0;
+    assert!((45.0..55.0).contains(&top), "about fifty metres high: {top}");
+    let limbs = physics.limbs(1).unwrap();
+    for (index, foot) in limbs.feet.iter().enumerate() {
+        let side = if index == 0 { -1.0 } else { 1.0 };
+        assert!(foot[1].abs() < 0.05 && (foot[0] - side * TITAN_FOOT_HALF).abs() < 0.5 && foot[2].abs() < 0.5, "foot {index} stands under its hip: {foot:?}");
+    }
+}
+
+#[test]
+fn a_titan_walks_turns_and_steps_after_itself() {
+    let mut physics = titan();
+    run(&mut physics, COAST, 300);
+    let mut landed = [0; 2];
+    let mut pose = physics.car_pose(1).unwrap();
+    for _ in 0..600 {
+        pose = run(&mut physics, CarControls { throttle: 1.0, ..DRIVEN }, 1);
+        let limbs = physics.limbs(1).unwrap();
+        for (index, count) in landed.iter_mut().enumerate() {
+            *count += u32::from(limbs.landed[index]);
+            let away = (limbs.feet[index][0] - pose.position[0]).hypot(limbs.feet[index][2] - pose.position[2]);
+            assert!(away < 3.0 * TITAN_STRIDE, "foot {index} keeps up with the hull: {away} m off");
+        }
+    }
+    println!("titan walks: {pose:?}, steps {landed:?}");
+    assert!(pose.forward_speed > 0.9 * TITAN_MAX_SPEED, "up to speed: {pose:?}");
+    assert!(pose.up_y > 0.97, "stays upright walking: {pose:?}");
+    assert!(landed[0] >= 3 && landed[1] >= 3 && landed[0].abs_diff(landed[1]) <= 1, "its feet step in turn: {landed:?}");
+    let stopped = run(&mut physics, DRIVEN, 300);
+    assert!(stopped.forward_speed.abs() < 0.3, "stops when the stick is let go: {stopped:?}");
+    let before = stopped.yaw();
+    let turned = run(&mut physics, CarControls { steer: -1.0, ..DRIVEN }, 180);
+    assert!((turned.yaw() - before).abs() > 1.0, "turns on the spot: {before} -> {}", turned.yaw());
+    let limbs = physics.limbs(1).unwrap();
+    let feet_apart = (limbs.feet[0][0] - limbs.feet[1][0]).hypot(limbs.feet[0][2] - limbs.feet[1][2]);
+    assert!((feet_apart - 2.0 * TITAN_FOOT_HALF).abs() < 2.0 * 2.5, "its feet came round with it: {feet_apart} m apart");
+}
+
+#[test]
+fn a_titan_crouches_to_bring_a_fist_to_the_ground_and_stands_again() {
+    let mut physics = titan();
+    run(&mut physics, COAST, 300);
+    // Standing, a fist asked for at the ground ahead stops at the end of its arm, far above it.
+    let ahead = [TITAN_SHOULDER[0], -TITAN_RIDE_HEIGHT + TITAN_FIST_RADIUS, -12.0];
+    physics.set_hands(1, [Hand::default(), Hand { target: Some(ahead), closed: false }]);
+    run(&mut physics, DRIVEN, 180);
+    let high = physics.limbs(1).unwrap().fists_world[1];
+    assert!(high[1] > 8.0, "standing, it cannot reach the ground: {high:?}");
+    // Crouched, the same fist comes down to it. The target is given in the hull frame, which has come down too.
+    let crouched = run(&mut physics, CarControls { lift: -1.0, ..DRIVEN }, 300);
+    println!("titan crouched: {crouched:?}");
+    assert!(crouched.position[1] < TITAN_RIDE_HEIGHT - 0.8 * TITAN_CROUCH, "its hull came down: {crouched:?}");
+    assert!(crouched.up_y > 0.85, "it leans, but does not fall: {crouched:?}");
+    let low = [TITAN_SHOULDER[0], -crouched.position[1] + TITAN_FIST_RADIUS, -12.0];
+    physics.set_hands(1, [Hand::default(), Hand { target: Some(low), closed: false }]);
+    run(&mut physics, CarControls { lift: -1.0, ..DRIVEN }, 120);
+    let fist = physics.limbs(1).unwrap().fists_world[1];
+    println!("titan fist at the ground: {fist:?}");
+    assert!(fist[1] < TITAN_FIST_RADIUS + 1.0, "crouched, its fist is on the ground: {fist:?}");
+    let stood = run(&mut physics, DRIVEN, 300);
+    assert!((stood.position[1] - TITAN_RIDE_HEIGHT).abs() < 0.5 && stood.up_y > 0.99, "it stands up again: {stood:?}");
+}
+
+#[test]
+fn a_titans_fist_goes_where_it_is_asked_within_its_reach_and_no_faster_than_its_arm() {
+    let mut physics = titan();
+    run(&mut physics, COAST, 300);
+    let shoulder = [TITAN_SHOULDER[0], TITAN_SHOULDER[1], TITAN_SHOULDER[2]];
+    // Far beyond its reach, straight ahead of the shoulder.
+    physics.set_hands(1, [Hand::default(), Hand { target: Some([shoulder[0], shoulder[1], -200.0]), closed: true }]);
+    let mut fastest: f32 = 0.0;
+    for _ in 0..120 {
+        run(&mut physics, DRIVEN, 1);
+        let limbs = physics.limbs(1).unwrap();
+        fastest = fastest.max(vec3::length(limbs.fist_velocity[1]));
+        assert!(vec3::distance(limbs.fists[1], shoulder) <= TITAN_REACH + 1e-2, "within reach: {:?}", limbs.fists[1]);
+    }
+    let limbs = physics.limbs(1).unwrap();
+    println!("titan fist: {limbs:?}, fastest {fastest}");
+    assert!((limbs.fists[1][2] + TITAN_REACH).abs() < 0.2 && limbs.closed == [false, true], "at the end of its arm, closed: {limbs:?}");
+    assert!(fastest > 0.8 * TITAN_FIST_SPEED && fastest < TITAN_FIST_SPEED + 3.0, "it swings at its arm's speed: {fastest}");
+    assert!(vec3::length(limbs.fist_velocity[1]) < 1.0, "and stops there: {limbs:?}");
+    // The other one hangs where it rests, mirrored.
+    assert!(vec3::distance(limbs.fists[0], [-TITAN_FIST_REST[0], TITAN_FIST_REST[1], TITAN_FIST_REST[2]]) < 0.05, "the left hangs: {limbs:?}");
+    // Asked for inside its own chest, it stays outside it.
+    physics.set_hands(1, [Hand::default(), Hand { target: Some([0.0, 0.0, 0.0]), closed: false }]);
+    run(&mut physics, DRIVEN, 120);
+    let [x, y, z] = physics.limbs(1).unwrap().fists[1];
+    let [hx, hy, hz] = TITAN_HALF_EXTENTS;
+    assert!(x.abs() >= hx + TITAN_FIST_RADIUS - 0.05 || y.abs() >= hy + TITAN_FIST_RADIUS - 0.05 || z.abs() >= hz + TITAN_FIST_RADIUS - 0.05, "outside its torso: {:?}", [x, y, z]);
+    // With nobody aboard, it hangs again.
+    run(&mut physics, COAST, 120);
+    let limbs = physics.limbs(1).unwrap();
+    assert!(vec3::distance(limbs.fists[1], TITAN_FIST_REST) < 0.05, "an empty one's arms hang: {limbs:?}");
+}
+
+#[test]
+fn a_titans_fist_shoves_a_jeep_and_a_closed_one_carries_it_off() {
+    let mut physics = titan();
+    run(&mut physics, COAST, 300);
+    let crouch = CarControls { lift: -1.0, ..DRIVEN };
+    let crouched = run(&mut physics, crouch, 300);
+    // A jeep ahead of the right fist, which sweeps through where it stands.
+    let jeep = [crouched.position[0] + TITAN_SHOULDER[0], 1.0, crouched.position[2] - 12.0];
+    physics.add_car(2, KIND_JEEP, jeep, 0.0);
+    let level = TITAN_FIST_RADIUS + 0.3;
+    physics.set_hands(1, [Hand::default(), Hand { target: Some(in_hull(&physics, [jeep[0] + 8.0, level, jeep[2]])), closed: false }]);
+    run(&mut physics, crouch, 60);
+    physics.set_hands(1, [Hand::default(), Hand { target: Some(in_hull(&physics, [jeep[0] - 8.0, level, jeep[2]])), closed: false }]);
+    run(&mut physics, crouch, 60);
+    let shoved = physics.car_pose(2).unwrap();
+    println!("jeep shoved: {shoved:?}");
+    assert!(shoved.position[0] < jeep[0] - 3.0, "the fist swept it aside: {shoved:?}");
+    let titan_now = physics.car_pose(1).unwrap();
+    assert!(titan_now.up_y > 0.85 && vec3::distance(titan_now.position, crouched.position) < 0.5, "the Titan does not feel it: {titan_now:?}");
+
+    // Closed on it, the fist lifts it.
+    for _ in 0..90 {
+        let at = physics.car_pose(2).unwrap().position;
+        physics.set_hands(1, [Hand::default(), Hand { target: Some(in_hull(&physics, at)), closed: true }]);
+        run(&mut physics, crouch, 1);
+    }
+    let fist = physics.limbs(1).unwrap().fists_world[1];
+    assert_eq!(physics.cars_touching_ball(fist, TITAN_FIST_RADIUS + 0.5, 1), vec![2], "the fist is on the jeep");
+    assert!(physics.grab_car(1, 1, 2) && physics.held_car(1, 1) == Some(2));
+    assert!(!physics.grab_car(1, 1, 2), "a full hand takes nothing more");
+    physics.set_hands(1, [Hand::default(), Hand { target: Some([TITAN_SHOULDER[0], 0.0, -15.0]), closed: true }]);
+    let stood = run(&mut physics, DRIVEN, 300);
+    let carried = physics.car_pose(2).unwrap();
+    println!("jeep carried: {carried:?}, titan {stood:?}");
+    assert!(carried.position[1] > 25.0, "carried high: {carried:?}");
+    assert!(stood.up_y > 0.98, "the Titan stands with it: {stood:?}");
+    // Thrown: let go while the fist swings.
+    physics.set_hands(1, [Hand::default(), Hand { target: Some([TITAN_SHOULDER[0], 5.0, -30.0]), closed: true }]);
+    run(&mut physics, DRIVEN, 12);
+    assert_eq!(physics.release_car(1, 1), Some(2));
+    let thrown = physics.car_pose(2).unwrap();
+    assert!(vec3::length(thrown.velocity) > 15.0 && physics.held_car(1, 1).is_none(), "it flies off as fast as the fist went: {thrown:?}");
+    // A tank is not too heavy, but another Titan is not a thing to pick up.
+    physics.add_car(3, KIND_TITAN, [80.0, TITAN_RIDE_HEIGHT, 0.0], 0.0);
+    assert!(!physics.grab_car(1, 0, 3));
+}
+
+#[test]
+fn a_titan_shrugs_off_a_shell_but_a_great_blow_fells_it_and_it_gets_up() {
+    let mut physics = titan();
+    run(&mut physics, COAST, 300);
+    // A blast against its chest that would throw a walker over.
+    physics.blast_cars([0.0, TITAN_RIDE_HEIGHT, -5.0], 12.0);
+    let pose = run(&mut physics, COAST, 300);
+    assert!(pose.up_y > 0.99 && pose.position[2].abs() < 1.0, "a shell's blast barely moves it: {pose:?}");
+    // Thrown over bodily.
+    physics.spin_car(1, [0.0, 0.0, 6.0]);
+    let mut lowest: f32 = 1.0;
+    for _ in 0..240 {
+        lowest = lowest.min(run(&mut physics, COAST, 1).up_y);
+    }
+    println!("titan felled: lowest up {lowest}");
+    assert!(lowest < TITAN_GAIT.fallen_up, "a great blow fells it: {lowest}");
+    let pose = run(&mut physics, COAST, 1800);
+    println!("titan got up: {pose:?}");
+    assert!(pose.up_y > 0.98 && (pose.position[1] - TITAN_RIDE_HEIGHT).abs() < 1.0, "it gets up again: {pose:?}");
 }

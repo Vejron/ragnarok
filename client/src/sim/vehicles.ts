@@ -42,6 +42,8 @@ export interface VehicleDef {
   shedsTurret: boolean
   /** Flown from afar by whoever launched it. */
   drone: boolean
+  /** A giant with two arms, whose pilot moves its fists (a Titan). */
+  fists: boolean
   /** Where it is boarded from in the hull frame, when not its middle: a ship's helm, a ship's gun's breech (`VehicleDef::board`). */
   board: Triple | null
   /** Its vision slits, which a round goes straight through (`Armor::slits`). */

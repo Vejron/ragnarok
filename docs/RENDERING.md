@@ -554,6 +554,16 @@ banners, the touch controls and invisible tap targets over the drawn hotbar.
   the reader (`paperView`, 1.2 km, kept on the world) on a canvas texture, redrawn 8 times a second.
   The view eases into first person at the eyes while it is up; firing or aiming puts it away.
 
+## A headset's two eyes
+
+`Renderer.renderEye(scene, camera, target)` draws the whole frame into part of a texture that is not the canvas: one eye of a VR headset ([VR.md](VR.md)). It is `render` with three differences:
+
+- the last pass draws into `target.view` at `target.x, y`, at the size `setSize` was last given, and keeps what is there already for an eye after the first;
+- an eye after the first (`target.again`) keeps the first's shadow map and exposure;
+- the camera's `lens`, when set, is its projection in place of the one `fov` and `aspect` make.
+
+The canvas's path does none of this and costs what it did.
+
 ## Adding to the pipeline
 
 - **A new model or effect:** add its root to the scene in `Game`'s constructor. Make its materials

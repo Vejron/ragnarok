@@ -7,6 +7,7 @@ import * as w from './wire'
 export const C_INPUT = 0
 export const C_PING = 1
 export const C_RTC = 2
+export const C_HANDS = 3
 export const S_WELCOME = 0
 export const S_SNAPSHOT = 1
 export const S_PONG = 2
@@ -59,6 +60,16 @@ export interface ClientInput {
 
 export interface Ping {
   nonce: number
+}
+
+export interface ClientHands {
+  lx: number
+  ly: number
+  lz: number
+  rx: number
+  ry: number
+  rz: number
+  flags: number
 }
 
 export interface Welcome {
@@ -661,5 +672,7 @@ export const writeInputFrame = (m: InputFrame): unknown[] => [m.seq, m.strafe, m
 export const writeClientInput = (m: ClientInput): unknown[] => [C_INPUT, m.version, m.baseline, m.frames.map(writeInputFrame)]
 
 export const writePing = (m: Ping): unknown[] => [C_PING, m.nonce]
+
+export const writeClientHands = (m: ClientHands): unknown[] => [C_HANDS, m.lx, m.ly, m.lz, m.rx, m.ry, m.rz, m.flags]
 
 export const writeRtc = (m: Omit<Rtc, 'type'>): unknown[] => [C_RTC, m.peer, m.kind, m.json]

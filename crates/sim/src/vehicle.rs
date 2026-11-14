@@ -28,6 +28,7 @@ use shared::protocol::{DAMAGE_PARTS, DAMAGE_SLOTS, DAMAGE_WHEELS, THRUST_AIR, TH
 mod dive;
 mod flight;
 mod floats;
+mod limbs;
 mod sail;
 mod spec;
 mod water;
@@ -38,7 +39,8 @@ use floats::float;
 use sail::sail;
 use water::{wade, water_under};
 pub use spec::half_extents;
-pub(super) use spec::{Airframe, Buttons, Floats, Lift, Role, Runners, Shape, Solid, Spec, spec};
+pub use limbs::{Hand, LIMB_GROUP, LimbsPose};
+pub(super) use spec::{Airframe, Arms, Buttons, Floats, Gait, Lift, Role, Runners, Shape, Solid, Spec, spec};
 
 
 /// How quickly a tank's yaw rate follows the stick, rad/s².
@@ -113,7 +115,7 @@ pub struct CarControls {
     /// -1 (left) ..= 1 (right). A helicopter turns instead, and a plane rolls.
     pub steer: f32,
     pub handbrake: bool,
-    /// -1 (sink) ..= 1 (climb). Only a helicopter has it.
+    /// -1 (sink) ..= 1 (climb). A helicopter has it, and a Titan, which crouches on sink.
     pub lift: f32,
     /// The rotor or the propeller is turning, i.e. a pilot is aboard. Only a helicopter and a plane have it.
     pub powered: bool,
@@ -223,6 +225,7 @@ impl CarControls {
             Buttons::Stunt => CarControls { handbrake: held(BUTTON_CROUCH), boost: held(BUTTON_RUN), hop: held(BUTTON_JUMP), ..stick },
             Buttons::Leap => CarControls { hop: held(BUTTON_JUMP), ..stick },
             Buttons::Sled => CarControls { handbrake: held(BUTTON_JUMP), boost: held(BUTTON_RUN), ..stick },
+            Buttons::Stride => CarControls { lift: -f32::from(held(BUTTON_CROUCH)), ..stick },
         }
     }
 }
@@ -325,6 +328,8 @@ pub(super) struct Car {
     firing: u8,
     /// Where a ship's gun is fixed (`mount_car`): it is carried there after every step.
     mounted: Option<Mounted>,
+    /// A giant's fists and feet: kinematic bodies of their own (`limbs`).
+    limbs: Option<limbs::Limbs>,
 }
 
 /// A vehicle fixed to another one, `on`, at `at` (its own frame), turned `yaw` there.
@@ -337,7 +342,7 @@ struct Mounted {
 impl Car {
     /// Whether `collider` is one of this vehicle's solids.
     fn owns(&self, collider: ColliderHandle) -> bool {
-        self.collider == collider || self.extra.contains(&collider)
+        self.collider == collider || self.extra.contains(&collider) || self.limbs.as_ref().is_some_and(|limbs| limbs.owns(collider))
     }
 }
 
@@ -414,7 +419,13 @@ pub(crate) fn heavy(kind: u8) -> bool {
 /// out of what they touch, as the hull does.
 pub(crate) fn extra_solids(kind: u8) -> Vec<ColliderBuilder> {
     let solids = spec(kind).solids.iter().map(|solid| ColliderBuilder::new(solid.shape(0.0)).translation(Vector::from(solid.at)));
-    if heavy(kind) { solids.map(|collider| collider.collision_groups(super::plows_trees())).collect() } else { solids.collect() }
+    if spec(kind).arms.is_some() {
+        solids.map(|collider| collider.collision_groups(limbs::giant_groups())).collect()
+    } else if heavy(kind) {
+        solids.map(|collider| collider.collision_groups(super::plows_trees())).collect()
+    } else {
+        solids.collect()
+    }
 }
 
 /// Whether a snowmobile under `controls` has its boost open: held, driving forward, with some left in `tank`.
@@ -560,7 +571,9 @@ impl Physics {
         } else {
             chassis.density(spec.density)
         };
-        if heavy(kind) {
+        if spec.arms.is_some() {
+            chassis = chassis.collision_groups(limbs::giant_groups());
+        } else if heavy(kind) {
             chassis = chassis.collision_groups(super::plows_trees());
         }
         let collider = self.colliders.insert_with_parent(chassis.build(), body, &mut self.bodies);
@@ -607,13 +620,20 @@ impl Physics {
                 }
             }
         }
-        self.cars.insert(id, Car { spec, body, collider, extra, controller, steer: 0.0, turn: 0.0, spin: 0.0, flight: CarControls::IDLE, air: (0.0, 0.0), condition: CarCondition::NEW, towed_by: None, tank: spec.tank, firing: 0, mounted: None });
+        self.cars.insert(id, Car { spec, body, collider, extra, controller, steer: 0.0, turn: 0.0, spin: 0.0, flight: CarControls::IDLE, air: (0.0, 0.0), condition: CarCondition::NEW, towed_by: None, tank: spec.tank, firing: 0, mounted: None, limbs: None });
+        self.add_limbs(id);
     }
 
     /// Takes vehicle `id` out of the world, with everything hitched to it.
     pub fn remove_car(&mut self, id: u32) {
         self.detach(id);
-        let Some(car) = self.cars.remove(&id) else { return };
+        self.drop_from_fists(id);
+        self.release_car(id, 0);
+        self.release_car(id, 1);
+        let Some(mut car) = self.cars.remove(&id) else { return };
+        if let Some(limbs) = car.limbs.take() {
+            self.remove_limbs(limbs);
+        }
         self.bodies.remove(car.body, &mut self.islands, &mut self.colliders, &mut self.impulse_joints, &mut self.multibody_joints, &mut self.soft_bodies, true);
     }
 
@@ -686,6 +706,8 @@ impl Physics {
     /// Puts a car back upright and at rest. Anything hitched to it lets go.
     pub fn reset_car(&mut self, id: u32, position: [f32; 3], yaw: f32) {
         self.detach(id);
+        self.drop_from_fists(id);
+        self.reset_limbs(id);
         let Some(car) = self.cars.get_mut(&id) else { return };
         car.steer = 0.0;
         car.turn = 0.0;
@@ -953,26 +975,29 @@ impl Physics {
         }
         // A walker's feet: how far below each hip the ground is.
         let mut stances = Vec::new();
-        for (&id, car) in self.cars.iter().filter(|(_, car)| car.spec.lift == Lift::Walker) {
+        for (&id, car) in &self.cars {
+            let Some(gait) = car.spec.gait.as_ref().filter(|_| car.spec.lift == Lift::Walker) else { continue };
             let Some(body) = self.bodies.get(car.body) else { continue };
             let [_, hy, _] = car.spec.half_extents;
-            let filter = QueryFilter::default().exclude_rigid_body(car.body);
+            // Nobody stands on a limb, their own or another giant's.
+            let solid = |_: ColliderHandle, collider: &Collider| !limbs::is_limb(collider);
+            let filter = QueryFilter::default().exclude_rigid_body(car.body).predicate(&solid);
             let queries = self.broad_phase.as_query_pipeline(self.narrow_phase.query_dispatcher(), &self.bodies, &self.colliders, filter);
             let feet = [-1.0, 1.0].map(|side| {
-                let hip = body.translation() + *body.rotation() * Vector::new(side * WALKER_FOOT_HALF, -hy, 0.0);
-                queries.cast_ray(&Ray::new(hip, Vector::new(0.0, -1.0, 0.0)), WALKER_LEG_LENGTH, true).map(|(_, distance)| distance)
+                let hip = body.translation() + *body.rotation() * Vector::new(side * gait.foot_half, -hy, 0.0);
+                queries.cast_ray(&Ray::new(hip, Vector::new(0.0, -1.0, 0.0)), gait.leg_length, true).map(|(_, distance)| distance)
             });
-            stances.push((id, feet));
+            stances.push((id, feet, gait));
         }
-        for (id, feet) in stances {
+        for (id, feet, gait) in stances {
             let Some(car) = self.cars.get_mut(&id) else { continue };
             let Some(body) = self.bodies.get_mut(car.body) else { continue };
             // A wreck (no health, which is exactly half power) has let go.
             let standing = car.condition.power > 0.5;
-            walk(body, car.flight, standing, feet);
+            walk(body, car.spec, gait, car.flight, standing, feet);
             // A hen's wings, after the legs, which reset the forces.
             if let Some(stamina) = &mut car.tank {
-                let grounded = feet.iter().any(|reach| reach.is_some_and(|distance| distance < WALKER_LEG_LENGTH));
+                let grounded = feet.iter().any(|reach| reach.is_some_and(|distance| distance < gait.leg_length));
                 car.firing = flap(body, car.flight, stamina, standing, grounded, dt);
             }
         }
@@ -1060,6 +1085,7 @@ impl Physics {
             spin.y = -car.spin;
             body.set_angvel(spin, true);
         }
+        self.step_limbs(dt);
         self.step_pipeline();
         self.carry_mounted();
     }
@@ -1347,10 +1373,11 @@ impl Physics {
             }
             let falloff = 1.0 - distance / radius;
             let direction = (away / distance.max(1e-3) + Vector::new(0.0, 0.4, 0.0)).normalize();
-            let impulse = direction * falloff * BLAST_VELOCITY * body.mass();
-            if car.spec.lift == Lift::Walker {
+            let share = car.spec.gait.map_or(1.0, |gait| gait.blast_share);
+            let impulse = direction * falloff * BLAST_VELOCITY * body.mass() * share;
+            if let Some(gait) = car.spec.gait.as_ref().filter(|_| car.spec.lift == Lift::Walker) {
                 // A tall hull catches it high up, which tips it as much as it pushes it.
-                let shoulders = body.translation() + *body.rotation() * Vector::new(0.0, WALKER_BLAST_LEVER, 0.0);
+                let shoulders = body.translation() + *body.rotation() * Vector::new(0.0, gait.blast_lever, 0.0);
                 body.apply_impulse_at_point(impulse, shoulders, true);
             } else {
                 body.apply_impulse(impulse, true);

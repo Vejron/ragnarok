@@ -1,4 +1,4 @@
-export { Renderer, RenderStats, type RendererOptions } from './renderer'
+export { Renderer, RenderStats, type EyeTarget, type RendererOptions } from './renderer'
 export { Node, Group } from './scene/node'
 export { Mesh, InstancedMesh, levelAt, fadingAt, FADE_MARGIN, type DetailLevel } from './scene/mesh'
 export { Geometry, type GeometryData, type Sphere } from './scene/geometry'

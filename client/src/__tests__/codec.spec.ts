@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { encode } from '@msgpack/msgpack'
-import { decodeServer, NOTICE_OBJECTIVE, encodeInput, encodePing, encodeRtc, RTC_ICE, FLAG_DEAD, FLAG_GROUNDED, toMrad, TURRET_STOWED, DEATH_ROADKILL, WEAPON_ROADKILL, WEAPON_SNIPER } from '@/net/codec'
+import { decodeServer, NOTICE_OBJECTIVE, encodeInput, encodeHands, encodePing, HANDS_GRIP_RIGHT, HANDS_REACH_RIGHT, encodeRtc, RTC_ICE, FLAG_DEAD, FLAG_GROUNDED, toMrad, TURRET_STOWED, DEATH_ROADKILL, WEAPON_ROADKILL, WEAPON_SNIPER } from '@/net/codec'
 import { Replica } from '@/net/replica'
 import type { Update } from '@/net/replicated'
 import { BUTTON_FIRE, BUTTON_JUMP, BUTTON_RUN, PROTOCOL_VERSION } from '@/sim/consts'
@@ -130,6 +130,8 @@ describe('codec', () => {
 
   it('round-trips pings and wraps angles', () => {
     expect([...encodePing(5)]).toEqual(fixture.ping)
+    // A Titan's pilot's hands, already in centimetres.
+    expect([...encodeHands({ lx: -1000, ly: -1500, lz: -300, rx: 850, ry: 600, rz: -2400, flags: HANDS_GRIP_RIGHT | HANDS_REACH_RIGHT })]).toEqual(fixture.hands)
     expect(toMrad(Math.PI * 2 + 1)).toBe(1000)
     expect(Math.abs(toMrad(1e6))).toBeLessThanOrEqual(3142)
   })

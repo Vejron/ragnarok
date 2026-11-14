@@ -11,7 +11,7 @@ struct Output {
   params: vec4f,
   // ink darken, ink strength, ink threshold, unused.
   ink: vec4f,
-  // camera near, camera far, unused, unused.
+  // camera near, camera far, and the pixel in the target the picture starts at (x, y).
   clip: vec4f,
   // bloom strength, light shafts' strength, vignette (0 to 1), Purkinje shift (0 to 1).
   bloom: vec4f,
@@ -112,7 +112,7 @@ fn toSrgb(c: vec3f) -> vec3f {
 
 @fragment
 fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
-  let p = vec2i(pos.xy);
+  let p = vec2i(pos.xy) - vec2i(output.clip.zw);
   var c: vec3f;
   if (output.beams.y > 0.0) {
     c = sharpened(p, output.beams.y);

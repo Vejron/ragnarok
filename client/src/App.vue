@@ -14,6 +14,8 @@ import { GYRO_MODES, type GyroMode } from './sim/gyro'
 const container = ref<HTMLElement | null>(null)
 const stats = shallowRef<HudStats | null>(null)
 const error = ref<string | null>(null)
+/** This browser can show the game in a VR headset (WebXR on WebGPU). */
+const vrOk = ref(false)
 const input = shallowRef<InputController | null>(null)
 const look = ref<Look>({ soft: true, contact: true, far: true, ink: true, bloom: true, rays: true, reflect: true, grass: true, scorch: true, adaptive: true, netStats: false })
 const lookOpen = ref(false)
@@ -43,7 +45,15 @@ onMounted(() => {
   game.start().catch((reason: unknown) => {
     error.value = reason instanceof Error ? reason.message : String(reason)
   })
+  void Game.vrSupported().then((ok) => (vrOk.value = ok))
 })
+
+/** Puts the game in the headset; what goes wrong is said, and the game stays on the screen. */
+function enterVr() {
+  game?.enterVr().catch((reason: unknown) => {
+    error.value = `VR: ${reason instanceof Error ? reason.message : String(reason)}`
+  })
+}
 
 function chooseQuality(next: Quality) {
   quality.value = next
@@ -93,7 +103,7 @@ const KEYS: [string, string][] = [
   ['WASD', 'move'], ['Shift', 'run'], ['Space', 'jump'], ['C', 'crouch'], ['Z', 'lie down'],
   ['E', 'take, drive, ride or man a gun'], ['1–5 / wheel', 'pick an item'], ['Click', 'fire'],
   ['Right mouse', 'aim (scope with the sniper or Carl Gustaf)'], ['R', 'reload'], ['X', 'holster'],
-  ['G', 'parachute'], ['K', 'skis (winter)'], ['L', 'headlamp'], ['V', 'talk'], ['M', 'read the map'],
+  ['G', 'parachute'], ['K', 'skis (winter)'], ['L', 'headlamp'], ['V', 'talk'], ['M', 'read the map'], ['B', 'a Titan: from its head'],
   ['Tab', 'scores'], ['F3', 'network stats'], ['Esc', 'release the mouse'],
 ]
 </script>
@@ -127,6 +137,7 @@ const KEYS: [string, string][] = [
     <div class="actions" @click.stop>
       <a class="chip" :href="settingsUrl" title="Leaves the match: you join again when you come back">Settings · name, colour, loadout, spawns</a>
       <button type="button" class="chip" :aria-expanded="lookOpen" @click="lookOpen = !lookOpen">Graphics {{ lookOpen ? '▴' : '▾' }}</button>
+      <button v-if="vrOk" type="button" class="chip" title="Shows the game in the headset. Pilot a Titan with your own hands" @click="enterVr">Enter VR</button>
       <button v-if="stats.touch" type="button" class="chip" :aria-expanded="controlsOpen" @click="controlsOpen = !controlsOpen">Controls {{ controlsOpen ? '▴' : '▾' }}</button>
     </div>
     <div v-if="controlsOpen && stats.touch" class="look" @click.stop>

@@ -1,4 +1,5 @@
-import { Adaptation, Beams, Bloom, Color, Fog, Grade, Ink, LensFlare, PerspectiveCamera, Renderer, Scene as EngineScene, Shafts, Sky } from '@ragnarok/engine'
+import { Adaptation, Beams, Bloom, Color, Fog, Grade, Ink, LensFlare, PerspectiveCamera, Quaternion, Renderer, Scene as EngineScene, Shafts, Sky, Vector3, type EyeTarget } from '@ragnarok/engine'
+import type { Eye } from '@/xr/headset'
 import { GunSightView } from './gunsight'
 import { HeldMapView } from './heldmap'
 import { ContactShadows } from './contact'
@@ -23,6 +24,11 @@ export const DRIVING_DISTANCE = 9
 export const TANK_DISTANCE = 13
 export const HELI_DISTANCE = 16
 export const WALKER_DISTANCE = 15
+/** Behind a Titan's shoulders, far enough to see all of it, and this far above the line of the look. */
+export const TITAN_DISTANCE = 60
+export const TITAN_AIM_UP = 14
+/** The point the Titan's camera swings about, above its hull's centre: between its shoulders. */
+export const TITAN_PIVOT_UP = 6
 /** The hen is as big as the walker, and its leaps and glides want room to see where it lands. */
 export const HEN_DISTANCE = 17
 /** Behind the field mortar, which is low and wide. */
@@ -131,6 +137,8 @@ export class Scene {
   private readonly glint = new Color()
   /** Whether the camera is under the water's surface this frame (see `setUnderwater`). */
   private underwater = false
+  /** A headset's eyes for the frame about to be drawn, or null to draw to the canvas (`see`). */
+  private eyes: readonly Eye[] | null = null
   private readonly murk = new Color()
   private readonly saved = { fog: new Color(), background: new Color(), near: 0, far: 0 }
   /** The light on flat ground against noon's, per channel: white at noon, dark blue at midnight (see `Sky.tint`). */
@@ -168,7 +176,7 @@ export class Scene {
   }
 
   private async createRenderer(): Promise<Renderer> {
-    const renderer = await Renderer.create(this.canvas, { sampleCount: this.currentPreset.msaa, onDeviceLost: (info) => this.deviceLost(info) })
+    const renderer = await Renderer.create(this.canvas, { sampleCount: this.currentPreset.msaa, xrCompatible: 'XRGPUBinding' in globalThis, onDeviceLost: (info) => this.deviceLost(info) })
     setWaterReflection(renderer.reflection, renderer.skyPanorama)
     renderer.detail = this.currentPreset.treeDetail
     setTreeDetail(this.currentPreset.treeDetail)
@@ -352,6 +360,8 @@ export class Scene {
   }
 
   private resize() {
+    // In a headset the picture is the size of an eye, which `render` sees to.
+    if (this.eyes) return
     const { clientWidth: width, clientHeight: height } = this.container
     if (width === 0 || height === 0) return
     const screen = window.devicePixelRatio
@@ -493,13 +503,64 @@ export class Scene {
     this.underwater = under
   }
 
+  /** Whether a headset is being drawn for. */
+  get worn() {
+    return this.eyes !== null
+  }
+
+  /** Draws the next frames for a headset's `eyes`, or back to the canvas for null. */
+  see(eyes: readonly Eye[] | null) {
+    const was = this.eyes
+    this.eyes = eyes
+    // Back on the screen, the picture is the canvas's size again.
+    if (was && !eyes) this.resize()
+  }
+
+  /**
+   * Draws the frame: to the canvas from the camera, or in a headset once for each of `eyes`, which are
+   * placed from where the camera is and the heading it looks along (VR.md).
+   */
   render() {
     if (!this.renderer) return
+    const eyes = this.eyes
+    if (!eyes) return this.draw(null)
+    const camera = this.camera
+    const [first] = eyes
+    if (first && (first.width !== this.renderer.width || first.height !== this.renderer.height)) this.renderer.setSize(first.width, first.height, 1)
+    // The cockpit keeps level: the headset's space is turned to the camera's heading, and nothing else of it.
+    const base = camera.position.clone()
+    const turn = camera.quaternion.clone()
+    const look = camera.getWorldDirection(new Vector3())
+    const heading = new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), Math.atan2(-look.x, -look.z))
+    const { fov, aspect } = camera
+    try {
+      for (const eye of eyes) {
+        camera.position.set(...eye.position).applyQuaternion(heading).add(base)
+        camera.quaternion.copy(heading).multiply(new Quaternion(...eye.orientation))
+        camera.lens = eye.lens
+        camera.fov = eye.fov
+        camera.aspect = eye.aspect
+        this.draw(eye.target)
+      }
+    } finally {
+      camera.position.copy(base)
+      camera.quaternion.copy(turn)
+      camera.lens = null
+      camera.fov = fov
+      camera.aspect = aspect
+      camera.updateWorld()
+    }
+  }
+
+  private draw(eye: EyeTarget | null) {
+    if (!this.renderer) return
+    const renderer = this.renderer
+    const paint = () => (eye ? renderer.renderEye(this.scene, this.camera, eye) : renderer.render(this.scene, this.camera))
     // The reticle is laid out in view space; it goes where the camera is, just before drawing.
     this.camera.updateWorld()
     this.gunsight.follow(this.camera)
     this.heldMap.follow(this.camera)
-    if (!this.underwater) return this.renderer.render(this.scene, this.camera)
+    if (!this.underwater) return paint()
     // Under water the fog is the water's own colour, lit as the ground is, and close, with no sky; the sky's comes back after.
     const { fog, background } = this.scene
     this.scene.sky = null
@@ -516,7 +577,7 @@ export class Scene {
     fog!.near = MURK_NEAR
     fog!.far = MURK_FAR
     try {
-      this.renderer.render(this.scene, this.camera)
+      paint()
     } finally {
       fog!.color.copy(saved.fog)
       background.copy(saved.background)

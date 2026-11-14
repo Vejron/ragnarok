@@ -17,6 +17,8 @@ pub enum Command {
     Input(u32, u32, Vec<InputFrame>),
     /// Voice signaling from the first player for the second, relayed as is.
     Rtc { from: u32, to: u32, kind: u8, json: String },
+    /// Where a Titan's pilot wants its fists.
+    Hands(u32, ClientHands),
 }
 
 #[derive(Clone, Debug)]
@@ -47,6 +49,14 @@ pub struct LiftRide {
     pub lift: u16,
     pub chair: u16,
     pub seat: u8,
+}
+
+/// The fist of a Titan a soldier is held in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Fist {
+    pub titan: u32,
+    /// 0 is its left hand.
+    pub hand: u8,
 }
 
 /// A hotbar of `items`, one a slot, with full magazines and full stacks. `ITEM_NONE` is an empty slot.
@@ -81,6 +91,11 @@ pub struct Player {
     pub seat: Option<Seat>,
     /// Riding a ski lift's chair (`mechanics::lifts`): carried, not walking, but out in the world.
     pub lift: Option<LiftRide>,
+    /// Held in a Titan's fist (`mechanics::titans`): carried, not walking, but out in the world.
+    pub held: Option<Fist>,
+    /// Where they want the fists of the Titan they pilot, as last sent, and how many ticks ago.
+    pub fists: Option<ClientHands>,
+    pub fists_age: u32,
     /// Ticks until a car can hit this player again.
     pub hit_cooldown: u32,
     /// The input applied this tick.
@@ -391,6 +406,9 @@ impl Player {
             character: Character::default(),
             seat: None,
             lift: None,
+            held: None,
+            fists: None,
+            fists_age: 0,
             hit_cooldown: 0,
             input: InputFrame::default(),
             inputs: JitterBuffer::default(),

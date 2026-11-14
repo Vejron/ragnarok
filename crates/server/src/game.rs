@@ -167,6 +167,12 @@ impl Game {
                     let _ = outbox.try_send(Outgoing::Reliable(encode(&Rtc { tag: S_RTC, peer: from, kind, json }).into()));
                 }
             }
+            Command::Hands(id, hands) => {
+                if let Some(mut player) = self.world.entities.get_mut::<Player>(id) {
+                    player.fists = Some(hands);
+                    player.fists_age = 0;
+                }
+            }
             Command::Input(id, baseline, frames) => {
                 if let Some(mut player) = self.world.entities.get_mut::<Player>(id) {
                     player.inputs.push(&frames);

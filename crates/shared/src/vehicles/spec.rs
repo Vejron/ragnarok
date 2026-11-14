@@ -1,6 +1,8 @@
 //! The tuning of a vehicle kind that the physics (`crates/sim`) reads: its chassis, wheels, suspension
 //! and what holds it up.
 
+use super::walker::*;
+
 /// What holds a vehicle up.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Lift {
@@ -107,6 +109,141 @@ pub struct Spec {
     /// set how fast it runs downhill. `None` for a kind on wheels, which rolls with only a light brake
     /// when coasting.
     pub runners: Option<Runners>,
+    /// How its legs carry it, for a `Lift::Walker` kind. `None` for everything else.
+    pub gait: Option<Gait>,
+    /// Its two arms, whose fists its pilot moves. `None` for everything but a Titan.
+    pub arms: Option<Arms>,
+}
+
+/// A giant's two arms. Each fist is a ball the pilot moves about its shoulder: it goes where it is
+/// asked to within the arm's reach, no faster than the arm can swing. The arm between is only drawn.
+/// Points are in the hull frame for the right arm; the left mirrors them in X.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Arms {
+    /// Where the right shoulder is.
+    pub shoulder: [f32; 3],
+    /// The furthest and the nearest a fist's middle can be from its shoulder, metres.
+    pub reach: f32,
+    pub min_reach: f32,
+    /// A fist's radius, metres.
+    pub fist: f32,
+    /// A fist's top speed against the hull, m/s, and how hard it speeds up and slows, m/s².
+    pub speed: f32,
+    pub accel: f32,
+    /// Where the right fist hangs when nobody asks anything of it.
+    pub rest: [f32; 3],
+    /// The heaviest vehicle a closed fist picks up, kilograms.
+    pub lift: f32,
+}
+
+/// A giant's feet, which are solid: a column for each shin, standing where the foot is planted and
+/// stepping after the hull as it walks.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Feet {
+    /// Half extents of a shin's column, metres. It stands on the ground.
+    pub half: [f32; 3],
+    /// How far the hull gets ahead of a planted foot before it steps, metres.
+    pub stride: f32,
+    /// How long a step takes, seconds, and how high the foot lifts in the middle of it, metres.
+    pub step_time: f32,
+    pub lift: f32,
+}
+
+/// How a legged kind (`Lift::Walker`) stands, balances and walks: two spring legs that are ray casts
+/// from its hips, a torque that keeps its hull upright and a push that walks it. See `walk` in
+/// `crates/sim`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Gait {
+    /// Distance of each foot from the middle of the hull, sideways, metres.
+    pub foot_half: f32,
+    /// How long a leg is from the bottom of the hull to the ground when it stands, metres.
+    pub leg_length: f32,
+    /// How much shorter its legs are when it crouches, metres. 0 for a kind that cannot.
+    pub crouch: f32,
+    /// How far its hull leans forward when it crouches, as a tilt (up's horizontal part).
+    pub crouch_lean: f32,
+    /// Top speed forwards, m/s, and the share of it backwards.
+    pub max_speed: f32,
+    pub reverse_share: f32,
+    /// Acceleration towards the speed asked for, and deceleration when it slows or reverses, m/s².
+    pub accel: f32,
+    pub brake: f32,
+    /// Planted feet do not slide sideways: the push against it, per m/s of sideways speed, and its cap, m/s².
+    pub grip_gain: f32,
+    pub grip: f32,
+    /// Yaw rate at full stick, rad/s, and the angular acceleration towards it, rad/s².
+    pub turn_rate: f32,
+    pub turn_accel: f32,
+    /// Leg spring and damper, per kilogram of the whole body for the pair: the spring settles at
+    /// `CAR_GRAVITY / spring` of compression.
+    pub spring: f32,
+    pub damping: f32,
+    /// How hard the hull is pulled upright, rad/s² per radian of tilt, the damping on its tilt rate, per
+    /// second, and the most the pull can be, rad/s²: sideways, and pitching, which it fights best.
+    pub balance_gain: f32,
+    pub balance_damp: f32,
+    pub balance_max: f32,
+    pub balance_max_pitch: f32,
+    /// The catching step: a push towards where the top is falling, m/s² per unit of lean and per rad/s
+    /// of fall, at most `catch_max`, beyond the lean and fall rate it tolerates.
+    pub catch_gain: f32,
+    pub catch_damp: f32,
+    pub catch_max: f32,
+    pub catch_lean_margin: f32,
+    pub catch_fall_margin: f32,
+    /// Extra lean into its heading at top speed, as a tilt, and how much of the tilt that would match
+    /// its push it leans by.
+    pub cruise_lean: f32,
+    pub accel_lean: f32,
+    /// A blast pushes it at its shoulders, this far above the middle of the hull, metres, so it tips it.
+    pub blast_lever: f32,
+    /// Below this `up_y` it has fallen, and the share of the full pull that stands it up again.
+    pub fallen_up: f32,
+    pub getup_share: f32,
+    /// The fastest its legs straighten, m/s, as it stands up from a crouch: the spring pushes no harder
+    /// than holds that speed. 0 for legs that push as hard as they are bent.
+    pub rise: f32,
+    /// The share of a blast's shove it takes: 1 for a walker, less for something far heavier.
+    pub blast_share: f32,
+    /// Its feet, when they are solids of their own. `None` leaves the legs to the hull's `solids`.
+    pub feet: Option<Feet>,
+}
+
+impl Gait {
+    /// The walker's legs, which the hen and the tupp walk on too: the `WALKER_*` constants.
+    pub const WALKER: Gait = Gait {
+        foot_half: WALKER_FOOT_HALF,
+        leg_length: WALKER_LEG_LENGTH,
+        crouch: 0.0,
+        crouch_lean: 0.0,
+        max_speed: WALKER_MAX_SPEED,
+        reverse_share: WALKER_REVERSE_SHARE,
+        accel: WALKER_ACCEL,
+        brake: WALKER_BRAKE,
+        grip_gain: WALKER_GRIP_GAIN,
+        grip: WALKER_GRIP,
+        turn_rate: WALKER_TURN_RATE,
+        turn_accel: WALKER_TURN_ACCEL,
+        spring: WALKER_LEG_SPRING,
+        damping: WALKER_LEG_DAMPING,
+        balance_gain: WALKER_BALANCE_GAIN,
+        balance_damp: WALKER_BALANCE_DAMP,
+        balance_max: WALKER_BALANCE_MAX,
+        balance_max_pitch: WALKER_BALANCE_MAX_PITCH,
+        catch_gain: WALKER_CATCH_GAIN,
+        catch_damp: WALKER_CATCH_DAMP,
+        catch_max: WALKER_CATCH_MAX,
+        catch_lean_margin: WALKER_CATCH_LEAN_MARGIN,
+        catch_fall_margin: WALKER_CATCH_FALL_MARGIN,
+        cruise_lean: WALKER_CRUISE_LEAN,
+        accel_lean: WALKER_ACCEL_LEAN,
+        blast_lever: WALKER_BLAST_LEVER,
+        fallen_up: WALKER_FALLEN_UP,
+        getup_share: WALKER_GETUP_SHARE,
+        rise: 0.0,
+        blast_share: 1.0,
+        feet: None,
+    };
 }
 
 /// A kind on runners (a sled): what holds it back as it slides, in place of a wheel's rolling. It is
@@ -209,6 +346,8 @@ pub enum Buttons {
     Leap,
     /// A snowmobile's: run boosts the engine from its `tank` while it lasts, and jump is the handbrake.
     Sled,
+    /// A Titan's: crouch bends its legs, which brings its fists down to the ground.
+    Stride,
 }
 
 /// A solid a vehicle carries beside its hull box, fixed to the hull at `at` (hull frame). It adds no

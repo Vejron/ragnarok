@@ -8,7 +8,7 @@ import { Transport } from './net/transport'
 import {
   BUTTON_CROUCH, BUTTON_FIRE, BUTTON_RELOAD, BUTTON_RUN, CROUCH_EYE_DROP, PRONE_EYE_HEIGHT, SLIDE_MIN_SPEED, EYE_HEIGHT, INPUT_REDUNDANCY, PLAYER_MAX_HP, PROTOCOL_VERSION,
   SHELL_COOLDOWN_TICKS, STANDING_Y, STANCE_CHUTE, STANCE_DIVE, STANCE_DOWN, STANCE_PRONE, STANCE_SWIM,
-  TICK_MS, TICK_RATE, LIFT_RIDER_CENTRE, BLOOM_RECOVER, STAMINA_FULL, ONE_ARM_SWAY, BACKPACK_SPEED, CARRY_SKIS, SUB_LAUNCH_DEPTH } from './sim/consts'
+  TICK_MS, TICK_RATE, TITAN_FIST_RADIUS, TITAN_REACH, LIFT_RIDER_CENTRE, BLOOM_RECOVER, STAMINA_FULL, ONE_ARM_SWAY, BACKPACK_SPEED, CARRY_SKIS, SUB_LAUNCH_DEPTH } from './sim/consts'
 import { easeSway, sway, swayAmplitude } from './sway'
 import { mayPlace } from './sim/bricks'
 import { crewGun, vehicleDef } from './sim/vehicles'
@@ -24,6 +24,10 @@ import { VehicleDriver, type DrivenPose } from './sim/driver'
 import { Predictor } from './sim/predict'
 import type { Vec3 } from './sim/motor'
 import { Effects } from './render/effects'
+import { TitanModel } from './render/titan'
+import { TitanHands } from './titanhands'
+import { Headset, type HeadsetFrame } from './xr/headset'
+import { fistsFromHands } from './xr/hands'
 import { dayPhase } from './render/daynight'
 import { DamageNumbers } from './render/damagenumbers'
 import { Particles } from './render/particles'
@@ -61,7 +65,7 @@ import { BallCam } from './render/ballcam'
 import { ChaseCam } from './render/chase'
 import { PerfReadout } from './render/perf'
 import { LookWorker } from './render/lookworker'
-import { encodeRtc, KIND_MISSILE, KIND_STRF, KIND_STRV, KIND_SUBMARINE, KIND_TANK, LIMB_ALL, LIMB_ARMS, LIMB_LEGS, TURRET_ALT } from './net/codec'
+import { encodeHands, encodeRtc, KIND_MISSILE, KIND_STRF, KIND_STRV, KIND_SUBMARINE, KIND_TANK, LIMB_ALL, LIMB_ARMS, LIMB_LEGS, TURRET_ALT } from './net/codec'
 import { TankMusic } from './music'
 import { VoiceChat } from './voice'
 import { PlaneModel } from './render/plane'
@@ -178,8 +182,11 @@ const CEILING_ABOVE = 12
 const ROOM_CAMERA_GAP = 0.25
 const ROOM_ARM_MIN = 0.35
 const ROOM_ARM_EASE = 4
+/** How far a VR pilot ducks their head to crouch, metres below where it was when the headset started. */
+const VR_DUCK = 0.25
+
 /** Seats that steer something along, which get a speedometer. */
-const MOVERS: ReadonlySet<SeatView['role']> = new Set(['driver', 'roadster', 'sled', 'helm', 'pilot', 'aviator', 'walker', 'hen', 'tupp', 'strv', 'drone', 'loiter', 'captain', 'missile'] as const)
+const MOVERS: ReadonlySet<SeatView['role']> = new Set(['driver', 'roadster', 'sled', 'helm', 'pilot', 'aviator', 'walker', 'titan', 'hen', 'tupp', 'strv', 'drone', 'loiter', 'captain', 'missile'] as const)
 
 /** What the local player is up to this frame: worked out once, read by the stages of the frame. */
 interface Moment {
@@ -374,6 +381,15 @@ export class Game {
   private seat: { vehicle: number; kind: number; index: number } | null = null
   /** The ski lift's chair the server says the local player rides (LIFTS.md); null when not on one. */
   private lifted: { lift: number; chair: number; seat: number } | null = null
+  /** The Titan's fist the local player is held in, and where the server last had them. */
+  private heldBy: { vehicle: number; hand: number; at: Vec3 } | null = null
+  /** A Titan's fists, as its pilot's look and buttons move them. */
+  private readonly titanHands = new TitanHands()
+  /** The VR headset the game is shown in, while it is (VR.md), and what it said for the frame being drawn. */
+  private headset: Headset | null = null
+  private worn: HeadsetFrame | null = null
+  /** The pilot has ducked their head far enough to crouch. */
+  private ducked = false
   /** The world's ski lifts, drawn, once the world is known. */
   private liftView: LiftView | null = null
   /** Where the camera goes while seated, by the seat's rig. */
@@ -552,7 +568,7 @@ export class Game {
     if (this.disposed) return
     this.lastFrame = performance.now()
     this.adaptive.pause(this.lastFrame)
-    this.frameHandle = requestAnimationFrame((now) => this.frame(now))
+    this.frameHandle = this.nextFrame()
     // A timer rather than the frame loop, so a background tab (no animation frames) still pings
     // and the server does not drop it as idle.
     this.pingTimer = window.setInterval(() => {
@@ -576,6 +592,7 @@ export class Game {
     this.awaitingCatchUp = false
     this.seat = null
     this.lifted = null
+    this.heldBy = null
     this.player.reset()
     this.bodies.clear()
     this.board.clear()
@@ -766,7 +783,8 @@ export class Game {
       this.driver?.acknowledge(message.ack)
     }
     this.lifted = (own?.lifted && !this.seat) ? { ...own.lifted } : null
-    if (this.seat || this.lifted) {
+    this.heldBy = own?.held && own.place && !this.seat ? { vehicle: own.held.vehicle, hand: own.held.hand, at: [own.place.x, own.place.y, own.place.z] } : null
+    if (this.seat || this.lifted || this.heldBy) {
       // The soldier is parked inside the car, or carried on a lift's chair. Inputs still go out; the
       // server just applies them to the car, or to their aim.
       this.predictor?.acknowledge(message.ack)
@@ -812,7 +830,7 @@ export class Game {
     }
     // In a car the soldier does not walk, and nor does a dead one; the frame is kept for replay
     // in case it steps out or respawns.
-    if (this.seat || this.lifted || !this.player.alive) this.predictor!.record(frame)
+    if (this.seat || this.lifted || this.heldBy || !this.player.alive) this.predictor!.record(frame)
     else {
       // A swimmer floats on the waves, which run on the server's tick: the one it is about now.
       const tick = Math.floor(this.clock.tickAt(performance.now()))
@@ -830,6 +848,40 @@ export class Game {
     this.recent.push(frame)
     if (this.recent.length > INPUT_REDUNDANCY) this.recent.shift()
     this.transport.send(encodeInput(this.recent, this.replica.baseline))
+    this.moveFists(sample.buttons)
+  }
+
+  /**
+   * A Titan's pilot moves its fists: they go to what the middle of the screen is on, which is where the
+   * look from the camera meets the ground, or a point out along it when it meets none in reach.
+   */
+  private moveFists(buttons: number) {
+    const seat = this.seat
+    const ride = seat?.index === 0 && vehicleDef(seat.kind).fists ? this.vehicles.placed.get(seat.vehicle) : undefined
+    if (!ride || !this.player.alive) {
+      this.titanHands.reset()
+      return
+    }
+    // In a headset the pilot's own hands move them.
+    if (this.worn) {
+      this.transport.send(encodeHands(fistsFromHands(this.worn.head, this.worn.hands, ride.yaw, ride.rotation)))
+      return
+    }
+    const camera = this.scene.camera
+    const look = camera.getWorldDirection(new Vector3())
+    const eye = camera.position
+    // The camera is a long way behind: the ground is looked for from where the arms could first reach.
+    const from = Math.max(0, Math.hypot(ride.x - eye.x, ride.y - eye.y, ride.z - eye.z) - 2 * TITAN_REACH)
+    const to = from + 4 * TITAN_REACH
+    const aim = new Vector3(eye.x + look.x * to, eye.y + look.y * to, eye.z + look.z * to)
+    for (let along = from; along <= to; along += 1) {
+      const [x, y, z] = [eye.x + look.x * along, eye.y + look.y * along, eye.z + look.z * along]
+      if (this.terrain && y <= this.terrain.heightAt(x, z)) {
+        aim.set(x, this.terrain.heightAt(x, z) + TITAN_FIST_RADIUS, z)
+        break
+      }
+    }
+    this.transport.send(encodeHands(this.titanHands.step(buttons, aim, [ride.x, ride.y, ride.z], ride.rotation)))
   }
 
   /** The server tick the picture on screen shows, as the wire carries it: modulo 65536. */
@@ -838,10 +890,80 @@ export class Game {
     return Number.isFinite(tick) && tick > 0 ? tick & 0xffff : 0
   }
 
+  /** Asks for the next frame: the headset's while one is on, the screen's otherwise. */
+  private nextFrame(): number {
+    const headset = this.headset
+    return headset ? headset.requestFrame((time) => this.frame(time)) : requestAnimationFrame((time) => this.frame(time))
+  }
+
+  private cancelFrame() {
+    if (this.headset) this.headset.cancelFrame(this.frameHandle)
+    else cancelAnimationFrame(this.frameHandle)
+  }
+
+  /** Whether this browser can show the game in a VR headset (`Headset.supported`). */
+  static vrSupported(): Promise<boolean> {
+    return Headset.supported()
+  }
+
+  /** The game is being shown in a headset. */
+  get inVr() {
+    return this.headset !== null
+  }
+
+  /**
+   * Puts the game in the VR headset (VR.md). Must be called from a click. The frames then come from
+   * the headset, and are drawn once for each eye, until its session ends.
+   */
+  async enterVr() {
+    const renderer = this.scene.renderer
+    if (this.headset || !renderer) return
+    if (!renderer.xrCompatible) throw new Error('The graphics adapter is not one the headset can show')
+    const camera = this.scene.camera
+    const headset = await Headset.enter(renderer.device, renderer.format, camera.near, camera.far, () => this.leftVr())
+    this.cancelFrame()
+    this.headset = headset
+    this.input.wear(true)
+    this.frameHandle = this.nextFrame()
+  }
+
+  /** Takes the game out of the headset. */
+  async leaveVr() {
+    await this.headset?.leave()
+  }
+
+  /** The headset's session is over: back to the screen. */
+  private leftVr() {
+    if (!this.headset) return
+    this.headset = null
+    this.worn = null
+    this.ducked = false
+    this.input.wear(false)
+    this.scene.see(null)
+    if (!this.disposed) this.frameHandle = this.nextFrame()
+  }
+
+  /**
+   * Takes what the headset says for this frame: its eyes to draw for, the left thumbstick to walk and
+   * turn with (the right one turns too), and a ducked head to crouch.
+   */
+  private readHeadset() {
+    if (!this.headset) return
+    this.worn = this.headset.read()
+    this.scene.see(this.worn?.eyes ?? [])
+    if (!this.worn) return
+    const [left, right] = this.worn.sticks
+    this.input.setStick(Math.max(-1, Math.min(1, left[0] + right[0])), left[1], false)
+    const ducked = this.worn.head[1] < (this.ducked ? -VR_DUCK * 0.6 : -VR_DUCK)
+    if (ducked !== this.ducked) this.input.hold(BUTTON_CROUCH, ducked)
+    this.ducked = ducked
+  }
+
   private frame(now: number) {
     if (this.disposed) return
-    this.frameHandle = requestAnimationFrame((t) => this.frame(t))
+    this.frameHandle = this.nextFrame()
     this.perf.begin(now)
+    this.readHeadset()
     const dt = Math.min(0.25, (now - this.lastFrame) / 1000)
     this.frameDt = dt
     this.fitResolution(now, now - this.lastFrame)
@@ -968,6 +1090,14 @@ export class Game {
     this.snowRoost?.light.copy(this.scene.groundLight)
   }
 
+  /** Where the local player stands on the fist that holds them: on it as it is drawn, or where the server last had them. */
+  private inFist(held: NonNullable<Game['heldBy']>): Vec3 {
+    const model = this.vehicles.model(held.vehicle)
+    if (!(model instanceof TitanModel)) return held.at
+    const fist = model.fistWorld(held.hand)
+    return [fist.x, fist.y + TITAN_FIST_RADIUS + STANDING_Y, fist.z]
+  }
+
   /** Works out what the local player is up to this frame, for the stages of the frame that follow. */
   private momentOf(now: number, dt: number, renderTick: number, seat: Game['seat'], view: SeatView | null): Moment {
     const predictor = this.predictor!
@@ -975,7 +1105,7 @@ export class Game {
     // On a lift's chair the soldier is where the chair is now, as the server has them.
     const lifted = this.lifted
     const chairSeat = lifted && seat === null ? this.liftView?.seatOf(lifted.lift, lifted.chair, lifted.seat, this.liftTick(now)) : null
-    const position: Vec3 = chairSeat ? [chairSeat[0], chairSeat[1] + LIFT_RIDER_CENTRE, chairSeat[2]] : this.ridden(predictor.renderPosition(this.accumulator / TICK_MS, dt), local.ride, renderTick)
+    const position: Vec3 = chairSeat ? [chairSeat[0], chairSeat[1] + LIFT_RIDER_CENTRE, chairSeat[2]] : this.heldBy && seat === null ? this.inFist(this.heldBy) : this.ridden(predictor.renderPosition(this.accumulator / TICK_MS, dt), local.ride, renderTick)
     this.localAt = position
     const velocity: [number, number] = [(local.position[0] - predictor.previous.position[0]) / (TICK_MS / 1000), (local.position[2] - predictor.previous.position[2]) / (TICK_MS / 1000)]
     const seated = seat !== null
@@ -1579,7 +1709,8 @@ export class Game {
     this.disposed = true
     this.perf.dispose()
     this.hud.dispose()
-    cancelAnimationFrame(this.frameHandle)
+    this.cancelFrame()
+    void this.headset?.leave()
     clearTimeout(this.reconnectTimer)
     clearInterval(this.pingTimer)
     this.transport.close()

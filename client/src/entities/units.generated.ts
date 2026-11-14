@@ -36,6 +36,8 @@ export function toGame(w: Components): Entity {
     fell: w.fell,
     sub: w.sub && { tubes: w.sub.tubes, scope: w.sub.scope / 1000, flags: w.sub.flags },
     lifted: w.lifted,
+    titan: w.titan && { lx: w.titan.lx / 100, ly: w.titan.ly / 100, lz: w.titan.lz / 100, rx: w.titan.rx / 100, ry: w.titan.ry / 100, rz: w.titan.rz / 100, flx: w.titan.flx / 100, fly: w.titan.fly / 100, flz: w.titan.flz / 100, frx: w.titan.frx / 100, fry: w.titan.fry / 100, frz: w.titan.frz / 100, flags: w.titan.flags },
+    held: w.held,
   }
 }
 
@@ -74,5 +76,7 @@ export function blend(a: Entity, b: Entity, t: number): Entity {
     fell: near.fell,
     sub: a.sub && b.sub ? (a.sub === b.sub || (a.sub.tubes === b.sub.tubes && a.sub.scope === b.sub.scope && a.sub.flags === b.sub.flags) ? b.sub : { tubes: t < 0.5 ? a.sub.tubes : b.sub.tubes, scope: angle(a.sub.scope, b.sub.scope, t), flags: t < 0.5 ? a.sub.flags : b.sub.flags }) : near.sub,
     lifted: near.lifted,
+    titan: a.titan && b.titan ? (a.titan === b.titan || (a.titan.lx === b.titan.lx && a.titan.ly === b.titan.ly && a.titan.lz === b.titan.lz && a.titan.rx === b.titan.rx && a.titan.ry === b.titan.ry && a.titan.rz === b.titan.rz && a.titan.flx === b.titan.flx && a.titan.fly === b.titan.fly && a.titan.flz === b.titan.flz && a.titan.frx === b.titan.frx && a.titan.fry === b.titan.fry && a.titan.frz === b.titan.frz && a.titan.flags === b.titan.flags) ? b.titan : { lx: lerp(a.titan.lx, b.titan.lx, t), ly: lerp(a.titan.ly, b.titan.ly, t), lz: lerp(a.titan.lz, b.titan.lz, t), rx: lerp(a.titan.rx, b.titan.rx, t), ry: lerp(a.titan.ry, b.titan.ry, t), rz: lerp(a.titan.rz, b.titan.rz, t), flx: lerp(a.titan.flx, b.titan.flx, t), fly: lerp(a.titan.fly, b.titan.fly, t), flz: lerp(a.titan.flz, b.titan.flz, t), frx: lerp(a.titan.frx, b.titan.frx, t), fry: lerp(a.titan.fry, b.titan.fry, t), frz: lerp(a.titan.frz, b.titan.frz, t), flags: t < 0.5 ? a.titan.flags : b.titan.flags }) : near.titan,
+    held: near.held,
   }
 }

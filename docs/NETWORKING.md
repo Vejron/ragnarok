@@ -26,6 +26,7 @@ All messages are MessagePack arrays whose first element is a tag. The client→s
 | 0 | `input` | `[0, version, baseline u32, [frame, …]]` | 1–4 frames, oldest first. Throttled to one per 8 ms. `baseline` is the `server_tick` of the newest snapshot the client has rebuilt, or 0 for none |
 | 1 | `ping` | `[1, nonce u32]` | Echoed as `pong`. Throttled to one per 100 ms. |
 | 2 | `rtc` | `[2, peer u32, kind u8, json string]` | Voice signaling for player `peer`. **Not a datagram**: sent on one unidirectional stream the client opens, each message behind a 4-byte big-endian length (as below). `kind` 0 offer, 1 answer, 2 ICE candidate; `json` is the session description or candidate. Server drops more than 64 a second, payloads over 8 KiB and frames over 8 KiB + 64 |
+| 3 | `hands` | `[3, lx, ly, lz, rx, ry, rz i16, flags u8]` | Where a Titan's pilot wants its left and right fists, centimetres in its hull frame (+X right, +Y up, −Z ahead), sent every tick while piloting one; the newest wins, and a pilot who sends none for half a second lets the arms hang. `flags`: 1 and 2 close the left and the right hand, 4 and 8 say that hand is being moved at all. Throttled to one per 8 ms, and ignored from anyone who is not a Titan's pilot (protocol 77, [VEHICLES-XIV.md](VEHICLES-XIV.md)) |
 
 `frame` is `[seq u32, strafe i8, forward i8, yaw i16, buttons u8, pitch i16, view u16, slot u8]`:
 
@@ -134,6 +135,8 @@ An `update` is `[id u32, set u32, (cleared u32), fields…]`:
 | 22 | `carry` | whole | `what` u8 | a soldier carrying the backpack (`CARRY_BACKPACK`); the client's own prediction walks twice as fast with it. The backpack on the ground is an entity of `kind` 15 with a `place` |
 | 26 | `sub` | whole | `tubes` u8, `scope` i16, `flags` u8 | a submarine's launch tubes loaded (bit `n` for tube `n`), its periscope's yaw from the hull (mrad, + turns left), and `SUB_MAST_UP` (bit 0) while the periscope is raised ([VEHICLES-X.md](VEHICLES-X.md)) |
 | 27 | `lifted` | whole | `lift` u16, `chair` u16, `seat` u8 | a soldier riding chair `chair` of ski lift `lift` (`Manifest::lifts`) in place `seat`, 0 on the left; the client sits them on the chair it draws at the server's clock, so no chair is replicated (protocol 76, [LIFTS.md](LIFTS.md)) |
+| 28 | `titan` | whole | `lx, ly, lz, rx, ry, rz` i16, `flx, fly, flz, frx, fry, frz` i16, `flags` u8 | a Titan's limbs, centimetres: its left and right fists in its hull frame, its left and right feet (their soles) from its hull's centre along the world's axes, and `HANDS_*` flags (1 and 2: that hand is closed; 16 and 32: it holds something). The client bends the arms and legs to them (protocol 77, [VEHICLES-XIV.md](VEHICLES-XIV.md)) |
+| 29 | `held` | whole | `vehicle` u32, `hand` u8 | a soldier held in a fist of Titan `vehicle` (hand 0 is its left); their `place` is on that fist, and their own client stops predicting their walk until it lets go (protocol 77) |
 
 What each carries today:
 

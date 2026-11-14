@@ -60,6 +60,8 @@ export class InputController {
   private proneLatched = false
   /** The paper map is held up to read: M toggles it; firing or aiming puts it away. */
   mapUp = false
+  /** A Titan's pilot looks out from its head, not from behind its shoulders: B swaps the two. */
+  cockpit = false
   /** Wheel notches turned with the map up, not yet taken (`takeMapWheel`): down zooms out. */
   private mapWheel = 0
   /** F3 was pressed since last asked (`takeStatsToggle`): show or hide the HUD's network numbers. */
@@ -178,6 +180,16 @@ export class InputController {
     return this.touching || document.pointerLockElement === this.element
   }
 
+  /** A headset is on, which stands in for taking the pointer lock as a touch player's tap does; or it is off again. */
+  wear(on: boolean) {
+    if (on) this.touching = true
+    else {
+      // A touch player who took the headset off has still tapped to start.
+      if (!this.coarse) this.touching = false
+      this.releaseTouch()
+    }
+  }
+
   /** Virtual stick: `x` right and `y` up, each −1..1. `run` is the shift key. */
   setStick(x: number, y: number, run: boolean) {
     this.stick = [x, y, run]
@@ -292,6 +304,7 @@ export class InputController {
       if (event.code === 'KeyK') this.latched |= BUTTON_SKIS
       if (event.code === 'KeyX') this.holster()
       if (event.code === 'KeyM') this.mapUp = !this.mapUp
+      if (event.code === 'KeyB') this.cockpit = !this.cockpit
       if (event.code === 'F3') this.statsToggle = true
       if (event.code === 'KeyR') this.latched |= BUTTON_RELOAD
       // Q loads a gun's other kind of round: a tank's high explosive, or back to armour-piercing.

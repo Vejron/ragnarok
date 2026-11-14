@@ -114,6 +114,8 @@ pub(super) const HEN: VehicleDef = VehicleDef {
         bow: 0.0,
         springs: Springs::FIRM,
         airframe: None,
+        gait: Some(Gait::WALKER),
+        arms: None,
         runners: None,
     },
     armor: ARMOR,

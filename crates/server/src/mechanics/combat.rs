@@ -386,6 +386,9 @@ pub fn damage_vehicle(world: &mut World, vid: u32, amount: u8, attacker: Option<
     if attacker.is_some_and(|by| seated.iter().any(|&rider| rider != by && same_team(world, by, rider))) {
         return;
     }
+    // What is left of the hit on a kind built to take it (`Body::tough`): nothing at all, of a small one.
+    let tough = world.entities.get::<Vehicle>(vid).map_or(1.0, |vehicle| shared::vehicles::vehicle_def(vehicle.kind).body.tough);
+    let amount = if tough < 1.0 { (f32::from(amount) * tough).round() as u8 } else { amount };
     let Some(mut health) = world.entities.get_mut::<Health>(vid) else { return };
     if !health.alive() || amount == 0 {
         return;

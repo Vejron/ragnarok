@@ -17,6 +17,8 @@ pub const C_INPUT: u8 = 0;
 pub const C_PING: u8 = 1;
 /// Voice signaling, sent on a client-opened reliable stream rather than as a datagram.
 pub const C_RTC: u8 = 2;
+/// Where a Titan's pilot wants its fists (`ClientHands`).
+pub const C_HANDS: u8 = 3;
 
 /// Server → client tags.
 pub const S_WELCOME: u8 = 0;
@@ -57,7 +59,7 @@ pub const HIT_DEER: u8 = 4;
 pub const OBJ_TREE: u8 = 0;
 pub const OBJ_BUILDING: u8 = 1;
 
-pub use crate::consts::{KIND_DEER, KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MISSILE, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_ROOSTER, KIND_SEAPLANE, KIND_SHIP, KIND_SHIP_GUN, KIND_SNOWMOBILE, KIND_SNOWRACER, KIND_SOLDIER, KIND_SPORTS, KIND_STAG, KIND_STRF, KIND_STRV, KIND_SUBMARINE, KIND_TANK, KIND_TECHNICAL, KIND_TUPP, KIND_WALKER, KIND_ZOMBIE};
+pub use crate::consts::{KIND_DEER, KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MISSILE, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_ROOSTER, KIND_SEAPLANE, KIND_SHIP, KIND_SHIP_GUN, KIND_SNOWMOBILE, KIND_SNOWRACER, KIND_SOLDIER, KIND_SPORTS, KIND_STAG, KIND_STRF, KIND_STRV, KIND_SUBMARINE, KIND_TANK, KIND_TECHNICAL, KIND_TITAN, KIND_TUPP, KIND_WALKER, KIND_ZOMBIE};
 
 /// Whether `kind` is a drone: flown from a remote seat by whoever launched it (see the `Drones` mechanic).
 pub fn is_drone(kind: u8) -> bool {
@@ -165,6 +167,18 @@ pub const WEAPON_GLASS: u8 = 33;
 pub const WEAPON_CLAW: u8 = 34;
 /// A submarine's guided missile going off (`KIND_MISSILE`).
 pub const WEAPON_MISSILE: u8 = 35;
+/// A Titan's fist or foot (`KIND_TITAN`): punched, thrown or stepped on.
+pub const WEAPON_TITAN: u8 = 36;
+
+/// `ClientHands::flags` and `replicated::Titan::flags` bits: a hand is closed (it holds what it closes
+/// on), and a hand is being moved by its pilot (otherwise it hangs).
+pub const HANDS_GRIP_LEFT: u8 = 1 << 0;
+pub const HANDS_GRIP_RIGHT: u8 = 1 << 1;
+pub const HANDS_REACH_LEFT: u8 = 1 << 2;
+pub const HANDS_REACH_RIGHT: u8 = 1 << 3;
+/// `replicated::Titan::flags` only: the hand holds something (a soldier or a vehicle).
+pub const HANDS_FULL_LEFT: u8 = 1 << 4;
+pub const HANDS_FULL_RIGHT: u8 = 1 << 5;
 
 /// `replicated::Limbs::lost` bits: the limbs a soldier has lost. The same bits shifted up by
 /// `LIMB_BLEED_SHIFT` are the stumps still bleeding.
@@ -331,6 +345,12 @@ messages! {
 
     /// A latency probe, echoed as a `Pong`.
     [C_PING] Ping { nonce: u32 }
+
+    /// Where a Titan's pilot wants its two fists, in centimetres in its hull frame (+X right, +Y up, -Z ahead), and
+    /// `HANDS_*` flags: which hands are closed and which are being moved at all. Sent every tick while
+    /// piloting one, newest wins; a pilot who stops sending lets the arms hang.
+    #[derive(Copy, Default, Eq)]
+    [C_HANDS] ClientHands { lx: i16, ly: i16, lz: i16, rx: i16, ry: i16, rz: i16, flags: u8 }
 
     /// Sent once on a reliable stream.
     [S_WELCOME] Welcome { version: u8, id: u32, tick_rate: u8, snapshot_every: u8, world_hash: u32 }

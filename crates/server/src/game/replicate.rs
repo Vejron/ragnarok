@@ -34,7 +34,8 @@ impl Game {
             let what = if poling { CARRY_POLING } else { 0 } | if crate::mechanics::carries(&self.world, id) { CARRY_BACKPACK } else { 0 } | if player.character.skis { CARRY_SKIS } else { 0 } | if player.lamp { CARRY_LAMP } else { 0 };
             let carry = (what != 0).then_some(wire::Carry { what });
             let lifted = player.lift.map(|ride| wire::Lifted { lift: ride.lift, chair: ride.chair, seat: ride.seat });
-            let mut shown = Replicated { seated, limbs, struck, carry, lifted, ..shown };
+            let held = player.held.map(|fist| wire::Held { vehicle: fist.titan, hand: fist.hand });
+            let mut shown = Replicated { seated, limbs, struck, carry, lifted, held, ..shown };
             if crate::mechanics::is_zombie(&self.world, id) && player.embodied() {
                 shown.kind = Some(wire::Kind { kind: KIND_ZOMBIE });
                 if let Some(flags) = &mut shown.flags
@@ -162,9 +163,24 @@ impl Game {
             None => self.world.physics.car_thrust(id).map(|(tank, flags)| wire::Thrust { air: air_byte(tank), flags }),
         };
         let sub = entities.get::<crate::mechanics::Sub>(id).map(|sub| wire::Sub { tubes: sub.loaded(), scope: to_mrad(sub.scope), flags: if sub.mast { SUB_MAST_UP } else { 0 } });
+        let titan = self.world.physics.limbs(id).map(|limbs| {
+            let [[lx, ly, lz], [rx, ry, rz]] = limbs.fists.map(|fist| fist.map(to_cm_i16));
+            let [[flx, fly, flz], [frx, fry, frz]] = limbs.feet.map(|foot| shared::vec3::sub(foot, pose.position).map(to_cm_i16));
+            let mut flags = 0;
+            for (hand, (grip, full)) in [(HANDS_GRIP_LEFT, HANDS_FULL_LEFT), (HANDS_GRIP_RIGHT, HANDS_FULL_RIGHT)].into_iter().enumerate() {
+                if limbs.closed[hand] {
+                    flags |= grip;
+                }
+                if self.world.physics.held_car(id, hand).is_some() || crate::mechanics::held_in_fist(&self.world, id, hand).is_some() {
+                    flags |= full;
+                }
+            }
+            wire::Titan { lx, ly, lz, rx, ry, rz, flx, fly, flz, frx, fry, frz, flags }
+        });
         Some(Replicated {
             kind: Some(wire::Kind { kind: vehicle.kind }),
             sub,
+            titan,
             place: Some(wire::Place { x, y, z }),
             orientation: Some(wire::Orientation { qx, qy, qz }),
             steer: Some(wire::Steer { steer: to_axis(pose.steer) }),

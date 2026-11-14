@@ -69,9 +69,22 @@ fn fs(@builtin(position) pos: vec4f) -> @builtin(frag_depth) f32 {
 }
 `
 
+/** Part of a texture that is not the canvas, to draw a frame into: one eye of a headset. */
+export interface EyeTarget {
+  /** The texture's view, in the canvas's format (`Renderer.format`). */
+  view: GPUTextureView
+  /** The corner of the eye's part of it, pixels. It is as big as `setSize` was last told. */
+  x: number
+  y: number
+  /** Not the first eye of this frame: what the eyes share is kept, and so is what is in the texture already. */
+  again: boolean
+}
+
 export interface RendererOptions {
   /** Multisampling for the main pass: 4 (default) or 1. */
   sampleCount?: 1 | 4
+  /** Ask for an adapter a headset can show (`XRGPUBinding`), for a page that offers VR. */
+  xrCompatible?: boolean
   /** Called if the GPU device is lost (driver reset, tab backgrounded too long on some platforms). */
   onDeviceLost?: (info: GPUDeviceLostInfo) => void
 }
@@ -298,17 +311,26 @@ export class Renderer {
   private camY = 0
   private camZ = 0
   private shadowsOn = false
+  /** The device came from an adapter a headset can show. */
+  xrCompatible = false
+  /** Where this frame is drawn, when not to the canvas (`renderEye`). */
+  private eye: EyeTarget | null = null
 
   static async create(canvas: HTMLCanvasElement, options: RendererOptions = {}): Promise<Renderer> {
     if (!navigator.gpu) throw new Error('WebGPU is not available in this browser')
-    const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' })
+    // A headset wants the adapter it is plugged into. Where there is none that will do, any adapter is taken.
+    const wanted: GPURequestAdapterOptions = { powerPreference: 'high-performance' }
+    const forHeadset = options.xrCompatible ? await navigator.gpu.requestAdapter({ ...wanted, xrCompatible: true } as GPURequestAdapterOptions) : null
+    const adapter = forHeadset ?? (await navigator.gpu.requestAdapter(wanted))
     if (!adapter) throw new Error('No WebGPU adapter')
     const requiredFeatures: GPUFeatureName[] = []
     if (adapter.features.has('timestamp-query')) requiredFeatures.push('timestamp-query')
     // The geometry arena is one vertex buffer; take what the GPU allows rather than the 256 MB default.
     const requiredLimits = { maxBufferSize: adapter.limits.maxBufferSize }
     const device = await adapter.requestDevice({ requiredFeatures, requiredLimits })
-    return new Renderer(canvas, device, options)
+    const renderer = new Renderer(canvas, device, options)
+    renderer.xrCompatible = forHeadset !== null
+    return renderer
   }
 
   constructor(readonly canvas: HTMLCanvasElement, readonly device: GPUDevice, options: RendererOptions = {}) {
@@ -475,6 +497,20 @@ export class Renderer {
     })
   }
 
+  /**
+   * Draws the scene from `camera` into `target`, part of a texture that is not the canvas: one eye of a
+   * headset. The whole frame is drawn for each eye, at the size `setSize` was last given, which should be
+   * the eye's. An eye after the first of a frame (`target.again`) keeps the first's shadow map.
+   */
+  renderEye(scene: Scene, camera: PerspectiveCamera, target: EyeTarget) {
+    this.eye = target
+    try {
+      this.render(scene, camera)
+    } finally {
+      this.eye = null
+    }
+  }
+
   render(scene: Scene, camera: PerspectiveCamera) {
     const start = performance.now()
     const stats = this.stats
@@ -486,7 +522,7 @@ export class Renderer {
     this.camX = camera.matrixWorld[12]!
     this.camY = camera.matrixWorld[13]!
     this.camZ = camera.matrixWorld[14]!
-    this.setupShadow(scene)
+    if (!this.eye?.again) this.setupShadow(scene)
     this.setupReflection(camera)
 
     this.poolUsed = 0
@@ -545,7 +581,7 @@ export class Renderer {
       if (inverted) this.sky.setView(this.inverseViewProj)
       this.sky.drawPanorama(encoder, this.sceneGroup!)
     }
-    if (this.shadowsOn) this.shadowPass(encoder)
+    if (this.shadowsOn && !this.eye?.again) this.shadowPass(encoder)
     if (this.reflectionOn) this.reflectionPass(encoder, scene)
     this.mainPass(encoder, scene)
     if (this.depthCopyPipeline) this.depthCopyPass(encoder)
@@ -556,7 +592,8 @@ export class Renderer {
     }
     const dt = this.lastRender ? (start - this.lastRender) / 1000 : 0
     this.lastRender = start
-    this.adaptation.encode(encoder, scene.adaptation, dt, this.timer.pass('adaptation'))
+    // The eye adapts once a frame: a headset's second eye is exposed as its first was.
+    if (!this.eye?.again) this.adaptation.encode(encoder, scene.adaptation, dt, this.timer.pass('adaptation'))
     const light = this.placeLight(scene, camera)
     this.beamsDrawn = false
     if (inverted && scene.beams) {
@@ -568,7 +605,7 @@ export class Renderer {
     this.shafts.encode(encoder, light && scene.shafts ? this.shaftLight : null, this.width / this.height, (name) => this.timer.pass(name))
     const bloom = scene.bloom
     if (bloom && bloom.strength > 0) this.bloom.encode(encoder, bloom.threshold, bloom.knee, bloom.radius)
-    const screen = this.context.getCurrentTexture().createView()
+    const screen = this.eye?.view ?? this.context.getCurrentTexture().createView()
     this.outputPass(encoder, scene, camera, screen, light)
     this.timer.resolve(encoder)
     const reading = scene.adaptation !== null && this.frameNumber % 30 === 0 && this.adaptation.copyOut(encoder)
@@ -1421,6 +1458,9 @@ export class Renderer {
     o[6] = ink?.threshold ?? 0
     o[8] = camera.near
     o[9] = camera.far
+    // Where in the target the picture starts: an eye's corner in a headset's texture.
+    o[10] = this.eye?.x ?? 0
+    o[11] = this.eye?.y ?? 0
     o[12] = scene.bloom?.strength ?? 0
     o[13] = light && scene.shafts ? 1 : 0
     const grade = scene.grade
@@ -1439,9 +1479,11 @@ export class Renderer {
     this.device.queue.writeBuffer(this.outputUniform, 0, o)
     const pass = encoder.beginRenderPass({
       label: 'output',
-      colorAttachments: [{ view: screen, loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 1 } }],
+      // A second eye in the same texture keeps the first.
+      colorAttachments: [{ view: screen, loadOp: this.eye?.again ? 'load' : 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 1 } }],
       timestampWrites: this.timer.pass('output'),
     })
+    if (this.eye) pass.setViewport(this.eye.x, this.eye.y, this.width, this.height, 0, 1)
     pass.setPipeline(this.outputPipeline)
     pass.setBindGroup(0, this.outputGroup!)
     pass.draw(3)

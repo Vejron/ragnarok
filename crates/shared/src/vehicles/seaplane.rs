@@ -129,6 +129,8 @@ pub(super) const SEAPLANE: VehicleDef = VehicleDef {
         bow: 0.0,
         springs: Springs::FIRM,
         airframe: Some(SEAPLANE_AIRFRAME),
+        gait: None,
+        arms: None,
         runners: None,
     },
     armor: ARMOR,

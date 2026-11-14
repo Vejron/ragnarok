@@ -10,6 +10,7 @@ import { kindView } from '@/kinds'
 import { missileLaunch, tubeSmoke } from '@/render/launch'
 import { SubmarineModel, TUBE_SMOKES, type SubView } from '@/render/submarine'
 import { TankModel } from '@/render/tank'
+import { TitanModel } from '@/render/titan'
 import { WalkerModel } from '@/render/walker'
 import type { VehicleModel } from '@/render/car'
 import type { DrivenPose } from '@/sim/driver'
@@ -28,6 +29,9 @@ const GUN_SLOTS = [1, -1].flatMap((side) =>
 )
 /** A gun further than this from any of a ship's slots, metres, is not on her. */
 const SLOT_REACH = 1.5
+
+/** How hard a Titan's footfall is heard: as a landing at this many m/s. */
+const TITAN_FOOTFALL = 12
 
 /** Damage parts of a vehicle that is not hurt. */
 const UNHURT: readonly number[] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
@@ -217,6 +221,8 @@ export class Vehicles implements Presenter<Frame> {
     const [x, y, z] = position
     // A hen draws its wings and legs from its flags: the driver's own as predicted, at once.
     if (model instanceof HenModel) model.setFlags(jets)
+    // A Titan's limbs are where the server has them.
+    if (model instanceof TitanModel) model.setLimbs(entity.titan ?? null)
     model.update(position, [rotation[0], rotation[1], rotation[2], rotation[3]], steer, seats, turret, arms)
     if (model instanceof TankModel) model.setPintle(pintle)
     if (model instanceof SubmarineModel) {
@@ -226,6 +232,8 @@ export class Vehicles implements Presenter<Frame> {
     // A missile's motor lights what it flies over while it burns.
     if (kind === KIND_MISSILE && (seats[0] ?? 0) !== 0) this.world.lights.hold(x, y, z, { color: 0xff9a40, intensity: 3.5, radius: 22 })
     if (model instanceof WalkerModel || model instanceof HenModel) for (const step of model.takeSteps()) this.world.sounds.footstep(step.at, step.weight)
+    // A Titan's foot comes down like something dropped from a height.
+    if (model instanceof TitanModel) for (const step of model.takeSteps()) this.world.sounds.thud(step.at, TITAN_FOOTFALL)
     if (model instanceof HenModel) {
       const { beats, leapt, eggs } = model.takeEvents()
       if (leapt) this.world.sounds.bawk([x, y + 2, z])

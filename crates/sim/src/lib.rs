@@ -28,7 +28,7 @@ mod ragdoll;
 mod stream;
 mod vehicle;
 pub use ragdoll::{PARTS as RAGDOLL_PARTS, POSE_FLOATS as RAGDOLL_POSE_FLOATS, Ragdolls, SEGMENT_FLOATS as RAGDOLL_SEGMENT_FLOATS};
-pub use vehicle::{CarCondition, CarControls, CarImpact, CarMotion, CarPose, Strike, half_extents};
+pub use vehicle::{CarCondition, CarControls, CarImpact, CarMotion, CarPose, Hand, LIMB_GROUP, LimbsPose, Strike, half_extents};
 
 /// A destructible piece of the static world: a building or a tree, by tile and index.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

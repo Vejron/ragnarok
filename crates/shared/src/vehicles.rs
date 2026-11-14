@@ -13,7 +13,7 @@ use crate::consts::*;
 use crate::mounts::{Aim, Ammo, Eye, Fire, MountDef, Muzzle, Need, Refill, Show};
 use crate::items::*;
 use crate::protocol::{
-    KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MISSILE, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_SEAPLANE, KIND_SHIP, KIND_SHIP_GUN, KIND_SNOWMOBILE, KIND_SNOWRACER, KIND_SPORTS, KIND_STRF, KIND_STRV, KIND_SUBMARINE, KIND_TANK, KIND_TECHNICAL, KIND_TUPP, KIND_WALKER, PROJECTILE_BALL, PROJECTILE_BOMB, PROJECTILE_CANNON, PROJECTILE_CANNON_AP,
+    KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MISSILE, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_SEAPLANE, KIND_SHIP, KIND_SHIP_GUN, KIND_SNOWMOBILE, KIND_SNOWRACER, KIND_SPORTS, KIND_STRF, KIND_STRV, KIND_SUBMARINE, KIND_TANK, KIND_TECHNICAL, KIND_TITAN, KIND_TUPP, KIND_WALKER, PROJECTILE_BALL, PROJECTILE_BOMB, PROJECTILE_CANNON, PROJECTILE_CANNON_AP,
     PROJECTILE_EGG, PROJECTILE_HE, PROJECTILE_MORTAR, PROJECTILE_SHELL, WEAPON_AUTOCANNON, WEAPON_DRONE, WEAPON_LASER, WEAPON_LOITER, WEAPON_MG, WEAPON_MISSILE, WEAPON_ROCKET, WEAPON_SHELL,
 };
 
@@ -40,10 +40,11 @@ pub mod strv;
 pub mod submarine;
 pub mod tank;
 pub mod technical;
+pub mod titan;
 pub mod tupp;
 pub mod walker;
 
-pub use spec::{Airframe, Buttons, Floats, Lift, Role, Runners, Shape, Skim, Solid, Spec, Springs, STEER_FADE};
+pub use spec::{Airframe, Arms, Buttons, Feet, Floats, Gait, Lift, Role, Runners, Shape, Skim, Solid, Spec, Springs, STEER_FADE};
 pub use crate::armor::{ALLOY, Armor, Box3, Module, On, Part, Pen, Plate, SHEET, SOFT, Zone};
 
 #[derive(Clone, Copy, Debug)]
@@ -217,9 +218,12 @@ pub struct Body {
     pub flies: bool,
     /// Nobody drives it: it rolls when towed, holds its brake when not, and can be hitched.
     pub towed: bool,
+    /// The share of any harm it takes, against a car's 1: what is left of a hit after rounding is all it
+    /// loses, so a small enough one does nothing at all.
+    pub tough: f32,
 }
 
-const CAR: Body = Body { drop_y: 1.0, legs: 0.0, heavy: false, ram: 1.0, crash: 1.0, flies: false, towed: false };
+const CAR: Body = Body { drop_y: 1.0, legs: 0.0, heavy: false, ram: 1.0, crash: 1.0, flies: false, towed: false, tough: 1.0 };
 /// A tank's armour takes a fifth of what a car would, and it rams with three times a car's weight.
 const TRACKS: Body = Body { heavy: true, ram: 3.0, crash: 0.2, ..CAR };
 const ROTOR: Body = Body { flies: true, ..CAR };
@@ -229,6 +233,10 @@ const WINGS: Body = Body { drop_y: 1.5, crash: 2.0, flies: true, ..CAR };
 /// A walker's, a hen's or a tupp's hull starts as high as its legs hold it up.
 const LEGS: Body = Body { drop_y: WALKER_LEG_LENGTH + WALKER_HALF_EXTENTS[1], legs: WALKER_LEG_LENGTH, ..CAR };
 const TOWED: Body = Body { towed: true, ..CAR };
+/// A Titan stands as high as its legs hold it, rams a building as nothing else does and is not hurt by
+/// walking into things. A tenth of any hit is what it feels. It is not `heavy`, which is a tracked
+/// hull's shape and wheels: its torso is far above the trees, and its limbs go through them.
+const GIANT: Body = Body { drop_y: titan::TITAN_LEG_LENGTH + titan::TITAN_HALF_EXTENTS[1], legs: titan::TITAN_LEG_LENGTH, ram: 40.0, crash: 0.0, tough: 0.1, ..CAR };
 /// A sled is bent steel tube on runners, built to be slammed about: crashes do it no harm at all.
 const SLED: Body = Body { crash: 0.0, ..CAR };
 
@@ -258,6 +266,7 @@ pub static VEHICLES: &[VehicleDef] = &[
     seaplane::SEAPLANE,
     strf::STRF,
     snowracer::SNOWRACER,
+    titan::TITAN,
 ];
 
 /// Where each kind id's definition is in `VEHICLES`: 0, the jeep's, for ids that are not a vehicle.

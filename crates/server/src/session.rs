@@ -118,6 +118,7 @@ impl Transport {
         let mut delayed_out: DelayQueue<Bytes> = DelayQueue::new(self.netem, seed.rotate_left(17));
         let netem = self.netem.enabled();
         let mut last_input = Instant::now() - Duration::from_secs(1);
+        let mut last_hands = Instant::now() - Duration::from_secs(1);
         let mut last_ping = Instant::now() - Duration::from_secs(1);
         let mut last_heard = Instant::now();
         // Every reliable message goes down this one stream, in order, each behind a 4-byte length.
@@ -235,6 +236,15 @@ impl Transport {
                         match self.commands.try_send(Command::Input(id, baseline, frames)) {
                             Err(mpsc::error::TrySendError::Closed(_)) => return Ok(()),
                             Ok(()) | Err(mpsc::error::TrySendError::Full(_)) => {}
+                        }
+                    }
+                    Some(C_HANDS) => {
+                        if last_hands.elapsed() < MIN_INPUT_GAP { continue; }
+                        let Some(hands) = decode::<ClientHands>(&payload) else { continue };
+                        last_hands = Instant::now();
+                        // A full queue sheds it: the next one says the same.
+                        if let Err(mpsc::error::TrySendError::Closed(_)) = self.commands.try_send(Command::Hands(id, hands)) {
+                            return Ok(());
                         }
                     }
                     Some(C_PING) => {

@@ -105,6 +105,8 @@ pub(super) const STRV: VehicleDef = VehicleDef {
         bow: 0.0,
         springs: Springs::FIRM,
         airframe: None,
+        gait: None,
+        arms: None,
         runners: None,
     },
     armor: ARMOR,

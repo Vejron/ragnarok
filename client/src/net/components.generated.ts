@@ -169,6 +169,27 @@ export interface Lifted {
   seat: number
 }
 
+export interface Titan {
+  lx: number
+  ly: number
+  lz: number
+  rx: number
+  ry: number
+  rz: number
+  flx: number
+  fly: number
+  flz: number
+  frx: number
+  fry: number
+  frz: number
+  flags: number
+}
+
+export interface Held {
+  vehicle: number
+  hand: number
+}
+
 /** An entity as it is replicated: the components it has. */
 export interface Components {
   place?: Place
@@ -198,6 +219,8 @@ export interface Components {
   fell?: Fell
   sub?: Sub
   lifted?: Lifted
+  titan?: Titan
+  held?: Held
 }
 
 export type ComponentName = keyof Components
@@ -238,4 +261,6 @@ export const SCHEMA: readonly { id: number; name: ComponentName; diff: boolean; 
   { id: 25, name: 'fell', diff: false, owner: false, fields: [{ name: 'style' }] },
   { id: 26, name: 'sub', diff: false, owner: false, fields: [{ name: 'tubes' }, { name: 'scope', unit: 'mrad' }, { name: 'flags' }] },
   { id: 27, name: 'lifted', diff: false, owner: false, fields: [{ name: 'lift' }, { name: 'chair' }, { name: 'seat' }] },
+  { id: 28, name: 'titan', diff: false, owner: false, fields: [{ name: 'lx', unit: 'cm' }, { name: 'ly', unit: 'cm' }, { name: 'lz', unit: 'cm' }, { name: 'rx', unit: 'cm' }, { name: 'ry', unit: 'cm' }, { name: 'rz', unit: 'cm' }, { name: 'flx', unit: 'cm' }, { name: 'fly', unit: 'cm' }, { name: 'flz', unit: 'cm' }, { name: 'frx', unit: 'cm' }, { name: 'fry', unit: 'cm' }, { name: 'frz', unit: 'cm' }, { name: 'flags' }] },
+  { id: 29, name: 'held', diff: false, owner: false, fields: [{ name: 'vehicle' }, { name: 'hand' }] },
 ]

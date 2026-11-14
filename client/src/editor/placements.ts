@@ -57,6 +57,8 @@ export const VEHICLE_KINDS: { kind: number; name: string; icon: string }[] = [
   { kind: 7, name: 'Walker', icon: 'W' },
   { kind: 12, name: 'Hen', icon: 'E' },
   { kind: 16, name: 'Tupp', icon: 'U' },
+  // Fifty metres high: it wants open ground to stand on.
+  { kind: 30, name: 'Titan', icon: 'Y' },
   { kind: 9, name: 'Mortar', icon: 'M' },
   { kind: 14, name: 'Pak 38', icon: 'K' },
   { kind: 17, name: 'Snowmobile', icon: 'N' },

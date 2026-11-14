@@ -23,10 +23,11 @@ pub use crate::vehicles::strv::*;
 pub use crate::vehicles::strf::*;
 pub use crate::vehicles::submarine::*;
 pub use crate::vehicles::tank::*;
+pub use crate::vehicles::titan::*;
 pub use crate::vehicles::walker::*;
 
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
-pub const PROTOCOL_VERSION: u8 = 76;
+pub const PROTOCOL_VERSION: u8 = 77;
 
 /// Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
 /// `crate::vehicles`.
@@ -92,6 +93,9 @@ pub const KIND_STRF: u8 = 28;
 /// The snowracer: a steerable sled for two with a small motor, which slides down a ski slope as fast
 /// as a snowmobile drives and creeps back up it.
 pub const KIND_SNOWRACER: u8 = 29;
+/// The Titan: a giant robot fifty metres high, whose pilot moves its fists: it punches, picks up and
+/// throws, and crushes what it steps on.
+pub const KIND_TITAN: u8 = 30;
 
 /// Fixed simulation rate, in ticks per second.
 pub const TICK_RATE: u32 = 60;

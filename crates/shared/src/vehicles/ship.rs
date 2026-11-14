@@ -109,6 +109,8 @@ pub(super) const SHIP: VehicleDef = VehicleDef {
         bow: SHIP_BOW,
         springs: Springs::FIRM,
         airframe: None,
+        gait: None,
+        arms: None,
         runners: None,
     },
     armor: ARMOR,

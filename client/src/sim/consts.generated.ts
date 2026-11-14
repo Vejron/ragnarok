@@ -2,7 +2,7 @@
 // change the Rust and run `npm run gen:consts`. Client-only constants live in consts.ts.
 
 /** Wire schema version. Bumped on any incompatible protocol or world-format change. */
-export const PROTOCOL_VERSION = 76
+export const PROTOCOL_VERSION = 77
 
 /**
  * Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
@@ -109,6 +109,12 @@ export const KIND_STRF = 28
  * as a snowmobile drives and creeps back up it.
  */
 export const KIND_SNOWRACER = 29
+
+/**
+ * The Titan: a giant robot fifty metres high, whose pilot moves its fists: it punches, picks up and
+ * throws, and crushes what it steps on.
+ */
+export const KIND_TITAN = 30
 
 /** Fixed simulation rate, in ticks per second. */
 export const TICK_RATE = 60
@@ -2405,6 +2411,110 @@ export const TECHNICAL_MG_HEAT = 31.0
  * (`TECHNICAL_MG_PIVOT` plus `TECHNICAL_MG_HEAD`).
  */
 export const TECHNICAL_SEAT_HEADS = [[-0.42, 1.0, -0.35], [0.42, 1.0, -0.35], [0.0, 1.79, 1.65]] as const
+
+/**
+ * The Titan (`KIND_TITAN`): a giant robot about fifty metres high, one pilot sealed in its head. Its
+ * body is a single box, its torso, held up by two spring legs that are ray casts to the ground and
+ * kept upright by a torque, exactly as a walker's is (its `Gait`). It has no guns. Its pilot moves its
+ * two fists (`TITAN_ARMS`): they hit what they meet and hold what they close on. Its feet are solid
+ * and crush what they come down on.
+ */
+export const TITAN_SEATS = 1
+
+/** Half the torso's box, metres. The hull frame has its origin at the box's centre. */
+export const TITAN_HALF_EXTENTS = [6.0, 8.0, 4.0] as const
+
+/**
+ * Distance of each foot from the middle of the hull, sideways, metres, and how long a leg is from the
+ * bottom of the torso to the ground when it stands.
+ */
+export const TITAN_FOOT_HALF = 5.0
+export const TITAN_LEG_LENGTH = 26.0
+
+/** How much shorter its legs are when it crouches, metres, and how far it leans forward then, as a tilt. */
+export const TITAN_CROUCH = 16.0
+export const TITAN_CROUCH_LEAN = 0.3
+
+/** How fast it stands up from a crouch, m/s. */
+export const TITAN_RISE = 7.0
+
+/** Top speed, m/s, and its yaw rate at full stick, rad/s. */
+export const TITAN_MAX_SPEED = 11.0
+export const TITAN_TURN_RATE = 0.6
+
+/**
+ * The leg spring, per kilogram of the body: soft, so it settles `CAR_GRAVITY / TITAN_LEG_SPRING` into
+ * its legs and takes a second to crouch or to stand.
+ */
+export const TITAN_LEG_SPRING = 12.0
+
+/**
+ * Where the hull's centre settles over flat ground when it stands, metres. Measured by
+ * `a_titan_stands_fifty_metres_high_on_its_legs`.
+ */
+export const TITAN_RIDE_HEIGHT = 33.2
+
+/** Where the right shoulder is in the hull frame; the left is its mirror in X. */
+export const TITAN_SHOULDER = [8.5, 6.0, 0.0] as const
+
+/** The furthest and the nearest a fist's middle can be from its shoulder, metres, and a fist's radius. */
+export const TITAN_REACH = 24.0
+export const TITAN_MIN_REACH = 6.0
+export const TITAN_FIST_RADIUS = 2.5
+
+/** A fist's top speed against the hull, m/s, and how hard it speeds up and slows, m/s². */
+export const TITAN_FIST_SPEED = 45.0
+export const TITAN_FIST_ACCEL = 140.0
+
+/** Where the right fist hangs when nobody asks anything of it, in the hull frame. */
+export const TITAN_FIST_REST = [10.0, -15.0, -3.0] as const
+
+/** The heaviest vehicle a closed fist picks up, kilograms: a tank, but not a ship. */
+export const TITAN_LIFT_MASS = 60000.0
+
+/** Half extents of a shin's column, metres, which stands where the foot is planted. */
+export const TITAN_SHIN_HALF = [2.2, 6.0, 3.2] as const
+
+/**
+ * How far the hull gets ahead of a planted foot before it steps, metres, how long a step takes,
+ * seconds, and how high the foot lifts in the middle of it, metres.
+ */
+export const TITAN_STRIDE = 7.0
+export const TITAN_STEP_TIME = 0.55
+export const TITAN_STEP_LIFT = 4.0
+
+/** Half extents of each thigh, a solid on the hull that hangs from the hip, metres. */
+export const TITAN_THIGH_HALF = [2.0, 3.5, 2.4] as const
+
+/**
+ * Where it is boarded from and where its pilot is set down, in the hull frame: on the ground between
+ * its feet, and ahead of them.
+ */
+export const TITAN_BOARD = [0.0, -32.2, 0.0] as const
+export const TITAN_EXIT = [0.0, -32.2, -10.0] as const
+
+/** The pilot's eye, in the hull frame: at the visor, just clear of the head's own plates. */
+export const TITAN_EYE = [0.0, 12.0, -3.2] as const
+
+/** A fist moving at least this fast, m/s, hits what it meets; slower, it only shoves. */
+export const TITAN_PUNCH_SPEED = 8.0
+
+/** What a punch takes off a soldier, per m/s of the fist's speed, and off a vehicle. */
+export const TITAN_PUNCH_DAMAGE = 6.0
+export const TITAN_PUNCH_VEHICLE_DAMAGE = 4.0
+
+/**
+ * How far around a foot coming down soldiers are knocked off their feet, metres, and how hard they
+ * are thrown at its edge, m/s. Under the foot itself they are crushed.
+ */
+export const TITAN_STOMP_RADIUS = 14.0
+export const TITAN_STOMP_KNOCK = 9.0
+
+/** What a foot coming down takes off a vehicle under it. */
+export const TITAN_STOMP_VEHICLE_DAMAGE = 120.0
+
+/** A soldier thrown from a fist keeps this share of the fist's speed. */
+export const TITAN_THROW_SHARE = 1.0
 
 /**
  * The tupp (`KIND_TUPP`): a giant robot rooster of the Swedish Hedemora breed, one driver in a cockpit

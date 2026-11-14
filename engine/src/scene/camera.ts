@@ -7,6 +7,12 @@ export class PerspectiveCamera extends Node {
   readonly view = mat4.create()
   readonly projection = mat4.create()
   readonly viewProjection = mat4.create()
+  /**
+   * A projection given from outside (reversed depth, 0..1), used in place of the one `fov` and `aspect`
+   * make: a headset's, which is not symmetric about the eye. `fov` and `aspect` should still say roughly
+   * what it covers, for what sizes things by them.
+   */
+  lens: Float32Array | null = null
 
   constructor(public fov = 60, public aspect = 1, public near = 0.1, public far = 1000) {
     super()
@@ -71,7 +77,8 @@ export class PerspectiveCamera extends Node {
   /** Refreshes view, projection and their product from the world matrix. The renderer calls it. */
   updateMatrices() {
     mat4.invert(this.view, this.matrixWorld)
-    mat4.perspectiveReversed(this.projection, (this.fov * Math.PI) / 180, this.aspect, this.near, this.far)
+    if (this.lens) this.projection.set(this.lens)
+    else mat4.perspectiveReversed(this.projection, (this.fov * Math.PI) / 180, this.aspect, this.near, this.far)
     mat4.multiply(this.viewProjection, this.projection, this.view)
   }
 }

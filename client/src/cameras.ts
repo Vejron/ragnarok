@@ -15,13 +15,13 @@ import type { VehicleModel } from '@/render/car'
 import type { ChaseView } from '@/render/chase'
 import { MortarModel } from '@/render/mortar'
 import { PlaneModel } from '@/render/plane'
-import { CAMERA_HEIGHT, PLANE_CAMERA_HEIGHT, PLANE_DISTANCE, AIM_DISTANCE_SCALE, type Scene } from '@/render/scene'
+import { CAMERA_HEIGHT, PLANE_CAMERA_HEIGHT, PLANE_DISTANCE, AIM_DISTANCE_SCALE, TITAN_AIM_UP, TITAN_PIVOT_UP, type Scene } from '@/render/scene'
 import { StrvModel } from '@/render/strvs'
 import { TankModel } from '@/render/tank'
 import type { VehicleFx } from '@/render/tyres'
 import { TuppModel } from '@/render/tupp'
 import { WalkerModel } from '@/render/walker'
-import { MORTAR_RANGE_MAX, MORTAR_RANGE_MIN, MORTAR_RANGE_START, PASSENGER_DISTANCE, ROOF_AIM_BACK, ROOF_AIM_UP, STRV_AIM_BACK, STRV_AIM_UP, WALKER_AIM_BACK, WALKER_AIM_UP, PASSENGER_HEIGHT, PASSENGER_SHOULDER, PLANE_AIM_MAX_PITCH, PLANE_CRUISE_SPEED, SIGHT_EYE_UP, STRV_BARREL_MAX, STRV_BARREL_MIN, SUB_MAST_HEIGHT, SUB_SAIL_Z, TUPP_HEAD_LIMIT, TUPP_HEAD_PITCH_MAX, TUPP_HEAD_PITCH_MIN, WALKER_GUN_PITCH_MAX, WALKER_GUN_PITCH_MIN, WALKER_TORSO_LIMIT } from '@/sim/consts'
+import { MORTAR_RANGE_MAX, MORTAR_RANGE_MIN, MORTAR_RANGE_START, PASSENGER_DISTANCE, ROOF_AIM_BACK, ROOF_AIM_UP, STRV_AIM_BACK, STRV_AIM_UP, WALKER_AIM_BACK, WALKER_AIM_UP, PASSENGER_HEIGHT, PASSENGER_SHOULDER, PLANE_AIM_MAX_PITCH, PLANE_CRUISE_SPEED, SIGHT_EYE_UP, STRV_BARREL_MAX, STRV_BARREL_MIN, SUB_MAST_HEIGHT, SUB_SAIL_Z, TITAN_EYE, TUPP_HEAD_LIMIT, TUPP_HEAD_PITCH_MAX, TUPP_HEAD_PITCH_MIN, WALKER_GUN_PITCH_MAX, WALKER_GUN_PITCH_MIN, WALKER_TORSO_LIMIT } from '@/sim/consts'
 import type { InputController } from '@/sim/input'
 import { layTube } from '@/sim/lob'
 import type { Rig, SeatView } from '@/seats'
@@ -78,6 +78,13 @@ export interface Seated {
 const PERISCOPE_PITCH = 0.35
 const PERISCOPE_EYE_UP = 0.15
 
+/** How far a Titan's pilot can look to either side of the way it faces from its head, and down and up, radians: further, and its own helmet fills the view. */
+const COCKPIT_TURN = 1
+const COCKPIT_DOWN = 1.2
+const COCKPIT_UP = 0.7
+/** How far ahead of `TITAN_EYE` the screen's eye is, metres: out of the visor, so that the brow and the cheeks are behind it. */
+const COCKPIT_AHEAD = 0.7
+
 type RigName = Rig['name']
 
 interface RigImpl {
@@ -105,7 +112,7 @@ export class Cameras {
     private readonly input: InputController,
     private readonly castRay: (origin: [number, number, number], direction: [number, number, number], max: number) => { t: number } | null,
   ) {
-    this.rigs = { drive: this.drive(), gun: this.gun(), fpv: this.fpv(), aviator: this.aviator(), tanker: this.tanker(), walker: this.walker(), pintle: this.pintle(), mortar: this.mortar(), passenger: this.passenger(), periscope: this.periscope() }
+    this.rigs = { drive: this.drive(), gun: this.gun(), fpv: this.fpv(), aviator: this.aviator(), tanker: this.tanker(), walker: this.walker(), titan: this.titan(), pintle: this.pintle(), mortar: this.mortar(), passenger: this.passenger(), periscope: this.periscope() }
   }
 
   /** The rig the camera is in, if the local player is seated. */
@@ -312,6 +319,39 @@ export class Cameras {
         } else {
           this.scene.follow([ride.x, ride.y + 0.4, ride.z], this.input.yaw, this.input.pitch, distance, 0, CAMERA_HEIGHT)
         }
+      },
+    }
+  }
+
+  /** Behind and above a Titan's shoulders: the look is free of where its legs face, and its fists go to what the middle of the screen is on. */
+  private titan(): RigImpl {
+    // The way the Titan faced a frame ago, radians.
+    let facing = 0
+    return {
+      enter: ({ ride }) => {
+        this.input.yaw = ride.yaw
+        this.input.pitch = -0.2
+        facing = ride.yaw
+      },
+      frame: ({ ride, distance }) => {
+        const turned = wrapAngle(ride.yaw - facing)
+        facing = ride.yaw
+        // In a headset the pilot is in its head, looking the way it faces: the headset turns the view from there.
+        if (this.scene.worn) {
+          const eye = new Vector3(...TITAN_EYE).applyQuaternion(new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), ride.yaw))
+          this.scene.scopeFrom([ride.x + eye.x, ride.y + eye.y, ride.z + eye.z], ride.yaw, 0)
+          return
+        }
+        // From its head (B): the eye leans and crouches with the hull, the look turns with it and is the
+        // pilot's within what the visor shows, and the fists still go to the middle of the screen.
+        if (this.input.cockpit) {
+          this.input.yaw = ride.yaw + clamp(wrapAngle(this.input.yaw + turned - ride.yaw), -COCKPIT_TURN, COCKPIT_TURN)
+          this.input.clampPitch(-COCKPIT_DOWN, COCKPIT_UP)
+          const eye = new Vector3(TITAN_EYE[0], TITAN_EYE[1], TITAN_EYE[2] - COCKPIT_AHEAD).applyQuaternion(new Quaternion(...ride.rotation))
+          this.scene.scopeFrom([ride.x + eye.x, ride.y + eye.y, ride.z + eye.z], this.input.yaw, this.input.pitch)
+          return
+        }
+        this.scene.aimFrom([ride.x, ride.y + TITAN_PIVOT_UP, ride.z], this.input.yaw, this.input.pitch, distance, TITAN_AIM_UP)
       },
     }
   }
