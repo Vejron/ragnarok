@@ -43,6 +43,13 @@ function turned(): Tri[] {
   ]
 }
 
+/** The gabled house with a dormer's front on its south slope: a wall 1.5 m tall, 3 m wide, its foot 3.4 m up. */
+function dormered(): Tri[] {
+  const [X, Z] = [137, -2231]
+  const p = (x: number, y: number, z: number): [number, number, number] => [X + x, y, Z + z]
+  return [...gable(), ...face([p(150, 340, 60), p(450, 340, 60), p(450, 490, 60), p(150, 490, 60)], [0, 0, -1])]
+}
+
 function lookOf(tris: Tri[]): CollisionMesh {
   const vertices = new Float32Array(tris.length * 9)
   tris.forEach((t, i) => t.forEach((v, k) => (vertices[i * 9 + k] = v / 100)))
@@ -51,7 +58,7 @@ function lookOf(tris: Tri[]): CollisionMesh {
 
 describe('window placement', () => {
   it('is the same on the server as on the client, house for house', () => {
-    for (const walls of [gable(), turned()]) {
+    for (const walls of [gable(), turned(), dormered()]) {
       const ours = openingsOf(lookOf(walls), { first: 0, walls: walls.length, roof: 0 })
       const theirs = serverOpenings(walls)
       expect(theirs.length).toBe(ours.length)
@@ -63,5 +70,19 @@ describe('window placement', () => {
         for (let a = 0; a < 3; a++) expect(t.normal[a]).toBeCloseTo(o.normal[a]!, 5)
       })
     }
+  })
+
+  it('puts a small window in a dormer, and no door', () => {
+    const openings = openingsOf(lookOf(dormered()), { first: 0, walls: dormered().length, roof: 0 })
+    // The dormer's front is 0.6 m in from the south wall.
+    const high = openings.filter((o) => Math.abs(o.corners[0][2] - (-2231 + 60) / 100) < 1e-3)
+    // Two, a metre and a half apart, across its 3 m.
+    expect(high.length).toBe(2)
+    for (const o of high) {
+      expect(o.door).toBe(false)
+      expect(o.corners[3][1] - o.corners[0][1]).toBeCloseTo(0.7, 5)
+      expect(o.corners[0][1]).toBeCloseTo(3.6, 5)
+    }
+    expect(openings.filter((o) => o.door).length).toBe(1)
   })
 })

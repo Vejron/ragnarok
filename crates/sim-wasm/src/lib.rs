@@ -473,6 +473,38 @@ pub fn windows_of(walls: &[i32]) -> Vec<f32> {
     out
 }
 
+/// What stands inside the house on `footprint` (`x, z` pairs, centimetres) whose look is `walls` and
+/// `roof` (nine centimetre numbers a triangle), as the server works it out (`shared::interior::rooms`):
+/// ten numbers a triangle, its corners in centimetres and what it is (`PART_*`). Empty for a house
+/// without rooms.
+#[wasm_bindgen]
+pub fn interior_of(footprint: &[i32], walls: &[i32], roof: &[i32]) -> Vec<i32> {
+    let tris = |flat: &[i32]| flat.chunks_exact(9).map(|t| std::array::from_fn(|k| t[k])).collect::<Vec<shared::carve::Tri>>();
+    let (walls, roof) = (tris(walls), tris(roof));
+    let mut look = shared::world::Look::default();
+    for t in &walls {
+        let base = look.vertices.len() as u32;
+        look.vertices.extend([[t[0], t[1], t[2]], [t[3], t[4], t[5]], [t[6], t[7], t[8]]]);
+        look.triangles.push([base, base + 1, base + 2]);
+    }
+    let windows = shared::windows::openings_of(&look, [0, walls.len() as u32, 0]);
+    let ring: Vec<[i32; 2]> = footprint.chunks_exact(2).map(|p| [p[0], p[1]]).collect();
+    let mut out = Vec::new();
+    for part in shared::interior::rooms(&ring, &walls, &roof, &windows) {
+        out.extend(part.tri);
+        out.push(part.kind as i32);
+    }
+    out
+}
+
+/// The cells of the grid at `origin` with `dims` cells a side that the triangles `inside` (nine
+/// centimetre numbers each) pass through: what a house's rooms add to its cells (`Shell::furnish`).
+#[wasm_bindgen]
+pub fn carve_furnish(origin: &[i32], dims: &[u32], inside: &[i32]) -> Vec<u32> {
+    let tris: Vec<shared::carve::Tri> = inside.chunks_exact(9).map(|t| std::array::from_fn(|k| t[k])).collect();
+    shared::carve::furnished(corner(origin), grid(dims), &tris)
+}
+
 /// `count` flags, one a cell (1 or 0), from the bytes the importer packed them into, a layer being
 /// `layer` cells (`shared::carve::unpack`).
 #[wasm_bindgen]

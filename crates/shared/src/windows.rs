@@ -17,6 +17,14 @@ const PITCH: f64 = 2.8;
 const MARGIN: f64 = 0.35;
 const DOOR_WIDTH: f64 = 1.0;
 const DOOR_HEIGHT: f64 = 2.1;
+/// A wall whose foot is this far over the building's lowest is raised (a dormer's front, the step
+/// up to a higher part of the roof): its windows are small, set low in it, and it has no door, metres.
+const RAISED: f64 = 2.0;
+const SMALL_SILL: f64 = 0.2;
+const SMALL_HEIGHT: f64 = 0.7;
+const SMALL_WIDTH: f64 = 0.8;
+const SMALL_MARGIN: f64 = 0.15;
+const SMALL_PITCH: f64 = 2.0;
 /// How far outside a pane's rectangle a round still counts as through it, metres.
 const SLACK: f32 = 0.03;
 
@@ -111,9 +119,10 @@ pub fn openings_of(look: &Look, [first, walls, _]: [u32; 3]) -> Vec<Window> {
             (x >= 0.0 && y >= 0.0 && z >= 0.0) || (x <= 0.0 && y <= 0.0 && z <= 0.0)
         })
     };
-    let fits = |plane: &Plane, u0: f64, u1: f64, v0: f64, v1: f64| {
-        [[u0 - MARGIN, v0 - MARGIN], [u1 + MARGIN, v0 - MARGIN], [u1 + MARGIN, v1 + MARGIN], [u0 - MARGIN, v1 + MARGIN]].iter().all(|&[u, v]| inside(plane, u, v))
+    let fits = |plane: &Plane, u0: f64, u1: f64, v0: f64, v1: f64, margin: f64| {
+        [[u0 - margin, v0 - margin], [u1 + margin, v0 - margin], [u1 + margin, v1 + margin], [u0 - margin, v1 + margin]].iter().all(|&[u, v]| inside(plane, u, v))
     };
+    let lowest = planes.iter().fold(f64::INFINITY, |lowest, plane| lowest.min(plane.v0));
     // The longest wall first, and of two as long the one with the smaller offset.
     let mut order: Vec<usize> = (0..planes.len()).collect();
     order.sort_by(|&i, &j| {
@@ -124,31 +133,33 @@ pub fn openings_of(look: &Look, [first, walls, _]: [u32; 3]) -> Vec<Window> {
     let mut out = Vec::new();
     for (rank, &at) in order.iter().enumerate() {
         let plane = &planes[at];
+        let raised = plane.v0 - lowest >= RAISED;
+        let (sill, height, width, margin, pitch) = if raised { (SMALL_SILL, SMALL_HEIGHT, SMALL_WIDTH, SMALL_MARGIN, SMALL_PITCH) } else { (SILL, WINDOW_HEIGHT, WINDOW_WIDTH, MARGIN, PITCH) };
         let length = plane.u1 - plane.u0;
-        if length < WINDOW_WIDTH + 2.0 * MARGIN {
+        if length < width + 2.0 * margin {
             continue;
         }
-        let count = js_round(length / PITCH).max(1.0);
+        let count = js_round(length / pitch).max(1.0);
         let step = length / count;
         let to_world = |u: f64, v: f64| -> [f32; 3] { [(plane.u[0] * u + plane.normal[0] * plane.d) as f32, v as f32, (plane.u[2] * u + plane.normal[2] * plane.d) as f32] };
         let normal = plane.normal.map(|v| v as f32);
         let mut push = |u0: f64, u1: f64, v0: f64, v1: f64, door: bool| out.push(Window { corners: [to_world(u0, v0), to_world(u1, v0), to_world(u1, v1), to_world(u0, v1)], normal, door });
         // Rows a storey apart, as high as the wall reaches (`fits` keeps them off a gable's slopes).
         let mut storey = 0.0f64;
-        while plane.v0 + SILL + storey * STOREY + WINDOW_HEIGHT + MARGIN <= plane.v1 {
-            let v0 = plane.v0 + SILL + storey * STOREY;
+        while plane.v0 + sill + storey * STOREY + height + margin <= plane.v1 {
+            let v0 = plane.v0 + sill + storey * STOREY;
             let mut i = 0.0f64;
             while i < count {
                 let mid = plane.u0 + (i + 0.5) * step;
                 // The longest wall's door: the middle of its ground row.
-                if rank == 0 && storey == 0.0 && i == (count / 2.0).floor() && fits(plane, mid - DOOR_WIDTH / 2.0, mid + DOOR_WIDTH / 2.0, plane.v0 + MARGIN, plane.v0 + DOOR_HEIGHT) {
+                if !raised && rank == 0 && storey == 0.0 && i == (count / 2.0).floor() && fits(plane, mid - DOOR_WIDTH / 2.0, mid + DOOR_WIDTH / 2.0, plane.v0 + MARGIN, plane.v0 + DOOR_HEIGHT, MARGIN) {
                     push(mid - DOOR_WIDTH / 2.0, mid + DOOR_WIDTH / 2.0, plane.v0 + 0.02, plane.v0 + DOOR_HEIGHT, true);
                     i += 1.0;
                     continue;
                 }
-                let (u0, u1) = (mid - WINDOW_WIDTH / 2.0, mid + WINDOW_WIDTH / 2.0);
-                if fits(plane, u0, u1, v0, v0 + WINDOW_HEIGHT) {
-                    push(u0, u1, v0, v0 + WINDOW_HEIGHT, false);
+                let (u0, u1) = (mid - width / 2.0, mid + width / 2.0);
+                if fits(plane, u0, u1, v0, v0 + height, margin) {
+                    push(u0, u1, v0, v0 + height, false);
                 }
                 i += 1.0;
             }

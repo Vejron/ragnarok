@@ -290,6 +290,10 @@ pub struct BuildingLook {
     pub walls: Vec<crate::carve::Tri>,
     pub roof: Vec<crate::carve::Tri>,
     pub windows: Vec<crate::windows::Window>,
+    /// What stands inside it and is collided with (`interior::rooms`, without the steps drawn over
+    /// the stairs): floors and the stairs' slopes. Empty for a house without.
+    #[serde(default)]
+    pub inside: Vec<crate::carve::Tri>,
 }
 
 impl BuildingLook {
@@ -1019,7 +1023,9 @@ impl WorldFile {
                 let range = tile.look.buildings.get(index).copied().unwrap_or([0; 3]);
                 world.looks.push(if range[1] + range[2] > 0 {
                     let (walls, roof) = tile.look.parts(range);
-                    BuildingLook { walls, roof, windows: crate::windows::openings_of(&tile.look, range) }
+                    let windows = crate::windows::openings_of(&tile.look, range);
+                    let inside = crate::interior::rooms(&building.footprint, &walls, &roof, &windows).into_iter().filter(|part| part.collided()).map(|part| part.tri).collect();
+                    BuildingLook { walls, roof, windows, inside }
                 } else {
                     BuildingLook::default()
                 });

@@ -2,6 +2,7 @@ import type { CollisionMesh } from '@/world'
 import type { ShellFlags } from '@/sim/carve'
 import type { LookRange, Surfaces } from './lookfracture'
 import type { RGB } from './geom'
+import { insideFor } from '@/sim/interior'
 
 /*
  * The main thread's side of the look worker (`look.worker.ts`), which redraws hurt buildings with a
@@ -49,6 +50,8 @@ interface Waiting {
  * to draw it (`facadeFor`, `openingsFor` and `eavesFor` read only a building's own range).
  */
 export function lookSlice(look: CollisionMesh, range: LookRange): { look: CollisionMesh; range: LookRange } {
+  // What stands in its rooms goes along worked out: the worker has no WebAssembly to work it out with.
+  insideFor(look, range)
   const count = range.walls + range.roof
   const triangles = new Uint32Array(count * 3)
   const renumbered = new Map<number, number>()
@@ -63,7 +66,7 @@ export function lookSlice(look: CollisionMesh, range: LookRange): { look: Collis
     }
     triangles[k] = at
   }
-  return { look: { vertices: Float32Array.from(vertices), triangles }, range: { first: 0, walls: range.walls, roof: range.roof } }
+  return { look: { vertices: Float32Array.from(vertices), triangles }, range: { first: 0, walls: range.walls, roof: range.roof, inside: range.inside ?? new Int32Array(0) } }
 }
 
 export class LookWorker {

@@ -11,6 +11,7 @@ pub mod consts;
 pub mod construct;
 pub mod facade;
 pub mod golf;
+pub mod interior;
 pub mod items;
 pub mod lifts;
 pub mod lambert93;

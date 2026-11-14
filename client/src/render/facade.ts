@@ -1,6 +1,7 @@
 import type { CollisionMesh } from '@/world'
 import { add, centreOf, dot, keyOf, normalOf, splitPlane, sub, triangulate, unit, type P, type Poly, type RGB } from './geom'
 import { REVEAL, openingsFor, type LookRange, type Opening } from './windows'
+import { Part, insideFor, type InsidePiece } from '@/sim/interior'
 
 /*
  * A looked building's faces as they are drawn, worked out once from its look (`Tile.look`): the
@@ -18,12 +19,25 @@ export const FLOOR_RGB: RGB = [0.07, 0.05, 0.035]
 /** How far above the building's lowest corner the floor lies: on a plinth, as the importer builds houses, so sloping ground inside the footprint stays under it. */
 const FLOOR_UP = 0.45
 
+/** A doorway is cut this far below its door's foot and above its top, metres. Mirrors `DOOR_SILL` and `DOOR_RISE` in `facade.rs`. */
+export const DOOR_SILL = 0.5
+export const DOOR_RISE = 0.3
+/** What stands inside a house, in linear colours: floor boards, the plastered underside of a floor, the underside of a flight of stairs and its steps. */
+export const INSIDE_RGB: Record<number, RGB> = {
+  [Part.Floor]: [0.2, 0.135, 0.08],
+  [Part.Ceiling]: [0.42, 0.4, 0.35],
+  [Part.Ramp]: [0.12, 0.085, 0.055],
+  [Part.Step]: [0.26, 0.18, 0.11],
+}
+
 export interface Facade {
-  /** Outward-wound, the windows cut out. */
+  /** Outward-wound, the windows cut out, and the door too when the house has rooms. */
   walls: Poly[]
   roof: Poly[]
-  /** Facing up, at the foot of the walls. */
+  /** Facing up, at the foot of the walls: the floor seen through the windows of a house without rooms. */
   floor: Poly[]
+  /** What stands inside it (`insideFor`): its floors and stairs. Empty for a house without. */
+  inside: readonly InsidePiece[]
 }
 
 /** The faces of building `range` of `look`. */
@@ -36,8 +50,19 @@ export function facadeOf(look: CollisionMesh, range: LookRange): Facade {
   for (let t = range.first; t < range.first + range.walls; t++) walls.push(poly(t))
   const roof: Poly[] = []
   for (let t = range.first + range.walls; t < range.first + range.walls + range.roof; t++) roof.push(poly(t))
-  for (const o of openingsFor(look, range)) if (!o.door) walls = cutWindow(walls, o)
-  return { walls, roof, floor: floorOf(walls) }
+  const inside = insideFor(look, range).pieces
+  for (const o of openingsFor(look, range)) {
+    if (!o.door) walls = cutWindow(walls, o)
+    else if (inside.length > 0) walls = cutWindow(walls, doorway(o))
+  }
+  // A house with rooms has its ground floor among them, on its plinth.
+  return { walls, roof, floor: inside.length > 0 ? [] : floorOf(walls), inside }
+}
+
+/** The hole door `o` is in a house with rooms: from under its foot to the height of a step over its top, as the server cuts it. */
+export function doorway(o: Opening): Opening {
+  const [a, b, c, d] = o.corners
+  return { ...o, corners: [[a[0], a[1] - DOOR_SILL, a[2]], [b[0], b[1] - DOOR_SILL, b[2]], [c[0], c[1] + DOOR_RISE, c[2]], [d[0], d[1] + DOOR_RISE, d[2]]] }
 }
 
 /** `walls` with window `o` cut out of the ones in its plane. */

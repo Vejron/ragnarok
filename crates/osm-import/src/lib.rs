@@ -3,6 +3,7 @@
 pub mod assemble;
 pub mod bridge;
 pub mod bushes;
+pub mod catalogue;
 pub mod cache;
 pub mod canopy;
 pub mod dem;
@@ -26,6 +27,7 @@ pub mod progress;
 pub mod props;
 pub mod region;
 pub mod roof;
+pub mod square;
 pub mod species;
 pub mod trees;
 pub mod voxels;

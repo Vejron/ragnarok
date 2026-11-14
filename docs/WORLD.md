@@ -159,7 +159,9 @@ and how many objects it has of each symbol.
   the slope it is and a round goes through a window. A tile written before looks has none and its
   buildings are drawn and collided with as cubes; the field is left out of the file when empty, so
   the world version is unchanged. Re-import a
-  world to give it looks (`--bake` cannot: a baked world has lost its walls and roofs).
+  world to give it looks (`--bake` cannot: a baked world has lost its walls and roofs). A house big
+  enough also gets floors and stairs, worked out from its footprint and look as the world is
+  read and stored nowhere: [INTERIORS.md](INTERIORS.md).
 - **Stony ground** goes in the tiles' `stones` layer: a 2 m grid of grades, the low seven bits how stony
   (`STONES_DENSITY`) and the top bit a boulder field's blocks (`STONES_ANGULAR`). It is written after
   `lines` (an empty `lines` is written to keep it in place) and left out when a tile has none, so a
@@ -421,13 +423,69 @@ test.
 ### Laser points (roofs)
 A small COPC reader of our own (`lidar.rs`) walks the octree and decompresses only nodes touching
 the world, from the newest flight of each square. Returns are bucketed in a 25 m grid; roofs are
-fitted per building as flat, shed, gable or hip, up to four parts (`roof.rs`). The data is
+fitted per building (see "Footprints and the roof catalogue" below). The data is
 Lantmäteriet's class 1 "unclassified" for most returns, so foliage is rejected by shape, not by
 class. A 2 km square is ~17 million points; reading them dominates the run time, so only the
 octree nodes that touch a painted tile (plus 30 m) are read, eight nodes are decoded at a time, and
 roofs are fitted on all cores, only for buildings on a painted tile. The importer prints how long
 each stage took (`[laser: 41.2 s]`). The editor always runs the release importer: a debug one is
 several times slower.
+
+### Footprints and the roof catalogue
+Before a roof is fitted, every footprint whose walls all run within 12° of one direction or its
+right angle is squared (`square.rs`): the walls are made exactly parallel and at right angles,
+jogs under 0.6 m are taken out and kinked walls made straight. It is kept only if it stays within
+8% of the drawn area and 1 m of the drawn outline; a round tower or a wedge stays as drawn, and so
+do footprints France cuts on its lattice (over 1000 m²).
+
+A house (under 250 m², `roof::SPLIT_FROM`) gets its roof from a catalogue of common shapes
+(`catalogue.rs`), not a free fit:
+
+- The squared plan is cut into at most four rectangular wings, the biggest first. A side wing at
+  least 0.6 times as deep as it is wide has its ridge run out from the main wing and is carried in
+  under its roof to the ridge, so the two meet in valleys (an L, T or U house). A bit under 1.5 m
+  wide is a porch, roofed flat at the eaves. A footprint that is not square, or needs more wings, is
+  one wing: the smallest rectangle around it.
+- The shapes are flat; shed (one slope along either side); gable; hip (a pyramid on a square
+  wing); and gambrel (steep up to halfway in, then shallow). Gable, hip and gambrel have one eave
+  height and one slope for the whole house, the ridge down the middle of every wing. A gable or hip
+  slopes 9° to 50°.
+- A footprint drawn a little off the house the laser saw (Kläppudden's orienteering map lies about
+  0.7 m off) would read a gable as low or tilted. Before fitting, the returns are moved back under it
+  by the shift, up to 1 m each way in 25 cm steps, under which a gable fits best, when that fits
+  clearly better. The roof is still built on the footprint as drawn.
+- Shapes are compared by their miss over the 75% of the returns they fit best, so a crown leaning
+  over the roof does not hide its shape. The simplest shape that fits wins: each parameter past the
+  first costs 15%, a hip 10% more than a gable, and nothing beats flat unless it misses by under 70%
+  as much. OSM's `roof:shape` tag, where there is one, takes 30% off its shape's cost.
+- A house whose best fit is flat or shed and still misses by about 0.3 m was seen only through
+  trees: it gets the usual roof, a gable (or the shape OSM names) at 27° from the eaves a house its
+  size has (one storey under 40 m², else two, as `cap` reckons them). A house tagged with its height,
+  or tall, keeps what the laser shows.
+- On a slope of 25° or more, at least 2.5 m from eave to ridge, a run of returns 2 to 6 m along the
+  eave whose middle return stands 0.6 m or more over the slope is a dormer, when its own gently
+  sloping roof takes 30% off what the slope round it misses by and its front is at least 1.2 m tall.
+  At most three to a slope. The dormer search looks at the returns from before what stood over the
+  first fit was dropped as foliage.
+- In France a house keeps its measured roof (`field.rs`) when the catalogue misses its returns by
+  over 0.35 m (a block of row houses, an odd roof).
+
+Bigger buildings are fitted as before (`roof::fit`), with the ridge always down the middle, and may
+be split into parts.
+
+The mesh (`roof::build`) cuts the footprint into pieces each under one plane of the roof. Every line
+of the whole roof cuts every piece (valleys and dormer sides only the pieces of their wings), and
+each corner of a piece is added to the sides of its neighbours, so pieces always meet corner to
+corner and leave no cracks. A side no other piece shares is an outer wall; a side two pieces share
+with the roof higher on one is a step wall facing the lower side: a dormer's front and cheeks, or
+the end of a higher part. A wall whose foot stands 2 m or more over the building's lowest (a
+dormer's front) gets small windows (0.8 × 0.7 m) and never the door (`shared::windows`, mirrored in
+`render/windows.ts`).
+
+The importer prints how many footprints it squared and how many roofs each shape got, with the
+wings past the first, the dormers, the houses guessed under trees, and the French houses left to
+their measured roofs. Kläppudden, re-imported: 351 of 361 footprints squared; 101 gable, 36 shed,
+20 flat, 4 hip and 2 gambrel roofs, 45 side wings, 16 guessed under trees, no dormers.
 
 ### Trees
 The register has position, scientific and Swedish name, broadleaf/conifer and sometimes a planting

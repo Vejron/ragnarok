@@ -160,7 +160,7 @@ export interface Building {
    * Its own walls and roof in the tile's `look`, to be drawn: `walls` triangles from `first`, then
    * `roof`. Null when it has none (a world made before looks): it is then drawn as its cubes.
    */
-  look?: { first: number; walls: number; roof: number } | null
+  look?: { first: number; walls: number; roof: number; footprint?: Int32Array; inside?: Int32Array } | null
 }
 
 /**
@@ -485,7 +485,7 @@ export function decodeTile(bytes: Uint8Array): TileData {
           ? { origin: cells[0] as [number, number, number], dims: cells[1] as [number, number, number], solid: cells[2], roof: cells[3] }
           : null,
       paint: paint ?? null,
-      look: looks?.[index] && looks[index]![1]! + looks[index]![2]! > 0 ? { first: looks[index]![0]!, walls: looks[index]![1]!, roof: looks[index]![2]! } : null,
+      look: looks?.[index] && looks[index]![1]! + looks[index]![2]! > 0 ? { first: looks[index]![0]!, walls: looks[index]![1]!, roof: looks[index]![2]!, footprint: Int32Array.from(footprint.flat()) } : null,
     })),
     roads: roads.map(([width, kind, points]) => ({ width: metres(width), kind, points: points.map(point) })),
     cover: cover.map(([kind, rings]) => ({ kind, rings: rings.map((ring) => ring.map(point)) })),

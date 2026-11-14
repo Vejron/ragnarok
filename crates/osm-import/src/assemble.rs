@@ -4,6 +4,7 @@
 use crate::bridge::{self, Pylons};
 use crate::overpass::{Area, LatLon, Osm, Way};
 use crate::region::Place;
+use crate::catalogue::Category;
 use crate::roof::{self, Cloud, Roof, Shape, Top};
 use crate::trees::Planted;
 use crate::water::{Placed, STREAM_WIDTH};
@@ -641,26 +642,42 @@ pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::B
     // on a lattice, so no one building is a huge structure to check when it is hit. The pieces share
     // the colours of the whole.
     let paint = |rings: &[&[P]]| photo.map(|photo| crate::paint::of(photo, rings, source));
+    let squared = std::sync::atomic::AtomicUsize::new(0);
+    let mut hints: Vec<Option<Category>> = Vec::new();
     let outlines: Vec<Outline> = osm
         .ways
         .iter()
         .filter(|way| is_building(way))
         .flat_map(|way| {
-            let points = line(&way.geometry);
+            let drawn = line(&way.geometry);
+            let open = if drawn.len() > 1 && drawn.first() == drawn.last() { &drawn[..drawn.len() - 1] } else { &drawn[..] };
+            // Walls drawn nearly square are made square (`square`); a footprint cut on France's lattice is left as it is.
+            let big = measured && open.len() >= 3 && signed_area(open).abs() > crate::footprints::BIG;
+            let points = match crate::square::square(open).filter(|_| !big) {
+                Some(ring) => {
+                    squared.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    ring
+                }
+                None => drawn.clone(),
+            };
             let ring = if points.len() > 1 && points.first() == points.last() { &points[..points.len() - 1] } else { &points[..] };
+            let hint = way.tags.get("roof:shape").and_then(|tag| Category::of_tag(tag));
             // A classified cloud's building returns are roof, whatever stands round it.
             let cap = if measured { None } else { cap(way, ring) };
             let height = cap.map_or(building_height(way), |[eaves, _]| building_height(way).min(eaves));
             let ceiling = cap.map(|[_, top]| top);
             let paint = paint(&[ring]);
-            if measured && ring.len() >= 3 && signed_area(ring).abs() > crate::footprints::BIG {
+            let found: Vec<Outline> = if big {
                 crate::footprints::pieces(ring).into_iter().map(|piece| (piece, height, paint, ceiling)).collect()
             } else {
-                vec![(points, height, paint, ceiling)]
-            }
+                vec![(points.clone(), height, paint, ceiling)]
+            };
+            hints.extend(found.iter().map(|_| hint));
+            found
         })
         .collect();
-    let rings: Vec<(&[P], Option<f64>)> = outlines.iter().map(|(points, .., ceiling)| (points.as_slice(), *ceiling)).collect();
+    eprintln!("footprints: {} of {} squared", squared.into_inner(), outlines.len());
+    let rings: Vec<(&[P], Option<f64>, Option<Category>)> = outlines.iter().zip(&hints).map(|((points, .., ceiling), hint)| (points.as_slice(), *ceiling, *hint)).collect();
     let shapes = lidar.map(|cloud| fit_roofs(cloud, &source, measured, half, tile_size, mask, &ground, &rings)).unwrap_or_default();
     let mut shapes = shapes.into_iter();
     for (points, height, paint, ceiling) in outlines {
@@ -722,15 +739,19 @@ pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::B
         for pieces in found {
             // The pieces of one building share its colours.
             let paint = paint(&pieces.iter().map(Vec::as_slice).collect::<Vec<_>>());
+            let whole = pieces.len() == 1;
             for ring in pieces {
+                // A building in one piece is squared as OSM's are.
+                let ring = if whole { crate::square::square(&ring).unwrap_or(ring) } else { ring };
                 // Moored barges and houseboats are building returns too; a building stands on land.
                 let n = ring.len() as f64;
                 let mid = ring.iter().fold([0.0, 0.0], |s, p| [s[0] + p[0] / n, s[1] + p[1] / n]);
                 if bridge::water_at(&ground, &water.levels, mid).is_some() {
                     continue;
                 }
-                if let Some(field) = crate::field::Field::measure(&ring, &cloud.over(&ring, source)) {
-                    buildings.push((ring, 0.0, Some(Top::Measured(field)), paint, None));
+                let returns = cloud.over(&ring, source);
+                if let Some(top) = from_catalogue(&ring, &returns, true, None, None, &Tally::default()).or_else(|| crate::field::Field::measure(&ring, &returns).map(Top::Measured)) {
+                    buildings.push((ring, 0.0, Some(top), paint, None));
                 }
             }
         }
@@ -1058,8 +1079,9 @@ fn fit_roofs(
     tile_size: f64,
     mask: Option<&std::collections::BTreeSet<(u16, u16)>>,
     ground: &Ground,
-    rings: &[(&[P], Option<f64>)],
+    rings: &[(&[P], Option<f64>, Option<Category>)],
 ) -> Vec<Option<Top>> {
+    let tally = Tally::default();
     crate::progress::stage("roofs");
     let painted = |ring: &[P]| {
         let Some(mask) = mask else { return true };
@@ -1067,7 +1089,7 @@ fn fit_roofs(
         let span = |a: f64, b: f64| ((a + half) / tile_size).floor() as i64..=((b + half) / tile_size).floor() as i64;
         span(lo[0], hi[0]).any(|c| span(lo[1], hi[1]).any(|r| c >= 0 && r >= 0 && mask.contains(&(c as u16, r as u16))))
     };
-    let fit = |(points, ceiling): (&[P], Option<f64>)| {
+    let fit = |(points, ceiling, hint): (&[P], Option<f64>, Option<Category>)| {
         let ring = if points.len() > 1 && points.first() == points.last() { &points[..points.len() - 1] } else { points };
         if ring.len() < 3 || !painted(ring) {
             return None;
@@ -1077,6 +1099,13 @@ fn fit_roofs(
         if let Some(ceiling) = ceiling {
             let top = floor_of(ground, ring) + ceiling;
             returns.retain(|r| r[2] <= top);
+        }
+        // The eaves a house this size has, as `cap` reckons them; a house tagged with its height, or
+        // tall, or big (no `ceiling`) keeps what the laser shows.
+        let storeys = if signed_area(ring).abs() < SMALL_HOUSE { 1.0 } else { 2.0 };
+        let eaves = ceiling.map(|_| floor_of(ground, ring) + storeys * STOREY + PLINTH);
+        if let Some(top) = from_catalogue(ring, &returns, measured, hint, eaves, &tally) {
+            return Some(top);
         }
         if measured && let Some(field) = crate::field::Field::measure(ring, &returns) {
             return Some(Top::Measured(field));
@@ -1099,7 +1128,46 @@ fn fit_roofs(
             });
         }
     });
+    let count = |n: &std::sync::atomic::AtomicUsize| n.load(std::sync::atomic::Ordering::Relaxed);
+    eprintln!("roofs from the catalogue: {:?}, {} wings past the first, {} dormers, {} guessed under trees, {} left to the measured roof", tally.shapes.lock().unwrap(), count(&tally.wings), count(&tally.dormers), count(&tally.guessed), count(&tally.measured));
     slots.into_iter().map(|slot| slot.into_inner().unwrap().expect("every building was taken")).collect()
+}
+
+/// How the houses' roofs came out of the catalogue, for the importer to print.
+#[derive(Default)]
+struct Tally {
+    shapes: std::sync::Mutex<BTreeMap<Category, usize>>,
+    wings: std::sync::atomic::AtomicUsize,
+    dormers: std::sync::atomic::AtomicUsize,
+    measured: std::sync::atomic::AtomicUsize,
+    guessed: std::sync::atomic::AtomicUsize,
+}
+
+/// How far a French house's returns may miss the catalogue's roof, metres, before its measured
+/// roof (`field::Field`) is kept instead: a block of row houses or an odd roof that is no one house.
+const FRENCH_MISS: f64 = 0.35;
+
+/// The roof from the catalogue for a house-sized `ring` (under `roof::SPLIT_FROM`), or `None` for a
+/// bigger building, too few returns, or (`measured`) a French roof the catalogue misses.
+///
+/// A house the laser saw only trees over is given the usual roof at the eaves `eaves` (local y,
+/// metres) a house its size has (`cap`).
+fn from_catalogue(ring: &[P], returns: &[[f64; 4]], measured: bool, hint: Option<Category>, eaves: Option<f64>, tally: &Tally) -> Option<Top> {
+    if signed_area(ring).abs() >= roof::SPLIT_FROM {
+        return None;
+    }
+    let found = crate::catalogue::fit(ring, returns, hint, if measured { None } else { eaves })?;
+    if found.guessed {
+        tally.guessed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+    if measured && found.miss > FRENCH_MISS {
+        tally.measured.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        return None;
+    }
+    *tally.shapes.lock().unwrap().entry(found.category).or_default() += 1;
+    tally.wings.fetch_add(found.wings - 1, std::sync::atomic::Ordering::Relaxed);
+    tally.dormers.fetch_add(found.dormers, std::sync::atomic::Ordering::Relaxed);
+    Some(Top::Fitted(found.roof))
 }
 
 /// Returns of a bridge's deck as measured, `[x, z, y]`: an empty list where nothing was measured.
@@ -1664,7 +1732,7 @@ mod tests {
                 add(e, n, if e > 2.4 { 16.0 } else { 4.0 });
             }
         }
-        let tops = fit_roofs(&cloud, &|x, z| (x, z), false, 100.0, 100.0, None, &Ground::default(), &[(&ring, None), (&ring, Some(9.3))]);
+        let tops = fit_roofs(&cloud, &|x, z| (x, z), false, 100.0, 100.0, None, &Ground::default(), &[(&ring, None, None), (&ring, Some(9.3), None)]);
         let Some(Top::Fitted(Roof::Leaf(Shape::Flat { y }))) = tops[0] else { panic!("{:?}", tops[0]) };
         assert!(y > 15.0, "uncapped, the crown is the roof: {y}");
         let Some(Top::Fitted(Roof::Leaf(Shape::Flat { y }))) = tops[1] else { panic!("{:?}", tops[1]) };

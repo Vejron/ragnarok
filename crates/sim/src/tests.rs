@@ -837,7 +837,7 @@ fn looked_house() -> (WorldFile, Shell, Vec<Tri>) {
         buildings: vec![building],
         building_ids: vec![ObjId { col: 0, row: 0, index: 0 }],
         building_triangles: vec![[0, floor.len() as u32]],
-        looks: vec![BuildingLook { walls: walls.clone(), roof: roof.clone(), windows: shared::windows::openings_of(&look, range) }],
+        looks: vec![BuildingLook { walls: walls.clone(), roof: roof.clone(), windows: shared::windows::openings_of(&look, range), inside: Vec::new() }],
         collision: mesh,
         ..flat_world()
     };
@@ -873,6 +873,106 @@ fn a_looked_house_is_collided_with_as_its_own_roof_and_walls_with_the_windows_op
     assert!(open.is_none_or(|t| t > 8.0), "through the hole, {open:?}");
     let still = physics.cast_ray([0.3, 0.3, -5.0], [0.0, 0.0, 1.0], 20.0, 0).expect("the wall");
     assert!((still - 5.0).abs() < 0.02, "{still}");
+}
+
+/// A house 12 × 8 m with 6 m walls under a flat roof, big enough for rooms (`shared::interior`): two
+/// storeys and the stairs between them, its door open. Baked into cells with its look kept, as
+/// `looked_house`. Returns the world and every part of its inside, steps and all.
+fn furnished_house() -> (WorldFile, Vec<shared::interior::Part>) {
+    let face = |corners: &[[i32; 3]]| -> Vec<Tri> { (1..corners.len() - 1).map(|i| { let (a, b, c) = (corners[0], corners[i], corners[i + 1]); [a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2]] }).collect() };
+    let (w, d, h) = (1200, 800, 600);
+    let walls: Vec<Tri> = [face(&[[0, 0, 0], [w, 0, 0], [w, h, 0], [0, h, 0]]), face(&[[w, 0, d], [0, 0, d], [0, h, d], [w, h, d]]), face(&[[0, 0, d], [0, 0, 0], [0, h, 0], [0, h, d]]), face(&[[w, 0, 0], [w, 0, d], [w, h, d], [w, h, 0]])].concat();
+    let roof: Vec<Tri> = face(&[[0, h, 0], [0, h, d], [w, h, d], [w, h, 0]]);
+    let floor: Vec<Tri> = face(&[[0, 0, 0], [0, 0, d], [w, 0, d], [w, 0, 0]]);
+    let mut look = Look::default();
+    for t in walls.iter().chain(&roof) {
+        let base = look.vertices.len() as u32;
+        look.vertices.extend([[t[0], t[1], t[2]], [t[3], t[4], t[5]], [t[6], t[7], t[8]]]);
+        look.triangles.push([base, base + 1, base + 2]);
+    }
+    let windows = shared::windows::openings_of(&look, [0, walls.len() as u32, roof.len() as u32]);
+    let footprint = vec![[0, 0], [w, 0], [w, d], [0, d]];
+    let parts = shared::interior::rooms(&footprint, &walls, &roof, &windows);
+    let mut mesh = CollisionMesh::default();
+    for t in &floor {
+        let base = mesh.vertices.len() as u32;
+        mesh.vertices.extend([[t[0], t[1], t[2]], [t[3], t[4], t[5]], [t[6], t[7], t[8]]]);
+        mesh.triangles.push([base, base + 1, base + 2]);
+    }
+    let building = Building { height: h, footprint, base: 0, first: 0, walls: 0, roof: 0, roof_kind: 0, cells: Shell::new(&walls, &roof).unwrap().cells(), paint: None };
+    let inside = parts.iter().filter(|p| p.collided()).map(|p| p.tri).collect();
+    let world = WorldFile {
+        buildings: vec![building],
+        building_ids: vec![ObjId { col: 0, row: 0, index: 0 }],
+        building_triangles: vec![[0, floor.len() as u32]],
+        looks: vec![BuildingLook { walls, roof, windows, inside }],
+        collision: mesh,
+        ..flat_world()
+    };
+    (world, parts)
+}
+
+/// Walks `character` straight towards `[x, z]` for `ticks` ticks, or until it is there.
+fn walk_towards(physics: &Physics, character: &mut Character, [x, z]: [f32; 2], ticks: u32) {
+    for _ in 0..ticks {
+        let (dx, dz) = (x - character.position[0], z - character.position[2]);
+        if dx.hypot(dz) < 0.15 {
+            break;
+        }
+        let yaw = shared::quant::to_mrad((-dx).atan2(-dz));
+        physics.move_character(character, &InputFrame { seq: 1, forward: 127, yaw, ..Default::default() }, TICK_DT);
+    }
+}
+
+#[test]
+fn a_soldier_walks_in_at_the_door_of_a_house_with_rooms_and_up_its_stairs() {
+    let (world, parts) = furnished_house();
+    let physics = Physics::new(&world).unwrap();
+    // In at the door: from 2 m outside it to 1.2 m inside, up onto the plinth.
+    let door = world.looks[0].windows.iter().find(|w| w.door).expect("a door");
+    let mid = [(door.corners[0][0] + door.corners[1][0]) / 2.0, (door.corners[0][2] + door.corners[1][2]) / 2.0];
+    let out = |by: f32| [mid[0] + door.normal[0] * by, mid[1] + door.normal[2] * by];
+    let mut character = Character { position: [out(2.0)[0], STANDING_Y, out(2.0)[1]], grounded: true, ..Default::default() };
+    walk_towards(&physics, &mut character, out(-1.2), 4 * TICK_RATE);
+    let plinth = shared::interior::PLINTH as f32 / 100.0;
+    assert!((character.position[0] - out(-1.2)[0]).hypot(character.position[2] - out(-1.2)[1]) < 0.3, "inside, at {:?}", character.position);
+    assert!((character.position[1] - STANDING_Y - plinth).abs() < 0.08, "on the ground floor, at {:?}", character.position);
+    // A window is still a hole and the wall beside the door still a wall.
+    let beside = physics.cast_ray([out(3.0)[0] + door.normal[2] * 1.2, 1.0, out(3.0)[1] - door.normal[0] * 1.2], [-door.normal[0], 0.0, -door.normal[2]], 6.0, 0).expect("the wall");
+    assert!((beside - 3.0).abs() < 0.05, "{beside}");
+
+    // Up the first flight: from the landing at its foot to the floor above.
+    let ramp: Vec<[f32; 3]> = parts.iter().filter(|p| p.kind == shared::interior::PART_RAMP).take(2).flat_map(|p| [[p.tri[0], p.tri[1], p.tri[2]], [p.tri[3], p.tri[4], p.tri[5]], [p.tri[6], p.tri[7], p.tri[8]]]).map(|c| c.map(|v| v as f32 / 100.0)).collect();
+    let (low, high) = (ramp.iter().map(|p| p[1]).fold(f32::MAX, f32::min), ramp.iter().map(|p| p[1]).fold(f32::MIN, f32::max));
+    let end = |y: f32| { let at: Vec<&[f32; 3]> = ramp.iter().filter(|p| (p[1] - y).abs() < 0.01).collect(); [at.iter().map(|p| p[0]).sum::<f32>() / at.len() as f32, at.iter().map(|p| p[2]).sum::<f32>() / at.len() as f32] };
+    let (foot, head) = (end(low), end(high));
+    let along = [(head[0] - foot[0]) / (head[0] - foot[0]).hypot(head[1] - foot[1]), (head[1] - foot[1]) / (head[0] - foot[0]).hypot(head[1] - foot[1])];
+    assert!((low - plinth).abs() < 0.06 && high > 2.7, "from the ground floor to the next, {low} to {high}");
+    let mut character = Character { position: [foot[0] - along[0] * 0.5, low + STANDING_Y, foot[1] - along[1] * 0.5], grounded: true, ..Default::default() };
+    walk_towards(&physics, &mut character, [head[0] + along[0] * 0.5, head[1] + along[1] * 0.5], 6 * TICK_RATE);
+    assert!((character.position[1] - STANDING_Y - high).abs() < 0.08 && character.grounded, "upstairs, at {:?}", character.position);
+}
+
+#[test]
+fn a_hole_blown_in_a_floor_is_fallen_through_and_the_rest_of_it_holds() {
+    let (world, parts) = furnished_house();
+    let mut physics = Physics::new(&world).unwrap();
+    let (shell, floor) = building_shell(&world, 0).unwrap();
+    // A piece of the upper floor, well clear of its edge.
+    let upper = parts.iter().filter(|p| p.kind == shared::interior::PART_FLOOR).map(|p| p.tri[1]).max().unwrap();
+    let at = [300, upper, 500];
+    let down = |physics: &Physics, x: f32, z: f32| 5.0 - physics.cast_ray([x, 5.0, z], [0.0, -1.0, 0.0], 10.0, 0).expect("a floor");
+    assert!((down(&physics, 3.0, 5.0) - upper as f32 / 100.0).abs() < 0.02, "the upper floor");
+    // The floor's cells are the building's own: one blast takes them, as it takes a wall's.
+    let hole = shared::carve::nearest_standing(shell.origin, shell.dims, at, |id| shell.is_solid(id)).expect("the floor is cut into cells");
+    assert!((shell.centre(hole)[1] - upper).abs() <= shared::carve::CELL / 2 && (shell.centre(hole)[0] - 300).abs() <= shared::carve::CELL / 2, "{:?}", shell.centre(hole));
+    let mut removed = shell.untouched();
+    let cut = shell.blast(&mut removed, at, 90);
+    assert!(!cut.blasted.is_empty() && cut.fell.is_empty(), "a hole, and nothing hung from it: {cut:?}");
+    physics.replace_building(Obj::Building(ObjId { col: 0, row: 0, index: 0 }), building_solid(&world, 0, Some((&shell, &removed)), &floor));
+    physics.step_cars(TICK_DT);
+    assert!((down(&physics, 3.0, 5.0) - shared::interior::PLINTH as f32 / 100.0).abs() < 0.06, "through the hole to the ground floor, {}", down(&physics, 3.0, 5.0));
+    assert!((down(&physics, 9.0, 2.0) - upper as f32 / 100.0).abs() < 0.02 || (down(&physics, 9.0, 6.0) - upper as f32 / 100.0).abs() < 0.02, "the floor stands elsewhere");
 }
 
 /// 200 m square of 1 m cells: dry at 0 north of z = -10, then a lake whose bed shelves down at 1 in 5 to

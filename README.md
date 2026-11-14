@@ -17,7 +17,7 @@ The docs are in [docs/](docs/).
 
 **Making worlds**
 
-- [WORLD.md](docs/WORLD.md): generating the world: data sources, credentials, download cache
+- [WORLD.md](docs/WORLD.md): generating the world: data sources, credentials, download cache, squared footprints and the catalogue of roof shapes (gable, hip, gambrel, cross-gabled wings, dormers)
 - [FRANCE.md](docs/FRANCE.md): worlds in France from IGN LiDAR HD
 - [EDITOR.md](docs/EDITOR.md): the map editor
 - [SCENARIOS.md](docs/SCENARIOS.md): a guide to writing a world's `scenario.json` by hand, since there is no scenario editor
@@ -31,6 +31,7 @@ The docs are in [docs/](docs/).
 - [SWIMMING.md](docs/SWIMMING.md): swimming, diving where you look, holding your breath and drowning
 - [ZOMBIES.md](docs/ZOMBIES.md): zombies that rise in hordes at night, shamble after you and claw, and can be shot apart limb by limb
 - [BUILDING.md](docs/BUILDING.md): placing cubes with bricks
+- [INTERIORS.md](docs/INTERIORS.md): floors and stairs inside every house big enough, worked out from its footprint, with its door open and its floors blasted like its walls
 - [CRATERS.md](docs/CRATERS.md) and [SCORCH.md](docs/SCORCH.md): shells digging the ground, and the marks they leave
 - [DRONES.md](docs/DRONES.md): FPV and loitering drones
 - [GYRO-AIM.md](docs/GYRO-AIM.md): aiming on a phone by turning it

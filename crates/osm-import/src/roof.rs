@@ -86,6 +86,8 @@ impl Shape {
 pub enum Roof {
     Leaf(Shape),
     Cut { o: P, n: P, low: Box<Roof>, high: Box<Roof> },
+    /// A house from the catalogue: wings, valleys and dormers (`House`).
+    House(Box<House>),
 }
 
 impl Roof {
@@ -94,6 +96,7 @@ impl Roof {
         match self {
             Roof::Leaf(shape) => shape.kind(),
             Roof::Cut { low, high, .. } => low.kind().max(high.kind()),
+            Roof::House(house) => if house.pitch == Pitch::Hip { ROOF_HIP } else { ROOF_GABLE },
         }
     }
 
@@ -104,6 +107,7 @@ impl Roof {
             Roof::Cut { o, n, low, high } => {
                 if n[0] * (p[0] - o[0]) + n[1] * (p[1] - o[1]) < 0.0 { low.height(p) } else { high.height(p) }
             }
+            Roof::House(house) => house.height(p),
         }
     }
 }
@@ -128,6 +132,28 @@ struct Obs {
 /// are too few. Canopy is dropped first, then the roof is split into parts while that pays.
 pub fn fit(footprint: &[P], points: &[[f64; 4]]) -> Option<Roof> {
     let area = polygon_area(footprint).abs();
+    let frame = Frame::around(footprint)?;
+    let obs: Vec<Obs> = roof_returns(footprint, points)?
+        .0
+        .iter()
+        .map(|r| {
+            let (u, v) = frame.to_uv([r[0], r[1]]);
+            Obs { u, v, y: r[2] }
+        })
+        .collect();
+    // A house is one roof; only a big building is fitted in parts.
+    Some(tree(&obs, &frame, if area >= SPLIT_FROM { MAX_DEPTH } else { 0 }).0)
+}
+
+/// Laser returns `[x, z, y]`, local metres.
+pub(crate) type Returns = Vec<[f64; 3]>;
+
+/// The laser returns `[x, z, y, code]` over `footprint` that are its roof, as `[x, z, y]`: foliage
+/// and what stands well over a first fit (a tree, an antenna, a chimney) left out. Also the returns
+/// before what stood over the fit was left out, in which a dormer still stands. `None` when there
+/// are too few to fit a roof to.
+pub(crate) fn roof_returns(footprint: &[P], points: &[[f64; 4]]) -> Option<(Returns, Returns)> {
+    let area = polygon_area(footprint).abs();
     if points.len() < MIN_POINTS || (points.len() as f64) < 0.3 * area {
         return None;
     }
@@ -146,27 +172,32 @@ pub fn fit(footprint: &[P], points: &[[f64; 4]]) -> Option<Roof> {
     } else {
         Some(lasts()).filter(enough).unwrap_or_else(|| points.iter().map(to_obs).collect())
     };
+    let world = |o: &Obs| [frame.centre[0] + frame.axes[0][0] * o.u + frame.axes[1][0] * o.v, frame.centre[1] + frame.axes[0][1] * o.u + frame.axes[1][1] * o.v];
     // Whatever still stands well above the first fit is a tree, an antenna or a chimney stack.
     let (first, _) = model(&obs, &frame);
-    let keep: Vec<Obs> = obs
-        .iter()
-        .copied()
-        .filter(|o| {
-            let at = [frame.centre[0] + frame.axes[0][0] * o.u + frame.axes[1][0] * o.v, frame.centre[1] + frame.axes[0][1] * o.u + frame.axes[1][1] * o.v];
-            o.y - first.height(at) <= CANOPY
-        })
-        .collect();
+    let keep: Vec<Obs> = obs.iter().copied().filter(|o| o.y - first.height(world(o)) <= CANOPY).collect();
+    let all: Vec<[f64; 3]> = obs.iter().map(|o| { let p = world(o); [p[0], p[1], o.y] }).collect();
     // A few stray returns are a tree, an antenna or a chimney. A big share standing above the fit is
     // a taller part of the building (a tower over its podium): keep it, and `tree` splits it off.
     if keep.len() >= MIN_POINTS && (obs.len() - keep.len()) as f64 <= MAX_STRAY * obs.len() as f64 {
         obs = keep;
     }
-    Some(tree(&obs, &frame, MAX_DEPTH).0)
+    Some((obs.iter().map(|o| { let p = world(o); [p[0], p[1], o.y] }).collect(), all))
 }
+
+/// Smallest footprint, square metres, whose roof may be fitted in parts (`tree`): a house is one
+/// roof, from the catalogue (`catalogue`), however its laser returns scatter.
+pub const SPLIT_FROM: f64 = 250.0;
 
 /// Half the short side of the smallest rectangle around `footprint`, metres.
 pub fn half_width(footprint: &[P]) -> Option<f64> {
     Frame::around(footprint).map(|frame| frame.half[1])
+}
+
+/// The smallest rectangle around `footprint` as a wing: its middle, its long side's direction and
+/// its half sides, long first.
+pub fn rectangle(footprint: &[P]) -> Option<Wing> {
+    Frame::around(footprint).map(|frame| Wing { centre: frame.centre, u: frame.axes[0], half: frame.half })
 }
 
 /// Fewest returns in a part of a roof.
@@ -301,21 +332,18 @@ fn model(obs: &[Obs], frame: &Frame) -> (Shape, f64) {
         best = (shed, plane_cost);
     }
 
-    // Gable, with the ridge along either axis of the footprint's rectangle.
+    // Gable, with the ridge along either axis of the footprint's rectangle, down its middle.
     let mut gable: Option<(Shape, f64)> = None;
-    for (set, extent, ridge_axis, across_axis) in [(obs, hv, axis_u, axis_v), (&swapped, hu, axis_v, axis_u)] {
-        for step in -4..=4 {
-            let v0 = f64::from(step) * extent * 0.12;
-            let (c, cost) = solve(set, |o| [1.0, (o.v - v0).abs(), 0.0]);
-            let pitch = -c[1];
-            if !(PITCH.0..=PITCH.1).contains(&pitch) {
-                continue;
-            }
-            if gable.as_ref().is_none_or(|g| cost < g.1) {
-                let shape = Shape::Gable { y: c[0], at: at(across_axis, v0), ridge: ridge_axis, pitch };
-                if plausible(&shape) {
-                    gable = Some((shape, cost));
-                }
+    for (set, ridge_axis, across_axis) in [(obs, axis_u, axis_v), (&swapped, axis_v, axis_u)] {
+        let (c, cost) = solve(set, |o| [1.0, o.v.abs(), 0.0]);
+        let pitch = -c[1];
+        if !(PITCH.0..=PITCH.1).contains(&pitch) {
+            continue;
+        }
+        if gable.as_ref().is_none_or(|g| cost < g.1) {
+            let shape = Shape::Gable { y: c[0], at: at(across_axis, 0.0), ridge: ridge_axis, pitch };
+            if plausible(&shape) {
+                gable = Some((shape, cost));
             }
         }
     }
@@ -323,21 +351,15 @@ fn model(obs: &[Obs], frame: &Frame) -> (Shape, f64) {
         best = (shape, cost);
     }
 
-    // Hip: only along the long axis, where the ridge is what is left of it.
+    // Hip: only along the long axis, where the ridge is what is left of it, down the middle.
     let half = (hu - hv).max(0.0);
     let mut hip: Option<(Shape, f64)> = None;
-    for step in -4..=4 {
-        let v0 = f64::from(step) * hv * 0.12;
-        let (c, cost) = solve(obs, |o| [1.0, (o.v - v0).abs().max(o.u.abs() - half), 0.0]);
-        let pitch = -c[1];
-        if !(PITCH.0..=PITCH.1).contains(&pitch) {
-            continue;
-        }
-        if hip.as_ref().is_none_or(|h| cost < h.1) {
-            let shape = Shape::Hip { y: c[0], at: at(axis_v, v0), ridge: axis_u, pitch, half };
-            if plausible(&shape) {
-                hip = Some((shape, cost));
-            }
+    let (c, cost) = solve(obs, |o| [1.0, o.v.abs().max(o.u.abs() - half), 0.0]);
+    let pitch = -c[1];
+    if (PITCH.0..=PITCH.1).contains(&pitch) {
+        let shape = Shape::Hip { y: c[0], at: at(axis_v, 0.0), ridge: axis_u, pitch, half };
+        if plausible(&shape) {
+            hip = Some((shape, cost));
         }
     }
     if let Some((shape, cost)) = hip {
@@ -359,6 +381,15 @@ fn improves(cost: f64, over: f64) -> bool {
 /// overhanging trees do not drag the fit. Returns the coefficients and the mean clipped squared
 /// residual (clipped at 1 m², so one outlier costs no more than a miss by a metre).
 fn solve(obs: &[Obs], features: impl Fn(&Obs) -> [f64; 3]) -> ([f64; 3], f64) {
+    let rows: Vec<[f64; 3]> = obs.iter().map(&features).collect();
+    let ys: Vec<f64> = obs.iter().map(|o| o.y).collect();
+    solve_rows(&rows, &ys)
+}
+
+/// `solve` over rows of features already worked out, one for each height in `ys`.
+pub(crate) fn solve_rows(rows: &[[f64; 3]], ys: &[f64]) -> ([f64; 3], f64) {
+    let obs: Vec<Obs> = ys.iter().enumerate().map(|(i, &y)| Obs { u: i as f64, v: 0.0, y }).collect();
+    let features = |o: &Obs| rows[o.u as usize];
     let mut weights = vec![1.0; obs.len()];
     let mut coefficients = [0.0; 3];
     for _ in 0..5 {
@@ -507,66 +538,244 @@ fn split(polygon: &[P], o: P, d: P) -> (Vec<P>, Vec<P>) {
     (left, right)
 }
 
-/// A piece of the footprint under one shape of the roof.
-struct Piece<'a> {
-    polygon: Vec<P>,
-    shape: &'a Shape,
+/// A plane over the ground: height `c[0] + c[1] x + c[2] z`, metres.
+pub type Plane = [f64; 3];
+
+/// Height of `plane` over `p`.
+pub fn eval(plane: &Plane, p: P) -> f64 {
+    plane[0] + plane[1] * p[0] + plane[2] * p[1]
 }
 
-/// Cuts a convex `polygon` along the roof's cuts and then its shapes' creases, into planar pieces,
-/// and collects where two parts of the roof meet inside it as `(a, b, low, high)`.
-fn pieces<'a>(roof: &'a Roof, polygon: Vec<P>, out: &mut Vec<Piece<'a>>, seams: &mut Vec<(P, P, &'a Roof, &'a Roof)>) {
-    match roof {
-        Roof::Leaf(shape) => {
-            let mut parts = vec![polygon];
-            for (o, d) in shape.creases() {
-                parts = parts
-                    .into_iter()
-                    .flat_map(|piece| {
-                        let (left, right) = split(&piece, o, d);
-                        [left, right]
-                    })
-                    .filter(|piece| piece.len() >= 3)
-                    .collect();
+/// The plane `A + B a + C b` laid out in the frame at `at` with `a` along the unit `u` and `b` along
+/// `[-u[1], u[0]]`, as a plane over the ground.
+pub fn local_plane(at: P, u: P, [a, b, c]: [f64; 3]) -> Plane {
+    let v = [-u[1], u[0]];
+    let (cx, cz) = (b * u[0] + c * v[0], b * u[1] + c * v[1]);
+    [a - cx * at[0] - cz * at[1], cx, cz]
+}
+
+impl Shape {
+    /// The plane the roof lies in over `p`: on a crease, either of the two that meet there.
+    pub fn plane_at(&self, p: P) -> Plane {
+        match *self {
+            Shape::Flat { y } => [y, 0.0, 0.0],
+            Shape::Shed { y, at, slope } => [y - slope[0] * at[0] - slope[1] * at[1], slope[0], slope[1]],
+            Shape::Gable { y, at, ridge, pitch } => {
+                let across = -ridge[1] * (p[0] - at[0]) + ridge[0] * (p[1] - at[1]);
+                local_plane(at, ridge, [y, 0.0, -pitch * sign(across)])
             }
-            out.extend(parts.into_iter().map(|polygon| Piece { polygon, shape }));
-        }
-        Roof::Cut { o, n, low, high } => {
-            // `split` takes a line by a direction; its "left" is where `n · (p - o)` is not positive.
-            let d = [-n[1], n[0]];
-            let side = |p: P| n[0] * (p[0] - o[0]) + n[1] * (p[1] - o[1]);
-            let (mut s0, mut s1): (Option<P>, Option<P>) = (None, None);
-            let along = |p: P| d[0] * p[0] + d[1] * p[1];
-            let mut note = |p: P| {
-                if s0.is_none_or(|q| along(p) < along(q)) {
-                    s0 = Some(p);
+            Shape::Hip { y, at, ridge, pitch, half } => {
+                let across = -ridge[1] * (p[0] - at[0]) + ridge[0] * (p[1] - at[1]);
+                let along = ridge[0] * (p[0] - at[0]) + ridge[1] * (p[1] - at[1]);
+                if across.abs() >= along.abs() - half {
+                    local_plane(at, ridge, [y, 0.0, -pitch * sign(across)])
+                } else {
+                    local_plane(at, ridge, [y + pitch * half, -pitch * sign(along), 0.0])
                 }
-                if s1.is_none_or(|q| along(p) > along(q)) {
-                    s1 = Some(p);
-                }
-            };
-            for i in 0..polygon.len() {
-                let (a, b) = (polygon[i], polygon[(i + 1) % polygon.len()]);
-                let (sa, sb) = (side(a), side(b));
-                if sa == 0.0 {
-                    note(a);
-                }
-                if (sa < 0.0 && sb > 0.0) || (sa > 0.0 && sb < 0.0) {
-                    let t = sa / (sa - sb);
-                    note([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]);
-                }
-            }
-            let (left, right) = split(&polygon, *o, d);
-            if let (Some(a), Some(b), true) = (s0, s1, left.len() >= 3 && right.len() >= 3 && s0 != s1) {
-                seams.push((a, b, low, high));
-            }
-            if left.len() >= 3 {
-                pieces(low, left, out, seams);
-            }
-            if right.len() >= 3 {
-                pieces(high, right, out, seams);
             }
         }
+    }
+}
+
+/// `1` for zero and up, else `-1`.
+fn sign(v: f64) -> f64 {
+    if v >= 0.0 { 1.0 } else { -1.0 }
+}
+
+/// How a house's wings are roofed (`House`): every wing the same way.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Pitch {
+    /// Two slopes meeting at the ridge, a gable wall at each end.
+    Gable,
+    /// Four slopes: a gable whose ends slope too. A square wing is a pyramid.
+    Hip,
+    /// A barn roof: each side steep up to halfway in, then shallower up to the ridge.
+    Gambrel,
+}
+
+/// One rectangular wing of a house: its middle, the unit direction its ridge runs along (`u`),
+/// and its half length along the ridge and half width across it, metres.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Wing {
+    pub centre: P,
+    pub u: P,
+    pub half: [f64; 2],
+}
+
+/// How far outside a wing a point still counts as on it, metres.
+const ON: f64 = 0.01;
+
+impl Wing {
+    /// `p` in the wing's own axes: along the ridge, and across it.
+    pub fn local(&self, p: P) -> (f64, f64) {
+        let (dx, dz) = (p[0] - self.centre[0], p[1] - self.centre[1]);
+        (dx * self.u[0] + dz * self.u[1], -dx * self.u[1] + dz * self.u[0])
+    }
+
+    /// The point at `(a, b)` in the wing's axes.
+    pub fn world(&self, a: f64, b: f64) -> P {
+        [self.centre[0] + a * self.u[0] - b * self.u[1], self.centre[1] + a * self.u[1] + b * self.u[0]]
+    }
+
+    pub fn contains(&self, p: P) -> bool {
+        let (a, b) = self.local(p);
+        a.abs() <= self.half[0] + ON && b.abs() <= self.half[1] + ON
+    }
+
+    /// The plane the wing's roof lies in over `p`, eaves at `eave` and slopes `k` (the second only for a gambrel's upper slope).
+    pub fn plane_at(&self, p: P, pitch: Pitch, eave: f64, k: [f64; 2]) -> Plane {
+        let (a, b) = self.local(p);
+        let (l, w) = (self.half[0], self.half[1]);
+        let (s, t) = (sign(b), sign(a));
+        let side = local_plane(self.centre, self.u, [eave + k[0] * w, 0.0, -k[0] * s]);
+        match pitch {
+            Pitch::Gable => side,
+            Pitch::Hip => {
+                if w - b.abs() <= l - a.abs() { side } else { local_plane(self.centre, self.u, [eave + k[0] * l, -k[0] * t, 0.0]) }
+            }
+            Pitch::Gambrel => {
+                if w - b.abs() <= w / 2.0 { side } else { local_plane(self.centre, self.u, [eave + (k[0] + k[1]) * w / 2.0, 0.0, -k[1] * s]) }
+            }
+        }
+    }
+
+    /// Every plane the wing's roof has.
+    fn planes(&self, pitch: Pitch, eave: f64, k: [f64; 2]) -> Vec<Plane> {
+        let (l, w) = (self.half[0], self.half[1]);
+        let probe = |a: f64, b: f64| self.plane_at(self.world(a, b), pitch, eave, k);
+        let mut out = vec![probe(0.0, w * 0.9), probe(0.0, -w * 0.9)];
+        match pitch {
+            Pitch::Gable => {}
+            Pitch::Hip => out.extend([probe(l * 0.999, 0.0), probe(-l * 0.999, 0.0)]),
+            Pitch::Gambrel => out.extend([probe(0.0, w * 0.1), probe(0.0, -w * 0.1)]),
+        }
+        out
+    }
+
+    /// Lines `(point, direction)` where the wing's roof bends, and its four sides.
+    fn lines(&self, pitch: Pitch, out: &mut Vec<(P, P)>) {
+        let (l, w) = (self.half[0], self.half[1]);
+        let v = [-self.u[1], self.u[0]];
+        out.push((self.centre, self.u));
+        for sign in [-1.0, 1.0] {
+            out.push((self.world(sign * l, 0.0), v));
+            out.push((self.world(0.0, sign * w), self.u));
+        }
+        match pitch {
+            Pitch::Gable => {}
+            Pitch::Hip => {
+                for t in [-1.0, 1.0] {
+                    for s in [-1.0, 1.0] {
+                        let d = [s * self.u[0] + t * v[0], s * self.u[1] + t * v[1]];
+                        out.push((self.world(t * (l - w), 0.0), d));
+                    }
+                }
+            }
+            Pitch::Gambrel => {
+                for sign in [-1.0, 1.0] {
+                    out.push((self.world(0.0, sign * w / 2.0), self.u));
+                }
+            }
+        }
+    }
+}
+
+/// A dormer: a box standing out of a slope with a roof of its own, a window in its front. Its
+/// rectangle on the ground is laid out as a wing's is; `wing` is the one it stands on.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Dormer {
+    pub area: Wing,
+    pub plane: Plane,
+    pub wing: usize,
+}
+
+/// A house roofed from the catalogue (`catalogue`): rectangular wings with the same eaves and
+/// slope, each roofed the same way, meeting in valleys; and its dormers.
+#[derive(Clone, Debug, PartialEq)]
+pub struct House {
+    pub eave: f64,
+    pub pitch: Pitch,
+    pub k: [f64; 2],
+    pub wings: Vec<Wing>,
+    pub dormers: Vec<Dormer>,
+}
+
+impl House {
+    /// The plane the roof lies in over `p`: the highest of the wings it is on, or of a dormer
+    /// there, or the eaves for a bit of the house under no wing (a porch).
+    pub fn plane_at(&self, p: P) -> Plane {
+        let mut best: Option<(f64, Plane)> = None;
+        for wing in self.wings.iter().filter(|wing| wing.contains(p)) {
+            let plane = wing.plane_at(p, self.pitch, self.eave, self.k);
+            let y = eval(&plane, p);
+            if best.is_none_or(|(top, _)| y > top + 1e-9) {
+                best = Some((y, plane));
+            }
+        }
+        for dormer in self.dormers.iter().filter(|dormer| dormer.area.contains(p)) {
+            let y = eval(&dormer.plane, p);
+            if best.is_none_or(|(top, _)| y > top + 1e-9) {
+                best = Some((y, dormer.plane));
+            }
+        }
+        best.map_or([self.eave, 0.0, 0.0], |(_, plane)| plane)
+    }
+
+    pub fn height(&self, p: P) -> f64 {
+        eval(&self.plane_at(p), p)
+    }
+}
+
+impl Roof {
+    /// The plane the roof lies in over `p`.
+    pub fn plane_at(&self, p: P) -> Plane {
+        match self {
+            Roof::Leaf(shape) => shape.plane_at(p),
+            Roof::Cut { .. } => leaf_at(self, p).plane_at(p),
+            Roof::House(house) => house.plane_at(p),
+        }
+    }
+
+    /// Lines the whole footprint is cut along: where the roof bends or changes part, and every wing's sides.
+    fn lines(&self, out: &mut Vec<(P, P)>) {
+        match self {
+            Roof::House(house) => house.wings.iter().for_each(|wing| wing.lines(house.pitch, out)),
+            roof => bends(roof, out),
+        }
+    }
+
+    /// Lines only the pieces on given wings are cut along (by the wing numbers): the valleys
+    /// where two wings meet, and the sides of the dormers on a wing.
+    fn local_lines(&self) -> Vec<(Vec<usize>, (P, P))> {
+        let Roof::House(house) = self else { return Vec::new() };
+        let mut out = Vec::new();
+        for i in 0..house.wings.len() {
+            for j in i + 1..house.wings.len() {
+                for a in house.wings[i].planes(house.pitch, house.eave, house.k) {
+                    for b in house.wings[j].planes(house.pitch, house.eave, house.k) {
+                        // Where the two planes are at one height.
+                        let n = [a[1] - b[1], a[2] - b[2]];
+                        let length = n[0].hypot(n[1]);
+                        if length < 1e-6 {
+                            continue;
+                        }
+                        let o = [-(a[0] - b[0]) * n[0] / (length * length), -(a[0] - b[0]) * n[1] / (length * length)];
+                        out.push((vec![i, j], (o, [-n[1] / length, n[0] / length])));
+                    }
+                }
+            }
+        }
+        for dormer in &house.dormers {
+            let mut sides = Vec::new();
+            let area = dormer.area;
+            let v = [-area.u[1], area.u[0]];
+            for sign in [-1.0, 1.0] {
+                sides.push((area.world(sign * area.half[0], 0.0), v));
+                sides.push((area.world(0.0, sign * area.half[1]), area.u));
+            }
+            out.extend(sides.into_iter().map(|line| (vec![dormer.wing], line)));
+        }
+        out
     }
 }
 
@@ -577,6 +786,7 @@ fn leaf_at(roof: &Roof, p: P) -> &Shape {
         Roof::Cut { o, n, low, high } => {
             if n[0] * (p[0] - o[0]) + n[1] * (p[1] - o[1]) < 0.0 { leaf_at(low, p) } else { leaf_at(high, p) }
         }
+        Roof::House(_) => unreachable!("a house is no part of a cut roof"),
     }
 }
 
@@ -589,48 +799,113 @@ fn bends(roof: &Roof, out: &mut Vec<(P, P)>) {
             bends(low, out);
             bends(high, out);
         }
+        Roof::House(_) => roof.lines(out),
     }
 }
 
-/// Splits the edge `a → b` where the roof changes shape or bends, as `(from, to, shape)` runs.
-fn edge_runs<'a>(roof: &'a Roof, a: P, b: P, out: &mut Vec<(P, P, &'a Shape)>) {
-    match roof {
-        Roof::Leaf(shape) => {
-            let mut ts = vec![0.0, 1.0];
-            for (o, d) in shape.creases() {
-                let (sa, sb) = (d[0] * (a[1] - o[1]) - d[1] * (a[0] - o[0]), d[0] * (b[1] - o[1]) - d[1] * (b[0] - o[0]));
-                if sa * sb < 0.0 {
-                    ts.push(sa / (sa - sb));
-                }
-            }
-            ts.sort_by(f64::total_cmp);
-            let at = |t: f64| [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
-            for pair in ts.windows(2) {
-                if pair[1] > pair[0] {
-                    out.push((at(pair[0]), at(pair[1]), shape));
-                }
-            }
+/// Middle of a polygon's corners.
+fn centroid(polygon: &[P]) -> P {
+    let n = polygon.len() as f64;
+    polygon.iter().fold([0.0, 0.0], |c, p| [c[0] + p[0] / n, c[1] + p[1] / n])
+}
+
+/// A side of a roof piece by the keys of its two ends, in the order its piece goes round.
+type Side = ([i64; 2], [i64; 2]);
+
+/// Key of a point to the tenth of a millimetre, so the same corner reached two ways is one.
+fn key(p: P) -> [i64; 2] {
+    [(p[0] * 1e4).round() as i64, (p[1] * 1e4).round() as i64]
+}
+
+/// The footprint triangles cut along every line of `roof` into pieces each under one plane,
+/// counter-clockwise, with every corner of a neighbouring piece that lies on one of its sides
+/// added to it, so two pieces always meet corner to corner.
+fn roof_pieces(roof: &Roof, triangles: Vec<Vec<P>>) -> Vec<Vec<P>> {
+    let mut lines = Vec::new();
+    roof.lines(&mut lines);
+    let keep = |piece: &Vec<P>| piece.len() >= 3 && polygon_area(piece).abs() > 1e-8;
+    let mut pieces: Vec<Vec<P>> = Vec::new();
+    for triangle in triangles {
+        let mut parts = vec![triangle];
+        for &(o, d) in &lines {
+            parts = parts.into_iter().flat_map(|piece| { let (left, right) = split(&piece, o, d); [left, right] }).filter(keep).collect();
         }
-        Roof::Cut { o, n, low, high } => {
-            let (sa, sb) = (n[0] * (a[0] - o[0]) + n[1] * (a[1] - o[1]), n[0] * (b[0] - o[0]) + n[1] * (b[1] - o[1]));
-            if sa < 0.0 && sb <= 0.0 {
-                edge_runs(low, a, b, out);
-            } else if sa >= 0.0 && sb >= 0.0 {
-                edge_runs(high, a, b, out);
-            } else {
-                let t = sa / (sa - sb);
-                let m = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
-                let (first, second) = if sa < 0.0 { (low, high) } else { (high, low) };
-                edge_runs(first, a, m, out);
-                edge_runs(second, m, b, out);
-            }
+        pieces.extend(parts);
+    }
+    if let Roof::House(house) = roof {
+        for (wings, (o, d)) in roof.local_lines() {
+            pieces = pieces
+                .into_iter()
+                .flat_map(|piece| {
+                    let c = centroid(&piece);
+                    if wings.iter().all(|&w| house.wings[w].contains(c)) {
+                        let (left, right) = split(&piece, o, d);
+                        vec![left, right]
+                    } else {
+                        vec![piece]
+                    }
+                })
+                .filter(keep)
+                .collect();
         }
     }
+    for piece in &mut pieces {
+        if polygon_area(piece) < 0.0 {
+            piece.reverse();
+        }
+        piece.dedup_by(|a, b| key(*a) == key(*b));
+        if piece.len() > 1 && key(piece[0]) == key(piece[piece.len() - 1]) {
+            piece.pop();
+        }
+    }
+    pieces.retain(keep);
+    // Corners of other pieces lying on a side, put in along it.
+    let mut corners: Vec<P> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for p in pieces.iter().flatten() {
+        if seen.insert(key(*p)) {
+            corners.push(*p);
+        }
+    }
+    pieces
+        .into_iter()
+        .map(|piece| {
+            let mut out = Vec::with_capacity(piece.len());
+            for i in 0..piece.len() {
+                let (a, b) = (piece[i], piece[(i + 1) % piece.len()]);
+                out.push(a);
+                let (dx, dz) = (b[0] - a[0], b[1] - a[1]);
+                let length = dx * dx + dz * dz;
+                if length < 1e-12 {
+                    continue;
+                }
+                let (lo, hi) = ([a[0].min(b[0]) - 1e-3, a[1].min(b[1]) - 1e-3], [a[0].max(b[0]) + 1e-3, a[1].max(b[1]) + 1e-3]);
+                let mut on: Vec<(f64, P)> = corners
+                    .iter()
+                    .filter(|p| p[0] >= lo[0] && p[0] <= hi[0] && p[1] >= lo[1] && p[1] <= hi[1])
+                    .filter(|p| key(**p) != key(a) && key(**p) != key(b))
+                    .filter_map(|&p| {
+                        let t = ((p[0] - a[0]) * dx + (p[1] - a[1]) * dz) / length;
+                        let off = ((p[0] - a[0]) * dz - (p[1] - a[1]) * dx).abs() / length.sqrt();
+                        (t > 1e-6 && t < 1.0 - 1e-6 && off < 5e-4).then_some((t, p))
+                    })
+                    .collect();
+                on.sort_by(|x, y| x.0.total_cmp(&y.0));
+                out.extend(on.into_iter().map(|(_, p)| p));
+            }
+            out
+        })
+        .collect()
 }
 
 /// Appends a building to `mesh`: walls up to the roof (and steps where parts of the roof differ in
 /// height), the roof, then the floor, in that order. `footprint` is counter-clockwise from above.
 /// The floor is at `floor` metres.
+///
+/// The footprint is cut into pieces each under one plane of the roof (`roof_pieces`). A side of a
+/// piece no other piece shares is the top of an outer wall; a side two pieces share, where the
+/// roof is higher on one than the other, is a step: a wall facing the lower side (a dormer's front
+/// and cheeks, the end of a higher part).
 pub fn build(mesh: &mut CollisionMesh, footprint: &[P], floor: f64, roof: &Roof) -> Parts {
     let mut ids: HashMap<[i32; 3], u32> = HashMap::new();
     let mut vertex = |mesh: &mut CollisionMesh, x: f64, y: f64, z: f64| -> u32 {
@@ -650,74 +925,84 @@ pub fn build(mesh: &mut CollisionMesh, footprint: &[P], floor: f64, roof: &Roof)
 
     let flat: Vec<f64> = footprint.iter().flat_map(|p| [p[0], p[1]]).collect();
     let triangles: Vec<[usize; 3]> = earcutr::earcut(&flat, &[], 2).map(|i| i.chunks_exact(3).map(|t| [t[0], t[1], t[2]]).collect()).unwrap_or_default();
-    let mut roof_pieces = Vec::new();
-    let mut seams = Vec::new();
-    for [a, b, c] in &triangles {
-        pieces(roof, vec![footprint[*a], footprint[*b], footprint[*c]], &mut roof_pieces, &mut seams);
-    }
+    let pieces = roof_pieces(roof, triangles.iter().map(|t| t.iter().map(|&i| footprint[i]).collect()).collect());
+    let planes: Vec<Plane> = pieces.iter().map(|piece| roof.plane_at(centroid(piece))).collect();
+    let height = |piece: usize, p: P| clamp(eval(&planes[piece], p));
 
-    // Walls: each edge is cut where the roof changes, so the top edge follows it.
-    let first_wall = mesh.triangles.len();
-    for i in 0..footprint.len() {
-        let (a, b) = (footprint[i], footprint[(i + 1) % footprint.len()]);
-        let mut runs = Vec::new();
-        edge_runs(roof, a, b, &mut runs);
-        for (p, q, shape) in runs {
-            let (tp, tq) = (clamp(shape.height(p)), clamp(shape.height(q)));
-            highest = highest.max(tp).max(tq);
-            let (bp, bq) = (vertex(mesh, p[0], floor, p[1]), vertex(mesh, q[0], floor, q[1]));
-            let (up, uq) = (vertex(mesh, p[0], tp, p[1]), vertex(mesh, q[0], tq, q[1]));
-            push(mesh, [bp, bq, uq]);
-            push(mesh, [bp, uq, up]);
+    // Every side of every piece, by its two ends: a side two pieces share is in both, the other way round.
+    let mut sides: HashMap<Side, (usize, P, P)> = HashMap::new();
+    for (i, piece) in pieces.iter().enumerate() {
+        for k in 0..piece.len() {
+            let (p, q) = (piece[k], piece[(k + 1) % piece.len()]);
+            sides.insert((key(p), key(q)), (i, p, q));
         }
     }
-    // Where two parts of the roof meet at different heights there is a step, a wall seen from
-    // either side.
-    for (a, b, low, high) in seams {
-        // Either side may bend along the seam, so the step is cut wherever a crease or a cut crosses it.
-        let mut lines = Vec::new();
-        bends(low, &mut lines);
-        bends(high, &mut lines);
-        let mut ts = vec![0.0, 1.0];
-        for (o, d) in lines {
-            let (sa, sb) = (d[0] * (a[1] - o[1]) - d[1] * (a[0] - o[0]), d[0] * (b[1] - o[1]) - d[1] * (b[0] - o[0]));
-            if sa * sb < 0.0 {
-                ts.push(sa / (sa - sb));
+    let mut order: Vec<(Side, (usize, P, P))> = sides.iter().map(|(k, v)| (*k, *v)).collect();
+    order.sort_by_key(|(k, _)| *k);
+
+    let first_wall = mesh.triangles.len();
+    for &((kp, kq), (i, p, q)) in &order {
+        match sides.get(&(kq, kp)) {
+            // An outer wall, from the floor to the roof.
+            None => {
+                let (tp, tq) = (height(i, p), height(i, q));
+                highest = highest.max(tp).max(tq);
+                let (bp, bq) = (vertex(mesh, p[0], floor, p[1]), vertex(mesh, q[0], floor, q[1]));
+                let (up, uq) = (vertex(mesh, p[0], tp, p[1]), vertex(mesh, q[0], tq, q[1]));
+                push(mesh, [bp, bq, uq]);
+                push(mesh, [bp, uq, up]);
             }
-        }
-        ts.sort_by(f64::total_cmp);
-        let at = |t: f64| [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
-        for pair in ts.windows(2) {
-            if pair[1] - pair[0] < 1e-6 {
-                continue;
+            // A side shared with the piece `j`: once, from the pair's lesser key.
+            Some(&(j, ..)) if (kp, kq) < (kq, kp) => {
+                let mut runs = vec![(p, q)];
+                let (dp, dq) = (height(i, p) - height(j, p), height(i, q) - height(j, q));
+                if dp * dq < 0.0 && dp.abs() > 0.02 && dq.abs() > 0.02 {
+                    let t = dp / (dp - dq);
+                    let m = [p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t];
+                    runs = vec![(p, m), (m, q)];
+                }
+                for (a, b) in runs {
+                    let mid = [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0];
+                    let up = height(i, mid) - height(j, mid);
+                    if up.abs() < 0.02 && (height(i, a) - height(j, a)).abs() < 0.02 && (height(i, b) - height(j, b)).abs() < 0.02 {
+                        continue;
+                    }
+                    // Walked with the higher piece on the left, as an outer wall is with the house.
+                    let (high, low, a, b) = if up > 0.0 { (i, j, a, b) } else { (j, i, b, a) };
+                    let (la, lb) = (vertex(mesh, a[0], height(low, a), a[1]), vertex(mesh, b[0], height(low, b), b[1]));
+                    let (ha, hb) = (vertex(mesh, a[0], height(high, a), a[1]), vertex(mesh, b[0], height(high, b), b[1]));
+                    push(mesh, [la, lb, hb]);
+                    push(mesh, [la, hb, ha]);
+                }
             }
-            let (p, q, mid) = (at(pair[0]), at(pair[1]), at((pair[0] + pair[1]) / 2.0));
-            let (lo, hi) = (leaf_at(low, mid), leaf_at(high, mid));
-            let (l0, l1, h0, h1) = (clamp(lo.height(p)), clamp(lo.height(q)), clamp(hi.height(p)), clamp(hi.height(q)));
-            if (l0 - h0).abs() < 0.02 && (l1 - h1).abs() < 0.02 {
-                continue;
-            }
-            let v = [vertex(mesh, p[0], l0, p[1]), vertex(mesh, q[0], l1, q[1]), vertex(mesh, q[0], h1, q[1]), vertex(mesh, p[0], h0, p[1])];
-            for tri in [[v[0], v[1], v[2]], [v[0], v[2], v[3]], [v[2], v[1], v[0]], [v[3], v[2], v[0]]] {
-                push(mesh, tri);
-            }
+            Some(_) => {}
         }
     }
     let walls = (mesh.triangles.len() - first_wall) as u32;
 
-    // Roof: each piece is a plane, fan-triangulated.
+    // Roof: each piece is a plane. A piece with a corner in the middle of a side is fanned from its middle.
     let first_roof = mesh.triangles.len();
-    for Piece { polygon, shape } in &roof_pieces {
-        let ids: Vec<u32> = polygon
-            .iter()
-            .map(|&[x, z]| {
-                let y = clamp(shape.height([x, z]));
-                highest = highest.max(y);
-                vertex(mesh, x, y, z)
-            })
-            .collect();
-        for k in 1..ids.len() - 1 {
-            push(mesh, [ids[0], ids[k], ids[k + 1]]);
+    for (i, piece) in pieces.iter().enumerate() {
+        let mut corner = |mesh: &mut CollisionMesh, p: P| {
+            let y = height(i, p);
+            highest = highest.max(y);
+            vertex(mesh, p[0], y, p[1])
+        };
+        let n = piece.len();
+        let straight = (0..n).any(|k| {
+            let (a, b, c) = (piece[(k + n - 1) % n], piece[k], piece[(k + 1) % n]);
+            ((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])).abs() < 1e-7
+        });
+        let ids: Vec<u32> = piece.iter().map(|&p| corner(mesh, p)).collect();
+        if straight && n > 3 {
+            let middle = corner(mesh, centroid(piece));
+            for k in 0..n {
+                push(mesh, [middle, ids[k], ids[(k + 1) % n]]);
+            }
+        } else {
+            for k in 1..n - 1 {
+                push(mesh, [ids[0], ids[k], ids[k + 1]]);
+            }
         }
     }
     let roof_count = (mesh.triangles.len() - first_roof) as u32;
@@ -822,7 +1107,7 @@ fn inside([x, z]: P, ring: &[P]) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// A `w × d` rectangle turned by `angle`, counter-clockwise from above.
@@ -933,10 +1218,10 @@ mod tests {
     }
 
     #[test]
-    fn a_house_with_a_lower_flat_wing_is_two_roofs() {
-        // 20 × 8: a gable over the west half, a flat roof 3 m lower over the east half.
-        let footprint = rectangle(20.0, 8.0, 0.0, [0.0, 0.0]);
-        let gable = Shape::Gable { y: 10.0, at: [-5.0, 0.0], ridge: [1.0, 0.0], pitch: 0.6 };
+    fn a_big_building_with_a_lower_flat_wing_is_two_roofs() {
+        // 32 × 10, big enough to be fitted in parts: a gable over the west half, a flat roof lower over the east half.
+        let footprint = rectangle(32.0, 10.0, 0.0, [0.0, 0.0]);
+        let gable = Shape::Gable { y: 10.0, at: [-8.0, 0.0], ridge: [1.0, 0.0], pitch: 0.6 };
         let flat = Shape::Flat { y: 4.0 };
         let mut points = sample(&footprint, &gable);
         for p in &mut points {
@@ -947,8 +1232,8 @@ mod tests {
         let Some(Roof::Cut { o, n, low, high }) = fit(&footprint, &points) else { panic!("one shape") };
         assert!(n[0].abs() > 0.99 && o[0].abs() < 2.0, "cut at {o:?} normal {n:?}");
         let (west, east) = if n[0] > 0.0 { (*low, *high) } else { (*high, *low) };
-        assert!((west.height([-5.0, 0.0]) - 10.0).abs() < 0.4, "{west:?}");
-        assert!((east.height([5.0, 0.0]) - 4.0).abs() < 0.4, "{east:?}");
+        assert!((west.height([-8.0, 0.0]) - 10.0).abs() < 0.4, "{west:?}");
+        assert!((east.height([8.0, 0.0]) - 4.0).abs() < 0.4, "{east:?}");
     }
 
     #[test]
@@ -967,8 +1252,37 @@ mod tests {
         }
     }
 
+    /// Fails when a corner of the roof lies in the middle of another roof triangle's edge: there
+    /// the two pieces do not meet corner to corner, and a crack shows between them.
+    pub(crate) fn no_cracks(mesh: &CollisionMesh, parts: Parts) {
+        let roof = &mesh.triangles[parts.walls as usize..(parts.walls + parts.roof) as usize];
+        let at = |i: u32| mesh.vertices[i as usize].map(f64::from);
+        let mut used: Vec<u32> = roof.iter().flatten().copied().collect();
+        used.sort_unstable();
+        used.dedup();
+        for tri in roof {
+            for k in 0..3 {
+                let (a, b) = (at(tri[k]), at(tri[(k + 1) % 3]));
+                let d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+                let length = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+                for &r in &used {
+                    if r == tri[k] || r == tri[(k + 1) % 3] {
+                        continue;
+                    }
+                    let p = at(r);
+                    let t = ((p[0] - a[0]) * d[0] + (p[1] - a[1]) * d[1] + (p[2] - a[2]) * d[2]) / length;
+                    if t <= 0.01 || t >= 0.99 {
+                        continue;
+                    }
+                    let off = (0..3).map(|i| (a[i] + d[i] * t - p[i]).powi(2)).sum::<f64>().sqrt();
+                    assert!(off > 0.6, "a crack: {p:?} lies on the edge {a:?} to {b:?}");
+                }
+            }
+        }
+    }
+
     /// The footprint area the roof triangles cover seen from above, signed so a hole shows.
-    fn roof_area(mesh: &CollisionMesh, parts: Parts) -> f64 {
+    pub(crate) fn roof_area(mesh: &CollisionMesh, parts: Parts) -> f64 {
         let mut area = 0.0;
         for tri in &mesh.triangles[parts.walls as usize..(parts.walls + parts.roof) as usize] {
             let p = tri.map(|i| mesh.vertices[i as usize]);
@@ -991,6 +1305,7 @@ mod tests {
         let single = build(&mut plain, &footprint, 0.0, &Roof::Leaf(Shape::Flat { y: 5.0 }));
         assert!(parts.walls > single.walls, "no step wall: {} vs {}", parts.walls, single.walls);
         assert!((parts.top - 9.0).abs() < 0.01);
+        no_cracks(&stepped, parts);
     }
 
     #[test]

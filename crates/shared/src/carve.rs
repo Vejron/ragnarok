@@ -117,6 +117,22 @@ fn sample(tri: &Tri, mut visit: impl FnMut([i64; 3])) {
     }
 }
 
+/// The cells of the grid at `origin` with `dims` cells a side that the triangles `inside` pass
+/// through (`Shell::furnish`), each as often as it is found: sampled and placed as walls are.
+pub fn furnished(origin: [i32; 3], dims: [usize; 3], inside: &[Tri]) -> Vec<u32> {
+    let mut cells = Vec::new();
+    if dims.contains(&0) {
+        return cells;
+    }
+    for tri in inside {
+        sample(tri, |p| {
+            let at = |axis: usize| ((p[axis] - 1 - origin[axis] as i64).div_euclid(CELL as i64)).clamp(0, dims[axis] as i64 - 1) as usize;
+            cells.push(((at(1) * dims[2] + at(2)) * dims[0] + at(0)) as u32);
+        });
+    }
+    cells
+}
+
 impl Shell {
     /// Cuts a building: its wall triangles and its roof triangles, in centimetres, wound however
     /// the collision mesh has them. `None` when there is nothing to carve, or it is too big.
@@ -190,6 +206,20 @@ impl Shell {
         };
         shell.anchor();
         Some(shell)
+    }
+
+    /// Adds what stands inside the building (`interior::rooms`: floors and stairs, as
+    /// triangles) to its cells, so it is blasted, holds and falls as the walls do. The grid
+    /// stays as it is, and so does every cell's number: only cells inside it become solid. The server
+    /// and the clients furnish alike, after `from_cells`.
+    pub fn furnish(&mut self, inside: &[Tri]) {
+        if inside.is_empty() {
+            return;
+        }
+        for id in furnished(self.origin, self.dims, inside) {
+            self.solid[id as usize] = true;
+        }
+        self.anchor();
     }
 
     /// Whether the roof passes through cell `id`.

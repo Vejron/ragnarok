@@ -6,7 +6,8 @@
  * The module is initialised by `SimMotor.create` before any tile is drawn.
  */
 
-import { carve_baked_faces, carve_cut, carve_faces, carve_nearest, carve_unpack, windows_of } from './wasm/sim'
+import { carve_baked_faces, carve_cut, carve_faces, carve_furnish, carve_nearest, carve_unpack, windows_of } from './wasm/sim'
+import { insideFor, type Furnishable } from './interior'
 
 /** Side of a cell, centimetres, on one lattice for the whole world. Mirrors `CELL`. */
 export const CELL = 72
@@ -115,6 +116,18 @@ export class Shell {
     } finally {
       cut.free()
     }
+  }
+
+  /**
+   * Adds what stands inside the building (`inside`: nine centimetre numbers a triangle) to its cells,
+   * as the server does (`Shell::furnish`): the grid and every cell's number stay as they are.
+   */
+  furnish(inside: Int32Array) {
+    if (inside.length === 0) return
+    const solid = this.solid
+    for (const id of carve_furnish(Int32Array.from(this.origin), Uint32Array.from(this.dims), inside)) solid[id] = 1
+    this.whole = null
+    this.solidIds = null
   }
 
   /** Whether cell `id` is part of the building. */
@@ -259,7 +272,11 @@ const shells = new WeakMap<{ buildings: unknown }, Map<number, Shell | null>>()
  * as the importer cuts them. Null when it has no cubes.
  */
 export function shellOf(
-  tile: { buildings: readonly { first: number; walls: number; roof: number; cells?: Baked | null }[]; collision: { vertices: Float32Array; triangles: Uint32Array } },
+  tile: {
+    buildings: readonly { first: number; walls: number; roof: number; cells?: Baked | null; look?: Furnishable | null }[]
+    collision: { vertices: Float32Array; triangles: Uint32Array }
+    look?: { vertices: Float32Array; triangles: Uint32Array }
+  },
   index: number,
 ): Shell | null {
   let byIndex = shells.get(tile)
@@ -286,6 +303,8 @@ export function shellOf(
     const roofFrom = building.first + building.walls
     shell = Shell.ofFlat(flat(building.first, roofFrom), flat(roofFrom, roofFrom + building.roof))
   }
+  // What stands in its rooms is cells too, as on the server (`sim::building_shell`).
+  if (shell && building?.look && tile.look) shell.furnish(insideFor(tile.look, building.look).collided)
   byIndex.set(index, shell)
   return shell
 }

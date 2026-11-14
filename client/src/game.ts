@@ -12,7 +12,7 @@ import {
 import { easeSway, sway, swayAmplitude } from './sway'
 import { mayPlace } from './sim/bricks'
 import { crewGun, vehicleDef } from './sim/vehicles'
-import { blockedAt, spreadPixels } from './aimline'
+import { blockedAt, lookDir, spreadPixels } from './aimline'
 import { Meter, called } from './sim/golf'
 import { ITEM_DRIVER, ITEM_NONE, aimSpeedScale, effectiveSpread, fillsHands, itemDef, type ItemDef, type ItemSlot } from './sim/items'
 import { backswingPhase, downswingPhase } from './render/golfclub'
@@ -172,6 +172,12 @@ const LOCAL_TRACK = 0
 const AIM_LOOK_SCALE = 0.6
 /** How long the static shows after a drone's feed cuts out, ms. */
 const FEED_LOST_MS = 700
+/** A ceiling this near over the head, metres, means the soldier is indoors and the camera keeps to the room. */
+const CEILING_ABOVE = 12
+/** Indoors the camera keeps this far off the wall behind it, comes no nearer the shoulder than `ROOM_ARM_MIN`, and is let back out at `ROOM_ARM_EASE` m/s. */
+const ROOM_CAMERA_GAP = 0.25
+const ROOM_ARM_MIN = 0.35
+const ROOM_ARM_EASE = 4
 /** Seats that steer something along, which get a speedometer. */
 const MOVERS: ReadonlySet<SeatView['role']> = new Set(['driver', 'roadster', 'sled', 'helm', 'pilot', 'aviator', 'walker', 'hen', 'tupp', 'strv', 'drone', 'loiter', 'captain', 'missile'] as const)
 
@@ -334,6 +340,8 @@ export class Game {
   /** Aiming a gun over the shoulder this frame, and how far the camera has eased in (0..1). */
   private aiming = false
   private aimBlend = 0
+  /** How far behind the shoulder the on-foot camera is let out to (`roomArm`), metres. */
+  private roomArmNow = ON_FOOT_DISTANCE
   /** A tired player's gun wandering this frame, `[yaw, pitch]` radians: added to the look shown and sent. */
   private sway: [number, number] = [0, 0]
   private swaySize = 0
@@ -1060,6 +1068,38 @@ export class Game {
     }
   }
 
+  /**
+   * Where the on-foot camera sits when it wants to be `distance` behind the shoulder: how far behind,
+   * and how far to the right the shoulder it looks over is. Under a roof (a ceiling within
+   * `CEILING_ABOVE` of the head) it keeps to the room the soldier is in: the shoulder no farther out
+   * than the wall beside him, the camera no farther back than the wall or floor behind, and both
+   * under the roof, since through a window or the door there is no wall to find. It comes in at
+   * once and eases back out. Out of doors it is `distance` and `ON_FOOT_SHOULDER`.
+   */
+  private roomArm(position: readonly number[], yaw: number, pitch: number, distance: number, dt: number): { arm: number; shoulder: number } {
+    const head: Vec3 = [position[0]!, position[1]! + ON_FOOT_HEIGHT, position[2]!]
+    const motor = this.motor
+    let clear = distance
+    let shoulder = ON_FOOT_SHOULDER
+    if (motor?.castRay(head, [0, 1, 0], CEILING_ABOVE)) {
+      const roofed = (p: Vec3) => motor.castRay(p, [0, 1, 0], CEILING_ABOVE) !== null
+      const right: Vec3 = [Math.cos(yaw), 0, -Math.sin(yaw)]
+      const beside = motor.castRay(head, right, ON_FOOT_SHOULDER + ROOM_CAMERA_GAP)
+      if (beside) shoulder = Math.max(0, beside.t - ROOM_CAMERA_GAP)
+      else if (!roofed([head[0] + right[0] * shoulder, head[1], head[2] + right[2] * shoulder])) shoulder = 0
+      const pivot: Vec3 = [head[0] + right[0] * shoulder, head[1], head[2] + right[2] * shoulder]
+      const look = lookDir(yaw, pitch)
+      const hit = motor.castRay(pivot, [-look[0], -look[1], -look[2]], distance + ROOM_CAMERA_GAP)
+      if (hit) clear = Math.max(ROOM_ARM_MIN, hit.t - ROOM_CAMERA_GAP)
+      for (let tries = 0; tries < 5 && clear > ROOM_ARM_MIN; tries++) {
+        if (roofed([pivot[0] - look[0] * clear, pivot[1] - look[1] * clear, pivot[2] - look[2] * clear])) break
+        clear = Math.max(ROOM_ARM_MIN, clear * 0.6)
+      }
+    }
+    this.roomArmNow = clear < this.roomArmNow ? clear : Math.min(clear, this.roomArmNow + ROOM_ARM_EASE * dt)
+    return { arm: Math.min(distance, this.roomArmNow), shoulder }
+  }
+
   /** Puts the camera where this frame wants it. */
   private aimCamera({ now, dt, seat, view, ride, position, distance, sighted, scoped, aiming, lookYaw, lookPitch, sitting, reading }: Moment) {
     this.input.lookScale = sighted ? SIGHT_LOOK_SCALE : scoped ? SCOPE_LOOK_SCALE : aiming ? AIM_LOOK_SCALE : 1
@@ -1082,7 +1122,9 @@ export class Game {
     if (scoped) this.scene.scopeFrom([position[0]!, position[1]! + this.eyeHeight(), position[2]!], lookYaw, lookPitch, shake)
     else {
       // Only the distance changes: the pivot is what the server's crosshair ray is built from.
-      this.scene.overShoulder(position, lookYaw, lookPitch, ON_FOOT_DISTANCE * (1 - (1 - AIM_DISTANCE_SCALE) * this.aimBlend), ON_FOOT_SHOULDER, ON_FOOT_HEIGHT, shake)
+      // Indoors both come in to keep the view in the room; the crosshair is then a little off the server's ray.
+      const { arm, shoulder } = this.roomArm(position, lookYaw, lookPitch, ON_FOOT_DISTANCE * (1 - (1 - AIM_DISTANCE_SCALE) * this.aimBlend), dt)
+      this.scene.overShoulder(position, lookYaw, lookPitch, arm, shoulder, ON_FOOT_HEIGHT, shake)
       if (reading > 0) this.toEyes([position[0]!, position[1]! + this.eyeHeight(), position[2]!], reading)
       else this.followBall(lookYaw, lookPitch, dt)
     }

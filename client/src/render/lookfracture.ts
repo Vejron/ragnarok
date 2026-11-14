@@ -1,8 +1,8 @@
 import type { CollisionMesh } from '@/world'
 import { CELL_HP, type Shell } from '@/sim/carve'
-import { openingQuads, openingsFor, type Opening } from './windows'
+import { drawnOpenings, openingQuads, openingsFor, type Opening } from './windows'
 import { SOFFIT_RGB, TRIM_RGB, eaveAnchor, eavesFor } from './eaves'
-import { FLOOR_RGB, INTERIOR_SHADE, facadeFor, innerOf, type Facade } from './facade'
+import { FLOOR_RGB, INSIDE_RGB, INTERIOR_SHADE, facadeFor, innerOf, type Facade } from './facade'
 import { add, centreOf, cross, dot, edgeKey, hash, keyOf, normalOf, split, sub, unit, type P, type Poly, type RGB } from './geom'
 
 /*
@@ -15,11 +15,7 @@ import { add, centreOf, cross, dot, edgeKey, hash, keyOf, normalOf, split, sub, 
  */
 
 /** A building's triangles in the look: `walls` from `first`, then `roof`. */
-export interface LookRange {
-  first: number
-  walls: number
-  roof: number
-}
+export type LookRange = import('./windows').LookRange
 
 export interface LookSoup {
   positions: Float32Array
@@ -87,6 +83,8 @@ interface Piece {
   /** Outward unit normal. */
   normal: P
   roof: boolean
+  /** For a piece of what stands in the house's rooms, what it is (`Part`); a wall or roof has none. */
+  inside?: number
 }
 
 /** A building's grid, in metres. */
@@ -154,9 +152,13 @@ function slice(facade: Facade, grid: Grid, near: readonly (readonly number[])[],
   const { cell, origin, shell } = grid
   const whole: Piece[] = []
   const sliced: Piece[] = []
-  const faces: [Poly, boolean][] = [...facade.walls.map((poly): [Poly, boolean] => [poly, false]), ...facade.roof.map((poly): [Poly, boolean] => [poly, true])]
-  for (const [poly, roof] of faces) {
-    const piece = { poly, normal: normalOf(poly), roof }
+  const faces: [Poly, boolean, number?][] = [
+    ...facade.walls.map((poly): [Poly, boolean] => [poly, false]),
+    ...facade.roof.map((poly): [Poly, boolean] => [poly, true]),
+    ...facade.inside.map(({ poly, kind }): [Poly, boolean, number] => [poly, false, kind]),
+  ]
+  for (const [poly, roof, inside] of faces) {
+    const piece: Piece = { poly, normal: normalOf(poly), roof, ...(inside === undefined ? {} : { inside }) }
     const lo = [0, 1, 2].map((a) => grid.of(Math.min(...poly.map((p) => p[a]!)), a) - SLICE_REACH)
     const hi = [0, 1, 2].map((a) => grid.of(Math.max(...poly.map((p) => p[a]!)), a) + SLICE_REACH)
     const close = near.some((c) => c[0]! >= lo[0]! && c[0]! <= hi[0]! && c[1]! >= lo[1]! && c[1]! <= hi[1]! && c[2]! >= lo[2]! && c[2]! <= hi[2]!)
@@ -186,7 +188,7 @@ function slice(facade: Facade, grid: Grid, near: readonly (readonly number[])[],
       // A hair inside the wall, so a wall on a cell boundary is judged by the cell it is cut into.
       const [x, y, z] = [0, 1, 2].map((a) => grid.of(c[a]! - piece.normal[a]! * 0.01, a)) as P
       const inCut = grid.has(x, y, z) && cut(shell.index(x, y, z))
-      ;(inCut || orphan(grid, x, y, z, cut) ? taken : kept).push({ poly, normal: piece.normal, roof: piece.roof })
+      ;(inCut || orphan(grid, x, y, z, cut) ? taken : kept).push({ ...piece, poly })
     }
   }
   return { whole, kept, taken }
@@ -440,7 +442,11 @@ export function lookFracture(look: CollisionMesh, range: LookRange, shell: Shell
   const near = [...removed, ...dents.keys()].map((id) => shell.coords(id))
   const facade = facadeFor(look, range)
   const openings = openingsFor(look, range)
-  const { whole, kept, taken } = slice(facade, grid, near, (id) => removed.has(id))
+  const sliced = slice(facade, grid, near, (id) => removed.has(id))
+  // What stands in the rooms is drawn as it is cut, apart from the walls and roof: its edges are thin and stay straight.
+  const shellOnly = (pieces: readonly Piece[]) => pieces.filter((piece) => piece.inside === undefined)
+  const [whole, kept, taken] = [shellOnly(sliced.whole), shellOnly(sliced.kept), shellOnly(sliced.taken)]
+  const rooms = [...sliced.whole, ...sliced.kept].filter((piece) => piece.inside !== undefined)
   const { rims, place } = outline(grid, taken, [...kept, ...taken], windowEdge(openings))
 
   // Which cells are gone, and which have a gone cell within two of them: only a corner in one of those can be sooted.
@@ -493,6 +499,7 @@ export function lookFracture(look: CollisionMesh, range: LookRange, shell: Shell
   for (const piece of whole) out.poly(innerOf(piece.poly, piece.normal), dim(piece.roof ? roof : wall), shade, true)
   for (const piece of kept) out.poly(innerOf(piece.poly.map(place), piece.normal), dim(piece.roof ? roof : wall), shade, true)
   for (const poly of floorStanding(facade.floor, grid, removed)) out.poly(poly, FLOOR_RGB, undefined, true)
+  for (const piece of rooms) out.poly(piece.poly, INSIDE_RGB[piece.inside!] ?? FLOOR_RGB, shade, true)
   out.rims(rims, wall, roof, shade)
   // The roof's overhang, each strip while the roof it hangs from still stands.
   for (const strip of eavesFor(look, range)) {
@@ -547,7 +554,7 @@ export function lookFracture(look: CollisionMesh, range: LookRange, shell: Shell
     }
   }
   // Windows and doors, but only those with wall still standing round them: a frame does not hang in the air.
-  const framed = removed.size === 0 ? openings : openings.filter((o) => openingStands(shell, removed, o))
+  const framed = drawnOpenings(removed.size === 0 ? openings : openings.filter((o) => openingStands(shell, removed, o)), facade.inside.length > 0)
   openingQuads(framed, (corners, rgb) => out.poly(corners, rgb, shade, true))
   return out.soup()
 }
@@ -720,9 +727,12 @@ function chips(out: Writer, piece: Piece, id: number, count: number, base: RGB) 
  */
 export function lookChunk(look: CollisionMesh, range: LookRange, shell: Shell, cells: ReadonlySet<number>, pivot: readonly [number, number, number], wall: RGB, roof: RGB): LookSoup {
   const grid = new Grid(shell)
-  const { kept, taken } = slice(facadeFor(look, range), grid, [...cells].map((id) => shell.coords(id)), (id) => cells.has(id))
+  const sliced = slice(facadeFor(look, range), grid, [...cells].map((id) => shell.coords(id)), (id) => cells.has(id))
+  const [kept, taken] = [sliced.kept, sliced.taken].map((pieces) => pieces.filter((piece) => piece.inside === undefined)) as [Piece[], Piece[]]
   const { rims, place } = outline(grid, taken, [...kept, ...taken], windowEdge(openingsFor(look, range)))
   const out = new Writer(place, [pivot[0], pivot[1], pivot[2]])
+  // The floors and walls of its rooms that were in those cells go with it.
+  for (const piece of sliced.taken) if (piece.inside !== undefined) out.poly(piece.poly, INSIDE_RGB[piece.inside] ?? FLOOR_RGB, undefined, true)
   for (const piece of taken) out.poly(piece.poly, piece.roof ? roof : wall)
   // Its inner face goes with it, so a section lying on the ground shows its dim inside.
   for (const piece of taken) out.poly(innerOf(piece.poly.map(place), piece.normal), [wall[0] * INTERIOR_SHADE, wall[1] * INTERIOR_SHADE, wall[2] * INTERIOR_SHADE], undefined, true)

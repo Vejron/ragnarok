@@ -349,7 +349,11 @@ pub fn building_parts(world: &WorldFile, index: usize) -> Option<[Vec<Tri>; 3]> 
 pub fn building_shell(world: &WorldFile, index: usize) -> Option<(Shell, Vec<Tri>)> {
     let [walls, roof, floor] = building_parts(world, index)?;
     let baked = &world.buildings.get(index)?.cells;
-    let shell = Shell::from_cells(baked).or_else(|| Shell::new(&walls, &roof))?;
+    let mut shell = Shell::from_cells(baked).or_else(|| Shell::new(&walls, &roof))?;
+    // What stands in its rooms is cells too, the same on the server and every client.
+    if let Some(look) = world.looks.get(index) {
+        shell.furnish(&look.inside);
+    }
     Some((shell, floor))
 }
 
@@ -378,7 +382,7 @@ pub fn building_shape(world: &WorldFile, index: usize) -> Option<SharedShape> {
 /// merged into boxes. With its `floor` either way. `None` when nothing stands.
 pub fn building_solid(world: &WorldFile, index: usize, cut: Option<(&Shell, &[bool])>, floor: &[Tri]) -> Option<SharedShape> {
     match world.looks.get(index).filter(|look| !look.is_empty()) {
-        Some(look) => mesh_of(&shared::facade::standing(&look.walls, &look.roof, &look.windows, cut), floor),
+        Some(look) => mesh_of(&shared::facade::standing(&look.walls, &look.roof, &look.windows, &look.inside, cut), floor),
         None => {
             let (shell, removed) = cut?;
             solid_of(&shell.boxes(removed), floor)

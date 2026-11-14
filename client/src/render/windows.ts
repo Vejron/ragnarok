@@ -12,6 +12,9 @@ export interface LookRange {
   first: number
   walls: number
   roof: number
+  /** Its footprint (`x, z` pairs, centimetres) and, once worked out, what stands inside it (`insideFor`). */
+  footprint?: Int32Array
+  inside?: Int32Array
 }
 
 type P = [number, number, number]
@@ -21,6 +24,8 @@ export interface Opening {
   corners: [P, P, P, P]
   normal: P
   door: boolean
+  /** A door standing open, as drawn on a house with rooms (`drawnOpenings`). */
+  open?: boolean
 }
 
 const STOREY = 2.8
@@ -33,6 +38,17 @@ const PITCH = 2.8
 const MARGIN = 0.35
 const DOOR_WIDTH = 1.0
 const DOOR_HEIGHT = 2.1
+/**
+ * A wall whose foot is this far over the building's lowest is raised (a dormer's front, the step up
+ * to a higher part of the roof): its windows are small, set low in it, and it has no door, metres.
+ * Mirrors `RAISED` and the `SMALL_*` constants in `windows.rs`.
+ */
+const RAISED = 2.0
+const SMALL_SILL = 0.2
+const SMALL_HEIGHT = 0.7
+const SMALL_WIDTH = 0.8
+const SMALL_MARGIN = 0.15
+const SMALL_PITCH = 2.0
 /** How far frames and panes stand out from the wall, metres, and how much wider a frame is than its pane. */
 const FRAME_OUT = 0.025
 export const PANE_OUT = 0.04
@@ -96,35 +112,39 @@ export function openingsOf(look: CollisionMesh, range: LookRange): Opening[] {
       const [x, y, z] = [s(a!, b!), s(b!, c!), s(c!, a!)]
       return (x >= 0 && y >= 0 && z >= 0) || (x <= 0 && y <= 0 && z <= 0)
     })
-  const fits = (plane: Plane, u0: number, u1: number, v0: number, v1: number) =>
+  const fits = (plane: Plane, u0: number, u1: number, v0: number, v1: number, margin = MARGIN) =>
     [
-      [u0 - MARGIN, v0 - MARGIN],
-      [u1 + MARGIN, v0 - MARGIN],
-      [u1 + MARGIN, v1 + MARGIN],
-      [u0 - MARGIN, v1 + MARGIN],
+      [u0 - margin, v0 - margin],
+      [u1 + margin, v0 - margin],
+      [u1 + margin, v1 + margin],
+      [u0 - margin, v1 + margin],
     ].every(([u, v]) => inside(plane, u!, v!))
+  let lowest = Infinity
+  for (const plane of planes.values()) lowest = Math.min(lowest, plane.v0)
   const sorted = [...planes.values()].sort((a, b) => (a.u1 - a.u0 === b.u1 - b.u0 ? a.d - b.d : b.u1 - b.u0 - (a.u1 - a.u0)))
   const out: Opening[] = []
   sorted.forEach((plane, rank) => {
+    const raised = plane.v0 - lowest >= RAISED
+    const [sill, height, width, margin, pitch] = raised ? [SMALL_SILL, SMALL_HEIGHT, SMALL_WIDTH, SMALL_MARGIN, SMALL_PITCH] : [SILL, WINDOW_HEIGHT, WINDOW_WIDTH, MARGIN, PITCH]
     const length = plane.u1 - plane.u0
-    if (length < WINDOW_WIDTH + 2 * MARGIN) return
-    const count = Math.max(1, Math.round(length / PITCH))
+    if (length < width + 2 * margin) return
+    const count = Math.max(1, Math.round(length / pitch))
     const step = length / count
     const toWorld = (u: number, v: number): P => [plane.u[0] * u + plane.normal[0] * plane.d, v, plane.u[2] * u + plane.normal[2] * plane.d]
     const push = (u0: number, u1: number, v0: number, v1: number, door: boolean) =>
       out.push({ corners: [toWorld(u0, v0), toWorld(u1, v0), toWorld(u1, v1), toWorld(u0, v1)], normal: plane.normal, door })
     // Rows a storey apart, as high as the wall reaches (`fits` keeps them off a gable's slopes).
-    for (let storey = 0; plane.v0 + SILL + storey * STOREY + WINDOW_HEIGHT + MARGIN <= plane.v1; storey++) {
-      const v0 = plane.v0 + SILL + storey * STOREY
+    for (let storey = 0; plane.v0 + sill + storey * STOREY + height + margin <= plane.v1; storey++) {
+      const v0 = plane.v0 + sill + storey * STOREY
       for (let i = 0; i < count; i++) {
         const mid = plane.u0 + (i + 0.5) * step
         // The longest wall's door: the middle of its ground row.
-        if (rank === 0 && storey === 0 && i === Math.floor(count / 2) && fits(plane, mid - DOOR_WIDTH / 2, mid + DOOR_WIDTH / 2, plane.v0 + MARGIN, plane.v0 + DOOR_HEIGHT)) {
+        if (!raised && rank === 0 && storey === 0 && i === Math.floor(count / 2) && fits(plane, mid - DOOR_WIDTH / 2, mid + DOOR_WIDTH / 2, plane.v0 + MARGIN, plane.v0 + DOOR_HEIGHT)) {
           push(mid - DOOR_WIDTH / 2, mid + DOOR_WIDTH / 2, plane.v0 + 0.02, plane.v0 + DOOR_HEIGHT, true)
           continue
         }
-        const [u0, u1] = [mid - WINDOW_WIDTH / 2, mid + WINDOW_WIDTH / 2]
-        if (fits(plane, u0, u1, v0, v0 + WINDOW_HEIGHT)) push(u0, u1, v0, v0 + WINDOW_HEIGHT, false)
+        const [u0, u1] = [mid - width / 2, mid + width / 2]
+        if (fits(plane, u0, u1, v0, v0 + height, margin)) push(u0, u1, v0, v0 + height, false)
       }
     }
   })
@@ -148,11 +168,25 @@ export function openingsFor(look: CollisionMesh, range: LookRange): readonly Ope
   return openings
 }
 
-/** The triangles `openingQuads` draws for `openings`: a window's frame ring and reveal, a door's frame and leaf. */
+/** The triangles `openingQuads` draws for `openings`: a window's frame ring and reveal, a door's frame and leaf (an open door's frame is three strips, and its leaf has two sides). */
 export function openingTriangles(openings: readonly Opening[]): number {
   let n = 0
-  for (const o of openings) n += o.door ? 4 : 16
+  for (const o of openings) n += o.door ? (o.open ? 10 : 4) : 16
   return n
+}
+
+/** How far above its foot an open door's leaf starts, metres: on the plinth the ground floor is on (`PLINTH` in `interior.rs`, less a hair). */
+const LEAF_FOOT = 0.28
+/** How far an open door's top is above a shut one's, metres. Mirrors `DOOR_RISE`. */
+const OPEN_RISE = 0.3
+
+/**
+ * `openings` as they are drawn on a house with rooms (`furnished`): its door stands open, on the
+ * plinth. The windows and a house without rooms are as they were.
+ */
+export function drawnOpenings(openings: readonly Opening[], furnished: boolean): readonly Opening[] {
+  if (!furnished) return openings
+  return openings.map((o) => (o.door ? { ...o, open: true } : o))
 }
 
 /**
@@ -162,7 +196,7 @@ export function openingTriangles(openings: readonly Opening[]): number {
  * drawn apart (`glass.ts`), and the hole itself is cut out of the wall (`facade.ts`).
  */
 export function openingQuads(openings: readonly Opening[], quad: (corners: [P, P, P, P], rgb: readonly [number, number, number], normal: P) => void) {
-  for (const { corners, normal, door } of openings) {
+  for (const { corners, normal, door, open } of openings) {
     const [a, , c] = corners
     // Unit along the wall and up, from the corners.
     const along: P = [corners[1][0] - a[0], 0, corners[1][2] - a[2]]
@@ -171,6 +205,18 @@ export function openingQuads(openings: readonly Opening[], quad: (corners: [P, P
     const grow = (out: number, by: number, bottom = by): [P, P, P, P] => {
       const shift = (p: P, du: number, dv: number): P => [p[0] + ux * du + normal[0] * out, p[1] + dv, p[2] + uz * du + normal[2] * out]
       return [shift(a, -by, -bottom), shift(corners[1], by, -bottom), shift(c, by, by), shift(corners[3], -by, by)]
+    }
+    if (door && open) {
+      // The doorway's frame, up its sides and over its top, and the leaf swung in on its first side.
+      const up = c[1] + OPEN_RISE
+      const at = (du: number, out: number, y: number): P => [a[0] + ux * du + normal[0] * out, y, a[2] + uz * du + normal[2] * out]
+      quad([at(-FRAME, FRAME_OUT, a[1]), at(0, FRAME_OUT, a[1]), at(0, FRAME_OUT, up), at(-FRAME, FRAME_OUT, up)], FRAME_RGB, normal)
+      quad([at(al, FRAME_OUT, a[1]), at(al + FRAME, FRAME_OUT, a[1]), at(al + FRAME, FRAME_OUT, up), at(al, FRAME_OUT, up)], FRAME_RGB, normal)
+      quad([at(-FRAME, FRAME_OUT, up), at(al + FRAME, FRAME_OUT, up), at(al + FRAME, FRAME_OUT, up + FRAME), at(-FRAME, FRAME_OUT, up + FRAME)], FRAME_RGB, normal)
+      const leaf: [P, P, P, P] = [at(0.03, -0.05, a[1] + LEAF_FOOT), at(0.03, -0.05 - al, a[1] + LEAF_FOOT), at(0.03, -0.05 - al, up), at(0.03, -0.05, up)]
+      quad(leaf, DOOR_RGB, [ux, 0, uz])
+      quad(leaf, DOOR_RGB, [-ux, 0, -uz])
+      continue
     }
     if (door) {
       quad(grow(FRAME_OUT, FRAME, 0), FRAME_RGB, normal)
