@@ -1,11 +1,11 @@
 import { Quaternion, Vector3 } from '@ragnarok/engine'
 import type { Node, PointLights } from '@ragnarok/engine'
-import { ARMS_CUT, DAMAGE_WHEELS, KIND_MISSILE, KIND_SHIP, KIND_SHIP_GUN } from '@/net/codec'
+import { ARMS_CUT, DAMAGE_WHEELS, KIND_MISSILE, KIND_SHIP, KIND_SHIP_GUN, KIND_TITAN, THRUST_LIFT } from '@/net/codec'
 import type { Debris } from '@/render/debris'
 import type { Effects } from '@/render/effects'
 import type { Rounds } from '@/render/rounds'
 import { HenModel } from '@/render/hen'
-import { VehicleFx, type FxWorld } from '@/render/tyres'
+import { VehicleFx, slamDust, type FxWorld } from '@/render/tyres'
 import { kindView } from '@/kinds'
 import { missileLaunch, tubeSmoke } from '@/render/launch'
 import { SubmarineModel, TUBE_SMOKES, type SubView } from '@/render/submarine'
@@ -15,7 +15,7 @@ import { WalkerModel } from '@/render/walker'
 import type { VehicleModel } from '@/render/car'
 import type { DrivenPose } from '@/sim/driver'
 import type { VehiclePose } from '@/sim/motor'
-import { SHIP_DECK_Y, SHIP_GUN_HALF_EXTENTS, SHIP_GUN_X, SHIP_GUN_Z, vehicleMaxHp } from '@/sim/consts'
+import { SHIP_DECK_Y, SHIP_GUN_HALF_EXTENTS, SHIP_GUN_X, SHIP_GUN_Z, TITAN_SLAM_FULL, TITAN_SLAM_RADIUS, TITAN_SLAM_RADIUS_FULL, TITAN_SLAM_SPEED, vehicleMaxHp } from '@/sim/consts'
 import { vehicleDef } from '@/sim/vehicles'
 import type { VehicleSounds } from '@/vehicleaudio'
 import type { Frame, Presenter } from '../presenter'
@@ -91,6 +91,8 @@ export interface VehicleWorld {
   listen: () => void
   /** The local player's gun went off. */
   ownShot: () => void
+  /** Something heavy came down at `at`: shakes the view by up to `strength` if it is within a few `radius` of it. */
+  shake?: (at: readonly [number, number, number], radius: number, strength: number) => void
 }
 
 /**
@@ -233,7 +235,19 @@ export class Vehicles implements Presenter<Frame> {
     if (kind === KIND_MISSILE && (seats[0] ?? 0) !== 0) this.world.lights.hold(x, y, z, { color: 0xff9a40, intensity: 3.5, radius: 22 })
     if (model instanceof WalkerModel || model instanceof HenModel) for (const step of model.takeSteps()) this.world.sounds.footstep(step.at, step.weight)
     // A Titan's foot comes down like something dropped from a height.
-    if (model instanceof TitanModel) for (const step of model.takeSteps()) this.world.sounds.thud(step.at, TITAN_FOOTFALL)
+    if (model instanceof TitanModel) {
+      for (const step of model.takeSteps()) this.world.sounds.thud(step.at, TITAN_FOOTFALL)
+      // Come down hard out of the air, the ground goes up around it and everything near shakes.
+      const slam = model.takeSlam()
+      if (slam && slam.speed >= TITAN_SLAM_SPEED) {
+        const power = Math.min(1, (slam.speed - TITAN_SLAM_SPEED) / (TITAN_SLAM_FULL - TITAN_SLAM_SPEED))
+        const radius = TITAN_SLAM_RADIUS + (TITAN_SLAM_RADIUS_FULL - TITAN_SLAM_RADIUS) * power
+        this.world.sounds.thud(slam.at, 3 * slam.speed)
+        this.world.sounds.explosion(slam.at)
+        slamDust(this.world.fx(), slam.at, radius)
+        this.world.shake?.(slam.at, radius, 0.3 + 0.5 * power)
+      } else if (slam) this.world.sounds.thud(slam.at, 2 * TITAN_FOOTFALL)
+    }
     if (model instanceof HenModel) {
       const { beats, leapt, eggs } = model.takeEvents()
       if (leapt) this.world.sounds.bawk([x, y + 2, z])
@@ -294,7 +308,8 @@ export class Vehicles implements Presenter<Frame> {
         grounded: fx.grounded,
         wheels: hurt ? damage.slice(DAMAGE_WHEELS, DAMAGE_WHEELS + 4) : null,
         cut,
-        jets: placed.jets,
+        // A Titan in the air with its thrusters off is silent.
+        jets: kind === KIND_TITAN ? placed.jets & THRUST_LIFT : placed.jets,
       },
       position,
       [fx.velocity.x, fx.velocity.y, fx.velocity.z],

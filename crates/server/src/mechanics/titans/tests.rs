@@ -297,3 +297,107 @@ fn a_placed_titan_stands_is_boarded_from_between_its_feet_walks_and_sets_its_pil
     assert!(player.seat.is_none() && player.character.position[1] < 3.0, "set down on the ground: {:?}", player.character);
     assert!((player.character.position[0] - at[0]).hypot(player.character.position[2] - at[2]) < 16.0, "by its feet: {:?} against {at:?}", player.character.position);
 }
+
+#[test]
+fn a_slam_throws_and_hurts_soldiers_throws_a_jeep_fells_trees_and_brings_down_a_house() {
+    use shared::world::{Building, CollisionMesh, ObjId, TREE_PINE, Tree};
+    let v = |x: f32, y: f32, z: f32| [(x * 100.0) as i32, (y * 100.0) as i32, (z * 100.0) as i32];
+    let vertices = vec![v(8.0, 0.0, -5.0), v(18.0, 0.0, -5.0), v(18.0, 0.0, 5.0), v(8.0, 0.0, 5.0), v(8.0, 6.0, -5.0), v(18.0, 6.0, -5.0), v(18.0, 6.0, 5.0), v(8.0, 6.0, 5.0)];
+    let triangles = vec![[0, 1, 5], [0, 5, 4], [1, 2, 6], [1, 6, 5], [2, 3, 7], [2, 7, 6], [3, 0, 4], [3, 4, 7], [4, 5, 6], [4, 6, 7], [0, 2, 1], [0, 3, 2]];
+    let house = Building { height: 600, footprint: vec![[800, -500], [1800, -500], [1800, 500], [800, 500]], base: 0, first: 0, walls: 8, roof: 2, ..Default::default() };
+    let (house_id, near_tree, far_tree) = (ObjId { col: 1, row: 1, index: 0 }, ObjId { col: 2, row: 3, index: 0 }, ObjId { col: 2, row: 3, index: 1 });
+    let tree = |x: i32, z: i32| Tree { x, z, base: 0, height: 1600, crown: 300, kind: TREE_PINE, solid: true };
+    let map = WorldFile {
+        version: WORLD_VERSION,
+        half_extent: 40_000,
+        spawns: vec![[30_000, 30_000]],
+        buildings: vec![house],
+        building_ids: vec![house_id],
+        building_triangles: vec![[0, 12]],
+        collision: CollisionMesh { vertices, triangles },
+        trees: vec![tree(-1500, 1000), tree(-9000, 0)],
+        tree_ids: vec![near_tree, far_tree],
+        ..Default::default()
+    };
+    let mut game = Game::new(map, 0).unwrap();
+    game.world.clear_pickups();
+    let pilot = join(&mut game);
+    let (near, edge, far) = (join(&mut game), join(&mut game), join(&mut game));
+    // The Titan stands well away: only where it is said to land matters here.
+    let vid = crate::mechanics::vehicles::add_vehicle(&mut game.world, KIND_TITAN, [300.0, TITAN_LEG_LENGTH + TITAN_HALF_EXTENTS[1], 300.0], 0.0);
+    let jeep = crate::mechanics::vehicles::add_vehicle(&mut game.world, KIND_JEEP, [0.0, 1.0, -22.0], 0.0);
+    for _ in 0..120 {
+        game.step();
+    }
+    stand(&mut game, near, [0.0, 12.0]);
+    stand(&mut game, edge, [0.0, 70.0]);
+    stand(&mut game, far, [0.0, 110.0]);
+    let (full, titan_hp) = (hp(&game, jeep), hp(&game, vid));
+    // As hard as it lands: its feet either side of the origin.
+    slam(&mut game.world, vid, [[-5.0, 0.0, 0.0], [5.0, 0.0, 0.0]], TITAN_SLAM_FULL, Some(pilot));
+    let thrown = game.world.entities.of::<Player>(near).character;
+    assert!(thrown.knock[1] > 10.0 && thrown.vy > 0.0 && thrown.down > 0, "thrown outwards and knocked down: {thrown:?}");
+    assert!(hp(&game, near) < PLAYER_MAX_HP || !game.world.entities.alive(near), "and hurt");
+    // Past where it hurts it still knocks them off their feet, and further out it does nothing.
+    let shaken = game.world.entities.of::<Player>(edge).character;
+    assert!(shaken.knock[1] > 1.0 && hp(&game, edge) == PLAYER_MAX_HP, "shaken but not hurt: {shaken:?}");
+    let untouched = game.world.entities.of::<Player>(far).character;
+    assert!(untouched.knock == [0.0, 0.0] && untouched.grounded, "out of its reach: {untouched:?}");
+    assert!(hp(&game, jeep) < full / 2 || game.world.entities.dead(jeep), "the jeep is broken: {} of {full}", hp(&game, jeep));
+    assert!(game.world.felled.contains(&Obj::Tree(near_tree)) && !game.world.felled.contains(&Obj::Tree(far_tree)), "the tree by it goes over, the far one stands");
+    assert!(game.world.carves.contains_key(&house_id), "the house by it is broken open");
+    assert_eq!(hp(&game, vid), titan_hp, "it does not feel its own landing");
+    // The jeep flies.
+    let before = game.world.physics.car_pose(jeep).unwrap().position;
+    for _ in 0..30 {
+        game.step();
+    }
+    let after = game.world.physics.car_pose(jeep).unwrap().position;
+    assert!(after[2] < before[2] - 2.0 && after[1] > 1.5, "the jeep is thrown away from it and up: {before:?} -> {after:?}");
+}
+
+#[test]
+fn a_titan_that_leaps_and_falls_slams_where_it_lands_and_one_set_down_gently_does_not() {
+    for gentle in [false, true] {
+        let mut game = game();
+        let pilot = join(&mut game);
+        let (bystander, held) = (join(&mut game), join(&mut game));
+        let vid = titan(&mut game);
+        assert!(crate::mechanics::seat(&mut game.world, pilot, vid, 0));
+        let mut seq = 0;
+        // Someone in its right fist goes up with it.
+        game.world.entities.of_mut::<Player>(held).held = Some(Fist { titan: vid, hand: 1 });
+        // Up on its thrusters for three seconds, then let go.
+        for _ in 0..180 {
+            tick(&mut game, vid, pilot, &mut seq, BUTTON_JUMP, None, true);
+        }
+        let high = game.world.physics.car_pose(vid).unwrap();
+        assert!(high.position[1] > TITAN_RIDE_HEIGHT + 20.0, "it flew: {high:?}");
+        stand(&mut game, bystander, [high.position[0] + 15.0, high.position[2]]);
+        let mut impact: f32 = 0.0;
+        for _ in 0..600 {
+            // Set down gently, the thrusters are fired whenever it falls fast.
+            let falling = game.world.physics.car_pose(vid).unwrap().velocity[1] < -4.0 && game.world.physics.limbs(vid).unwrap().step == shared::vehicles::Step::Airborne;
+            tick(&mut game, vid, pilot, &mut seq, if gentle && falling { BUTTON_JUMP } else { 0 }, None, true);
+            // The bystander waits where they were put until it lands.
+            if impact == 0.0 {
+                stand(&mut game, bystander, [high.position[0] + 15.0, high.position[2]]);
+            }
+            impact = impact.max(game.world.physics.limbs(vid).unwrap().impact);
+        }
+        let seen = game.world.entities.of::<Player>(bystander).character;
+        println!("titan landed (gentle: {gentle}) at {impact} m/s; bystander {seen:?}, hp {}", hp(&game, bystander));
+        if gentle {
+            assert!(impact > 0.0 && impact < TITAN_SLAM_SPEED, "set down: {impact} m/s");
+            // Its feet coming down still shake the ground under them, as any step of its does.
+            assert!(hp(&game, bystander) == PLAYER_MAX_HP && (seen.position[0] - high.position[0] - 15.0).abs() < 5.0, "the bystander is unhurt and where they were, near enough: {seen:?}");
+        } else {
+            assert!(impact > TITAN_SLAM_SPEED + 5.0, "it came down hard: {impact} m/s");
+            assert!(hp(&game, bystander) < PLAYER_MAX_HP || !game.world.entities.alive(bystander), "the bystander is hurt");
+            assert!(seen.position[0] > high.position[0] + 17.0 || !game.world.entities.alive(bystander), "and thrown away from it: {seen:?}");
+        }
+        assert_eq!(hp(&game, held), PLAYER_MAX_HP, "whoever it holds comes down with it unhurt");
+        assert!(game.world.entities.of::<Player>(held).held.is_some(), "and still in its fist");
+        assert_eq!(hp(&game, vid), vehicle_def(KIND_TITAN).hp, "and it takes no harm itself");
+    }
+}

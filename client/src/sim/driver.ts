@@ -24,6 +24,13 @@ export interface DrivenPose {
  * authoritative state, as the soldier's are; what is left of a correction is kept as a visual offset
  * that decays.
  */
+/** A Titan's feet as a snapshot has them: where each is in the world (left, right), and its `step` and `weight`. */
+export interface Feet {
+  at: readonly [readonly [number, number, number], readonly [number, number, number]]
+  step: number
+  weight: number
+}
+
 export class VehicleDriver {
   private id = 0
   private kind = 0
@@ -79,9 +86,10 @@ export class VehicleDriver {
   /**
    * Rewinds to the server's state as of input `ack` and replays everything newer. `tick` is the
    * snapshot's: the server's next step, which the first replayed input is, so the waves on open water
-   * are where the server has them.
+   * are where the server has them. `feet` are a Titan's, which it stands on: without them the replay
+   * would walk it on from wherever this client's own copy of them had got to.
    */
-  reconcile(ack: number, vehicle: VehiclePose, drive: DriveState, tick?: number) {
+  reconcile(ack: number, vehicle: VehiclePose, drive: DriveState, tick?: number, feet?: Feet | null) {
     this.acknowledge(ack)
     if (this.id !== vehicle.id || this.kind !== vehicle.kind) {
       this.leave()
@@ -91,6 +99,7 @@ export class VehicleDriver {
     }
     const before = this.current
     this.motor.setCarState(this.id, vehicle, drive)
+    if (feet) this.motor.setCarFeet(this.id, feet.at, feet.step, feet.weight)
     if (tick !== undefined) this.motor.setTick(tick)
     let state = this.motor.carState(this.id)
     let previous = state

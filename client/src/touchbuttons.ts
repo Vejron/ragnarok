@@ -31,7 +31,7 @@ export interface TouchContext {
 const AIMS = new Set<Seat>(['gunner', 'roofgunner', 'strv', 'walker', 'titan', 'tupp', 'passenger', 'periscope'])
 
 const jumpLabel = (seat: Seat) =>
-  seat === 'driver' || seat === 'sled' ? 'BRAKE' : seat === 'helm' ? 'ANCHOR' : seat === 'roadster' ? 'HOP' : seat === 'hen' || seat === 'tupp' ? 'FLAP' : seat === 'aviator' ? 'FASTER' : seat === 'pilot' || seat === 'drone' || seat === 'captain' ? 'UP' : 'JUMP'
+  seat === 'driver' || seat === 'sled' ? 'BRAKE' : seat === 'helm' ? 'ANCHOR' : seat === 'roadster' ? 'HOP' : seat === 'hen' || seat === 'tupp' ? 'FLAP' : seat === 'titan' ? 'THRUST' : seat === 'aviator' ? 'FASTER' : seat === 'pilot' || seat === 'drone' || seat === 'captain' ? 'UP' : 'JUMP'
 const fireLabel = (seat: Seat) => (seat === 'drone' || seat === 'loiter' || seat === 'missile' ? 'BOOM' : seat === 'periscope' ? 'LAUNCH' : seat === 'hen' ? 'EGG' : seat === 'tupp' ? 'LASER' : 'FIRE')
 
 /** The buttons for `seat` (null on foot), each in a cell of its own. */

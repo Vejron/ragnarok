@@ -9,6 +9,9 @@
 //!   no heavier than `TITAN_LIFT_MASS` carries it off the same way.
 //! - **A step.** Where a foot comes down, soldiers under it are crushed and those around it are thrown
 //!   off their feet; vehicles, buildings, cubes and trees under it are hurt.
+//! - **A slam.** Come down out of the air at `TITAN_SLAM_SPEED` or faster, it lands as a blast would,
+//!   wider and harder the faster it fell: soldiers are thrown and hurt, vehicles thrown and broken,
+//!   buildings bitten down and trees felled.
 
 use super::Mechanic;
 use super::life::{Harm, damage_entity};
@@ -49,6 +52,8 @@ const CRUSH_HEIGHT: f32 = 4.0;
 const STOMP_DV: f32 = 6.0;
 /// Tree damage per m/s of a fist: any punch fells a tree.
 const TREE_DAMAGE_PER_SPEED: f32 = 60.0;
+/// The share of the speed a slam throws a vehicle outward with that it also throws it up with.
+const SLAM_TOSS: f32 = 0.6;
 /// The share of a fist's speed another Titan it lands on is knocked by.
 const GIANT_KNOCK: f32 = 0.06;
 
@@ -224,6 +229,36 @@ fn stomp(world: &mut World, vid: u32, foot: [f32; 3], pilot: Option<u32>) {
     strike(world, vid, middle, CRUSH_RADIUS, [0.0, -STOMP_DV, 0.0], TITAN_STOMP_VEHICLE_DAMAGE, pilot);
 }
 
+/// Titan `vid` comes down between its `feet` at `impact` m/s, hard enough to be a slam: a blast without
+/// fire, wider and harder the faster it fell, which it does not feel itself. Vehicles are thrown further
+/// than a blast's shove takes them.
+fn slam(world: &mut World, vid: u32, feet: [[f32; 3]; 2], impact: f32, pilot: Option<u32>) {
+    let power = ((impact - TITAN_SLAM_SPEED) / (TITAN_SLAM_FULL - TITAN_SLAM_SPEED)).clamp(0.0, 1.0);
+    let radius = TITAN_SLAM_RADIUS + (TITAN_SLAM_RADIUS_FULL - TITAN_SLAM_RADIUS) * power;
+    let knock = TITAN_SLAM_KNOCK * (0.5 + 0.5 * power);
+    let point = [0, 1, 2].map(|axis| (feet[0][axis] + feet[1][axis]) * 0.5);
+    let near = world.physics.cars_touching_ball(point, radius, vid);
+    super::combat::blast_sparing(
+        world,
+        super::combat::Blast { point, radius, damage: TITAN_SLAM_DAMAGE * (0.4 + 0.6 * power), knock, dir: [0.0, 1.0, 0.0], attacker: pilot, weapon: WEAPON_TITAN },
+        vid,
+    );
+    for car in near {
+        // Another Titan is shaken, not thrown; what this one holds comes down with it.
+        if world.entities.get::<Vehicle>(car).is_some_and(|vehicle| vehicle_def(vehicle.kind).spec.arms.is_some()) || world.physics.held_car(vid, 0) == Some(car) || world.physics.held_car(vid, 1) == Some(car) {
+            continue;
+        }
+        let Some(pose) = world.physics.car_pose(car) else { continue };
+        let away = [pose.position[0] - point[0], pose.position[2] - point[2]];
+        let distance = away[0].hypot(away[1]).max(0.1);
+        let falloff = (1.0 - distance / radius).max(0.0);
+        let dv = [away[0] / distance * knock * falloff, knock * falloff * SLAM_TOSS, away[1] / distance * knock * falloff];
+        world.physics.knock_car(car, dv, pose.position);
+        super::combat::damage_vehicle(world, car, (TITAN_SLAM_VEHICLE_DAMAGE * (0.4 + 0.6 * power) * falloff).min(255.0) as u8, pilot);
+    }
+    tracing::debug!(titan = vid, impact, radius, "slammed");
+}
+
 impl Titans {
     /// One tick of Titan `vid`, whose limbs are at `limbs`.
     fn work(&mut self, world: &mut World, vid: u32, limbs: LimbsPose) {
@@ -269,6 +304,9 @@ impl Titans {
             if limbs.landed[foot] && !wrecked {
                 stomp(world, vid, limbs.feet[foot], pilot);
             }
+        }
+        if limbs.impact >= TITAN_SLAM_SPEED && !wrecked {
+            slam(world, vid, limbs.feet, limbs.impact, pilot);
         }
     }
 }

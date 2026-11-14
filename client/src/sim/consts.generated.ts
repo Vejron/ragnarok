@@ -2,7 +2,7 @@
 // change the Rust and run `npm run gen:consts`. Client-only constants live in consts.ts.
 
 /** Wire schema version. Bumped on any incompatible protocol or world-format change. */
-export const PROTOCOL_VERSION = 77
+export const PROTOCOL_VERSION = 79
 
 /**
  * Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
@@ -2475,13 +2475,47 @@ export const TITAN_LIFT_MASS = 60000.0
 /** Half extents of a shin's column, metres, which stands where the foot is planted. */
 export const TITAN_SHIN_HALF = [2.2, 6.0, 3.2] as const
 
+/** The fuel its thrusters burn, as `Spec::tank`: 1 is full. */
+export const TITAN_FUEL = 1.0
+
 /**
- * How far the hull gets ahead of a planted foot before it steps, metres, how long a step takes,
- * seconds, and how high the foot lifts in the middle of it, metres.
+ * The upward speed its leap gives, the climb its thrusters hold and how fast they carry it along, m/s,
+ * and how high over the ground they take it, metres.
  */
-export const TITAN_STRIDE = 7.0
-export const TITAN_STEP_TIME = 0.55
-export const TITAN_STEP_LIFT = 4.0
+export const TITAN_LEAP_SPEED = 14.0
+export const TITAN_JET_CLIMB = 8.0
+export const TITAN_JET_SPEED = 20.0
+export const TITAN_CEILING = 120.0
+
+/**
+ * Coming down at this speed or faster, m/s, its landing is a slam, which is at its worst at
+ * `TITAN_SLAM_FULL`.
+ */
+export const TITAN_SLAM_SPEED = 8.0
+export const TITAN_SLAM_FULL = 35.0
+
+/** How far out a slam reaches, metres, at `TITAN_SLAM_SPEED` and at `TITAN_SLAM_FULL`. */
+export const TITAN_SLAM_RADIUS = 20.0
+export const TITAN_SLAM_RADIUS_FULL = 50.0
+
+/**
+ * The speed a soldier or a vehicle at the middle of the worst slam is thrown outward with, m/s, and
+ * the health each loses there. Both fall away to nothing at its edge.
+ */
+export const TITAN_SLAM_KNOCK = 22.0
+export const TITAN_SLAM_DAMAGE = 160.0
+export const TITAN_SLAM_VEHICLE_DAMAGE = 220.0
+
+/**
+ * Its longest step and the shortest it walks with, metres; how long a foot is in the air and how long
+ * the weight takes to go from one foot to the other, seconds; and how high a foot lifts in the middle
+ * of a step, metres. A leg 26 m long swings no faster than this: the slowness is what makes it big.
+ */
+export const TITAN_STRIDE = 18.0
+export const TITAN_STRIDE_MIN = 10.0
+export const TITAN_STEP_TIME = 1.3
+export const TITAN_SHIFT_TIME = 0.35
+export const TITAN_STEP_LIFT = 4.5
 
 /** Half extents of each thigh, a solid on the hull that hangs from the hip, metres. */
 export const TITAN_THIGH_HALF = [2.0, 3.5, 2.4] as const

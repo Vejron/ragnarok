@@ -251,6 +251,15 @@ impl ClientSim {
         self.physics.set_turret(id, turret);
     }
 
+    /// Puts vehicle `id`'s feet where a snapshot's `titan` component has them: `feet` is the left foot's
+    /// and the right's place in the world (six numbers), `step` and `weight` as the component carries
+    /// them. A kind without feet takes no notice.
+    #[wasm_bindgen(js_name = setCarFeet)]
+    pub fn set_car_feet(&mut self, id: u32, feet: &[f32], step: u8, weight: f32) {
+        let &[lx, ly, lz, rx, ry, rz] = feet else { return };
+        self.physics.set_feet(id, [[lx, ly, lz], [rx, ry, rz]], shared::vehicles::Step::from_byte(step), weight);
+    }
+
     /// The controls (`CONTROLS_LEN` numbers) a driver's input asks of a vehicle of `kind`, as the
     /// server reads them (`CarControls::driven`).
     #[wasm_bindgen(js_name = controlsFor)]

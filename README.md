@@ -49,7 +49,7 @@ The docs are in [docs/](docs/).
 - [VEHICLES-XI.md](docs/VEHICLES-XI.md): the seaplane, an amphibious biplane on pontoons that lands on water, armed as the triplane is
 - [VEHICLES-XII.md](docs/VEHICLES-XII.md): the Strf 90, a CV90-style infantry fighting vehicle with a 40 mm autocannon firing armour-piercing or high explosive, and two troops who leave by the rear ramp
 - [VEHICLES-XIII.md](docs/VEHICLES-XIII.md): the snowracer, a steerable sled for two that slides down ski slopes about as fast as a snowmobile drives, with a small motor to creep back up
-- [VEHICLES-XIV.md](docs/VEHICLES-XIV.md): the Titan, a robot fifty metres high whose pilot moves its fists: it punches, picks up soldiers and vehicles and throws them, and crushes what it steps on
+- [VEHICLES-XIV.md](docs/VEHICLES-XIV.md): the Titan, a robot fifty metres high whose pilot moves its fists: it punches, picks up soldiers and vehicles and throws them, crushes what it steps on, and flies a while on the thrusters in its feet to come down as a blast
 - [VR.md](docs/VR.md): the game in a VR headset through WebXR on WebGPU, to pilot a Titan with your own hands; built but not yet run on a headset
 - [LIFTS.md](docs/LIFTS.md): ski lifts from OpenStreetMap, every one built as a chair lift whose chairs run on the server's clock, boarded with E at a station and ridden round until you jump off
 

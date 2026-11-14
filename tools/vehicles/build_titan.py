@@ -201,6 +201,10 @@ for side, label in ((-1, "L"), (1, "R")):
     foot.box((0.0, 0.6, -PAD / 2 - 0.1), (5.2, 6.8, PAD - 0.2), DARK)  # sole
     foot.taper((0.0, 2.6, -PAD / 2 + 0.5), (4.4, 3.4), (5.2, 4.4), 1.6, PAINT)  # toe cap
     foot.box((0.0, -2.9, -PAD / 2 + 0.3), (4.0, 1.6, 1.4), METAL)  # heel
+    # Thrusters: two bells behind the heel, their mouths just clear of the ground, glowing inside.
+    for bell in (-1, 1):
+        foot.cylinder((bell * 1.5, -4.5, -0.2), 1.1, 2.4, STEEL, axis="Z", segments=8)
+        foot.cylinder((bell * 1.5, -4.5, -1.42), 0.8, 0.12, LAMP, axis="Z", segments=8)
     objects.append(foot.build())
 
 # --------------------------------------------------------------------------------------------------

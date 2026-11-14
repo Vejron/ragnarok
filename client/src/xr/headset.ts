@@ -80,10 +80,14 @@ export interface HeadsetFrame {
   hands: [PilotHand, PilotHand]
   /** The left and the right thumbstick, each `[x, y]` with + right and + forward. */
   sticks: [readonly [number, number], readonly [number, number]]
+  /** The right controller's lower face button (A) is down. */
+  jump: boolean
 }
 
 /** The squeeze button and the thumbstick's axes of a controller, in the `xr-standard` layout. */
 const SQUEEZE = 1
+/** The lower face button (A on the right hand, X on the left) in the same layout. */
+const FACE = 4
 const STICK_X = 2
 const STICK_Y = 3
 
@@ -170,6 +174,7 @@ export class Headset {
     })
     const hands: [PilotHand, PilotHand] = [{ at: null, closed: false }, { at: null, closed: false }]
     const sticks: [[number, number], [number, number]] = [[0, 0], [0, 0]]
+    let jump = false
     for (const source of this.session.inputSources) {
       if (source.handedness === 'none') continue
       const index: 0 | 1 = source.handedness === 'left' ? 0 : 1
@@ -179,9 +184,10 @@ export class Headset {
       hands[index] = { at: at ? [at.x, at.y, at.z] : null, closed: pad?.buttons[SQUEEZE]?.pressed === true }
       // A stick pushed away is a negative y.
       sticks[index] = [pad?.axes[STICK_X] ?? 0, -(pad?.axes[STICK_Y] ?? 0)]
+      if (index === 1) jump = pad?.buttons[FACE]?.pressed === true
     }
     const head = pose.transform.position
-    return { eyes, head: [head.x, head.y, head.z], hands, sticks }
+    return { eyes, head: [head.x, head.y, head.z], hands, sticks, jump }
   }
 
   /** Ends the session. */

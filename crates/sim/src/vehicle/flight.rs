@@ -1,6 +1,7 @@
 //! How a helicopter and a plane are flown: the hull is levelled and turned by setting its
 //! angular velocity, the rotor and propeller are forces on the body, and wings lift it.
 
+use super::limbs::Planted;
 use super::*;
 
 /// Share of full engine force at `speed` for a top speed of `max`: all of it up to [`FULL_POWER`]
@@ -227,6 +228,63 @@ pub(crate) fn flap(body: &mut RigidBody, controls: CarControls, stamina: &mut f3
     flags
 }
 
+/// One tick of the thrusters in a legged kind's feet (`Gait::jets`), after [`walk`] has worked its
+/// legs; returns its `THRUST_*` flags.
+///
+/// On the ground, jump leaps, once per press. In the air the thrusters keep the hull level, which the
+/// legs' balance cannot, lean it with the stick and turn it with the steering. Jump held in the air
+/// fires them: they hold a climb that fades out below the ceiling over `floor` (so held on the way
+/// down they break the fall), and carry it along its heading with the stick. Leaping and thrust drain
+/// `fuel`, which comes back on the ground with jump let go; with none left it falls. A fallen or
+/// wrecked one does none of it. Everything is a function of the body's state, the fuel and the
+/// controls, so the client can replay it.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn jet(body: &mut RigidBody, gait: &Gait, jets: &shared::vehicles::Jets, controls: CarControls, fuel: &mut f32, full: f32, standing: bool, grounded: bool, floor: f32, dt: f32) -> u8 {
+    let mut flags = if grounded { 0 } else { THRUST_AIR };
+    let rotation = *body.rotation();
+    let up = rotation * Vector::Y;
+    if !standing || !controls.powered || up.y < gait.fallen_up {
+        return flags;
+    }
+    let mass = body.mass();
+    let nose = rotation * Vector::new(0.0, 0.0, -1.0);
+    let heading = Vector::new(nose.x, 0.0, nose.z).normalize_or(Vector::new(0.0, 0.0, -1.0));
+    let (throttle, steer) = (controls.throttle.clamp(-1.0, 1.0), controls.steer.clamp(-1.0, 1.0));
+    let rising = body.linvel().y;
+    if grounded {
+        if controls.hop && *fuel >= jets.leap_cost && rising < jets.leap * 0.5 {
+            let forward = jets.leap_forward * if throttle >= 0.0 { throttle } else { throttle * gait.reverse_share };
+            body.set_linvel(body.linvel() + Vector::new(0.0, jets.leap, 0.0) + heading * forward, true);
+            *fuel -= jets.leap_cost;
+            flags |= THRUST_LIFT;
+        } else if !controls.hop {
+            *fuel += jets.refill * dt;
+        }
+        *fuel = fuel.clamp(0.0, full);
+        return flags;
+    }
+
+    // The thrusters trim it level, leaning it a little with the stick, and turn it with the steering.
+    let lean = (Vector::Y + heading * (throttle * jets.tilt)).normalize();
+    let mut wanted = up.cross(lean) * jets.level;
+    wanted.y = -steer * jets.yaw;
+    let current = body.angvel();
+    body.set_angvel(current + (wanted - current) * (jets.response * dt).min(1.0), true);
+    if !controls.hop || *fuel <= 0.0 {
+        return flags;
+    }
+    // Held: a climb that fades out below the ceiling, and a push along the heading with the stick.
+    let top = if throttle >= 0.0 { jets.speed } else { jets.speed * gait.reverse_share };
+    let ahead = (throttle * top - body.linvel().dot(heading)).clamp(-jets.push, jets.push);
+    let mut push = if throttle != 0.0 { heading * ahead } else { Vector::ZERO };
+    let climb = jets.climb * ((jets.ceiling - (body.translation().y - floor)) / 20.0).clamp(-1.0, 1.0);
+    push.y = CAR_GRAVITY + ((climb - rising) * jets.gain).clamp(-jets.accel, jets.accel);
+    *fuel = (*fuel - jets.drain * dt).max(0.0);
+    // A force rather than an impulse: it is integrated together with gravity, so the climb is exact.
+    body.add_force(push * mass, true);
+    flags | THRUST_LIFT
+}
+
 /// One tick of rotor flight for a powered helicopter body.
 ///
 /// The disc leans by setting the angular velocity that carries the hull's up axis towards the
@@ -436,7 +494,12 @@ pub(crate) fn glide(body: &mut RigidBody, glide: Glide, controls: CarControls, f
 /// by itself. `standing` is false for a wreck, which has no pull at all. A kind that can crouch
 /// (`Gait::crouch`) does while its driver holds `lift` down: its legs shorten and it leans forward.
 /// Everything is a function of the body's state and the controls alone, so the client can replay it.
-pub(crate) fn walk(body: &mut RigidBody, spec: &Spec, gait: &Gait, controls: CarControls, standing: bool, feet: [Option<f32>; 2]) {
+///
+/// A kind with feet of its own (`Gait::feet`) stands on those instead, where they are `planted`: each
+/// carries its share of the weight at the end of a leg of fixed length, so the hull rises as it goes
+/// over a foot and sinks between two. It is drawn towards the foot that carries it, leans to it, and
+/// goes slowest over it.
+pub(crate) fn walk(body: &mut RigidBody, spec: &Spec, gait: &Gait, controls: CarControls, standing: bool, feet: [Option<f32>; 2], planted: Option<Planted>) {
     let rotation = *body.rotation();
     let up = rotation * Vector::Y;
     let mass = body.mass();
@@ -452,8 +515,39 @@ pub(crate) fn walk(body: &mut RigidBody, spec: &Spec, gait: &Gait, controls: Car
     let leg_length = gait.leg_length - gait.crouch * crouch;
 
     // The legs: springs from each hip, pushing the hull up and damped by the foot's own speed.
+    let stood = planted.zip(gait.feet);
     let mut grounded = 0;
-    if standing && !fallen {
+    // The share of its weight its feet carry, where the hull is over the foot it is on (1 over it, 0 half
+    // a stride from it), and where the middle of what carries it is.
+    let mut carried = 0.0;
+    let mut over = 0.0;
+    let mut support = Vector::ZERO;
+    if let Some((planted, shape)) = stood.filter(|_| standing && !fallen) {
+        let pelvis = body.translation() + rotation * Vector::new(0.0, -hy, 0.0);
+        let rate = body.linvel().y;
+        let nose = rotation * Vector::new(0.0, 0.0, -1.0);
+        let ahead = Vector::new(nose.x, 0.0, nose.z).normalize_or(Vector::new(0.0, 0.0, -1.0));
+        for index in 0..2 {
+            let weight = planted.weight[index];
+            let side = if index == 0 { -1.0 } else { 1.0 };
+            let hip = body.translation() + rotation * Vector::new(side * gait.foot_half, -hy, 0.0);
+            let off = planted.at[index] - hip;
+            let distance = pelvis.y - planted.at[index].y;
+            // A foot the hull has been thrown clear of carries nothing.
+            if weight <= 0.0 || distance >= gait.leg_length {
+                continue;
+            }
+            // The leg is a strut from the foot: the further off the hip is, the lower it holds it.
+            let out = off.x.hypot(off.z).min(0.8 * leg_length);
+            let strut = (leg_length * leg_length - out * out).sqrt();
+            let bent = if gait.rise > 0.0 { (strut - distance).min((CAR_GRAVITY + gait.damping * gait.rise) / gait.spring) } else { strut - distance };
+            let push = (gait.spring * bent - gait.damping * rate).max(0.0) * mass * weight * upright.sqrt();
+            body.add_force_at_point(Vector::new(0.0, push, 0.0), body.translation(), true);
+            carried += weight;
+            over += weight * (1.0 - (off.dot(ahead) / (0.5 * shape.stride)).powi(2)).max(0.0);
+            support += planted.at[index] * weight;
+        }
+    } else if standing && !fallen {
         let spring = gait.spring * mass / 2.0;
         let damper = gait.damping * mass / 2.0;
         for (index, reach) in feet.iter().enumerate() {
@@ -479,21 +573,32 @@ pub(crate) fn walk(body: &mut RigidBody, spec: &Spec, gait: &Gait, controls: Car
     let heading = if flat.length() > 1e-3 { flat.normalize() } else { Vector::new(0.0, 0.0, -1.0) };
     let right = heading.cross(Vector::Y);
     let velocity = body.linvel();
-    let share = upright * (grounded as f32 / 2.0);
-    let standing_on = grounded > 0 && !fallen;
+    let footing = if stood.is_some() { carried } else { grounded as f32 / 2.0 };
+    let share = upright * footing;
+    let standing_on = footing > 0.0 && !fallen;
     let driven = controls.powered && standing_on;
     let mut push = Vector::ZERO;
     // Planted feet hold it still when nobody drives: it stops where it stands, as a walker does.
     if standing_on {
         let throttle = if driven { controls.throttle.clamp(-1.0, 1.0) } else { 0.0 };
-        let top = if throttle >= 0.0 { gait.max_speed } else { gait.max_speed * gait.reverse_share };
+        let mut top = if throttle >= 0.0 { gait.max_speed } else { gait.max_speed * gait.reverse_share };
+        // On feet of its own it is slower crouched, and goes slowest as it passes over a foot.
+        if let Some((_, shape)) = stood {
+            top *= (1.0 - crouch * (1.0 - shape.crouch_pace)) * (1.0 + shape.pulse * (0.65 - over / carried));
+        }
         let along = velocity.dot(heading);
         let wanted = throttle * top;
         // Slowing down is quicker than speeding up: it plants its feet and leans back.
         let limit = if wanted.abs() < along.abs() || wanted * along < 0.0 { gait.brake } else { gait.accel };
         let ahead = (wanted - along).clamp(-limit, limit);
         // Planted feet do not slide sideways.
-        let sideways = (-velocity.dot(right) * gait.grip_gain).clamp(-gait.grip, gait.grip);
+        // On feet of its own it is drawn part of the way over the one that carries it.
+        let drawn = stood.map_or(0.0, |(planted, shape)| {
+            let middle = (planted.at[0] + planted.at[1]) * 0.5;
+            let to = middle + (support / carried - middle) * shape.sway;
+            (to - body.translation()).dot(right) * shape.sway_gain
+        });
+        let sideways = (drawn - velocity.dot(right) * gait.grip_gain).clamp(-gait.grip, gait.grip);
         push = (heading * ahead + right * sideways) * share;
     }
 
@@ -507,9 +612,11 @@ pub(crate) fn walk(body: &mut RigidBody, spec: &Spec, gait: &Gait, controls: Car
         // A kind that gets up with more than its standing pull eases back to it as it comes upright, so
         // that it does not drop again the moment its legs take over.
         let risen = if gait.getup_share > 1.0 { 1.0 + (gait.getup_share - 1.0) * (1.0 - upright) } else { 1.0 };
-        let share = if fallen { gait.getup_share } else if grounded > 0 { risen } else { 0.0 };
+        let share = if fallen { gait.getup_share } else if footing > 0.0 { risen } else { 0.0 };
         let cruise = (velocity.dot(heading) / gait.max_speed).clamp(-1.0, 1.0) * gait.cruise_lean + crouch * gait.crouch_lean;
-        let target = (Vector::Y + push * gait.accel_lean / CAR_GRAVITY + heading * cruise).normalize();
+        // On feet of its own it leans to the one that carries it.
+        let tilt = stood.map_or(0.0, |(planted, shape)| (planted.weight[1] - planted.weight[0]) * shape.tilt * footing);
+        let target = (Vector::Y + push * gait.accel_lean / CAR_GRAVITY + heading * cruise + right * tilt).normalize();
         let error = up.cross(target);
         let mut tilt_rate = body.angvel();
         tilt_rate.y = 0.0;
@@ -519,7 +626,7 @@ pub(crate) fn walk(body: &mut RigidBody, spec: &Spec, gait: &Gait, controls: Car
         let inertia = mass * (hx * hx + hy * hy + hz * hz) / 3.0;
         body.add_torque(wanted * (share * inertia), true);
 
-        if grounded > 0 && !fallen {
+        if footing > 0.0 && !fallen {
             // How far along its heading the top has gone past the lean it walks with, and how fast it is
             // falling that way, each beyond a margin the walking lean and tilt rate itself uses.
             let lean = (up.dot(heading) - cruise) * (1.0 / up.y.max(0.3));
@@ -528,7 +635,7 @@ pub(crate) fn walk(body: &mut RigidBody, spec: &Spec, gait: &Gait, controls: Car
             let dead = |x: f32, margin: f32| x.signum() * (x.abs() - margin).max(0.0);
             let step = (dead(lean, gait.catch_lean_margin) * gait.catch_gain + dead(fall.dot(heading), gait.catch_fall_margin) * gait.catch_damp)
                 .clamp(-gait.catch_max, gait.catch_max);
-            catching = heading * (step * grounded as f32 / 2.0);
+            catching = heading * (step * footing);
         }
     }
 

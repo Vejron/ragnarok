@@ -172,7 +172,8 @@ fn ride_heights_differ_between_cars() {
 fn the_sports_car_is_quicker_than_the_jeep() {
     let mut reached = vec![];
     for kind in [KIND_JEEP, KIND_SPORTS] {
-        let mut physics = Physics::new(&flat()).unwrap();
+        // A kilometre of flat ground: at full throttle for 15 s the cars cover more than `flat()` has.
+        let mut physics = Physics::new(&WorldFile { version: WORLD_VERSION, half_extent: 100_000, ..Default::default() }).unwrap();
         physics.add_car(1, kind, [0.0, 1.5, 0.0], 0.0);
         run(&mut physics, COAST, 60);
         let early = run(&mut physics, FORWARD, 60 * 3);
@@ -2103,32 +2104,68 @@ fn a_titan_stands_fifty_metres_high_on_its_legs() {
 }
 
 #[test]
-fn a_titan_walks_turns_and_steps_after_itself() {
+fn a_titan_walks_on_one_foot_at_a_time_rising_over_each_and_turns_on_the_spot() {
     let mut physics = titan();
     run(&mut physics, COAST, 300);
     let mut landed = [0; 2];
     let mut pose = physics.car_pose(1).unwrap();
-    for _ in 0..600 {
+    let (mut low, mut high, mut slow, mut fast) = (f32::MAX, f32::MIN, f32::MAX, f32::MIN);
+    let mut planted = [[0.0; 3]; 2];
+    for tick in 0..900 {
         pose = run(&mut physics, CarControls { throttle: 1.0, ..DRIVEN }, 1);
         let limbs = physics.limbs(1).unwrap();
         for (index, count) in landed.iter_mut().enumerate() {
             *count += u32::from(limbs.landed[index]);
             let away = (limbs.feet[index][0] - pose.position[0]).hypot(limbs.feet[index][2] - pose.position[2]);
-            assert!(away < 3.0 * TITAN_STRIDE, "foot {index} keeps up with the hull: {away} m off");
+            assert!(away < TITAN_STRIDE, "foot {index} keeps up with the hull: {away} m off");
+            // A foot on the ground stays where it was put, and one of the two always is.
+            if limbs.step.swinging().is_none_or(|(foot, _)| foot != index) && !limbs.landed[index] && tick > 0 {
+                assert_eq!(limbs.planted[index], planted[index], "foot {index} does not slide");
+            }
+        }
+        planted = limbs.planted;
+        // Once it is in its stride: how high it rides and how fast it goes.
+        if tick >= 500 {
+            (low, high) = (low.min(pose.position[1]), high.max(pose.position[1]));
+            (slow, fast) = (slow.min(pose.forward_speed), fast.max(pose.forward_speed));
         }
     }
-    println!("titan walks: {pose:?}, steps {landed:?}");
-    assert!(pose.forward_speed > 0.9 * TITAN_MAX_SPEED, "up to speed: {pose:?}");
+    println!("titan walks: {pose:?}, steps {landed:?}, rides {low}..{high} m at {slow}..{fast} m/s");
+    assert!(slow > 0.85 * TITAN_MAX_SPEED && fast < 1.05 * TITAN_MAX_SPEED, "up to speed: {slow}..{fast}");
     assert!(pose.up_y > 0.97, "stays upright walking: {pose:?}");
     assert!(landed[0] >= 3 && landed[1] >= 3 && landed[0].abs_diff(landed[1]) <= 1, "its feet step in turn: {landed:?}");
+    // About 1.65 s a step: nine in fifteen seconds, not the twenty a quick patter would be.
+    assert!(landed[0] + landed[1] <= 10, "it takes long, slow steps: {landed:?}");
+    assert!(high - low > 0.4 && high < TITAN_RIDE_HEIGHT, "it rises over each foot and sinks between them: {low}..{high}");
+    assert!(fast - slow > 0.3, "and goes slowest over a foot: {slow}..{fast}");
     let stopped = run(&mut physics, DRIVEN, 300);
     assert!(stopped.forward_speed.abs() < 0.3, "stops when the stick is let go: {stopped:?}");
     let before = stopped.yaw();
     let turned = run(&mut physics, CarControls { steer: -1.0, ..DRIVEN }, 180);
     assert!((turned.yaw() - before).abs() > 1.0, "turns on the spot: {before} -> {}", turned.yaw());
+    let settled = run(&mut physics, DRIVEN, 400);
     let limbs = physics.limbs(1).unwrap();
     let feet_apart = (limbs.feet[0][0] - limbs.feet[1][0]).hypot(limbs.feet[0][2] - limbs.feet[1][2]);
     assert!((feet_apart - 2.0 * TITAN_FOOT_HALF).abs() < 2.0 * 2.5, "its feet came round with it: {feet_apart} m apart");
+    assert!((settled.position[1] - TITAN_RIDE_HEIGHT).abs() < 0.3 && limbs.step.swinging().is_none(), "and it stands again on both: {settled:?}");
+}
+
+#[test]
+fn a_titans_feet_put_back_where_a_snapshot_has_them_walk_on_the_same() {
+    // What its pilot's client does at every snapshot: the hull and the feet are put back, and it is walked on.
+    let mut physics = titan();
+    run(&mut physics, COAST, 300);
+    run(&mut physics, CarControls { throttle: 1.0, ..DRIVEN }, 400);
+    let (pose, motion, limbs) = (physics.car_pose(1).unwrap(), physics.car_motion(1).unwrap(), physics.limbs(1).unwrap());
+    let ahead = run(&mut physics, CarControls { throttle: 1.0, ..DRIVEN }, 30);
+    // Its feet as the wire carries them: to the centimetre, the step and the weight a byte each.
+    let cm = |point: [f32; 3]| point.map(|value| (value * 100.0).round() / 100.0);
+    physics.set_car_state(1, pose.position, pose.rotation, motion, None);
+    physics.set_feet(1, limbs.planted.map(cm), shared::vehicles::Step::from_byte(limbs.step.to_byte()), (limbs.weight * 255.0).round() / 255.0);
+    let again = run(&mut physics, CarControls { throttle: 1.0, ..DRIVEN }, 30);
+    let off = shared::vec3::distance(ahead.position, again.position);
+    println!("replayed {off} m off");
+    assert!(off < 0.15, "half a second on, it is where it was the first time: {off} m off");
 }
 
 #[test]
@@ -2255,4 +2292,106 @@ fn a_titan_shrugs_off_a_shell_but_a_great_blow_fells_it_and_it_gets_up() {
     let pose = run(&mut physics, COAST, 1800);
     println!("titan got up: {pose:?}");
     assert!(pose.up_y > 0.98 && (pose.position[1] - TITAN_RIDE_HEIGHT).abs() < 1.0, "it gets up again: {pose:?}");
+}
+
+/// Fills a Titan's tank where it is, as a snapshot would.
+fn refuel(physics: &mut Physics) {
+    let (pose, motion) = (physics.car_pose(1).unwrap(), physics.car_motion(1).unwrap());
+    physics.set_car_state(1, pose.position, pose.rotation, motion, Some(TITAN_FUEL));
+}
+
+#[test]
+fn a_titan_leaps_and_its_thrusters_carry_it_up_and_along_while_the_fuel_lasts() {
+    let mut physics = titan();
+    run(&mut physics, COAST, 300);
+    let hop = CarControls { hop: true, ..DRIVEN };
+    // A leap takes it off its feet, which hang under it.
+    let leapt = run(&mut physics, hop, 30);
+    let limbs = physics.limbs(1).unwrap();
+    let (fuel, flags) = physics.car_thrust(1).unwrap();
+    println!("titan leapt: {leapt:?}, {limbs:?}, fuel {fuel}");
+    assert!(leapt.position[1] > TITAN_RIDE_HEIGHT + 4.0 && limbs.step == shared::vehicles::Step::Airborne, "off the ground: {leapt:?}");
+    assert!(limbs.feet.iter().all(|foot| foot[1] > 3.0 && leapt.position[1] - foot[1] < TITAN_RIDE_HEIGHT), "its feet hang under it, drawn up: {:?}", limbs.feet);
+    assert!(flags & THRUST_AIR != 0 && fuel < TITAN_FUEL, "it cost fuel: {fuel}");
+    // Held, the thrusters climb and carry it along; it turns, and stays level.
+    let before = leapt.yaw();
+    let flown = run(&mut physics, CarControls { throttle: 1.0, steer: -1.0, ..hop }, 240);
+    println!("titan flown: {flown:?}");
+    assert!((flown.velocity[1] - TITAN_JET_CLIMB).abs() < 1.0, "climbing at its pace: {flown:?}");
+    assert!(flown.forward_speed > 5.0 && flown.up_y > 0.97, "carried along, level: {flown:?}");
+    assert!((flown.yaw() - before).abs() > 1.0, "turned in the air: {before} -> {}", flown.yaw());
+    assert!(physics.car_thrust(1).unwrap().1 & THRUST_LIFT != 0, "thrusters lit");
+    // With the fuel gone it falls, whatever is held.
+    let spent = run(&mut physics, hop, 240);
+    let (fuel, flags) = physics.car_thrust(1).unwrap();
+    assert!(fuel == 0.0 && flags & THRUST_LIFT == 0 && spent.velocity[1] < -5.0, "out of fuel, falling: {spent:?}, fuel {fuel}");
+    // Refuelled in the air and held, it stops under its ceiling.
+    for _ in 0..40 {
+        refuel(&mut physics);
+        run(&mut physics, hop, 60);
+    }
+    let high = physics.car_pose(1).unwrap();
+    println!("titan at its ceiling: {high:?}");
+    assert!((high.position[1] - TITAN_CEILING).abs() < 3.0 && high.velocity[1].abs() < 0.5, "it hangs at its ceiling: {high:?}");
+}
+
+#[test]
+fn a_titan_that_comes_down_hard_lands_on_its_feet_and_its_thrusters_break_a_fall() {
+    // Up to its ceiling, twice: once let fall, once with the thrusters fired whenever it falls fast.
+    let mut hardest = [0.0_f32; 2];
+    for (case, held) in [false, true].into_iter().enumerate() {
+        let mut physics = titan();
+        run(&mut physics, COAST, 300);
+        let hop = CarControls { hop: true, ..DRIVEN };
+        for _ in 0..12 {
+            refuel(&mut physics);
+            run(&mut physics, hop, 60);
+        }
+        refuel(&mut physics);
+        let mut lowest = f32::MAX;
+        let mut landed = false;
+        for _ in 0..1800 {
+            // The fuel is kept up, so that this is about the thrusters alone.
+            if held {
+                refuel(&mut physics);
+            }
+            let falling = physics.limbs(1).unwrap().step == shared::vehicles::Step::Airborne && physics.car_pose(1).unwrap().velocity[1] < -5.0;
+            let pose = run(&mut physics, if held && falling { CarControls { hop: true, ..DRIVEN } } else { DRIVEN }, 1);
+            let limbs = physics.limbs(1).unwrap();
+            if limbs.impact > 0.0 {
+                hardest[case] = hardest[case].max(limbs.impact);
+                assert!(limbs.landed == [true; 2] && limbs.feet.iter().all(|foot| foot[1].abs() < 0.05), "both feet are planted on the ground: {limbs:?}");
+                landed = true;
+            }
+            if landed {
+                lowest = lowest.min(pose.position[1]);
+                assert!(pose.up_y > 0.9, "it stays on its feet: {pose:?}");
+            }
+        }
+        let rest = physics.car_pose(1).unwrap();
+        println!("titan landed (thrusters held: {held}): hit at {} m/s, sank to {lowest} m, rests {rest:?}", hardest[case]);
+        assert!(landed && (rest.position[1] - TITAN_RIDE_HEIGHT).abs() < 0.3 && rest.velocity[1].abs() < 0.2, "it stands again at its height: {rest:?}");
+        // Its hull, whose underside is `TITAN_HALF_EXTENTS[1]` below its middle, never met the ground.
+        assert!(lowest > TITAN_HALF_EXTENTS[1] + 6.0, "its legs took the landing: sank to {lowest} m");
+    }
+    assert!(hardest[0] >= TITAN_SLAM_FULL * 0.8, "let fall from its ceiling it slams: {hardest:?}");
+    assert!(hardest[1] < TITAN_SLAM_SPEED, "with its thrusters held it sets down: {hardest:?}");
+}
+
+#[test]
+fn a_titan_put_back_in_the_air_as_a_snapshot_has_it_flies_on_the_same() {
+    let mut physics = titan();
+    run(&mut physics, COAST, 300);
+    let fly = CarControls { hop: true, throttle: 1.0, ..DRIVEN };
+    run(&mut physics, fly, 120);
+    let (pose, motion, limbs, (fuel, _)) = (physics.car_pose(1).unwrap(), physics.car_motion(1).unwrap(), physics.limbs(1).unwrap(), physics.car_thrust(1).unwrap());
+    assert_eq!(limbs.step, shared::vehicles::Step::Airborne);
+    let ahead = run(&mut physics, fly, 30);
+    let cm = |point: [f32; 3]| point.map(|value| (value * 100.0).round() / 100.0);
+    physics.set_car_state(1, pose.position, pose.rotation, motion, Some((fuel * 255.0).round() / 255.0));
+    physics.set_feet(1, limbs.planted.map(cm), shared::vehicles::Step::from_byte(limbs.step.to_byte()), limbs.weight);
+    let again = run(&mut physics, fly, 30);
+    let off = shared::vec3::distance(ahead.position, again.position);
+    println!("replayed in the air {off} m off");
+    assert!(off < 0.05 && physics.limbs(1).unwrap().step == shared::vehicles::Step::Airborne, "half a second on, it is where it was the first time: {off} m off");
 }

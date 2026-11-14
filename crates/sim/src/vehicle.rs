@@ -33,7 +33,7 @@ mod sail;
 mod spec;
 mod water;
 
-use flight::{LOITER_GLIDE, MISSILE_GLIDE, assist, boost, flap, fly, fly_drone, glide, pull, on_runners, roll_plane, thrust, walk, wing};
+use flight::{LOITER_GLIDE, MISSILE_GLIDE, assist, boost, flap, fly, fly_drone, glide, jet, pull, on_runners, roll_plane, thrust, walk, wing};
 use dive::dive;
 use floats::float;
 use sail::sail;
@@ -225,7 +225,7 @@ impl CarControls {
             Buttons::Stunt => CarControls { handbrake: held(BUTTON_CROUCH), boost: held(BUTTON_RUN), hop: held(BUTTON_JUMP), ..stick },
             Buttons::Leap => CarControls { hop: held(BUTTON_JUMP), ..stick },
             Buttons::Sled => CarControls { handbrake: held(BUTTON_JUMP), boost: held(BUTTON_RUN), ..stick },
-            Buttons::Stride => CarControls { lift: -f32::from(held(BUTTON_CROUCH)), ..stick },
+            Buttons::Stride => CarControls { lift: -f32::from(held(BUTTON_CROUCH)), hop: held(BUTTON_JUMP), ..stick },
         }
     }
 }
@@ -987,18 +987,25 @@ impl Physics {
                 let hip = body.translation() + *body.rotation() * Vector::new(side * gait.foot_half, -hy, 0.0);
                 queries.cast_ray(&Ray::new(hip, Vector::new(0.0, -1.0, 0.0)), gait.leg_length, true).map(|(_, distance)| distance)
             });
-            stances.push((id, feet, gait));
+            stances.push((id, feet, gait, car.limbs.as_ref().and_then(|limbs| limbs.planted())));
         }
-        for (id, feet, gait) in stances {
+        for (id, feet, gait, planted) in stances {
             let Some(car) = self.cars.get_mut(&id) else { continue };
             let Some(body) = self.bodies.get_mut(car.body) else { continue };
             // A wreck (no health, which is exactly half power) has let go.
             let standing = car.condition.power > 0.5;
-            walk(body, car.spec, gait, car.flight, standing, feet);
+            walk(body, car.spec, gait, car.flight, standing, feet, planted);
             // A hen's wings, after the legs, which reset the forces.
             if let Some(stamina) = &mut car.tank {
                 let grounded = feet.iter().any(|reach| reach.is_some_and(|distance| distance < gait.leg_length));
-                car.firing = flap(body, car.flight, stamina, standing, grounded, dt);
+                car.firing = match &gait.jets {
+                    // A giant is on the ground while its own feet are.
+                    Some(jets) => {
+                        let grounded = planted.map_or(grounded, |planted| planted.weight[0] + planted.weight[1] > 0.0);
+                        jet(body, gait, jets, car.flight, stamina, car.spec.tank.unwrap_or(1.0), standing, grounded, floor(&id), dt)
+                    }
+                    None => flap(body, car.flight, stamina, standing, grounded, dt),
+                };
             }
         }
         // A ship floats on whatever water it is on, and sails if there is enough of it under her keel.

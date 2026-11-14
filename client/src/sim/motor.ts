@@ -266,6 +266,14 @@ export class SimMotor {
     this.sim.setCarState(id, vehicle.x, vehicle.y, vehicle.z, vehicle.qx, vehicle.qy, vehicle.qz, vehicle.qw, drive.vx, drive.vy, drive.vz, drive.wx, drive.wy, drive.wz, drive.steer, drive.spin, tank, vehicle.hp, Uint8Array.from(vehicle.damage), turret)
   }
 
+  /**
+   * Puts simulated vehicle `id`'s feet where the server has them (a Titan's `titan` component: each
+   * foot's place in the world, and where it is in its walk), so that it is walked on from there.
+   */
+  setCarFeet(id: number, feet: readonly [Readonly<Vec3>, Readonly<Vec3>], step: number, weight: number) {
+    this.sim.setCarFeet(id, Float32Array.from([...feet[0], ...feet[1]]), step, weight)
+  }
+
   /** Puts simulated vehicle `id` in a state of the caller's making, the rest as it is when new; for tests. */
   placeCar(id: number, state: { position: Vec3; rotation?: [number, number, number, number]; linvel?: Vec3; angvel?: Vec3; hp?: number; damage?: readonly number[]; turret?: boolean }) {
     const { position, rotation = [0, 0, 0, 1], linvel = [0, 0, 0], angvel = [0, 0, 0], hp = 255, damage = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], turret = true } = state

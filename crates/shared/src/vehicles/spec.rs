@@ -136,17 +136,111 @@ pub struct Arms {
     pub lift: f32,
 }
 
-/// A giant's feet, which are solid: a column for each shin, standing where the foot is planted and
-/// stepping after the hull as it walks.
+/// A giant's feet, which are solid and which it stands on: a column for each shin. A planted foot does
+/// not move, and the hull is carried over it at the end of a leg of fixed length, so it rises as it
+/// passes over the foot and sinks into the next step. The feet step in turn: the weight goes onto one,
+/// the other swings ahead to where the hull is going, and the weight follows it. See `walk` and
+/// `step_limbs` in `crates/sim`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Feet {
     /// Half extents of a shin's column, metres. It stands on the ground.
     pub half: [f32; 3],
-    /// How far the hull gets ahead of a planted foot before it steps, metres.
+    /// The longest step, from where a foot lifts to where it lands as the hull sees it, metres, and the
+    /// shortest it takes when it is walked.
     pub stride: f32,
-    /// How long a step takes, seconds, and how high the foot lifts in the middle of it, metres.
+    pub stride_min: f32,
+    /// How long a foot is in the air, seconds, and how high it lifts in the middle of that, metres.
     pub step_time: f32,
     pub lift: f32,
+    /// How long the weight takes to go from one foot to the other, seconds: both are on the ground.
+    pub shift_time: f32,
+    /// How far towards the foot that carries it the hull moves, as a share of the way from the middle
+    /// of the two, and how hard it is pulled there, 1/s².
+    pub sway: f32,
+    pub sway_gain: f32,
+    /// How far the hull leans towards the foot that carries it, radians.
+    pub tilt: f32,
+    /// How much slower it goes over a foot than between two, as a share of its speed.
+    pub pulse: f32,
+    /// The share of its speed it keeps when it is crouched right down.
+    pub crouch_pace: f32,
+}
+
+/// Thrusters in a legged kind's feet: it leaps from the ground, and they carry it up and about while
+/// its pilot holds jump and the fuel in `Spec::tank` lasts. See `jet` in `crates/sim`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Jets {
+    /// The upward speed a leap gives, m/s, the speed along the heading a full stick adds to it, and
+    /// what it costs of the tank.
+    pub leap: f32,
+    pub leap_forward: f32,
+    pub leap_cost: f32,
+    /// The climb the thrusters hold, m/s, how hard they chase it, 1/s, and the most they add to or take
+    /// from holding its weight, m/s².
+    pub climb: f32,
+    pub gain: f32,
+    pub accel: f32,
+    /// What a second of thrust costs of the tank, and what a second on the ground gives back.
+    pub drain: f32,
+    pub refill: f32,
+    /// How fast they carry it along its heading with the stick, m/s, and how hard they push to, m/s².
+    pub speed: f32,
+    pub push: f32,
+    /// In the air: how far it leans with the stick, radians; how hard it is brought level, 1/s; how
+    /// quickly its turning follows, 1/s; and how fast it turns, rad/s.
+    pub tilt: f32,
+    pub level: f32,
+    pub response: f32,
+    pub yaw: f32,
+    /// How high over the ground the thrusters carry it, metres: the climb fades out below this.
+    pub ceiling: f32,
+}
+
+/// Where a kind with `Feet` is in its walk. Foot 0 is the left.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Step {
+    /// Both feet are planted, and no step is due.
+    Planted,
+    /// Both are planted, and the weight is coming off this foot for it to step.
+    Shifting(usize),
+    /// This foot is in the air, this far through its step, 0..1.
+    Swinging(usize, f32),
+    /// Both feet are off the ground, hanging under it: it has leapt, or is flying or falling.
+    Airborne,
+}
+
+impl Step {
+    /// The step as a replicated component carries it: 0 planted, 1..=100 the left foot that far through
+    /// its step and 101..=200 the right, 201 and 202 the weight coming off the left and the right, 203
+    /// off the ground.
+    pub fn to_byte(self) -> u8 {
+        match self {
+            Step::Planted => 0,
+            Step::Swinging(foot, progress) => 1 + 100 * (foot.min(1) as u8) + (progress.clamp(0.0, 1.0) * 99.0).round() as u8,
+            Step::Shifting(foot) => 201 + foot.min(1) as u8,
+            Step::Airborne => 203,
+        }
+    }
+
+    /// The step a byte from `to_byte` stands for.
+    pub fn from_byte(byte: u8) -> Step {
+        match byte {
+            0 => Step::Planted,
+            1..=100 => Step::Swinging(0, f32::from(byte - 1) / 99.0),
+            101..=200 => Step::Swinging(1, f32::from(byte - 101) / 99.0),
+            201 => Step::Shifting(0),
+            202 => Step::Shifting(1),
+            _ => Step::Airborne,
+        }
+    }
+
+    /// The foot that is in the air, and how far through its step it is.
+    pub fn swinging(self) -> Option<(usize, f32)> {
+        match self {
+            Step::Swinging(foot, progress) => Some((foot, progress)),
+            _ => None,
+        }
+    }
 }
 
 /// How a legged kind (`Lift::Walker`) stands, balances and walks: two spring legs that are ray casts
@@ -207,6 +301,8 @@ pub struct Gait {
     pub blast_share: f32,
     /// Its feet, when they are solids of their own. `None` leaves the legs to the hull's `solids`.
     pub feet: Option<Feet>,
+    /// Thrusters in its feet, if it has them.
+    pub jets: Option<Jets>,
 }
 
 impl Gait {
@@ -243,6 +339,7 @@ impl Gait {
         rise: 0.0,
         blast_share: 1.0,
         feet: None,
+        jets: None,
     };
 }
 
@@ -346,7 +443,8 @@ pub enum Buttons {
     Leap,
     /// A snowmobile's: run boosts the engine from its `tank` while it lasts, and jump is the handbrake.
     Sled,
-    /// A Titan's: crouch bends its legs, which brings its fists down to the ground.
+    /// A Titan's: crouch bends its legs, which brings its fists down to the ground, and jump leaps, then
+    /// fires the thrusters in its feet.
     Stride,
 }
 

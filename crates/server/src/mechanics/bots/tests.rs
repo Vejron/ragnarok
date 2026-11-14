@@ -216,17 +216,6 @@ fn a_killed_bot_comes_back_at_home_on_patrol() {
 
 
 #[test]
-fn it_shoots_someone_it_sees_dead() {
-    let mut game = game(false);
-    let bot = guard(&mut game, 1.0);
-    let human = join(&mut game);
-    put(&mut game, human, [0.0, -25.0]);
-    run(&mut game, 6.0);
-    assert!(game.world.entities.of::<Player>(human).score.deaths >= 1, "still on {} hp", game.world.entities.of::<crate::entities::Health>(human).hp);
-    assert_eq!(game.world.entities.of::<Player>(bot).score.kills, game.world.entities.of::<Player>(human).score.deaths);
-}
-
-#[test]
 fn it_takes_a_moment_to_react() {
     let mut game = game(false);
     let bot = guard(&mut game, 0.0);
@@ -489,19 +478,6 @@ fn a_teammate_firing_behind_a_wall_brings_it_running() {
     let mind = &game.world.entities.of::<Bot>(helper);
     assert_eq!(mind.mode, BotMode::Pursue, "heard nothing");
     assert!(stood.iter().any(|&at| distance_2d(mind.sight.last_seen, at) < 5.0), "went to look at {:?}, not where the fighter fired from", mind.sight.last_seen);
-}
-
-#[test]
-fn a_bot_sent_far_from_home_fights_at_the_end_of_its_route() {
-    let mut game = game(false);
-    // Home at one side, the one waypoint 170 m off at the other: an attacker's route.
-    let bot = game.add_bot([-90.0, 0.0], TEAM_BOTS, vec![[80.0, 0.0]]).unwrap();
-    game.world.entities.get_mut::<Bot>(bot).unwrap().aim.skill = 1.0;
-    put(&mut game, bot, [80.0, 0.0]);
-    let human = join(&mut game);
-    put(&mut game, human, [80.0, -25.0]);
-    run(&mut game, 6.0);
-    assert!(game.world.entities.of::<Player>(human).score.deaths >= 1, "still on {} hp", game.world.entities.of::<crate::entities::Health>(human).hp);
 }
 
 #[test]

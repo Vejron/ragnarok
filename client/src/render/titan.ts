@@ -1,8 +1,8 @@
 import { Group, Mesh, type Material, type Node, Matrix4, Quaternion, Vector3 } from '@ragnarok/engine'
 import { parseToonModel, unlitMaterial } from './models'
 import { toonMaterial } from './toon'
-import { HANDS_GRIP_LEFT, HANDS_GRIP_RIGHT } from '@/net/codec'
-import { TITAN_FIST_REST, TITAN_FOOT_HALF, TITAN_HALF_EXTENTS, TITAN_RIDE_HEIGHT, TITAN_SHOULDER } from '@/sim/consts'
+import { HANDS_GRIP_LEFT, HANDS_GRIP_RIGHT, THRUST_LIFT, wrapAngle } from '@/net/codec'
+import { TITAN_FIST_REST, TITAN_FOOT_HALF, TITAN_HALF_EXTENTS, TITAN_RIDE_HEIGHT, TITAN_SHOULDER, TITAN_STEP_LIFT } from '@/sim/consts'
 import type { Titan } from '@/entities/units'
 import type { VehicleModel } from './car'
 
@@ -16,9 +16,18 @@ const FORE = 12
 const THIGH = 13.5
 const SHIN = 13.5
 const PAD = 1.5
-/** A foot moving faster than this, m/s, is in a step; one that was and has slowed below `LANDED` has come down. */
-const STEPPING = 3
-const LANDED = 0.8
+/** A `titan` component's `step` with both feet off the ground (`Step::Airborne` on the server). */
+export const STEP_AIRBORNE = 203
+
+/**
+ * The foot (0 left) a `titan` component's `step` has in the air, and how far through its step it is,
+ * 0..1; null with both on the ground (`Step::from_byte` on the server).
+ */
+export function swinging(step: number): { foot: number; progress: number } | null {
+  if (step >= 1 && step <= 100) return { foot: 0, progress: (step - 1) / 99 }
+  if (step >= 101 && step <= 200) return { foot: 1, progress: (step - 101) / 99 }
+  return null
+}
 
 let asset: Node | null = null
 
@@ -98,11 +107,16 @@ export class TitanModel implements VehicleModel {
   private limbs: Titan | null = null
   /** Each fist's middle in the hull frame, as drawn. */
   private readonly fists = [new Vector3(), new Vector3()]
-  /** Each foot's sole in the world, as drawn, where it was a frame ago, and whether it is in a step. */
-  private readonly soles = [new Vector3(), new Vector3()]
+  /** Whether each foot was in the air a frame ago, and the way each points, radians about +Y: as it was put down. */
   private readonly stepping = [false, false]
+  private readonly pointing = [0, 0]
   private seen = false
+  /** Whether it was off the ground a frame ago, how fast it was coming down then, m/s, and when and how high it was. */
+  private flying = false
+  private fall = 0
   private stamp = 0
+  private height = 0
+  private slammed: { at: [number, number, number]; speed: number } | null = null
   private steps: { at: [number, number, number]; weight: number }[] = []
 
   constructor(id: number) {
@@ -142,14 +156,39 @@ export class TitanModel implements VehicleModel {
     return steps
   }
 
+  /** The landing out of the air since the last call, if there was one: where, and how fast it came down, m/s. */
+  takeSlam() {
+    const slammed = this.slammed
+    this.slammed = null
+    return slammed
+  }
+
+  /** The thrusters firing for `flags` (`THRUST_*`), where it was last placed: one under each foot, blowing down. */
+  jets(flags: number): { at: Vector3; direction: Vector3 }[] {
+    if (!(flags & THRUST_LIFT)) return []
+    this.root.updateWorldMatrix(true, false)
+    const world = new Matrix4().fromArray(this.root.matrixWorld)
+    return this.foot.map((foot) => ({ at: new Vector3(foot.position.x, foot.position.y, foot.position.z).applyMatrix4(world).add(new Vector3(0, -PAD, 0)), direction: DOWN.clone() }))
+  }
+
   /** Places the Titan and bends its limbs to where they are. `steer`, `seats` and the rest are unused. */
   update(position: readonly [number, number, number], rotation: readonly [number, number, number, number]) {
     this.root.position.set(...position)
     this.root.quaternion.set(...rotation)
-    const now = performance.now()
-    const dt = this.seen ? Math.min(0.1, Math.max(0.001, (now - this.stamp) / 1000)) : 0.016
-    this.stamp = now
     const limbs = this.limbs
+    const step = swinging(limbs?.step ?? 0)
+    // Off the ground, how fast it is coming down is kept for when it lands.
+    const now = performance.now()
+    const dt = Math.max(0.004, (now - this.stamp) / 1000)
+    const flying = limbs?.step === STEP_AIRBORNE
+    if (flying && this.flying && dt < 0.25) this.fall = Math.max(0, (this.height - position[1]) / dt)
+    if (!flying && this.flying && limbs) {
+      this.slammed = { at: [position[0] + (limbs.flx + limbs.frx) / 2, position[1] + (limbs.fly + limbs.fry) / 2, position[2] + (limbs.flz + limbs.frz) / 2], speed: this.fall }
+      this.fall = 0
+    }
+    this.flying = flying
+    this.stamp = now
+    this.height = position[1]
     const flags = limbs?.flags ?? 0
     const turn = new Quaternion(...rotation)
     const unturn = turn.clone().invert()
@@ -178,24 +217,26 @@ export class TitanModel implements VehicleModel {
       const sole = limbs
         ? new Vector3(position[0] + (index === 0 ? limbs.flx : limbs.frx), position[1] + (index === 0 ? limbs.fly : limbs.fry), position[2] + (index === 0 ? limbs.flz : limbs.frz))
         : hip.clone().applyQuaternion(turn).add(new Vector3(...position)).setY(position[1] - TITAN_RIDE_HEIGHT)
+      // The foot that is stepping is lifted here: the server sends the ground it is over.
+      const progress = step?.foot === index ? step.progress : null
+      if (progress !== null) sole.y += TITAN_STEP_LIFT * Math.sin(Math.PI * progress)
       const ankle = sole.clone().setY(sole.y + PAD).sub(new Vector3(...position)).applyQuaternion(unturn)
       bend(hip, ankle, THIGH, SHIN, new Vector3(0, -0.15, -1), joint, end)
       hang(this.thigh[index]!, hip, joint, back)
       hang(this.shin[index]!, joint, end, back)
-      // The foot stays flat on the ground, pointing the way the Titan faces.
+      // The foot stays flat. On the ground it points the way it was put down, while the Titan turns over
+      // it; in the air it comes round to the way the Titan faces.
       const nose = new Vector3(0, 0, -1).applyQuaternion(turn)
-      const level = new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), Math.atan2(-nose.x, -nose.z))
+      const facing = Math.atan2(-nose.x, -nose.z)
+      if (!this.seen || !limbs) this.pointing[index] = facing
+      else if (progress !== null) this.pointing[index]! += wrapAngle(facing - this.pointing[index]!) * progress
+      const level = new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), this.pointing[index]!)
       this.foot[index]!.position.copy(end)
       this.foot[index]!.quaternion.copy(unturn).multiply(level)
 
-      // A foot that was swinging and has stopped has come down.
-      const speed = this.seen ? sole.distanceTo(this.soles[index]!) / dt : 0
-      if (speed > STEPPING) this.stepping[index] = true
-      else if (this.stepping[index] && speed < LANDED) {
-        this.stepping[index] = false
-        this.steps.push({ at: [sole.x, sole.y, sole.z], weight: 1 })
-      }
-      this.soles[index]!.copy(sole)
+      // A foot that was in the air and is not has come down.
+      if (this.stepping[index] && progress === null) this.steps.push({ at: [sole.x, sole.y, sole.z], weight: 1 })
+      this.stepping[index] = progress !== null
     }
     this.seen = true
   }

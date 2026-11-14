@@ -1,15 +1,15 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { beforeAll, describe, expect, it } from 'vitest'
+import { beforeAll, describe, expect, it, vi } from 'vitest'
 import { triangleCount } from './helpers'
 import { Quaternion, Vector3 } from '@ragnarok/engine'
-import { bend, parseTitanModel, TitanModel } from '@/render/titan'
+import { bend, parseTitanModel, STEP_AIRBORNE, TitanModel } from '@/render/titan'
 import { TitanHands } from '@/titanhands'
 import { fistsFromHands, PILOT_ARM, PILOT_SHOULDER_DOWN, PILOT_SHOULDER_OUT, reversedDepth } from '@/xr/hands'
 import { kindView } from '@/kinds'
 import { seatView } from '@/seats'
-import { HANDS_GRIP_LEFT, HANDS_GRIP_RIGHT, HANDS_REACH_LEFT, HANDS_REACH_RIGHT, KIND_TITAN } from '@/net/codec'
-import { BUTTON_ALT, BUTTON_FIRE, BUTTON_RUN, TITAN_FIST_REST, TITAN_REACH, TITAN_RIDE_HEIGHT, TITAN_SHOULDER } from '@/sim/consts'
+import { HANDS_GRIP_LEFT, HANDS_GRIP_RIGHT, HANDS_REACH_LEFT, HANDS_REACH_RIGHT, KIND_TITAN, THRUST_AIR, THRUST_LIFT } from '@/net/codec'
+import { BUTTON_ALT, BUTTON_FIRE, BUTTON_RUN, TITAN_FIST_REST, TITAN_REACH, TITAN_RIDE_HEIGHT, TITAN_SHOULDER, TITAN_STEP_LIFT } from '@/sim/consts'
 import { aimsReticle, seatHint } from '@/seathints'
 import { vehicleDef } from '@/sim/vehicles'
 import type { Titan } from '@/entities/units'
@@ -17,7 +17,7 @@ import type { Titan } from '@/entities/units'
 const IDENTITY: [number, number, number, number] = [0, 0, 0, 1]
 const STANDING: [number, number, number] = [100, TITAN_RIDE_HEIGHT, -40]
 /** Its limbs as the server sends them at rest: the fists hanging, the feet on the ground under the hips. */
-const AT_REST: Titan = { lx: -TITAN_FIST_REST[0], ly: TITAN_FIST_REST[1], lz: TITAN_FIST_REST[2], rx: TITAN_FIST_REST[0], ry: TITAN_FIST_REST[1], rz: TITAN_FIST_REST[2], flx: -5, fly: -TITAN_RIDE_HEIGHT, flz: 0, frx: 5, fry: -TITAN_RIDE_HEIGHT, frz: 0, flags: 0 }
+const AT_REST: Titan = { lx: -TITAN_FIST_REST[0], ly: TITAN_FIST_REST[1], lz: TITAN_FIST_REST[2], rx: TITAN_FIST_REST[0], ry: TITAN_FIST_REST[1], rz: TITAN_FIST_REST[2], flx: -5, fly: -TITAN_RIDE_HEIGHT, flz: 0, frx: 5, fry: -TITAN_RIDE_HEIGHT, frz: 0, flags: 0, step: 0, weight: 0.5 }
 
 beforeAll(async () => {
   const bytes = readFileSync(resolve(process.cwd(), 'public/models/titan.glb'))
@@ -77,22 +77,69 @@ describe('TitanModel', () => {
     expect(ankle.y).toBeCloseTo(1.5, 3)
     expect(where(titan, 'shin_L').z).toBeLessThan(STANDING[2] - 1)
     expect(titan.takeSteps()).toEqual([])
-    // A foot swings ahead, then stops: that is a footfall, where it stopped.
-    const wait = (ms: number) => new Promise((done) => setTimeout(done, ms))
-    return (async () => {
-      for (let step = 1; step <= 4; step++) {
-        await wait(20)
-        titan.setLimbs({ ...AT_REST, flz: -step * 2 })
-        titan.update(STANDING, IDENTITY)
-      }
-      expect(titan.takeSteps()).toEqual([])
-      await wait(20)
-      titan.update(STANDING, IDENTITY)
-      const steps = titan.takeSteps()
-      expect(steps).toHaveLength(1)
-      expect(steps[0]!.at[2]).toBeCloseTo(STANDING[2] - 8, 3)
-      titan.dispose()
-    })()
+    // The left foot swings ahead, lifted in the middle of its step; the right stays where it is.
+    titan.setLimbs({ ...AT_REST, flz: -4, step: 1 + 50 })
+    titan.update(STANDING, IDENTITY)
+    expect(where(titan, 'foot_L').y).toBeGreaterThan(1.5 + 0.9 * TITAN_STEP_LIFT)
+    expect(where(titan, 'foot_R').y).toBeCloseTo(1.5, 3)
+    expect(titan.takeSteps()).toEqual([])
+    // It comes down: that is a footfall, where it stands.
+    titan.setLimbs({ ...AT_REST, flz: -8, step: 202 })
+    titan.update(STANDING, IDENTITY)
+    const steps = titan.takeSteps()
+    expect(steps).toHaveLength(1)
+    expect(steps[0]!.at[2]).toBeCloseTo(STANDING[2] - 8, 3)
+    expect(where(titan, 'foot_L').y).toBeCloseTo(1.5, 3)
+    titan.dispose()
+  })
+
+  it('keeps a planted foot pointing the way it was put down while the hull turns over it', () => {
+    const titan = new TitanModel(0)
+    titan.setLimbs(AT_REST)
+    titan.update(STANDING, IDENTITY)
+    const pointing = (name: string) => new Vector3(0, 0, -1).applyQuaternion(titan.root.getObjectByName(name)!.getWorldQuaternion(new Quaternion()))
+    // The hull turns a quarter to the left with the right foot in the air: the left still points north.
+    const turned = new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), Math.PI / 2)
+    titan.setLimbs({ ...AT_REST, step: 101 + 99 })
+    titan.update(STANDING, [turned.x, turned.y, turned.z, turned.w])
+    expect(pointing('foot_L').z).toBeCloseTo(-1, 3)
+    expect(pointing('foot_R').x).toBeCloseTo(-1, 3)
+    titan.dispose()
+  })
+
+  it('burns under both feet while its thrusters fire, and reports a hard landing once', () => {
+    const titan = new TitanModel(0)
+    let clock = 1000
+    const now = vi.spyOn(performance, 'now').mockImplementation(() => clock)
+    const hanging = TITAN_RIDE_HEIGHT - 2
+    const up = (height: number): [number, number, number] => [STANDING[0], STANDING[1] + height, STANDING[2]]
+    titan.setLimbs({ ...AT_REST, fly: -hanging, fry: -hanging, step: STEP_AIRBORNE })
+    titan.update(up(60), IDENTITY)
+    expect(titan.jets(0)).toEqual([])
+    expect(titan.jets(THRUST_AIR)).toEqual([])
+    const jets = titan.jets(THRUST_AIR | THRUST_LIFT)
+    expect(jets).toHaveLength(2)
+    // One under each foot's sole, blowing down.
+    expect(jets[0]!.at.x).toBeCloseTo(STANDING[0] - 5, 3)
+    expect(jets[1]!.at.x).toBeCloseTo(STANDING[0] + 5, 3)
+    expect(jets[0]!.at.y).toBeCloseTo(STANDING[1] + 60 - hanging, 3)
+    expect(jets[0]!.direction.y).toBe(-1)
+    // It comes down at 30 m/s and its feet meet the ground.
+    for (let frame = 1; frame <= 4; frame++) {
+      clock += 100
+      titan.update(up(60 - 3 * frame), IDENTITY)
+      expect(titan.takeSlam()).toBeNull()
+    }
+    clock += 100
+    titan.setLimbs(AT_REST)
+    titan.update(STANDING, IDENTITY)
+    const slam = titan.takeSlam()
+    expect(slam!.speed).toBeCloseTo(30, 3)
+    expect(slam!.at).toEqual([STANDING[0], 0, STANDING[2]])
+    expect(titan.takeSlam()).toBeNull()
+    expect(seatView(KIND_TITAN, 0).gauges).toEqual(['air'])
+    now.mockRestore()
+    titan.dispose()
   })
 
   it('hangs its arms until the server says where they are', () => {

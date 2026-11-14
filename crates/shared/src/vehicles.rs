@@ -44,7 +44,7 @@ pub mod titan;
 pub mod tupp;
 pub mod walker;
 
-pub use spec::{Airframe, Arms, Buttons, Feet, Floats, Gait, Lift, Role, Runners, Shape, Skim, Solid, Spec, Springs, STEER_FADE};
+pub use spec::{Airframe, Arms, Buttons, Feet, Floats, Gait, Jets, Lift, Role, Runners, Shape, Skim, Solid, Spec, Springs, Step, STEER_FADE};
 pub use crate::armor::{ALLOY, Armor, Box3, Module, On, Part, Pen, Plate, SHEET, SOFT, Zone};
 
 #[derive(Clone, Copy, Debug)]

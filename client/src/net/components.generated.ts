@@ -183,6 +183,8 @@ export interface Titan {
   fry: number
   frz: number
   flags: number
+  step: number
+  weight: number
 }
 
 export interface Held {
@@ -261,6 +263,6 @@ export const SCHEMA: readonly { id: number; name: ComponentName; diff: boolean; 
   { id: 25, name: 'fell', diff: false, owner: false, fields: [{ name: 'style' }] },
   { id: 26, name: 'sub', diff: false, owner: false, fields: [{ name: 'tubes' }, { name: 'scope', unit: 'mrad' }, { name: 'flags' }] },
   { id: 27, name: 'lifted', diff: false, owner: false, fields: [{ name: 'lift' }, { name: 'chair' }, { name: 'seat' }] },
-  { id: 28, name: 'titan', diff: false, owner: false, fields: [{ name: 'lx', unit: 'cm' }, { name: 'ly', unit: 'cm' }, { name: 'lz', unit: 'cm' }, { name: 'rx', unit: 'cm' }, { name: 'ry', unit: 'cm' }, { name: 'rz', unit: 'cm' }, { name: 'flx', unit: 'cm' }, { name: 'fly', unit: 'cm' }, { name: 'flz', unit: 'cm' }, { name: 'frx', unit: 'cm' }, { name: 'fry', unit: 'cm' }, { name: 'frz', unit: 'cm' }, { name: 'flags' }] },
+  { id: 28, name: 'titan', diff: false, owner: false, fields: [{ name: 'lx', unit: 'cm' }, { name: 'ly', unit: 'cm' }, { name: 'lz', unit: 'cm' }, { name: 'rx', unit: 'cm' }, { name: 'ry', unit: 'cm' }, { name: 'rz', unit: 'cm' }, { name: 'flx', unit: 'cm' }, { name: 'fly', unit: 'cm' }, { name: 'flz', unit: 'cm' }, { name: 'frx', unit: 'cm' }, { name: 'fry', unit: 'cm' }, { name: 'frz', unit: 'cm' }, { name: 'flags' }, { name: 'step' }, { name: 'weight', unit: 'byte' }] },
   { id: 29, name: 'held', diff: false, owner: false, fields: [{ name: 'vehicle' }, { name: 'hand' }] },
 ]

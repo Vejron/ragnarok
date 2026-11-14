@@ -165,7 +165,7 @@ impl Game {
         let sub = entities.get::<crate::mechanics::Sub>(id).map(|sub| wire::Sub { tubes: sub.loaded(), scope: to_mrad(sub.scope), flags: if sub.mast { SUB_MAST_UP } else { 0 } });
         let titan = self.world.physics.limbs(id).map(|limbs| {
             let [[lx, ly, lz], [rx, ry, rz]] = limbs.fists.map(|fist| fist.map(to_cm_i16));
-            let [[flx, fly, flz], [frx, fry, frz]] = limbs.feet.map(|foot| shared::vec3::sub(foot, pose.position).map(to_cm_i16));
+            let [[flx, fly, flz], [frx, fry, frz]] = limbs.planted.map(|foot| shared::vec3::sub(foot, pose.position).map(to_cm_i16));
             let mut flags = 0;
             for (hand, (grip, full)) in [(HANDS_GRIP_LEFT, HANDS_FULL_LEFT), (HANDS_GRIP_RIGHT, HANDS_FULL_RIGHT)].into_iter().enumerate() {
                 if limbs.closed[hand] {
@@ -175,7 +175,7 @@ impl Game {
                     flags |= full;
                 }
             }
-            wire::Titan { lx, ly, lz, rx, ry, rz, flx, fly, flz, frx, fry, frz, flags }
+            wire::Titan { lx, ly, lz, rx, ry, rz, flx, fly, flz, frx, fry, frz, flags, step: limbs.step.to_byte(), weight: (limbs.weight.clamp(0.0, 1.0) * 255.0).round() as u8 }
         });
         Some(Replicated {
             kind: Some(wire::Kind { kind: vehicle.kind }),

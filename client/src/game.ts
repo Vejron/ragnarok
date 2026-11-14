@@ -6,7 +6,7 @@ import { Backoff } from './net/backoff'
 import { RttEstimator, ServerClock } from './net/clock'
 import { Transport } from './net/transport'
 import {
-  BUTTON_CROUCH, BUTTON_FIRE, BUTTON_RELOAD, BUTTON_RUN, CROUCH_EYE_DROP, PRONE_EYE_HEIGHT, SLIDE_MIN_SPEED, EYE_HEIGHT, INPUT_REDUNDANCY, PLAYER_MAX_HP, PROTOCOL_VERSION,
+  BUTTON_CROUCH, BUTTON_FIRE, BUTTON_JUMP, BUTTON_RELOAD, BUTTON_RUN, CROUCH_EYE_DROP, PRONE_EYE_HEIGHT, SLIDE_MIN_SPEED, EYE_HEIGHT, INPUT_REDUNDANCY, PLAYER_MAX_HP, PROTOCOL_VERSION,
   SHELL_COOLDOWN_TICKS, STANDING_Y, STANCE_CHUTE, STANCE_DIVE, STANCE_DOWN, STANCE_PRONE, STANCE_SWIM,
   TICK_MS, TICK_RATE, TITAN_FIST_RADIUS, TITAN_REACH, LIFT_RIDER_CENTRE, BLOOM_RECOVER, STAMINA_FULL, ONE_ARM_SWAY, BACKPACK_SPEED, CARRY_SKIS, SUB_LAUNCH_DEPTH } from './sim/consts'
 import { easeSway, sway, swayAmplitude } from './sway'
@@ -20,7 +20,7 @@ import { InputController } from './sim/input'
 import type { Character } from './render/character'
 import { SimMotor, type CharacterState, type VehiclePose } from './sim/motor'
 import { Terrain } from './sim/terrain'
-import { VehicleDriver, type DrivenPose } from './sim/driver'
+import { VehicleDriver, type DrivenPose, type Feet } from './sim/driver'
 import { Predictor } from './sim/predict'
 import type { Vec3 } from './sim/motor'
 import { Effects } from './render/effects'
@@ -390,6 +390,8 @@ export class Game {
   private worn: HeadsetFrame | null = null
   /** The pilot has ducked their head far enough to crouch. */
   private ducked = false
+  /** The headset's jump button was down last frame. */
+  private jumping = false
   /** The world's ski lifts, drawn, once the world is known. */
   private liftView: LiftView | null = null
   /** Where the camera goes while seated, by the seat's rig. */
@@ -403,7 +405,7 @@ export class Game {
   /** Predicts the vehicle the local player drives. */
   private driver: VehicleDriver | null = null
   /** The newest snapshot of the driven vehicle, waiting for the next frame to be reconciled with. */
-  private driverSnapshot: { ack: number; tick: number; vehicle: VehiclePose; drive: DriveState } | null = null
+  private driverSnapshot: { ack: number; tick: number; vehicle: VehiclePose; drive: DriveState; feet: Feet | null } | null = null
   /** Vehicle poses of the newest snapshot, which the predicted soldier's frame is fixed to while riding. */
   private readonly refPoses = new Map<number, VehiclePose>()
   private localId: number | null = null
@@ -473,6 +475,10 @@ export class Game {
       seated: () => this.seat?.vehicle ?? null,
       listen: () => this.listen(),
       ownShot: () => (this.lastShotAt = performance.now()),
+      shake: (at, radius, strength) => {
+        const distance = this.scene.camera.position.distanceTo(new Vector3(at[0], at[1], at[2]))
+        if (distance < radius * 4) this.chase.kick(strength * (1 - distance / (radius * 4)))
+      },
     }
     this.surroundings = new Surroundings(this.scene, this.effects, () => this.fxWorld)
     this.vehicles = this.machines.add(new Vehicles(world, this.machines.add(new Seating())))
@@ -755,11 +761,15 @@ export class Game {
     // Vehicles are solid to the predicted soldier, at the pose of the newest snapshot.
     this.refPoses.clear()
     let drive: DriveState | undefined
+    let limbs: Entity['titan']
     for (const [id, wire] of rebuilt.scene) {
       if (!wire.orientation || !wire.place) continue
       const vehicle = inGameUnits(wire)
       this.refPoses.set(id, poseOf(id, vehicle))
-      if (id === own?.seated?.vehicle) drive = vehicle.drive
+      if (id === own?.seated?.vehicle) {
+        drive = vehicle.drive
+        limbs = vehicle.titan
+      }
     }
     this.motor?.setVehicles([...this.refPoses.values()].map((pose) => {
       const [vx, vz] = this.store.latestVelocity(pose.id) ?? [0, 0]
@@ -776,7 +786,11 @@ export class Game {
       // for the next frame: a backlog of snapshots (a busy main thread) is then one replay, not
       // one per snapshot, which would only make the thread busier.
       this.driver?.acknowledge(message.ack)
-      this.driverSnapshot = { ack: message.ack, tick: message.tick, vehicle: mount, drive }
+      // A Titan stands on its feet, so the replay starts from where the server has those too.
+      const feet: Feet | null = limbs
+        ? { at: [[mount.x + limbs.flx, mount.y + limbs.fly, mount.z + limbs.flz], [mount.x + limbs.frx, mount.y + limbs.fry, mount.z + limbs.frz]], step: limbs.step, weight: limbs.weight }
+        : null
+      this.driverSnapshot = { ack: message.ack, tick: message.tick, vehicle: mount, drive, feet }
     } else {
       this.driverSnapshot = null
       this.driver?.leave()
@@ -938,6 +952,8 @@ export class Game {
     this.headset = null
     this.worn = null
     this.ducked = false
+    if (this.jumping) this.input.hold(BUTTON_JUMP, false)
+    this.jumping = false
     this.input.wear(false)
     this.scene.see(null)
     if (!this.disposed) this.frameHandle = this.nextFrame()
@@ -945,7 +961,7 @@ export class Game {
 
   /**
    * Takes what the headset says for this frame: its eyes to draw for, the left thumbstick to walk and
-   * turn with (the right one turns too), and a ducked head to crouch.
+   * turn with (the right one turns too), a ducked head to crouch, and the right hand's A button to jump.
    */
   private readHeadset() {
     if (!this.headset) return
@@ -957,6 +973,9 @@ export class Game {
     const ducked = this.worn.head[1] < (this.ducked ? -VR_DUCK * 0.6 : -VR_DUCK)
     if (ducked !== this.ducked) this.input.hold(BUTTON_CROUCH, ducked)
     this.ducked = ducked
+    // The right controller's lower face button (A) leaps and fires the thrusters.
+    if (this.worn.jump !== this.jumping) this.input.hold(BUTTON_JUMP, this.worn.jump)
+    this.jumping = this.worn.jump
   }
 
   private frame(now: number) {
@@ -970,9 +989,9 @@ export class Game {
     this.lastFrame = now
 
     if (this.driverSnapshot) {
-      const { ack, tick, vehicle, drive } = this.driverSnapshot
+      const { ack, tick, vehicle, drive, feet } = this.driverSnapshot
       this.driverSnapshot = null
-      this.driver?.reconcile(ack, vehicle, drive, tick)
+      this.driver?.reconcile(ack, vehicle, drive, tick, feet)
     }
     // The waves run on the server's clock, as the sim the vehicles ride them in does.
     if (this.clock.synced) {

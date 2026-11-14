@@ -456,9 +456,12 @@ replicated! {
 
     set 28 titan
     /// A Titan's limbs, as drawn: its left and right fists in its hull frame, its left and right feet
-    /// (their undersides) from its hull's centre along the world's axes, and `HANDS_*` flags. The arms
-    /// and legs between are the client's to draw.
-    Titan { lx: i16 as cm, ly: i16 as cm, lz: i16 as cm, rx: i16 as cm, ry: i16 as cm, rz: i16 as cm, flx: i16 as cm, fly: i16 as cm, flz: i16 as cm, frx: i16 as cm, fry: i16 as cm, frz: i16 as cm, flags: u8 }
+    /// from its hull's centre along the world's axes, and `HANDS_*` flags. The arms and legs between are
+    /// the client's to draw. A foot is given where it stands, or the ground it is over while it steps:
+    /// `step` is where it is in its walk (`Step::to_byte`), and the client lifts the foot that is in the
+    /// air. `weight` is the share of the Titan the
+    /// left foot carries. Its pilot's client walks it on from these (`Physics::set_feet`).
+    Titan { lx: i16 as cm, ly: i16 as cm, lz: i16 as cm, rx: i16 as cm, ry: i16 as cm, rz: i16 as cm, flx: i16 as cm, fly: i16 as cm, flz: i16 as cm, frx: i16 as cm, fry: i16 as cm, frz: i16 as cm, flags: u8, step: u8, weight: u8 as byte }
 
     set 29 held
     /// A soldier held in a fist of Titan `vehicle` (hand 0 is its left): they are carried where it is,

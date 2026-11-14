@@ -2,13 +2,15 @@
 //!
 //! The hull (its torso) is a dynamic body on spring legs, as a walker's is. Its limbs are kinematic
 //! bodies of their own, which the hull does not feel: a fist goes where its pilot asks, within the arm's
-//! reach and no faster than the arm swings, and a foot stands where it was planted until the hull has
-//! walked a stride away from it, then steps after it. They shove whatever dynamic body they meet (a car,
+//! reach and no faster than the arm swings. Its feet are what it stands on (`Planted`, which `walk`
+//! reads): a planted foot does not move, and they step in turn, the weight going onto one while the
+//! other swings ahead to where the hull is going. They shove whatever dynamic body they meet (a car,
 //! a tank), and a vehicle a fist holds is joined to it. What they do to soldiers, buildings and trees is
 //! the server's `Titans` mechanic's business, which reads them with [`Physics::limbs`].
 
 use super::*;
 use crate::TREE_GROUP;
+use shared::vehicles::{Feet, Step};
 
 /// The collision group of a giant's limbs. A giant's own hull leaves this group out of what it touches,
 /// so its fists and feet never push it about.
@@ -35,7 +37,17 @@ const SETTLE_REACH: f32 = 2.0;
 const SETTLE_SPEED: f32 = 1.0;
 /// A foot this many strides from its hip has been left behind (the giant was put somewhere else): it is
 /// put back under it at once.
-const LOST_STRIDES: f32 = 5.0;
+const LOST_STRIDES: f32 = 3.0;
+/// Off the ground, its feet hang this share of a leg's length under its hips, and are drawn up to
+/// there at this speed, m/s.
+const HANG: f32 = 0.93;
+const TUCK_SPEED: f32 = 10.0;
+/// A foot lifts once it carries less than this share of the weight.
+const LIGHT: f32 = 0.02;
+/// Going faster than this with the stick let go, m/s, it is being carried along and steps to keep up.
+const CARRIED_SPEED: f32 = 3.0;
+/// The stick is held past this.
+const WALKED: f32 = 0.1;
 /// How far above the hip, and below the leg's length, a foot looks for the ground, metres.
 const GROUND_PROBE: f32 = 8.0;
 
@@ -62,6 +74,14 @@ pub struct LimbsPose {
     pub feet: [[f32; 3]; 2],
     /// A foot came down in the last step.
     pub landed: [bool; 2],
+    /// Where each foot stands, or the ground it is over while it steps.
+    pub planted: [[f32; 3]; 2],
+    /// Where it is in its walk.
+    pub step: Step,
+    /// The share of the weight the left foot carries.
+    pub weight: f32,
+    /// How fast it was coming down when its feet met the ground in the last step, m/s; 0 in any other.
+    pub impact: f32,
 }
 
 struct Fist {
@@ -80,20 +100,38 @@ struct Fist {
 struct Foot {
     body: RigidBodyHandle,
     collider: ColliderHandle,
-    /// Where its underside is.
+    /// Where it stands, or the ground it is over while it steps.
     at: Vector,
-    step: Option<Step>,
+    /// The way it points, radians about +Y: as it was put down.
+    yaw: f32,
     landed: bool,
 }
 
-/// A step in progress: where from, where to, and how far through it is, 0..1.
-type Step = (Vector, Vector, f32);
-/// What a tick makes of a foot: where its underside is, the step it is in, and whether it came down.
-type Stepped = (Vector, Option<Step>, bool);
+/// How a giant stands on its feet.
+struct Stance {
+    /// Where it is in its walk.
+    step: Step,
+    /// The share of the weight the left foot carries; the right has the rest.
+    weight: f32,
+    /// How fast it was coming down when its feet met the ground in the last step, m/s.
+    impact: f32,
+}
+
+impl Stance {
+    const LEVEL: Stance = Stance { step: Step::Planted, weight: 0.5, impact: 0.0 };
+}
+
+/// The feet a giant stands on, for `walk`: where each is, and the share of the weight it carries.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Planted {
+    pub at: [Vector; 2],
+    pub weight: [f32; 2],
+}
 
 pub(super) struct Limbs {
     fists: [Fist; 2],
     feet: Option<[Foot; 2]>,
+    stance: Stance,
 }
 
 impl Limbs {
@@ -101,6 +139,26 @@ impl Limbs {
     pub(super) fn owns(&self, collider: ColliderHandle) -> bool {
         self.fists.iter().any(|fist| fist.collider == collider) || self.feet.as_ref().is_some_and(|feet| feet.iter().any(|foot| foot.collider == collider))
     }
+
+    /// The feet it stands on, once they have been found under it.
+    pub(super) fn planted(&self) -> Option<Planted> {
+        let feet = self.feet.as_ref()?;
+        if feet.iter().any(|foot| foot.at.x == f32::MAX) {
+            return None;
+        }
+        let weight = match self.stance.step {
+            Step::Airborne => [0.0, 0.0],
+            Step::Swinging(0, _) => [0.0, 1.0],
+            Step::Swinging(..) => [1.0, 0.0],
+            _ => [self.stance.weight, 1.0 - self.stance.weight],
+        };
+        Some(Planted { at: [feet[0].at, feet[1].at], weight })
+    }
+}
+
+/// How high a foot `progress` through its step is over the ground, metres.
+fn lifted(shape: &Feet, progress: f32) -> f32 {
+    shape.lift * (std::f32::consts::PI * progress).sin()
 }
 
 /// -1 for the left limb (index 0), 1 for the right.
@@ -157,11 +215,11 @@ impl Physics {
                 let at = Vector::new(hip.x, hip.y - gait.leg_length, hip.z);
                 let body = self.bodies.insert(RigidBodyBuilder::kinematic_position_based().pose(Pose::from_parts(at + Vector::new(0.0, hy, 0.0), pose.rotation)).build());
                 let collider = self.colliders.insert_with_parent(ColliderBuilder::cuboid(hx, hy, hz).collision_groups(limb_groups()).friction(0.8).build(), body, &mut self.bodies);
-                Foot { body, collider, at, step: None, landed: false }
+                Foot { body, collider, at, yaw: 0.0, landed: false }
             })
         });
         if let Some(car) = self.cars.get_mut(&id) {
-            car.limbs = Some(Limbs { fists, feet });
+            car.limbs = Some(Limbs { fists, feet, stance: Stance::LEVEL });
         }
     }
 
@@ -186,9 +244,20 @@ impl Physics {
         }
         // The feet are found again under the hips by the next step.
         for foot in limbs.feet.iter_mut().flatten() {
-            foot.step = None;
             foot.at = Vector::splat(f32::MAX);
         }
+        limbs.stance = Stance::LEVEL;
+    }
+
+    /// Puts vehicle `id`'s feet where a snapshot has them (`LimbsPose::planted`, `step` and `weight`),
+    /// for its pilot's client to walk it on from there.
+    pub fn set_feet(&mut self, id: u32, planted: [[f32; 3]; 2], step: Step, weight: f32) {
+        let Some(limbs) = self.cars.get_mut(&id).and_then(|car| car.limbs.as_mut()) else { return };
+        let Some(feet) = limbs.feet.as_mut() else { return };
+        for (foot, at) in feet.iter_mut().zip(planted) {
+            foot.at = Vector::from(at);
+        }
+        limbs.stance = Stance { step, weight: weight.clamp(0.0, 1.0), impact: 0.0 };
     }
 
     /// What the pilot of vehicle `id` asks of its hands (left, right) from now on.
@@ -206,13 +275,23 @@ impl Physics {
         let pose = *self.bodies.get(car.body)?.position();
         let fists = [0, 1].map(|index| &limbs.fists[index]);
         let feet = limbs.feet.as_ref();
+        let shape = car.spec.gait.and_then(|gait| gait.feet);
+        let planted = [0, 1].map(|index| feet.map_or(Vector::ZERO, |feet| feet[index].at));
+        let up = |index: usize| match (limbs.stance.step, shape) {
+            (Step::Swinging(foot, progress), Some(shape)) if foot == index => lifted(&shape, progress),
+            _ => 0.0,
+        };
         Some(LimbsPose {
             fists: fists.map(|fist| fist.at.into()),
             fists_world: fists.map(|fist| (pose * fist.at).into()),
             fist_velocity: fists.map(|fist| fist.world_velocity.into()),
             closed: fists.map(|fist| fist.hand.closed),
-            feet: [0, 1].map(|index| feet.map_or([0.0; 3], |feet| feet[index].at.into())),
+            feet: [0, 1].map(|index| (planted[index] + Vector::new(0.0, up(index), 0.0)).into()),
             landed: [0, 1].map(|index| feet.is_some_and(|feet| feet[index].landed)),
+            planted: planted.map(Into::into),
+            step: limbs.stance.step,
+            weight: limbs.stance.weight,
+            impact: limbs.stance.impact,
         })
     }
 
@@ -325,71 +404,144 @@ impl Physics {
             let nose = pose.rotation * Vector::new(0.0, 0.0, -1.0);
             let heading = Vector::new(nose.x, 0.0, nose.z).normalize_or(Vector::new(0.0, 0.0, -1.0));
             let right = heading.cross(Vector::Y);
-            let yaw = Rotation::from_rotation_y((-heading.x).atan2(-heading.z));
             let flat = Vector::new(linvel.x, 0.0, linvel.z);
-            let mut steps: [Option<Stepped>; 2] = [None, None];
+            let facing = (-heading.x).atan2(-heading.z);
+            let (throttle, crouch) = if able { (car.flight.throttle.clamp(-1.0, 1.0), (-car.flight.lift).clamp(0.0, 1.0)) } else { (0.0, 0.0) };
+            // What a tick makes of its feet: where each is, the step, the weight on the left, and which came down.
+            let mut stepped: Option<([Vector; 2], Stance, [bool; 2])> = None;
             if let (Some(gait), Some(limbs)) = (gait, &car.limbs)
                 && let (Some(shape), Some(feet)) = (gait.feet, &limbs.feet)
             {
                 let hip_y = pose.translation.y - spec.half_extents[1];
                 let top = hip_y + GROUND_PROBE;
                 let reach = gait.leg_length + 2.0 * GROUND_PROBE;
-                let home = |index: usize| pose.translation + right * (side(index) * gait.foot_half);
-                let stepping = feet.iter().any(|foot| foot.step.is_some());
-                // The foot furthest from its hip steps first.
-                let lag = |index: usize| {
-                    let away = home(index) - feet[index].at;
-                    Vector::new(away.x, 0.0, away.z).length()
+                let centre = Vector::new(pose.translation.x, 0.0, pose.translation.z);
+                // Where the hip of foot `index` will be over in `ahead` seconds, on the ground plane.
+                let home = |index: usize, ahead: f32, turned: f32| centre + flat * ahead + Rotation::from_rotation_y(angvel.y * turned) * (right * (side(index) * gait.foot_half));
+                let mut at = [feet[0].at, feet[1].at];
+                let mut stance = Stance { step: limbs.stance.step, weight: limbs.stance.weight, impact: 0.0 };
+                let mut landed = [false; 2];
+                let away = |index: usize, at: &[Vector; 2]| {
+                    let off = home(index, 0.0, 0.0) - at[index];
+                    Vector::new(off.x, 0.0, off.z)
                 };
-                let first = if lag(0) >= lag(1) { 0 } else { 1 };
-                for index in 0..2 {
-                    let foot = &feet[index];
-                    let under = home(index);
-                    let lost = lag(index) > LOST_STRIDES * shape.stride;
-                    if lost {
+                // The way it walks: the way it is going, when its pilot walks it or it is carried along (a
+                // blow, or coming to a stop), or the way its pilot has just asked for. Slower than that it
+                // only brings its feet back under it, or it would follow them about.
+                let speed = flat.length();
+                let way = if speed >= if throttle.abs() > WALKED { SETTLE_SPEED } else { CARRIED_SPEED } {
+                    flat / speed
+                } else if throttle.abs() > WALKED {
+                    heading * throttle.signum()
+                } else {
+                    Vector::ZERO
+                };
+                let walking = way != Vector::ZERO;
+                // It steps as far as it goes in the time a step takes, shorter crouched, and no shorter
+                // than its walk's when it is walked.
+                let cycle = shape.step_time + shape.shift_time;
+                let least = if throttle.abs() > WALKED { shape.stride_min } else { 2.0 * SETTLE_REACH };
+                let stride = (speed * cycle).clamp(least, shape.stride) * (1.0 - crouch * gait.crouch / gait.leg_length);
+                if (0..2).any(|index| at[index].x == f32::MAX || away(index, &at).length() > LOST_STRIDES * shape.stride) {
+                    at = [0, 1].map(|index| {
+                        let under = home(index, 0.0, 0.0);
                         let y = ground(under.x, under.z, top, reach).unwrap_or(hip_y - gait.leg_length);
-                        steps[index] = Some((Vector::new(under.x, y, under.z), None, false));
-                        continue;
+                        Vector::new(under.x, y, under.z)
+                    });
+                    stance = Stance::LEVEL;
+                } else if stance.step == Step::Airborne {
+                    // Off the ground its feet hang under its hips, a little drawn up. When one meets the
+                    // ground on the way down, both are planted where they are.
+                    let hang = HANG * (gait.leg_length - crouch * gait.crouch);
+                    let mut met = false;
+                    for (index, foot) in at.iter_mut().enumerate() {
+                        let under = home(index, 0.0, 0.0);
+                        let below = (foot.y - hip_y + linvel.y * dt).max(-gait.leg_length);
+                        let y = hip_y + below + (-hang - below).clamp(-TUCK_SPEED * dt, TUCK_SPEED * dt);
+                        let floor = ground(under.x, under.z, top, reach);
+                        met |= floor.is_some_and(|floor| y <= floor);
+                        *foot = Vector::new(under.x, floor.map_or(y, |floor| y.max(floor)), under.z);
                     }
-                    match foot.step {
-                        Some((from, to, progress)) => {
-                            let progress = progress + dt / shape.step_time;
-                            if progress >= 1.0 {
-                                steps[index] = Some((to, None, true));
-                            } else {
-                                let ease = progress * progress * (3.0 - 2.0 * progress);
-                                let at = from.lerp(to, ease) + Vector::new(0.0, shape.lift * (std::f32::consts::PI * progress).sin(), 0.0);
-                                steps[index] = Some((at, Some((from, to, progress)), false));
+                    if met && linvel.y <= 0.0 {
+                        stance = Stance { step: Step::Planted, weight: 0.5, impact: -linvel.y };
+                        landed = [true; 2];
+                    }
+                } else if (0..2).all(|index| stance.step.swinging().is_some_and(|(foot, _)| foot == index) || hip_y - at[index].y >= gait.leg_length) {
+                    // Lifted clear of every foot that was carrying it (a leap, a blast): it is off the ground.
+                    stance = Stance { step: Step::Airborne, weight: 0.5, impact: 0.0 };
+                } else if let Step::Swinging(index, progress) = stance.step {
+                    // In the air, the foot goes to where its hip will be when it lands, and half a stride
+                    // beyond: the hull is then carried over it.
+                    let left = (1.0 - progress) * shape.step_time;
+                    let to = home(index, left, left + 0.5 * cycle) + way * (0.5 * stride);
+                    let share = (dt / left.max(dt)).min(1.0);
+                    let y = ground(to.x, to.z, top, reach).unwrap_or(at[index].y);
+                    at[index] += (Vector::new(to.x, y, to.z) - at[index]) * share;
+                    let progress = progress + dt / shape.step_time;
+                    stance.step = if progress < 1.0 { Step::Swinging(index, progress) } else { Step::Planted };
+                    stance.weight = if index == 0 { 0.0 } else { 1.0 };
+                    landed[index] = progress >= 1.0;
+                } else {
+                    // On both feet. Walking, a foot is due to step once the hull has gone half a stride past
+                    // it, or has no foot ahead to go onto; at rest, once it has been left out of place.
+                    let behind = |index: usize| away(index, &at).dot(way);
+                    let on = |index: usize, weight: f32| if index == 0 { weight } else { 1.0 - weight };
+                    let due = |index: usize, slack: f32| {
+                        able && if walking {
+                            behind(index) + speed * shape.shift_time >= 0.5 * stride * slack || behind(1 - index) > -0.1 * stride
+                        } else {
+                            away(index, &at).length() > SETTLE_REACH * slack
+                        }
+                    };
+                    let pace = dt / shape.shift_time;
+                    match stance.step {
+                        // The weight comes off the foot that is to step, and it lifts when it is light.
+                        Step::Shifting(next) if due(next, 0.5) => {
+                            let wanted = if next == 0 { 0.0 } else { 1.0 };
+                            stance.weight += (wanted - stance.weight).clamp(-pace, pace);
+                            if on(next, stance.weight) <= LIGHT {
+                                stance = Stance { step: Step::Swinging(next, 0.0), weight: wanted, impact: 0.0 };
                             }
                         }
-                        None => {
-                            let resting = flat.length() < SETTLE_SPEED && angvel.y.abs() < 0.05;
-                            let due = lag(index) > shape.stride || (resting && lag(index) > SETTLE_REACH);
-                            if able && due && !stepping && index == first {
-                                // It lands ahead of the hip by a stride, where the hull will be over it mid-stride.
-                                let lead = if resting { Vector::ZERO } else { flat * shape.step_time + flat.normalize_or_zero() * shape.stride };
-                                let to = under + lead;
-                                let y = ground(to.x, to.z, top, reach).unwrap_or(foot.at.y);
-                                steps[index] = Some((foot.at, Some((foot.at, Vector::new(to.x, y, to.z), 0.0)), false));
+                        _ => {
+                            // The next to step is the one furthest behind; at rest, the one furthest out of
+                            // place, and of two much alike the one that did not step last, which has the weight.
+                            let lag = |index: usize| if walking { behind(index) } else { away(index, &at).length() + on(index, stance.weight) * 2.0 * SETTLE_REACH };
+                            let next = if lag(0) >= lag(1) { 0 } else { 1 };
+                            if due(next, 1.0) {
+                                stance.step = Step::Shifting(next);
+                            } else {
+                                stance.step = Step::Planted;
+                                stance.weight += (0.5 - stance.weight).clamp(-pace, pace);
                             }
                         }
                     }
                 }
+                stepped = Some((at, stance, landed));
             }
             let Some(car) = self.cars.get_mut(&id) else { continue };
             let Some(limbs) = car.limbs.as_mut() else { continue };
-            if let (Some(feet), Some(shape)) = (limbs.feet.as_mut(), gait.and_then(|gait| gait.feet)) {
-                for (foot, step) in feet.iter_mut().zip(steps) {
-                    foot.landed = false;
-                    if let Some((at, step, landed)) = step {
-                        foot.at = at;
-                        foot.step = step;
-                        foot.landed = landed;
+            if let (Some(feet), Some(shape), Some((at, stance, landed))) = (limbs.feet.as_mut(), gait.and_then(|gait| gait.feet), stepped) {
+                for (index, foot) in feet.iter_mut().enumerate() {
+                    foot.at = at[index];
+                    foot.landed = landed[index];
+                    // A planted foot points the way it was put down; in the air it comes round to the hull's.
+                    let up = match stance.step {
+                        Step::Swinging(stepping, progress) if stepping == index => {
+                            let turn = (facing - foot.yaw + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+                            foot.yaw += turn * (dt / ((1.0 - progress) * shape.step_time).max(dt)).min(1.0);
+                            lifted(&shape, progress)
+                        }
+                        _ => 0.0,
+                    };
+                    if landed[index] {
+                        foot.yaw = facing;
                     }
                     if let Some(body) = self.bodies.get_mut(foot.body) {
-                        body.set_next_kinematic_position(Pose::from_parts(foot.at + Vector::new(0.0, shape.half[1], 0.0), yaw));
+                        body.set_next_kinematic_position(Pose::from_parts(foot.at + Vector::new(0.0, shape.half[1] + up, 0.0), Rotation::from_rotation_y(foot.yaw)));
                     }
                 }
+                limbs.stance = stance;
             }
             let Some(arms) = spec.arms else { continue };
             for (index, fist) in limbs.fists.iter_mut().enumerate() {

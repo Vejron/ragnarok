@@ -26,6 +26,7 @@ The game can be shown in a VR headset, and a Titan ([VEHICLES-XIV.md](VEHICLES-X
 | Left thumbstick | Forward and back walk; left and right turn |
 | Right thumbstick | Left and right turn too |
 | Duck your head 25 cm | It crouches, which brings its fists to the ground |
+| A button, right hand | It leaps; held in the air, its foot thrusters fire while the fuel lasts |
 
 - Its arms follow yours at their own pace: they swing at 45 m/s at most, so a fast jab of yours becomes a long heavy punch.
 - A fist moving at 8 m/s or more hits only if it is closed. An open hand does no harm, so reach for a soldier open-handed and then squeeze.

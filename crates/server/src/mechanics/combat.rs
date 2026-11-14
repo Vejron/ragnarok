@@ -159,12 +159,24 @@ pub fn blast(world: &mut World, blast: Blast) {
 
 /// [`blast`], for a shell that struck vehicle `direct.vehicle` itself.
 pub fn blast_at(world: &mut World, blast: Blast, direct: Option<Direct>) {
+    burst(world, blast, direct, None);
+}
+
+/// [`blast`], for one that vehicle `spare` makes itself and does not feel (a Titan's landing): neither
+/// it nor a soldier it holds in a fist is hurt or thrown.
+pub fn blast_sparing(world: &mut World, blast: Blast, spare: u32) {
+    burst(world, blast, None, Some(spare));
+}
+
+fn burst(world: &mut World, blast: Blast, direct: Option<Direct>, spare: Option<u32>) {
     make_noise(world, blast.point, blast.attacker, HEAR_BLAST);
+    let spared = |world: &World, id: u32| spare.is_some() && world.entities.get::<Player>(id).and_then(|player| player.held).map(|fist| fist.titan) == spare;
     // As they stood when it went off: being knocked flat by it does not bring them nearer.
-    let bodies = blasted(world, blast.point, blast.radius, blast.damage);
+    let mut bodies = blasted(world, blast.point, blast.radius, blast.damage);
+    bodies.retain(|&(id, _)| !spared(world, id));
     // Soldiers are thrown; everything in the open is hurt, below.
     for id in world.entities.ids::<With<Player>>() {
-        if !world.entities.alive(id) {
+        if !world.entities.alive(id) || spared(world, id) {
             continue;
         }
         let mut player = world.entities.of_mut::<Player>(id);
@@ -199,6 +211,7 @@ pub fn blast_at(world: &mut World, blast: Blast, direct: Option<Direct>) {
         super::limbs::blasted(world, id, blast.point, amount, blast.attacker);
     }
     let mut reached = world.physics.blast_cars(blast.point, blast.radius);
+    reached.retain(|&(vid, _)| Some(vid) != spare);
     // A shell that struck a vehicle's edge may burst further from its centre than the blast reaches.
     if let Some(direct) = direct.filter(|direct| !reached.iter().any(|&(vid, _)| vid == direct.vehicle)) {
         reached.push((direct.vehicle, 0.0));

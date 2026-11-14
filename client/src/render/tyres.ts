@@ -565,6 +565,68 @@ export function scrapeSparks(world: FxWorld, at: Vector3, velocity: Vector3) {
   }
 }
 
+/** Puffs per foot per second while a Titan's thrusters fire, and how far over the ground they still blow dust out, metres. */
+const THRUSTER_RATE = 70
+const THRUSTER_WASH = 30
+
+/**
+ * The thrusters in a Titan's feet for one frame: a column of flame out of each sole, the smoke it
+ * turns to, and the dust it blows out along the ground when the foot is near it.
+ */
+export function thrusterFlame(world: FxWorld, jets: readonly { at: Vector3; direction: Vector3 }[], velocity: Vector3, dt: number) {
+  const count = Math.max(1, Math.round(THRUSTER_RATE * dt))
+  for (const { at, direction } of jets) {
+    for (let i = 0; i < count; i++) {
+      const speed = rand(35, 55)
+      const spread = () => rand(-4, 4)
+      const from: [number, number, number] = [at.x + rand(-2, 2), at.y, at.z + rand(-2, 2)]
+      const out: [number, number, number] = [velocity.x + direction.x * speed + spread(), velocity.y + direction.y * speed + spread(), velocity.z + direction.z * speed + spread()]
+      world.glow.spawn({ position: from, velocity: out, life: rand(0.25, 0.5), size: [rand(4.5, 6.5), 1.2], color: 0xffd9a0, colorEnd: 0xff5a14, alpha: 0.9, drag: 1.5, shape: 'puff' })
+      if (i % 2 === 0) world.smoke.spawn({ position: from, velocity: [out[0] * 0.6, out[1] * 0.6, out[2] * 0.6], life: rand(1, 1.8), size: [4, rand(10, 15)], color: 0x8a8580, colorEnd: 0xbdb8b0, alpha: 0.3, drag: 2.5, gravity: -1, shape: 'puff' })
+    }
+    // Near the ground the blast runs out along it.
+    const ground = world.groundAt(at.x, at.z)
+    if (at.y - ground < THRUSTER_WASH) {
+      const angle = rand(0, Math.PI * 2)
+      world.smoke.spawn({
+        position: [at.x + Math.cos(angle) * 2, ground + 0.4, at.z + Math.sin(angle) * 2],
+        velocity: [Math.cos(angle) * rand(14, 24), rand(0.5, 2.5), Math.sin(angle) * rand(14, 24)],
+        life: rand(1, 1.8), size: [1.5, rand(6, 10)], color: 0xc9bfa8, alpha: 0.35, drag: 1.8, shape: 'puff',
+      })
+    }
+  }
+}
+
+/**
+ * The ground thrown up where a Titan comes down hard: a ring of dust running out to `radius` metres
+ * from `at`, and a column of it over the spot.
+ */
+export function slamDust(world: FxWorld, at: readonly [number, number, number], radius: number) {
+  const ring = Math.round(60 + radius * 3)
+  for (let i = 0; i < ring; i++) {
+    const angle = (i / ring) * Math.PI * 2 + rand(-0.05, 0.05)
+    const [cos, sin] = [Math.cos(angle), Math.sin(angle)]
+    const start = rand(4, 9)
+    const [x, z] = [at[0] + cos * start, at[2] + sin * start]
+    // Fast enough to reach the edge before the drag has stopped it.
+    const speed = radius * rand(1.6, 2.4)
+    world.smoke.spawn({
+      position: [x, world.groundAt(x, z) + rand(0.3, 1.5), z],
+      velocity: [cos * speed, rand(1, 6), sin * speed],
+      life: rand(1.6, 2.8), size: [3, rand(9, 15)], color: 0xb8ad96, colorEnd: 0xd6cfbf, alpha: 0.45, drag: 2, gravity: -0.6, shape: 'puff',
+    })
+  }
+  for (let i = 0; i < 40; i++) {
+    const angle = rand(0, Math.PI * 2)
+    const out = rand(0, 7)
+    world.smoke.spawn({
+      position: [at[0] + Math.cos(angle) * out, at[1] + rand(0, 2), at[2] + Math.sin(angle) * out],
+      velocity: [Math.cos(angle) * rand(2, 8), rand(10, 28), Math.sin(angle) * rand(2, 8)],
+      life: rand(1.5, 3), size: [3, rand(8, 14)], color: 0xa89d88, colorEnd: 0xcfc8b8, alpha: 0.5, drag: 1.6, gravity: 2, shape: 'puff',
+    })
+  }
+}
+
 /** Jets per nozzle per second while a Roadster's thrusters fire. */
 const JET_RATE = 90
 

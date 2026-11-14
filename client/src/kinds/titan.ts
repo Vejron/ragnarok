@@ -10,7 +10,7 @@ export const TITAN: VehicleKind = {
   kind: KIND_TITAN,
   model: (id) => new TitanModel(id),
   load: loadTitanModel,
-  ride: { distance: TITAN_DISTANCE, reload: null, seats: [{ rig: { name: 'titan' }, role: 'titan', board: 'E: pilot the Titan' }] },
+  ride: { distance: TITAN_DISTANCE, reload: null, seats: [{ rig: { name: 'titan' }, role: 'titan', board: 'E: pilot the Titan', gauges: ['air'] }] },
   // No engine to hum: its feet are heard by the footfalls.
   sound: { voices: PETROL, ...PLAIN, engine: { name: 'none' } },
   // A car's wheel points, far up under its torso, which only touch when it lies fallen. Its reactor is in its chest.
