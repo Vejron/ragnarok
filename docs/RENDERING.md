@@ -233,7 +233,8 @@ after the solid scene, with the scene's depth bound read-only so they can be sof
 
 - **`Effects`** (`effects.ts`) is every muzzle flash, tracer, spark and puff of a shot. Whatever is
   round in the air goes to the particle pools below: light to `glow` (`shape: 'glare'`, which has no
-  edge), fire and smoke to `smoke` (`shape: 'puff'`), blood to `blood`.
+  edge), fire and smoke to `smoke` (`shape: 'puff'`), blood to `blood`. A gun that fires shells is
+  drawn by `gunfire` and `barrelSmoke` from a `MuzzleProfile` ([GUNSMOKE.md](GUNSMOKE.md)).
 - **`FlashEffects`** (the engine's) is only tracers, a laser's beam and flares, and rings on the ground.
   Each is one 80-byte record written when it is spawned, a formula of its age (`at + direction × along·p`,
   radius `size + grow·p`) that the vertex shader evaluates, so nothing is touched per frame. A streak is a
@@ -250,7 +251,10 @@ after the solid scene, with the scene's depth bound read-only so they can be sof
   sparks and flames, 4096 alpha-blended and 2048 additive. A particle can change colour over its life
   (`colorEnd`: fire cooling to ember red, soot greying), spin, stretch along its velocity (`stretch`:
   sparks), be multiplied past 1 (`glow`, so it blooms) and have a billowy noise-eaten edge
-  (`shape: 'puff'`) instead of a smooth disc. The CPU only writes a 160-byte emit command
+  (`shape: 'puff'`) instead of a smooth disc. Smoke can also churn in the air (`turbulence`), be
+  carried by the game's wind (`wind`, set each frame by `Particles.blowing`) and keep its opacity for
+  half its life before it thins (`hold`); alpha puffs are shaded by the sun and lit by the frame's
+  point lights, which the compute pass gathers per particle ([GUNSMOKE.md](GUNSMOKE.md)). The CPU only writes a 160-byte emit command
   per `spawn`; a compute pass expands commands into a pool and another integrates every live particle
   (drag, gravity, bounce on a ground height field, size, fade), and each blend class draws with one
   indirect call whose instance count the GPU wrote. When the pool is full, new particles are dropped.
@@ -614,7 +618,7 @@ The canvas's path does none of this and costs what it did.
   call `material.needsUpdate()` after changing a material's colour or opacity. A glTF goes through
   `parseToonModel` (`models.ts`), which swaps in toon materials and keeps their names.
 - **A new short-lived effect:** a `Particles.spawn` for anything round in the air (flash, spark,
-  fire, smoke); a `Flash` (`FlashEffects.spawn`) for a streak or a ground ring, which cost nothing per frame; a ribbon (`ProjectileTrails.follow`) for a trail behind something that
+  fire, smoke; give smoke that lasts `turbulence` and `wind: 1`, never a wind of its own in its velocity); a `Flash` (`FlashEffects.spawn`) for a streak or a ground ring, which cost nothing per frame; a ribbon (`ProjectileTrails.follow`) for a trail behind something that
   moves; `scene.lights.flash` to light the surroundings. Avoid spawning meshes per event.
 - **Something that must never be hidden** (a reticle, a marker): a mesh with `overlay = true` and a
   `blend: 'alpha'` material. It ignores depth and sorts by `renderOrder`.

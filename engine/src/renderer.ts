@@ -239,6 +239,8 @@ export class Renderer {
   private sceneGroupKey = ''
   private lightingGroup: GPUBindGroup | null = null
   private outputGroup: GPUBindGroup | null = null
+  /** Whether the half-resolution effects (smoke) were drawn this frame, so that their target holds this frame's coverage. */
+  private smokeDrawn = false
   private colorTarget: GPUTexture | null = null
   private depthTarget: GPUTexture | null = null
   /**
@@ -495,7 +497,9 @@ export class Renderer {
     this.adaptation.resize(this.hdrTarget)
     this.flare.resize(this.sceneDepth)
     this.beams.resize(w, h, this.sceneDepth)
+    // The output pass reads the half-resolution effects' coverage, so their target is there from the start.
     this.halfResolution.release()
+    this.halfResolution.ensure(w, h)
     this.outputGroup = this.device.createBindGroup({
       layout: this.outputPipeline.getBindGroupLayout(0),
       entries: [
@@ -507,6 +511,7 @@ export class Renderer {
         { binding: 5, resource: this.shafts.view! },
         { binding: 6, resource: { buffer: this.adaptation.state } },
         { binding: 7, resource: this.beams.view! },
+        { binding: 8, resource: this.halfResolution.view! },
       ],
     })
   }
@@ -600,8 +605,10 @@ export class Renderer {
     if (this.reflectionOn) this.reflectionPass(encoder, scene)
     this.mainPass(encoder, scene)
     if (this.depthCopyPipeline) this.depthCopyPass(encoder)
+    this.smokeDrawn = false
     if (this.effects.length || this.overlayFrom < this.mainBatches.length) {
       const half = this.effects.some((e) => e.halfResolution)
+      this.smokeDrawn = half
       if (half) this.halfResolutionPass(encoder, effects)
       this.effectsPass(encoder, effects, half)
     }
@@ -1230,6 +1237,14 @@ export class Renderer {
       colorFormat: HDR_FORMAT,
       depthFormat: DEPTH_FORMAT,
       targetsVersion: this.targetsVersion,
+      lights: {
+        records: this.lights.records,
+        cells: this.lights.cells,
+        originX: this.lightGrid.originX,
+        originZ: this.lightGrid.originZ,
+        perCell: 1 / LIGHT_CELL,
+        count: this.lightGrid.count,
+      },
     }
   }
 
@@ -1496,6 +1511,7 @@ export class Renderer {
     o[23] = scene.adaptation ? 1 : 0
     o[24] = this.beamsDrawn ? 1 : 0
     o[25] = this.sharpen
+    o[26] = this.smokeDrawn ? 1 : 0
     this.device.queue.writeBuffer(this.outputUniform, 0, o)
     const pass = encoder.beginRenderPass({
       label: 'output',

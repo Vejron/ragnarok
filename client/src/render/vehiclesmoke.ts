@@ -5,8 +5,6 @@ import type { FxWorld } from './tyres'
 /** Past this the plume is not drawn at all, metres; past HALF_RANGE it is thinned. */
 const RANGE = 140
 const HALF_RANGE = 70
-/** A steady breeze that every plume leans with, m/s. */
-const WIND = new Vector3(1.1, 0, 0.5)
 
 const rand = (low: number, high: number) => low + Math.random() * (high - low)
 const pick = <T>(items: readonly T[]) => items[Math.floor(Math.random() * items.length)]!
@@ -76,10 +74,12 @@ export function damageSmoke(
     world.smoke.spawn({
       position: [x + out.x * 0.15 + rand(-0.12, 0.12) - velocity.x * lag, y + out.y * 0.15 + rand(-0.05, 0.12), z + out.z * 0.15 + rand(-0.12, 0.12) - velocity.z * lag],
       velocity: [
-        velocity.x * 0.35 + out.x * 0.8 + WIND.x * rand(0.4, 1) + rand(-0.5, 0.5),
+        velocity.x * 0.35 + out.x * 0.8 + rand(-0.5, 0.5),
         out.y * 0.8 + rand(1.4, 2.6) + level * 1.8,
-        velocity.z * 0.35 + out.z * 0.8 + WIND.z * rand(0.4, 1) + rand(-0.5, 0.5),
+        velocity.z * 0.35 + out.z * 0.8 + rand(-0.5, 0.5),
       ],
+      turbulence: 0.8,
+      wind: 1,
       life: rand(2.2, 3.2) + level * 1.6,
       size: [rand(0.25, 0.4), rand(1.6, 2.4) + level * 1.8 + Math.min(1, speed / 15) * 0.4],
       color: pick(palette),
@@ -136,7 +136,9 @@ export function damageSmoke(
     for (let i = due((2 + 8 * fresh) * budget, dt); i > 0; i--) {
       world.glow.spawn({
         position: [x + rand(-0.15, 0.15), y + rand(0, 0.2), z + rand(-0.15, 0.15)],
-        velocity: [WIND.x * rand(0.3, 1) + rand(-0.8, 0.8), rand(1.5, 4), WIND.z * rand(0.3, 1) + rand(-0.8, 0.8)],
+        velocity: [rand(-0.8, 0.8), rand(1.5, 4), rand(-0.8, 0.8)],
+        turbulence: 1.2,
+        wind: 1,
         life: rand(1.2, 2.4),
         size: [0.06, 0.015],
         color: 0xffb04a,
@@ -175,7 +177,9 @@ export function rocketTrail(
     const along = 0.5 + rand(0, speed * dt)
     world.smoke.spawn({
       position: [position[0] + back[0] * along + rand(-0.05, 0.05), position[1] + back[1] * along + rand(-0.05, 0.05), position[2] + back[2] * along + rand(-0.05, 0.05)],
-      velocity: [WIND.x * rand(0.3, 1) + rand(-0.3, 0.3), rand(0.2, 0.7), WIND.z * rand(0.3, 1) + rand(-0.3, 0.3)],
+      velocity: [rand(-0.3, 0.3), rand(0.2, 0.7), rand(-0.3, 0.3)],
+      turbulence: 0.7,
+      wind: 1,
       life: rand(1.8, 2.8),
       size: [rand(0.2, 0.3), rand(1.0, 1.6)],
       color: pick(WHITE),

@@ -83,6 +83,23 @@ const WAYS = [
   ['impostors', treesAt(0.1)],
   // The trees' levels twice as far out.
   ['trees2x', treesAt(2)],
+  // Not something turned off but something added, so its number is how much it costs, negated: a
+  // volley of four tank guns firing across the view 14 m ahead and one at the camera's own muzzle,
+  // six tenths of a second on, when the smoke has rolled out. The undo runs every particle to its end.
+  ['gunsmoke', `(async () => {
+    const { CANNON } = await import('/src/render/gunfire.ts')
+    const c = g.scene.camera, p = c.position, f = c.getWorldDirection({ x: 0, y: 0, z: 0 })
+    const fl = Math.hypot(f.x, f.z) || 1, fx = f.x / fl, fz = f.z / fl, rx = -fz, rz = fx
+    const random = Math.random
+    let seed = 7
+    Math.random = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296
+    const shot = (ahead, side, up) => g.effects.gunfire({ x: p.x + fx * ahead + rx * side, y: p.y + up, z: p.z + fz * ahead + rz * side }, { x: rx, y: 0.05, z: rz }, CANNON, 1, g.fxWorld)
+    for (const side of [-9, -3, 3, 9]) shot(14, side, 0.5)
+    shot(3, -1.5, -0.3)
+    Math.random = random
+    for (let k = 0; k < 6; k++) { g.smoke.update(0.1); g.glow.update(0.1); g.scene.render() }
+    return () => { g.smoke.update(100); g.glow.update(100); g.scene.render(); g.scene.render() }
+  })()`],
 ]
 
 // ---- Vite and Chrome ----
@@ -274,7 +291,7 @@ for (const name of views) {
     for (const [variant, off] of variants) {
       const ms = await evaluate(`(async () => {
         const g = window.__game, r = g.scene.renderer, e = g.scene.scene
-        const undo = ${off ?? 'null'}
+        const undo = await ${off ?? 'null'}
         try { return await window.__bench.time(${frames}) } finally { undo?.() }
       })()`)
       times[variant].push(ms)
@@ -286,7 +303,7 @@ for (const name of views) {
   const drawn = {}
   if (flag('shoot')) {
     for (const [variant, off] of variants.slice(1)) {
-      await evaluate(`(() => { const g = window.__game, r = g.scene.renderer, e = g.scene.scene; window.__undo = ${off}; return 1 })()`)
+      await evaluate(`(() => { const g = window.__game, r = g.scene.renderer, e = g.scene.scene; window.__undo = ${off}; return Promise.resolve(window.__undo).then((undo) => { window.__undo = undo; return 1 }) })()`)
       await shoot(`${label}-${name}-${variant}`)
       drawn[variant] = await evaluate('window.__bench.stats()')
       await evaluate('(() => { window.__undo?.(); return 1 })()')

@@ -8,8 +8,6 @@ type V = { x: number; y: number; z: number }
 const RANGE = 280
 /** Further than this, metres, a missile's exhaust is thinned. */
 const THIN_RANGE = 140
-/** The breeze the smoke leans with, m/s: the vehicles' smoke's wind (`vehiclesmoke.ts`). */
-const WIND = [1.1, 0.5] as const
 
 const WHITE = [0xe2e2de, 0xd0d0cc, 0xbcbcb8] as const
 const GREY = [0x9a9895, 0x858380, 0x74726f] as const
@@ -55,7 +53,7 @@ export function missileLaunch(world: FxWorld, mouth: V, up: V, surface: number |
       const turn = rand(0, Math.PI * 2), out = rand(2, 9)
       world.smoke.spawn({
         position: from(at, [Math.cos(turn) * rand(0, 0.8), rand(0.1, 0.6), Math.sin(turn) * rand(0, 0.8)]),
-        velocity: [Math.cos(turn) * out + WIND[0], rand(0.5, 5), Math.sin(turn) * out + WIND[1]],
+        velocity: [Math.cos(turn) * out, rand(0.5, 5), Math.sin(turn) * out], turbulence: 0.8, wind: 1,
         life: rand(2.5, 5), size: [rand(0.8, 1.4), rand(3.5, 6)], color: pick(WHITE), colorEnd: 0xb8bcbc, alpha: rand(0.5, 0.7),
         gravity: -0.5, drag: 1.8, shape: 'puff', spin: [-0.7, 0.7],
       })
@@ -101,7 +99,7 @@ export function missileLaunch(world: FxWorld, mouth: V, up: V, surface: number |
     const turn = (i / 30) * Math.PI * 2 + rand(-0.2, 0.2)
     const v = off(rand(0.2, 1.4), rand(3, 10), turn)
     world.smoke.spawn({
-      position: from(mouth, off(rand(0.1, 0.4), rand(0.2, 0.6), turn)), velocity: [v[0] + WIND[0], v[1], v[2] + WIND[1]],
+      position: from(mouth, off(rand(0.1, 0.4), rand(0.2, 0.6), turn)), velocity: v, turbulence: 0.8, wind: 1,
       life: rand(3.5, 6.5), size: [rand(0.7, 1.1), rand(3.5, 6)], color: pick(i % 3 ? WHITE : GREY), colorEnd: 0x8c8c88, alpha: rand(0.5, 0.7),
       gravity: -0.3, drag: 1.5, shape: 'puff', spin: [-0.7, 0.7],
     })
@@ -110,7 +108,7 @@ export function missileLaunch(world: FxWorld, mouth: V, up: V, surface: number |
   for (let i = 0; i < 16; i++) {
     const v = off(rand(2, 11), rand(0, 1.2), rand(0, Math.PI * 2))
     world.smoke.spawn({
-      position: from(mouth, off(rand(0.3, 2.5), rand(0, 0.4), rand(0, Math.PI * 2))), velocity: [v[0] + WIND[0], v[1], v[2] + WIND[1]],
+      position: from(mouth, off(rand(0.3, 2.5), rand(0, 0.4), rand(0, Math.PI * 2))), velocity: v, turbulence: 0.8, wind: 1,
       life: rand(3, 5.5), size: [rand(0.6, 1), rand(3, 4.8)], color: pick(WHITE), colorEnd: 0x8c8c88, alpha: rand(0.5, 0.65),
       gravity: -0.4, drag: 1.3, shape: 'puff', spin: [-0.7, 0.7],
     })
@@ -128,7 +126,7 @@ export function tubeSmoke(world: FxWorld, mouth: V, up: V, heat: number, dt: num
     const speed = rand(0.8, 2 + 5 * heat)
     world.smoke.spawn({
       position: [mouth.x + rand(-0.15, 0.15), mouth.y + 0.1, mouth.z + rand(-0.15, 0.15)],
-      velocity: [up.x * speed + WIND[0] * rand(0.3, 1) + rand(-0.4, 0.4), up.y * speed, up.z * speed + WIND[1] * rand(0.3, 1) + rand(-0.4, 0.4)],
+      velocity: [up.x * speed + rand(-0.4, 0.4), up.y * speed, up.z * speed + rand(-0.4, 0.4)], turbulence: 0.9, wind: 1,
       life: rand(1.8, 3.2), size: [rand(0.3, 0.45), rand(1.3, 2.4)], color: pick(heat > 0.5 ? WHITE : GREY), colorEnd: 0x6c6c69, alpha: 0.25 + 0.3 * heat,
       gravity: -0.5, drag: 1.2, shape: 'puff', spin: [-0.8, 0.8],
     })
@@ -169,7 +167,7 @@ export function missileExhaust(world: FxWorld, position: readonly [number, numbe
   for (let i = 0; i < puffs; i++) {
     world.smoke.spawn({
       position: behind(0.4 + rand(0, speed * dt), 0.06 + 0.1 * boost),
-      velocity: [WIND[0] * rand(0.3, 1) + rand(-0.4, 0.4) + back[0] * 2 * boost, rand(0.2, 0.7) + back[1] * 2 * boost, WIND[1] * rand(0.3, 1) + rand(-0.4, 0.4) + back[2] * 2 * boost],
+      velocity: [rand(-0.4, 0.4) + back[0] * 2 * boost, rand(0.2, 0.7) + back[1] * 2 * boost, rand(-0.4, 0.4) + back[2] * 2 * boost], turbulence: 0.7, wind: 1,
       life: rand(2.2, 3.4) + 1.5 * boost, size: [rand(0.25, 0.35) + 0.2 * boost, rand(1.3, 2) + 1.4 * boost], color: pick(WHITE), colorEnd: 0x8c8c88, alpha: 0.5 + 0.15 * boost,
       gravity: -0.2, drag: 0.8, shape: 'puff', spin: [-0.8, 0.8],
     })

@@ -37,11 +37,13 @@ const rider = (vehicle: number, seat: number): Components => ({ kind: { kind: 0 
 /** Vehicles drawn into stand-ins that record what is heard, flashed and thrown. */
 function harness(driven: Driven | null = null) {
   const log: string[] = []
+  /** The heat of each barrel that smoked, frame by frame. */
+  const smoking: number[] = []
   const fx = { smoke: new Particles(500), glow: new Particles(100, true), skids: new Skidmarks(100), groundAt: () => 0, surfaceAt: () => 0, camera: new Vec3(0, 5, 10) }
   const world: VehicleWorld = {
     root: new Group(),
     sounds: { begin() {}, end() {}, engine() {}, drop: (id: number) => log.push(`drop ${id}`), thud() {}, footstep() {}, cannon: () => log.push('cannon'), laser() {}, machineGun() {} } as never,
-    effects: { muzzleFlash: () => log.push('flash'), muzzle() {} } as never,
+    effects: { gunfire: (_m: unknown, _d: unknown, _g: unknown, fired: number) => log.push(fired === 1 ? 'flash' : `flash of ${fired}`), barrelSmoke: (_m: unknown, _d: unknown, heat: number) => smoking.push(heat), muzzle() {} } as never,
     rounds: { fire() {} } as never,
     debris: { throw: () => log.push('turret thrown') } as never,
     lights: { flash: (_x: number, _y: number, _z: number, light: { color: number }) => log.push(light.color === 0xff7a24 ? 'fire' : 'muzzle light') } as never,
@@ -60,7 +62,7 @@ function harness(driven: Driven | null = null) {
   machines.add(new Turrets(world, vehicles))
   const frame = (tick: number, localId: number | null = 7): Frame => ({ tick, dt: 1 / 60, now: tick * 33, localId })
   const draw = (tick: number) => machines.run(store.sampleAll(tick), frame(tick))
-  return { log, store, vehicles, wear, draw, world, fx }
+  return { log, smoking, store, vehicles, wear, draw, world, fx }
 }
 
 describe('the vehicle presenters', () => {
@@ -83,6 +85,32 @@ describe('the vehicle presenters', () => {
     draw(12)
     // The local player (7) mans the gun, so the HUD's reload starts.
     expect(log).toEqual(['flash', 'muzzle light', 'cannon', 'own shot'])
+  })
+
+  it('a gun that has fired smokes from its barrel for some seconds, less and less, and then stops', () => {
+    const { smoking, store, draw } = harness()
+    store.push(10, new Map([[3, tank(1, { shots: 5 })]]), true)
+    draw(10)
+    expect(smoking).toEqual([])
+    store.push(12, new Map([[3, tank(1, { shots: 6 })]]), true)
+    draw(12)
+    expect(smoking).toEqual([1])
+    // A tank's barrel smokes for five seconds: 300 frames of a sixtieth.
+    for (let frame = 0; frame < 400; frame++) draw(12)
+    expect(smoking.length).toBeGreaterThan(290)
+    expect(smoking.length).toBeLessThan(310)
+    expect(smoking[smoking.length - 1]).toBeLessThan(0.02)
+    expect(smoking.every((heat, i) => i === 0 || heat < smoking[i - 1]!)).toBe(true)
+  })
+
+  it('a gun whose counter moved by several between two frames fired them all', () => {
+    const { log, store, draw } = harness()
+    store.push(10, new Map([[3, tank(1, { shots: 254 })]]), true)
+    draw(10)
+    // The counter is a byte, and wraps.
+    store.push(12, new Map([[3, tank(1, { shots: 1 })]]), true)
+    draw(12)
+    expect(log).toEqual(['flash of 3', 'muzzle light', 'cannon'])
   })
 
   it('throw a shot-off turret clear once, and smoke and burn as the hull dies', () => {

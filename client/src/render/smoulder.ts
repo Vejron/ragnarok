@@ -8,8 +8,6 @@ export const SMOULDER_MAX = 16
 export const SMOULDER_MIN_RADIUS = 3
 /** Seconds between puffs of a crater just dug, and of one nearly cold. */
 const WISP_EVERY = [0.08, 0.45] as const
-/** The drift the smoke leans with, m/s: the vehicles' smoke's wind (`vehiclesmoke.ts`). */
-const WIND = [1.1, 0.5] as const
 /** Soot dark to grey, picked per puff so the column is not one flat colour. */
 const SMOKE = [0x2e2a26, 0x3d3833, 0x55504a] as const
 
@@ -60,7 +58,9 @@ export class Smoulders {
       const r = s.radius * 0.25
       smoke.spawn({
         position: [s.x + rand(-r, r), s.y + 0.3, s.z + rand(-r, r)],
-        velocity: [WIND[0] * rand(0.3, 1) + rand(-0.4, 0.4), rand(1.2, 2.0) + heat * 1.5, WIND[1] * rand(0.3, 1) + rand(-0.4, 0.4)],
+        velocity: [rand(-0.4, 0.4), rand(1.2, 2.0) + heat * 1.5, rand(-0.4, 0.4)],
+        turbulence: 0.7,
+        wind: 1,
         life: rand(4, 6) * (0.6 + 0.4 * heat),
         size: [0.4 + s.radius * 0.06, rand(1.8, 3.0) * (0.5 + 0.5 * heat) + s.radius * 0.15],
         color: SMOKE[Math.floor(Math.random() * SMOKE.length)]!,

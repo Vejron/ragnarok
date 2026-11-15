@@ -132,14 +132,18 @@ const frame = (now: number) => {
     }
   }
   // Two smoke columns at 30 puffs a second, the fraction carried between frames as the game's burning wrecks do.
+  // They churn (`turbulence`), lean with the wind (`wind`) and hang before they thin (`hold`), and a
+  // flash beside the first now and then lights its smoke.
   smokeCarry += 30 * dt
   const puffs = Math.floor(smokeCarry)
   smokeCarry -= puffs
+  particles.setWind(1.1, 0, 0.5)
   if (puffs) for (const [x, z] of [[-15, 10], [18, -12]] as const) {
     particles.emit({ count: puffs, position: [x, height(x, z) + 0.5, z], spread: 0.6,
-      velocity: [1.2, 2.2, 0.4], jitter: [0.4, 0.5, 0.4], life: [2.2, 4.8], size: [0.8, 3.6], color: 0x333333, color2: 0x555555,
-      alpha: 0.5, gravity: -0.6, drag: 0.4 })
+      velocity: [0, 2.2, 0], jitter: [0.4, 0.5, 0.4], life: [2.2, 4.8], size: [0.8, 3.6], color: 0x333333, color2: 0x555555,
+      alpha: 0.5, hold: true, gravity: -0.6, drag: 0.4, turbulence: 0.9, wind: 1, shape: 'puff', spin: [-0.6, 0.6] })
   }
+  if (Math.random() < 0.02) scene.lights.flash(-13, height(-13, 10) + 3, 10, { color: 0xffc060, intensity: 8, radius: 20, life: 0.4 })
   if (stress) {
     // Average life 2 s: emit stress/2 per second.
     carry += (stress / 2) * dt

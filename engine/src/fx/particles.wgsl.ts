@@ -1,4 +1,5 @@
 import { COMMON_WGSL } from '../materials/common.wgsl'
+import { LIGHT_CELL_MAX, LIGHT_GRID } from '../scene/lightgrid'
 
 /** Per-particle state, shared by the compute and render shaders. */
 const PARTICLE_STRUCT = /* wgsl */ `
@@ -15,8 +16,10 @@ struct Particle {
   state: vec4u,
   // linear rgb at death, unused.
   colorEnd: vec4f,
-  // stretch (metres of length per m/s of speed), HDR glow multiplier, unused, unused.
+  // stretch (metres of length per m/s of speed), HDR glow multiplier, turbulence (m/s of swirl), the share of the wind that carries it.
   look: vec4f,
+  // The light the frame's point lights throw on it (linear rgb), unused.
+  lit: vec4f,
 }
 
 const PF_BOUNCE = 1u;
@@ -25,6 +28,7 @@ const PF_NO_FOG = 4u;
 const PF_PUFF = 8u;
 const PF_DROP = 16u;
 const PF_GLARE = 32u;
+const PF_HOLD = 64u;
 `
 
 /**
@@ -50,11 +54,12 @@ struct Command {
   e: vec4f,
   // count, first particle index, seed, flags.
   f: vec4u,
+  // rgb, and the share of the wind that carries it.
   colorA: vec4f,
   colorB: vec4f,
   // colour at death, HDR glow multiplier.
   g: vec4f,
-  // spin min, spin max (radians per second), stretch, unused.
+  // spin min, spin max (radians per second), stretch, turbulence (m/s).
   h: vec4f,
 }
 
@@ -65,6 +70,10 @@ struct Sim {
   capacity: u32,
   // ground origin x, origin z, cell size, on (0 or 1).
   ground: vec4f,
+  // The wind (m/s), and the seconds simulated so far.
+  wind: vec4f,
+  // The light grid's corner (world x, z), 1 / its cell size, the number of lights listed.
+  lights: vec4f,
 }
 
 struct Counters {
@@ -79,6 +88,12 @@ struct Counters {
 @group(0) @binding(5) var<storage, read_write> alive: array<u32>;
 @group(0) @binding(6) var<storage, read> commands: array<Command>;
 @group(0) @binding(7) var groundHeights: texture_2d<f32>;
+// The frame's point lights and their grid over the ground (scene/lightgrid.ts), as the scene shaders read them.
+@group(0) @binding(8) var<storage, read> lightRecords: array<vec4f>;
+@group(0) @binding(9) var<storage, read> lightCells: array<u32>;
+
+const LIGHT_GRID = ${LIGHT_GRID}i;
+const LIGHT_CELL_MAX = ${LIGHT_CELL_MAX}u;
 
 fn pcg(v: u32) -> u32 {
   let state = v * 747796405u + 2891336453u;
@@ -139,7 +154,8 @@ fn emit(@builtin(global_invocation_id) id: vec3u) {
   let rotation = random(seed, k, 13u) * 6.2831853;
   p.state = vec4u(1u, c.f.w, bitcast<u32>(spin), bitcast<u32>(rotation));
   p.colorEnd = vec4f(c.g.rgb, 0.0);
-  p.look = vec4f(c.h.z, c.g.w, 0.0, 0.0);
+  p.look = vec4f(c.h.z, c.g.w, c.h.w, c.colorA.w);
+  p.lit = vec4f(0.0);
   particles[slot] = p;
 }
 
@@ -162,6 +178,46 @@ fn groundHeight(x: f32, z: f32) -> f32 {
   return mix(mix(h00, h10, f.x), mix(h01, h11, f.x), f.y);
 }
 
+// The air's own churning at a point, a unit or so in size: two sizes of eddy, each a flow with no
+// divergence (so smoke carried by it rolls and folds without bunching up), drifting as time passes.
+fn swirl(p: vec3f, time: f32) -> vec3f {
+  let a = p * 1.7 + vec3f(0.31, 0.47, 0.23) * time;
+  let b = p * 4.3 + vec3f(0.9, 1.3, 0.7) * time;
+  // Each part is free of its own axis, which is what keeps the flow from gathering or thinning.
+  return vec3f(sin(a.z) + cos(a.y), sin(a.x) + cos(a.z), sin(a.y) + cos(a.x)) * 0.5
+    + vec3f(cos(b.z) - sin(b.y), cos(b.x) - sin(b.z), cos(b.y) - sin(b.x)) * 0.25;
+}
+
+// The light the frame's point and spot lights throw on smoke at \`world\`: all of each, as smoke
+// scatters light from any side.
+fn lightAt(world: vec3f) -> vec3f {
+  if (sim.lights.w < 0.5) {
+    return vec3f(0.0);
+  }
+  let cell = vec2i(floor((world.xz - sim.lights.xy) * sim.lights.z));
+  if (any(cell < vec2i(0)) || any(cell >= vec2i(LIGHT_GRID))) {
+    return vec3f(0.0);
+  }
+  let packed = lightCells[u32(cell.y * LIGHT_GRID + cell.x)];
+  let first = u32(LIGHT_GRID * LIGHT_GRID) + (packed >> 8u);
+  let count = min(packed & 0xffu, LIGHT_CELL_MAX);
+  var sum = vec3f(0.0);
+  for (var k = 0u; k < count; k++) {
+    let i = lightCells[first + k] * 3u;
+    let at = lightRecords[i];
+    let to = at.xyz - world;
+    let d = length(to);
+    if (d < at.w) {
+      let color = lightRecords[i + 1u];
+      let spot = lightRecords[i + 2u];
+      let fall = 1.0 - d / at.w;
+      let cone = smoothstep(color.w, spot.w, dot(-to / max(d, 1e-3), spot.xyz));
+      sum += color.rgb * fall * fall * cone;
+    }
+  }
+  return sum;
+}
+
 @compute @workgroup_size(64)
 fn simulate(@builtin(global_invocation_id) id: vec3u) {
   let i = id.x;
@@ -180,11 +236,16 @@ fn simulate(@builtin(global_invocation_id) id: vec3u) {
     deadList[u32(d)] = i;
     return;
   }
-  // The same integration as the CPU pool it replaces: drag as a share of speed per second, then gravity.
+  // Drag is a share per second of its speed through the air, which moves with the wind as far as this
+  // particle is carried by it; then gravity. The air's churning carries it without changing its speed.
+  let air = sim.wind.xyz * p.look.w;
   let keep = max(0.0, 1.0 - p.size.w * dt);
-  var v = p.velLife.xyz * keep;
+  var v = air + (p.velLife.xyz - air) * keep;
   v.y -= p.size.z * dt;
   var pos = p.posAge.xyz + v * dt;
+  if (p.look.z > 0.0) {
+    pos += swirl(pos, sim.wind.w) * p.look.z * dt;
+  }
   if ((p.state.y & PF_BOUNCE) != 0u) {
     let ground = groundHeight(pos.x, pos.z) + 0.02;
     if (pos.y < ground) {
@@ -194,6 +255,9 @@ fn simulate(@builtin(global_invocation_id) id: vec3u) {
   }
   particles[i].posAge = vec4f(pos, age);
   particles[i].velLife = vec4f(v, p.velLife.w);
+  if ((p.state.y & (PF_ADDITIVE | PF_PUFF)) == PF_PUFF) {
+    particles[i].lit = vec4f(lightAt(pos), 0.0);
+  }
   let blend = select(0u, 1u, (p.state.y & PF_ADDITIVE) != 0u);
   let n = atomicAdd(&args[blend * 4u + 1u], 1u);
   alive[blend * sim.capacity + n] = i;
@@ -228,6 +292,9 @@ struct Out {
   @location(4) size: f32,
   @location(5) @interpolate(flat) seed: f32,
   @location(6) rot: vec2f,
+  // The point lights' light on it, and the way to the sun in the view's frame with how much of it shades the puff.
+  @location(7) lit: vec3f,
+  @location(8) @interpolate(flat) sun: vec4f,
 }
 
 @vertex
@@ -271,6 +338,11 @@ fn vs(@builtin(vertex_index) v: u32, @builtin(instance_index) instance: u32) -> 
   let cover = abs(top.y - centre.y) / max(centre.w, 0.01);
   let near = 1.0 - smoothstep(0.7, 1.4, cover);
   var fade = min(1.0, t * 10.0) * (1.0 - t);
+  if ((p.state.y & PF_HOLD) != 0u) {
+    // Smoke that hangs: there within a tenth of a second, as thick as it came for the first half of its
+    // life, and thinning away over the second.
+    fade = min(1.0, p.posAge.w * 10.0) * (1.0 - smoothstep(0.5, 1.0, t));
+  }
   if ((p.state.y & PF_DROP) != 0u) {
     // Liquid stays whole all the way: it is gone only where it lands, at the end of its life.
     fade = 1.0 - smoothstep(0.92, 1.0, t);
@@ -281,8 +353,14 @@ fn vs(@builtin(vertex_index) v: u32, @builtin(instance_index) instance: u32) -> 
   out.viewDepth = -(frame.view * vec4f(p.posAge.xyz, 1.0)).z;
   out.flags = p.state.y;
   out.size = size;
+  out.lit = p.lit.rgb;
+  // By night the ground light has already darkened the smoke, and there is no side to light.
+  out.sun = vec4f((frame.view * vec4f(frame.sunDir.xyz, 0.0)).xyz, clamp(frame.sunDir.y * 5.0, 0.0, 1.0));
   return out;
 }
+
+// How much of a point light's strength shows on the smoke it reaches.
+const LIT = 0.25;
 
 // View distance of a reversed-depth buffer value.
 fn linearDepth(d: f32) -> f32 {
@@ -308,6 +386,7 @@ fn noise(p: vec2f) -> f32 {
 @fragment
 fn fs(in: Out) -> @location(0) vec4f {
   var edge = smoothstep(0.5, 0.15, length(in.uv - 0.5));
+  var shade = vec3f(1.0);
   if ((in.flags & PF_PUFF) != 0u) {
     // Billowy edge: noise in the particle's own (spinning) frame, so each puff is a different cloud.
     let q = in.uv - 0.5;
@@ -319,6 +398,15 @@ fn fs(in: Out) -> @location(0) vec4f {
     }
     let n = noise(r * 7.0 + in.seed);
     edge = smoothstep(0.5, 0.12, d + (n - 0.5) * 0.34);
+    if ((in.flags & PF_ADDITIVE) == 0u) {
+      // Smoke has a body: a ball's normal over the puff, lumpy with its noise, lit on the side toward the
+      // sun and dark away from it, with its thin rim bright when the sun is behind it.
+      let s = vec2f(q.x * in.rot.x - q.y * in.rot.y, q.x * in.rot.y + q.y * in.rot.x) * 2.0;
+      let nz = sqrt(max(1.0 - dot(s, s), 0.0));
+      let toward = dot(vec3f(s, nz), in.sun.xyz) + (n - 0.5) * 0.5;
+      let rim = (1.0 - nz) * (1.0 - nz) * max(-in.sun.z, 0.0);
+      shade = vec3f(mix(1.0, 0.5 + 0.7 * clamp(toward * 0.5 + 0.5, 0.0, 1.0) + rim * 0.5, in.sun.w)) + in.lit * LIT;
+    }
   }
   var shine = 0.0;
   if ((in.flags & PF_DROP) != 0u) {
@@ -339,7 +427,7 @@ fn fs(in: Out) -> @location(0) vec4f {
   // Soft particles: fade out where the billboard nears what is behind it instead of cutting into it.
   ${sceneDepth}
   alpha *= clamp((scene - in.viewDepth) / max(in.size * 0.5, 0.05), 0.0, 1.0);
-  var rgb = in.color.rgb + frame.sunColor.rgb * shine * 0.15;
+  var rgb = in.color.rgb * shade + in.lit * LIT * 0.08 + frame.sunColor.rgb * shine * 0.15;
   if ((in.flags & PF_NO_FOG) == 0u && frame.fog.z > 0.0) {
     let f = smoothstep(frame.fog.x, frame.fog.y, in.viewDepth);
     if ((in.flags & PF_ADDITIVE) != 0u) {

@@ -183,6 +183,8 @@ export function explosion(world: FxWorld, debris: Debris, at: Vector3, radius: n
       colorEnd: profile.wreck ? 0x4a4a4a : 0x7a7a7a,
       shape: 'puff',
       spin: [-0.6, 0.6],
+      turbulence: 1,
+      wind: 1,
       alpha: 0.55,
       gravity: -0.8,
       drag: 0.8,

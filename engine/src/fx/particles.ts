@@ -16,6 +16,8 @@ export interface ParticleSpec {
   color: number | Color
   /** Opacity at birth; it fades in over the first tenth of its life and out over the rest. */
   alpha: number
+  /** Keeps that opacity through the first half of its life and thins away over the second: smoke that hangs. */
+  hold?: boolean
   /** Metres per second² pulling it down; negative floats it up. */
   gravity?: number
   /** Share of its speed lost per second. */
@@ -34,6 +36,10 @@ export interface ParticleSpec {
   stretch?: number
   /** Multiplies the colour (HDR), so values over 1 bloom. */
   glow?: number
+  /** Metres per second the air's churning carries it about: smoke that rolls and curls instead of spreading in straight lines. */
+  turbulence?: number
+  /** The share of the wind (`setWind`) that carries it, 0 to 1: its drag is against that moving air. */
+  wind?: number
   /**
    * `puff` gives alpha-blended smoke a billowy, noise-eaten edge instead of a smooth disc; `drop` is a
    * bead of liquid, crisp-edged with a glint, that stays whole until the very end of its life; `glare`
@@ -62,13 +68,14 @@ export interface EmitSpec extends Omit<ParticleSpec, 'life'> {
 /** Floats per emit command; matches `Command` in particles.wgsl. */
 const COMMAND_FLOATS = 40
 /** Bytes in a particle; matches `Particle`. */
-const PARTICLE_BYTES = 112
+const PARTICLE_BYTES = 128
 const PF_BOUNCE = 1
 const PF_ADDITIVE = 2
 const PF_NO_FOG = 4
 const PF_PUFF = 8
 const PF_DROP = 16
 const PF_GLARE = 32
+const PF_HOLD = 64
 /** Frames between reads of the live count. */
 const COUNT_EVERY = 10
 
@@ -96,6 +103,9 @@ export class ParticleSystem extends Effect {
   private readonly color = new Color()
   private readonly color2 = new Color()
   private readonly colorEnd = new Color()
+  private readonly wind = [0, 0, 0]
+  /** Seconds simulated so far: the air's churning drifts with it. */
+  private time = 0
   private ground: { data: Float32Array<ArrayBuffer>; width: number; height: number; x0: number; z0: number; cell: number; version: number } | null = null
   private groundVersion = 0
   private gpu: ParticleGpu | null = null
@@ -109,6 +119,13 @@ export class ParticleSystem extends Effect {
   /** Advances the simulation by `dt` seconds at the next render. */
   update(dt: number) {
     this.dt = dt
+  }
+
+  /** The wind, m/s: what carries the particles that have a `wind` share. */
+  setWind(x: number, y: number, z: number) {
+    this.wind[0] = x
+    this.wind[1] = y
+    this.wind[2] = z
   }
 
   /** One particle, exactly as specified. */
@@ -166,10 +183,11 @@ export class ParticleSystem extends Effect {
     w[o + 20] = count
     w[o + 21] = this.spawnCount
     w[o + 22] = this.seed = (this.seed * 1664525 + 1013904223) >>> 0
-    w[o + 23] = (spec.bounce ? PF_BOUNCE : 0) | (spec.blend === 'additive' ? PF_ADDITIVE : 0) | (spec.fog === false ? PF_NO_FOG : 0) | (spec.shape === 'puff' ? PF_PUFF : 0) | (spec.shape === 'drop' ? PF_DROP : 0) | (spec.shape === 'glare' ? PF_GLARE : 0)
+    w[o + 23] = (spec.bounce ? PF_BOUNCE : 0) | (spec.blend === 'additive' ? PF_ADDITIVE : 0) | (spec.fog === false ? PF_NO_FOG : 0) | (spec.shape === 'puff' ? PF_PUFF : 0) | (spec.shape === 'drop' ? PF_DROP : 0) | (spec.shape === 'glare' ? PF_GLARE : 0) | (spec.hold ? PF_HOLD : 0)
     const a = toLinear(spec.color, this.color)
     const b = toLinear(color2, this.color2)
     c[o + 24] = a.r; c[o + 25] = a.g; c[o + 26] = a.b
+    c[o + 27] = spec.wind ?? 0
     c[o + 28] = b.r; c[o + 29] = b.g; c[o + 30] = b.b
     const e = toLinear(spec.colorEnd ?? spec.color, this.colorEnd)
     c[o + 32] = e.r; c[o + 33] = e.g; c[o + 34] = e.b
@@ -178,6 +196,7 @@ export class ParticleSystem extends Effect {
     c[o + 36] = typeof spin === 'number' ? spin : spin[0]
     c[o + 37] = typeof spin === 'number' ? spin : spin[1]
     c[o + 38] = spec.stretch ?? 0
+    c[o + 39] = spec.turbulence ?? 0
     this.commandCount++
     this.spawnCount += count
   }
@@ -185,7 +204,7 @@ export class ParticleSystem extends Effect {
   prepare(ctx: EffectContext, encoder: GPUCommandEncoder) {
     // A new device (the old one was lost) starts the pool afresh.
     if (this.gpu && this.gpu.device !== ctx.device) this.gpu = null
-    const gpu = (this.gpu ??= new ParticleGpu(ctx.device, this.capacity))
+    const gpu = (this.gpu ??= new ParticleGpu(ctx.device, this.capacity, ctx.lights))
     const device = ctx.device
     if (this.ground && this.ground.version !== gpu.groundVersion) gpu.uploadGround(this.ground)
     const spawn = Math.min(this.spawnCount, this.capacity)
@@ -210,6 +229,15 @@ export class ParticleSystem extends Effect {
       sim[6] = this.ground.cell
       sim[7] = 1
     }
+    this.time += this.dt
+    sim[8] = this.wind[0]!
+    sim[9] = this.wind[1]!
+    sim[10] = this.wind[2]!
+    sim[11] = this.time
+    sim[12] = ctx.lights.originX
+    sim[13] = ctx.lights.originZ
+    sim[14] = ctx.lights.perCell
+    sim[15] = ctx.lights.count
     device.queue.writeBuffer(gpu.simBuffer, 0, sim)
     // Instance counts start at zero; the simulation counts the live particles back in.
     device.queue.writeBuffer(gpu.argsBuffer, 0, gpu.argsReset)
@@ -255,7 +283,7 @@ function toLinear(c: number | Color, out: Color): Color {
 
 /** The GPU half of a ParticleSystem, made on first use. */
 class ParticleGpu {
-  readonly simData = new Float32Array(8)
+  readonly simData = new Float32Array(16)
   readonly simBuffer: GPUBuffer
   readonly argsBuffer: GPUBuffer
   readonly argsReset: Uint32Array<ArrayBuffer>
@@ -277,14 +305,14 @@ class ParticleGpu {
   private pendingCount: { buffer: GPUBuffer; done: (dead: number) => void } | null = null
   private frame = 0
 
-  constructor(readonly device: GPUDevice, private readonly capacity: number) {
+  constructor(readonly device: GPUDevice, private readonly capacity: number, private readonly lights: EffectContext['lights']) {
     const storage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
     this.particles = device.createBuffer({ label: 'particles', size: capacity * PARTICLE_BYTES, usage: storage })
     this.deadList = device.createBuffer({ label: 'particle dead list', size: capacity * 4, usage: storage })
     this.counters = device.createBuffer({ label: 'particle counters', size: 16, usage: storage | GPUBufferUsage.COPY_SRC })
     this.alive = device.createBuffer({ label: 'particle alive list', size: capacity * 2 * 4, usage: storage })
     this.argsBuffer = device.createBuffer({ label: 'particle draw args', size: 32, usage: storage | GPUBufferUsage.INDIRECT })
-    this.simBuffer = device.createBuffer({ label: 'particle sim', size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
+    this.simBuffer = device.createBuffer({ label: 'particle sim', size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
     this.commandBuffer = this.makeCommandBuffer(256)
     this.groundTexture = this.makeGroundTexture(1, 1)
     // Every slot starts dead: the dead stack holds all of them.
@@ -307,6 +335,9 @@ class ParticleGpu {
         { binding: 5, visibility: compute, buffer: { type: 'storage' } },
         { binding: 6, visibility: compute, buffer: { type: 'read-only-storage' } },
         { binding: 7, visibility: compute, texture: { sampleType: 'unfilterable-float' } },
+        // With these two the compute stage holds all eight of the storage buffers a default device allows.
+        { binding: 8, visibility: compute, buffer: { type: 'read-only-storage' } },
+        { binding: 9, visibility: compute, buffer: { type: 'read-only-storage' } },
       ],
     })
     const layout = device.createPipelineLayout({ bindGroupLayouts: [this.computeLayout] })
@@ -421,6 +452,8 @@ class ParticleGpu {
         { binding: 5, resource: { buffer: this.alive } },
         { binding: 6, resource: { buffer: this.commandBuffer } },
         { binding: 7, resource: this.groundTexture.createView() },
+        { binding: 8, resource: { buffer: this.lights.records } },
+        { binding: 9, resource: { buffer: this.lights.cells } },
       ],
     })
   }

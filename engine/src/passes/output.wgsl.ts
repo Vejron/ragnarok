@@ -19,7 +19,7 @@ struct Output {
   shadows: vec4f,
   // What the highlights are multiplied by (rgb), whether the exposure is the eye's adaptation (0 or 1).
   highlights: vec4f,
-  // Whether lamps' beams were drawn this frame (0 or 1), how much to sharpen (0 to 1), unused, unused.
+  // Whether lamps' beams were drawn this frame (0 or 1), how much to sharpen (0 to 1), whether smoke was (0 or 1), unused.
   beams: vec4f,
 }
 
@@ -32,6 +32,8 @@ struct Output {
 // The eye's adaptation (passes/exposure.ts): its exposure is element 1.
 @group(0) @binding(6) var<storage, read> adaptation: array<f32, 4>;
 @group(0) @binding(7) var beams: texture_2d<f32>;
+// The half-resolution effects' target (passes/halfres.ts): its alpha is how much of a pixel smoke covers.
+@group(0) @binding(8) var smoke: texture_2d<f32>;
 
 @vertex
 fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
@@ -119,6 +121,7 @@ fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
   } else {
     c = textureLoad(hdr, p, 0).rgb;
   }
+  let uv = (vec2f(p) + 0.5) / vec2f(textureDimensions(hdr));
   if (output.params.z > 0.0) {
     // Ink (client/src/render/ink.ts): a silhouette or occluding edge bends depth sharply across the
     // pixel; a smooth surface, even a long slope seen at a low angle, only changes its rate.
@@ -131,10 +134,15 @@ fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
     let jump = max(abs(l + r - 2.0 * mid), abs(d + u - 2.0 * mid)) / mid;
     let threshold = output.ink.z;
     let edge = smoothstep(threshold, threshold * 1.6, jump);
+    // Smoke has no depth to find an edge in: the lines of what is behind it would show through it, so
+    // they fade by how much of the pixel the smoke covers.
+    var clear = 1.0;
+    if (edge > 0.0 && output.beams.z > 0.0) {
+      clear = 1.0 - textureSampleLevel(smoke, bloomSampler, uv, 0.0).a;
+    }
     // The line darkens what it is drawn over, so the hue carries through.
-    c = mix(c, c * output.ink.x, edge * output.ink.y);
+    c = mix(c, c * output.ink.x, edge * output.ink.y * clear);
   }
-  let uv = (vec2f(p) + 0.5) / vec2f(textureDimensions(hdr));
   if (output.bloom.x > 0.0) {
     c += textureSampleLevel(bloom, bloomSampler, uv, 0.0).rgb * output.bloom.x;
   }

@@ -23,10 +23,14 @@ export interface RibbonStyle {
   step?: number
   /** Fogged with distance; off for things that should glow through haze. */
   fog?: boolean
+  /** Metres the trail has strayed from where it was laid by the end of its life: smoke that kinks and spreads as it hangs. */
+  wander?: number
+  /** The share of the wind (`setWind`) that carries the trail off after it is laid, 0 to 1. */
+  drift?: number
 }
 
 /** Floats per segment; matches `Segment` in the shader. */
-const SEGMENT_FLOATS = 20
+const SEGMENT_FLOATS = 24
 const F_NO_FOG = 2
 
 interface Trail {
@@ -52,6 +56,14 @@ struct Segment {
   d: vec4f,
   // life, width, taper, flags.
   e: vec4f,
+  // wander (metres strayed by the end of its life), unused.
+  f: vec4f,
+}
+
+// Which way a point of a trail strays, about a unit long: the same for the two segments that meet at it.
+fn stray(p: vec3f) -> vec3f {
+  return vec3f(sin(p.y * 0.83 + p.z * 0.61), sin(p.z * 0.71 + p.x * 0.47) * 0.6, sin(p.x * 0.79 + p.y * 0.53))
+    + vec3f(sin(p.z * 2.3 + p.y * 1.7), sin(p.x * 1.9 + p.z * 2.1) * 0.6, sin(p.y * 2.6 + p.x * 1.4)) * 0.4;
 }
 
 @group(1) @binding(0) var<storage, read> segments: array<Segment>;
@@ -71,9 +83,10 @@ fn vs(@builtin(vertex_index) v: u32, @builtin(instance_index) instance: u32) -> 
   var sides = array<f32, 6>(-1.0, -1.0, 1.0, -1.0, 1.0, 1.0);
   let end = ends[v];
   let side = sides[v];
-  let pos = mix(s.a.xyz, s.b.xyz, end);
+  let laid = mix(s.a.xyz, s.b.xyz, end);
   let age = mix(s.a.w, s.b.w, end);
   let t = clamp(age / max(s.e.x, 1e-3), 0.0, 1.0);
+  let pos = laid + stray(laid) * (s.f.x * t);
   let width = s.e.y * mix(1.0, s.e.z, t) * select(1.0, 0.0, age >= s.e.x);
   var dir = s.b.xyz - s.a.xyz;
   let toCamera = frame.cameraPos.xyz - pos;
@@ -124,6 +137,7 @@ export class Ribbons extends Effect {
   private readonly colorEnd = new Color()
   private gpu: { device: GPUDevice; buffer: GPUBuffer; pipelines: GPURenderPipeline[]; group: GPUBindGroup; format: string } | null = null
   private counts = [0, 0]
+  private readonly wind = [0, 0, 0]
 
   constructor(readonly capacity = 8192) {
     super()
@@ -131,15 +145,31 @@ export class Ribbons extends Effect {
     this.data = new Float32Array(capacity * SEGMENT_FLOATS)
   }
 
-  /** Moves the clock on by `dt` seconds and drops the parts of trails that have faded. */
+  /** The wind, m/s: what carries off the trails whose style has a `drift`. */
+  setWind(x: number, y: number, z: number) {
+    this.wind[0] = x
+    this.wind[1] = y
+    this.wind[2] = z
+  }
+
+  /** Moves the clock on by `dt` seconds, lets the wind take the trails it carries and drops the parts that have faded. */
   update(dt: number) {
     this.now += dt
+    const [wx, wy, wz] = this.wind as [number, number, number]
     for (const [id, trail] of this.trails) {
       if (!trail.ended && this.now - trail.lastSeen > 0.5) trail.ended = true
       const p = trail.points
       let drop = 0
       while (drop + 4 <= p.length && this.now - p[drop + 3]! > trail.style.life) drop += 4
       if (drop) p.splice(0, drop)
+      const carried = (trail.style.drift ?? 0) * dt
+      if (carried) {
+        for (let i = 0; i < p.length; i += 4) {
+          p[i] = p[i]! + wx * carried
+          p[i + 1] = p[i + 1]! + wy * carried
+          p[i + 2] = p[i + 2]! + wz * carried
+        }
+      }
       if (trail.ended && p.length === 0) this.trails.delete(id)
     }
   }
@@ -207,6 +237,7 @@ export class Ribbons extends Effect {
           data[o + 8] = c.r; data[o + 9] = c.g; data[o + 10] = c.b; data[o + 11] = glow
           data[o + 12] = e.r; data[o + 13] = e.g; data[o + 14] = e.b; data[o + 15] = style.alpha ?? 1
           data[o + 16] = style.life; data[o + 17] = style.width; data[o + 18] = style.taper ?? 0; data[o + 19] = flags
+          data[o + 20] = style.wander ?? 0
           n++
         }
       }

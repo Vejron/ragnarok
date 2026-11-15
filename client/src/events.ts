@@ -24,6 +24,7 @@ import type { Scorchmarks } from '@/render/scorchmarks'
 import type { Flinch } from '@/render/flinch'
 import { locate, type HullMarks, type MarkKind } from '@/render/hullmarks'
 import { BLASTS, explosion, type ExplosionProfile } from '@/render/explosion'
+import { LAUNCHER } from '@/render/gunfire'
 import type { Rockets } from '@/render/rockets'
 import type { Rounds } from '@/render/rounds'
 import type { Scene } from '@/render/scene'
@@ -348,7 +349,7 @@ export class Events {
       const forward = along.lengthSq() > 1e-4 ? along.normalize() : new Vector3(0, 0, -1)
       const back = forward.clone().negate()
       const venturi = from.clone().addScaledVector(back, LAUNCHER_LENGTH)
-      effects.muzzleFlash(from, forward)
+      effects.gunfire(from, forward, LAUNCHER, 1, this.world.fx())
       effects.blast(venturi, back)
       effects.dust(venturi.clone().addScaledVector(back, 1.5), 2.5)
       this.muzzleLight(from, 0xffb060, 3, 10)

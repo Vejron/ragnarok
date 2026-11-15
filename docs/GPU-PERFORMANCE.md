@@ -137,6 +137,15 @@ them hidden, timed alternately):
 `gpu-bench.mjs --parts solids,impostors,trees2x` draws the trees those ways, and `--quality low`
 runs the preset with one sample a pixel.
 
+## Smoke
+
+Smoke is cheap here because it is drawn at half resolution: 200 puffs 3 to 5 m wide across the whole
+view cost 0.13 ms, and a volley of five cannon shots with all their smoke, sparks and dust 0.15 ms
+(`--parts gunsmoke`; [GUNSMOKE.md](GUNSMOKE.md) has the table). What was added to smoke is worked out
+per particle in the compute pass (the churning air, the wind, the point lights that reach it), where
+it costs by the pool's size and not by the pixels covered. The sun's shading of a puff is the one
+thing added per pixel, and took the 200 puffs from 0.11 to 0.13 ms.
+
 ## Tried and dropped
 
 - **`rg11b10ufloat` for the HDR image** (4 bytes a pixel, not 8, where the device has

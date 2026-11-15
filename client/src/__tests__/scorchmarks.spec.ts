@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest'
-import { Effects } from '@/render/effects'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { Effects, type GunScene } from '@/render/effects'
+import { AUTOCANNON, CANNON } from '@/render/gunfire'
 import type { ParticleSpec } from '@/render/particles'
 import { Scorchmarks } from '@/render/scorchmarks'
 
@@ -54,6 +55,16 @@ describe('shot effects', () => {
     return { effects, smoke, glow, blood }
   }
   const at = { x: 1, y: 2, z: 3 }
+  const ahead = { x: 0, y: 0, z: 1 }
+  /** The world round a gun: the camera `far` metres from it, level ground at 0 and `alive` puffs of smoke in the air already. */
+  const scene = (far = 10, alive = 0): GunScene => ({ camera: { x: at.x + far, y: at.y, z: at.z }, groundAt: () => 0, smoke: { alive } })
+
+  // The effects scatter by `Math.random`: the same draws every run, so what is thrown is the same too.
+  beforeEach(() => {
+    let seed = 1
+    vi.spyOn(Math, 'random').mockImplementation(() => (seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296)
+  })
+  afterEach(() => vi.restoreAllMocks())
 
   it('burns with billowing black smoke and flame, from the particle pools', () => {
     const { effects, smoke, glow } = pools()
@@ -66,7 +77,8 @@ describe('shot effects', () => {
 
   it('draws nothing round as a flash record: only streaks and rings go there', () => {
     const { effects } = pools()
-    effects.muzzleFlash(at, { x: 0, y: 0, z: 1 })
+    effects.gunfire(at, ahead, CANNON, 1, scene())
+    effects.barrelSmoke(at, ahead, 1, 0.5, CANNON, scene())
     effects.blast(at, { x: 0, y: 0, z: 1 })
     effects.strike(at)
     effects.pelletStrike(at)
@@ -78,6 +90,73 @@ describe('shot effects', () => {
     effects.struck(at)
     effects.muzzle(at)
     expect(effects.root.count).toBe(0)
+  })
+
+  it('a tank’s gun throws more smoke than an autocannon’s, with sparks that bounce and dust off the ground under it', () => {
+    const tank = pools()
+    tank.effects.gunfire(at, ahead, CANNON, 1, scene())
+    const auto = pools()
+    auto.effects.gunfire(at, ahead, AUTOCANNON, 1, scene())
+    const puffs = (smoke: ParticleSpec[]) => smoke.filter((s) => s.hold).length
+    expect(puffs(tank.smoke)).toBeGreaterThan(puffs(auto.smoke) * 3)
+    expect(tank.glow.some((s) => s.bounce && s.stretch)).toBe(true)
+    // The muzzle is 2 m up: the cannon's blast reaches the ground, and dust has no hold on it.
+    expect(tank.smoke.some((s) => !s.hold && s.color === 0xcbc2b0)).toBe(true)
+    expect(auto.smoke.some((s) => s.color === 0xcbc2b0)).toBe(false)
+  })
+
+  it('a gun’s smoke rolls in the air and leans with the wind', () => {
+    const { effects, smoke } = pools()
+    effects.gunfire(at, ahead, CANNON, 1, scene())
+    const bank = smoke.filter((s) => s.hold)
+    expect(bank.length).toBeGreaterThan(10)
+    expect(bank.every((s) => s.turbulence! > 0 && s.wind === 1 && s.shape === 'puff')).toBe(true)
+  })
+
+  it('a gun far from the camera flashes but makes no smoke', () => {
+    const { effects, smoke, glow } = pools()
+    effects.gunfire(at, ahead, CANNON, 1, scene(300))
+    expect(smoke).toEqual([])
+    expect(glow).toHaveLength(1)
+    expect(glow[0]!.shape).toBe('glare')
+  })
+
+  it('a gun makes less smoke at a distance, and when the air is already full of it', () => {
+    const count = (far: number, alive: number) => {
+      const { effects, smoke } = pools()
+      effects.gunfire(at, ahead, CANNON, 1, scene(far, alive))
+      return smoke.filter((s) => s.hold).length
+    }
+    expect(count(100, 0)).toBeLessThan(count(10, 0))
+    expect(count(10, 2000)).toBeLessThan(count(10, 0))
+  })
+
+  it('a rotary cannon that fired three rounds in a frame shows three', () => {
+    const count = (fired: number) => {
+      const { effects, smoke } = pools()
+      effects.gunfire(at, ahead, AUTOCANNON, fired, scene())
+      return smoke.filter((s) => s.hold).length
+    }
+    expect(count(3)).toBe(count(1) * 3)
+    // A gap in the stream is not a burst: no more than three are drawn.
+    expect(count(40)).toBe(count(3))
+  })
+
+  it('a gun that has fired smokes from its muzzle, and thins to nothing', () => {
+    const wisps = (heat: number) => {
+      const { effects, smoke } = pools()
+      for (let frame = 0; frame < 60; frame++) effects.barrelSmoke(at, ahead, heat, 1 / 60, CANNON, scene())
+      return smoke.filter((s) => s.hold)
+    }
+    const hot = wisps(1), cooling = wisps(0.3)
+    expect(hot.length).toBeGreaterThan(8)
+    expect(cooling.length).toBeLessThan(hot.length / 2)
+    expect(cooling.length).toBeGreaterThan(0)
+    expect(hot[0]!.alpha).toBeGreaterThan(cooling[0]!.alpha)
+    // Far off it is not drawn at all.
+    const { effects, smoke } = pools()
+    effects.barrelSmoke(at, ahead, 1, 1, CANNON, scene(200))
+    expect(smoke).toEqual([])
   })
 
   it('throws blood out of a body and sparks off a hull', () => {

@@ -1,10 +1,10 @@
 import { Vector3 } from '@ragnarok/engine'
 import { HeliModel } from '@/render/heli'
+import { AUTOCANNON, BEAM, BLACK_POWDER, CANNON, MORTAR, ROTARY, type MuzzleProfile } from '@/render/gunfire'
 import { LaserEyes } from '@/render/lasereyes'
 import { MortarModel } from '@/render/mortar'
 import { PakModel } from '@/render/pak'
 import { ShipGunModel } from '@/render/shipgun'
-import { seaWind } from '@/render/ship'
 import { PlaneModel } from '@/render/plane'
 import { StrfModel } from '@/render/strf'
 import { StrvModel } from '@/render/strvs'
@@ -19,19 +19,44 @@ import type { Frame, Presenter } from '../presenter'
 import type { Entity } from '../units'
 import type { VehicleWorld, Vehicles } from './vehicles'
 
-/** How fast a ship's gun's smoke drifts off downwind, m/s. */
-const BLACK_POWDER_DRIFT = 1.5
 /** Of every few rounds between two frames, at most this many are drawn: more is a gap in the stream, not a burst. */
 const MAX_ROUNDS = 4
 
+/** A gun that fires shells, as its shot is drawn: how far its muzzle is from its pivot (metres), how the shot looks, which seat fires it and whether it has a heavy gun's bang. */
+interface Cannon {
+  length: number
+  profile: MuzzleProfile
+  gunner: number
+  heavy: boolean
+}
+
+type CannonModel = TankModel | HeliModel | WalkerModel | MortarModel | PakModel | ShipGunModel | TitanModel
+
+/** Who fires it: the driver of a walker, a Titan, a Strv S or a gun on a carriage, the gunner of the rest. */
+function cannonOf(model: unknown): Cannon | null {
+  if (model instanceof TitanModel) return { length: TITAN_GUN_LENGTH, profile: ROTARY, gunner: 0, heavy: true }
+  if (model instanceof HeliModel) return { length: HELI_GUN_LENGTH, profile: AUTOCANNON, gunner: 1, heavy: false }
+  if (model instanceof WalkerModel) return { length: WALKER_GUN_LENGTH, profile: BEAM, gunner: 0, heavy: false }
+  if (model instanceof StrvModel) return { length: STRV_BARREL_LENGTH, profile: CANNON, gunner: 0, heavy: true }
+  if (model instanceof StrfModel) return { length: STRF_BARREL_LENGTH, profile: AUTOCANNON, gunner: 1, heavy: false }
+  if (model instanceof MortarModel) return { length: MORTAR_BARREL_LENGTH, profile: MORTAR, gunner: 0, heavy: false }
+  if (model instanceof PakModel) return { length: PAK_BARREL_LENGTH, profile: CANNON, gunner: 0, heavy: false }
+  if (model instanceof ShipGunModel) return { length: SHIP_GUN_BARREL_LENGTH, profile: BLACK_POWDER, gunner: 0, heavy: false }
+  if (model instanceof TankModel) return { length: TANK_BARREL_LENGTH, profile: CANNON, gunner: 1, heavy: true }
+  return null
+}
+
 /**
- * A mounted gun (`turret`): every new shot on its counter is a shell or round leaving, with a flash at
- * the muzzle, a recoil and the bang. The shell itself is a projectile, and a plane's rear ring gun's and
- * a technical's machine gun's rounds are drawn as bullets in flight (`Rounds`).
+ * A mounted gun (`turret`): every new shot on its counter is a shell or round leaving, with fire and
+ * smoke at the muzzle (`Effects.gunfire`), a recoil and the bang, and a barrel that goes on smoking for
+ * some seconds after. The shell itself is a projectile, and a plane's rear ring gun's and a technical's
+ * machine gun's rounds are drawn as bullets in flight (`Rounds`).
  */
 export class Turrets implements Presenter<Frame> {
   /** The shot counter as last seen, per gun. */
   private readonly shots = new Map<number, number>()
+  /** How hot each barrel that has fired still is, 1 down to 0: what it smokes by. */
+  private readonly heat = new Map<number, number>()
   private readonly laserEyes = new Map<number, LaserEyes>()
 
   constructor(private readonly world: VehicleWorld, private readonly vehicles: Vehicles) {}
@@ -49,15 +74,17 @@ export class Turrets implements Presenter<Frame> {
     const before = this.shots.get(id)
     this.shots.set(id, shots)
     // The first sight of a gun is not a shot, nor is a counter that has not moved.
-    if (before === undefined || before === shots) return
-    if (model instanceof PlaneModel) this.ring(model, (shots - before + 256) % 256)
-    else if (model instanceof TechnicalModel) this.machineGun(model, (shots - before + 256) % 256, placed.seats, frame)
-    else if (model instanceof TitanModel) this.fist(model, placed.seats, frame)
-    else if (model instanceof TankModel || model instanceof HeliModel || model instanceof WalkerModel || model instanceof MortarModel || model instanceof PakModel || model instanceof ShipGunModel) this.fired(model, shots, placed.seats, frame)
+    const fired = before === undefined ? 0 : (shots - before + 256) % 256
+    const cannon = cannonOf(model)
+    if (cannon) return this.cannon(id, model as CannonModel, cannon, shots, fired, placed.seats, frame)
+    if (!fired) return
+    if (model instanceof PlaneModel) this.ring(model, fired)
+    else if (model instanceof TechnicalModel) this.machineGun(model, fired, placed.seats, frame)
   }
 
   remove(id: number) {
     this.shots.delete(id)
+    this.heat.delete(id)
     this.laserEyes.get(id)?.dispose()
     this.laserEyes.delete(id)
   }
@@ -69,37 +96,34 @@ export class Turrets implements Presenter<Frame> {
     eyes.update(tupp, flags, mine, frame.dt, { effects: this.world.effects, sounds: this.world.sounds, lights: this.world.lights, lit: this.world.ownShot })
   }
 
-  private fired(gun: TankModel | HeliModel | WalkerModel | MortarModel | PakModel | ShipGunModel, shots: number, seats: readonly number[], frame: Frame) {
+  /**
+   * A gun that fires shells, this frame: the `fired` rounds that have left it since the last one, each
+   * shot a blast at the muzzle, its light, a kick and the bang, and then the smoke its barrel gives off
+   * while it is still hot, from wherever the muzzle now points.
+   */
+  private cannon(id: number, gun: CannonModel, cannon: Cannon, shots: number, fired: number, seats: readonly number[], frame: Frame) {
+    let heat = this.heat.get(id) ?? 0
+    if (!fired && heat <= 0) return
     // A walker's barrels fire in turn: the counter has already gone up for this shot.
     const { origin, direction } = gun instanceof WalkerModel ? gun.barrel((shots - 1) % 2 === 0 ? -1 : 1) : gun.barrel()
-    gun.recoil()
-    const length = gun instanceof HeliModel ? HELI_GUN_LENGTH : gun instanceof WalkerModel ? WALKER_GUN_LENGTH : gun instanceof StrvModel ? STRV_BARREL_LENGTH : gun instanceof StrfModel ? STRF_BARREL_LENGTH : gun instanceof MortarModel ? MORTAR_BARREL_LENGTH : gun instanceof PakModel ? PAK_BARREL_LENGTH : gun instanceof ShipGunModel ? SHIP_GUN_BARREL_LENGTH : TANK_BARREL_LENGTH
-    const muzzle = origin.clone().addScaledVector(direction, length)
-    if (gun instanceof ShipGunModel) {
-      // Black powder: fire, and a bank of dark smoke that drifts off with the wind over the water.
-      const [wx, wz] = seaWind.blowing
-      this.world.effects.blackPowder(muzzle, direction, [wx * BLACK_POWDER_DRIFT, wz * BLACK_POWDER_DRIFT])
-      this.world.lights.flash(muzzle.x, muzzle.y, muzzle.z, { color: 0xffa040, intensity: 6, radius: 20, life: 0.15 })
-    } else {
-      this.world.effects.muzzleFlash(muzzle, direction)
-      this.world.lights.flash(muzzle.x, muzzle.y, muzzle.z, { color: 0xffc060, intensity: 4, radius: 14, life: 0.09 })
+    const muzzle = origin.clone().addScaledVector(direction, cannon.length)
+    const { profile } = cannon
+    const { effects, sounds } = this.world
+    if (fired) {
+      if (gun instanceof TitanModel) gun.kick()
+      else gun.recoil()
+      effects.gunfire(muzzle, direction, profile, fired, this.world.fx())
+      this.world.lights.flash(muzzle.x, muzzle.y, muzzle.z, profile.light)
+      if (gun instanceof WalkerModel) sounds.laser([muzzle.x, muzzle.y, muzzle.z])
+      else sounds.cannon([muzzle.x, muzzle.y, muzzle.z], cannon.heavy)
+      if (frame.localId !== null && seats[cannon.gunner] === frame.localId) this.world.ownShot()
+      heat = Math.min(1, heat + profile.heat * fired)
     }
-    if (gun instanceof WalkerModel) this.world.sounds.laser([muzzle.x, muzzle.y, muzzle.z])
-    else this.world.sounds.cannon([muzzle.x, muzzle.y, muzzle.z], gun instanceof TankModel && !(gun instanceof StrfModel))
-    // Who fires it: the driver of a walker, a Strv S or a gun on a carriage, the gunner of the rest.
-    const gunner = gun instanceof WalkerModel || gun instanceof StrvModel || gun instanceof MortarModel || gun instanceof PakModel || gun instanceof ShipGunModel ? 0 : 1
-    if (frame.localId !== null && seats[gunner] === frame.localId) this.world.ownShot()
-  }
-
-  /** A Titan's rotary cannon, in its fist: a heavy round out along the forearm, a flash, a kick, the barrels turning on and the bang. */
-  private fist(titan: TitanModel, seats: readonly number[], frame: Frame) {
-    const { origin, direction } = titan.barrel()
-    titan.kick()
-    const muzzle = origin.addScaledVector(direction, TITAN_GUN_LENGTH)
-    this.world.effects.muzzleFlash(muzzle, direction)
-    this.world.lights.flash(muzzle.x, muzzle.y, muzzle.z, { color: 0xffc060, intensity: 6, radius: 24, life: 0.12 })
-    this.world.sounds.cannon([muzzle.x, muzzle.y, muzzle.z], true)
-    if (frame.localId !== null && seats[0] === frame.localId) this.world.ownShot()
+    if (heat <= 0) return
+    effects.barrelSmoke(muzzle, direction, heat, frame.dt, profile, this.world.fx())
+    heat -= frame.dt / profile.linger
+    if (heat > 0) this.heat.set(id, heat)
+    else this.heat.delete(id)
   }
 
   /** A plane's rear ring gun: each new round a bullet out to what it meets. */

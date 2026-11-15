@@ -1,4 +1,5 @@
 import { Color, FlashEffects } from '@ragnarok/engine'
+import type { MuzzleProfile } from './gunfire'
 import { dustCloud, type ParticleSpec, type Particles } from './particles'
 
 /** Anything with x, y and z: three's Vector3 or the engine's. */
@@ -14,8 +15,30 @@ const spread = (): V => ({ x: Math.random() - 0.5, y: Math.random() - 0.5, z: Ma
 const rand = (low: number, high: number) => low + Math.random() * (high - low)
 const pick = <T>(items: readonly T[]) => items[Math.floor(Math.random() * items.length)]!
 
-/** The drift the smoke leans with, m/s: the vehicles' smoke's wind (`vehiclesmoke.ts`). */
-const WIND = [1.1, 0.5] as const
+/** Some number of a thing due at `rate` a second over `dt`, the fraction left to chance. */
+const due = (rate: number, dt: number) => Math.floor(rate * dt + Math.random())
+/** A level direction square to `d`, to throw things out of a gun's sides. */
+const beside = (d: V): V => {
+  const l = Math.hypot(d.x, d.z)
+  return l > 1e-3 ? { x: d.z / l, y: 0, z: -d.x / l } : { x: 1, y: 0, z: 0 }
+}
+
+/** Further from the camera than this, metres, a shot is its flash alone; past `GUN_THIN` it has half its smoke and sparks. */
+const GUN_RANGE = 200
+const GUN_THIN = 80
+/** Further than this, metres, a barrel's lingering smoke is not drawn. */
+const WISP_RANGE = 120
+/** A blast lifts dust off ground this near under the muzzle, metres. */
+const DUST_HEIGHT = 4
+/** Of several rounds between two frames, the smoke and sparks of at most this many are drawn. */
+const MAX_SHOTS = 3
+
+/** What a gun's shot needs of the world: where the camera and the ground are, and how much smoke there is already. */
+export interface GunScene {
+  camera: V
+  groundAt(x: number, z: number): number
+  smoke: { alive: number }
+}
 const SOOT = [0x161514, 0x0f0e0e, 0x1f1c1a] as const
 const GRIT = [0xb8ad98, 0x9a948a, 0xa89f8c] as const
 const SPARK = [0xffffff, 0xffe08a, 0xffa23a, 0xff6a1a] as const
@@ -47,42 +70,82 @@ export class Effects {
     this.blood = pools.blood
   }
 
-  /** A shell leaving the barrel: a flash, a tongue of flame along it and a roll of smoke. The shell is drawn in flight. */
-  muzzleFlash(muzzle: V, direction: V) {
+  /**
+   * A gun going off at `muzzle` along `direction`, as its `gun` profile has it: the flash, a tongue of
+   * flame along the bore, a bank of smoke blown out ahead that stalls, rolls and leans off downwind,
+   * jets out of the sides of a muzzle brake, burning grains that arc away and bounce, and dust off the
+   * ground under the blast. `fired` is how many rounds left since the last frame. Far off it is the
+   * flash alone, and it thins when the air is already full of smoke. The shell is drawn in flight, the
+   * light by whoever fires, and the barrel's smoke afterwards by `barrelSmoke`.
+   */
+  gunfire(muzzle: V, direction: V, gun: MuzzleProfile, fired: number, scene: GunScene) {
     const d = norm(direction)
-    this.flash(muzzle, 2.4, 0.12, 0xffe9a0, 8)
-    this.flame(add(muzzle, d, 1), [d.x * 7, d.y * 7, d.z * 7], 0.25, [0.5, 1.6], 0xffc060)
-    for (let i = 0; i < 4; i++) {
-      const v = add(d, spread(), 0.7)
-      this.drift(add(muzzle, d, rand(0.5, 1.5)), [v.x * 4, v.y * 4 + 0.6, v.z * 4], rand(1, 1.8), [0.5, rand(1.8, 2.6)], 0x8a8885, 0.35)
+    this.flash(add(muzzle, d, gun.flame * 0.25), gun.flash, 0.12, 0xffe9a0, 8)
+    const far = len(sub(muzzle, scene.camera))
+    if (far > GUN_RANGE) return
+    const alive = scene.smoke.alive
+    const share = (far > GUN_THIN ? 0.5 : 1) * (alive > 1500 ? 0.4 : alive > 800 ? 0.65 : 1) * Math.min(Math.max(fired, 1), MAX_SHOTS)
+    const some = (count: number) => (count > 0 ? Math.max(1, Math.round(count * share)) : 0)
+    const smoke = (at: V, velocity: readonly [number, number, number], life: number, size: number) => this.smoke.spawn({
+      position: at, velocity, life, size: [size * 0.35, size], color: pick(gun.tone), colorEnd: gun.tone[0], alpha: gun.alpha * rand(0.8, 1), hold: true,
+      gravity: -0.35, drag: 2.4, turbulence: 1.1, wind: 1, spin: [-0.6, 0.6], shape: 'puff',
+    })
+    for (let i = some(gun.flame * 1.5); i > 0; i--) {
+      const v = add(d, spread(), 0.2)
+      const speed = rand(6, 12)
+      this.flame(add(muzzle, d, rand(0.2, gun.flame)), [v.x * speed, v.y * speed, v.z * speed], rand(0.15, 0.35), [gun.flash * 0.15, gun.flash * rand(0.35, 0.55)], pick([0xffc060, 0xff9a30, 0xffe090]))
+    }
+    // The smoke leaves already a third of its full width, the first of it blown furthest and fastest, and
+    // all of it slows into a bank that swells where it stops.
+    for (let i = some(gun.smoke); i > 0; i--) {
+      const lead = Math.random()
+      const v = add(d, spread(), 0.5)
+      const speed = 3 + 11 * lead * lead
+      smoke(add(add(muzzle, d, rand(0.2, 0.6) * gun.flame + lead), spread(), 0.4), [v.x * speed, v.y * speed + 0.4, v.z * speed], gun.hang * rand(0.6, 1), gun.puff * rand(0.7, 1.15))
+    }
+    const side = beside(d)
+    for (const way of gun.brake > 0 ? [-1, 1] : []) {
+      const port = add(add(muzzle, d, -0.25), side, way * 0.3)
+      this.flash(add(port, side, way * 0.5), gun.flash * 0.5, 0.1, 0xffd890, 7)
+      this.flame(port, [side.x * way * 9, 1, side.z * way * 9], rand(0.15, 0.25), [0.3, gun.flash * 0.3], 0xffc060)
+      for (let i = some(gun.brake); i > 0; i--) {
+        const speed = rand(4, 11)
+        smoke(port, [side.x * way * speed + d.x * 1.5 + rand(-1, 1), rand(-0.6, 1.4), side.z * way * speed + d.z * 1.5 + rand(-1, 1)], gun.hang * rand(0.4, 0.7), gun.puff * rand(0.5, 0.75))
+      }
+    }
+    for (let i = some(gun.sparks); i > 0; i--) {
+      const v = add(d, spread(), 0.55)
+      const speed = rand(9, 26)
+      // One in five is an ember: slow, and carried about by the air instead of falling.
+      if (i % 5 === 0) this.glow.spawn({ position: muzzle, velocity: [v.x * 5, v.y * 5 + 1, v.z * 5], life: rand(0.9, 1.8), size: [0.06, 0.02], color: 0xffb04a, colorEnd: 0xff3a05, glow: 5, alpha: 1, gravity: 1.2, drag: 2, turbulence: 1.6, wind: 1 })
+      else this.glow.spawn({ position: add(muzzle, d, 0.4), velocity: [v.x * speed, v.y * speed + 1.5, v.z * speed], life: rand(0.3, 0.9), size: [rand(0.06, 0.1), 0.03], color: pick(SPARK), colorEnd: 0xff3a05, glow: 6, stretch: 0.03, alpha: 1, gravity: 9.8, drag: 1.4, bounce: true })
+    }
+    if (gun.dust > 0) {
+      const under = add(muzzle, d, Math.min(2, gun.flame))
+      const ground = scene.groundAt(under.x, under.z)
+      const height = under.y - ground
+      if (height < DUST_HEIGHT) dustCloud(this.smoke, { x: under.x, y: ground, z: under.z }, gun.dust * (1 - height / (DUST_HEIGHT * 1.5)), 1.4)
     }
   }
 
   /**
-   * A black-powder gun going off at `muzzle` along `direction`, drifting with `wind` (m/s, `[x, z]`): a
-   * long tongue of flame and burning grains thrown out ahead, then a great bank of thick, dark smoke
-   * rolling out of the muzzle and hanging there as the wind takes it.
+   * A barrel that has fired, for the `dt` seconds just passed: smoke out of the muzzle at `muzzle` along
+   * `direction`, pouring thick with a lick of flame while its `heat` is near 1 and thinning to a curl as
+   * that runs down to 0. It is laid where the muzzle is now, so it follows a gun that turns.
    */
-  blackPowder(muzzle: V, direction: V, wind: readonly [number, number] = WIND) {
+  barrelSmoke(muzzle: V, direction: V, heat: number, dt: number, gun: MuzzleProfile, scene: GunScene) {
+    if (gun.wisps <= 0 || len(sub(muzzle, scene.camera)) > WISP_RANGE) return
     const d = norm(direction)
-    this.flash(add(muzzle, d, 0.8), 4.5, 0.16, 0xffd27a, 10)
-    for (let i = 0; i < 6; i++) {
-      const out = rand(0.3, 2.8)
-      const v = add(d, spread(), 0.25)
-      this.flame(add(muzzle, d, out), [v.x * 9, v.y * 9, v.z * 9], rand(0.15, 0.35), [0.6, rand(1.6, 2.6)], pick([0xffc060, 0xff9a30, 0xffe090]))
+    for (let i = due(gun.wisps * (0.2 + 0.8 * heat * heat), dt); i > 0; i--) {
+      const speed = rand(0.2, 0.6 + 2.5 * heat)
+      this.smoke.spawn({
+        position: add(muzzle, spread(), 0.12), velocity: [d.x * speed + rand(-0.2, 0.2), d.y * speed + rand(0.1, 0.5), d.z * speed + rand(-0.2, 0.2)],
+        life: rand(1.6, 3), size: [gun.puff * 0.05, gun.puff * rand(0.25, 0.42)], color: pick(gun.tone), colorEnd: gun.tone[0], alpha: 0.3 + 0.4 * heat, hold: true,
+        gravity: -0.5, drag: 1.4, turbulence: 0.9, wind: 1, spin: [-0.8, 0.8], shape: 'puff',
+      })
     }
-    for (let i = 0; i < 10; i++) {
-      const v = add(d, spread(), 0.6)
-      const speed = rand(10, 22)
-      this.glow.spawn({ position: add(muzzle, d, 0.5), velocity: [v.x * speed, v.y * speed + 2, v.z * speed], life: rand(0.3, 0.8), size: [0.08, 0.03], color: pick(SPARK), colorEnd: 0xff3a05, glow: 6, stretch: 0.03, alpha: 1, gravity: 9.8, drag: 1.5 })
-    }
-    // The smoke: blown out along the barrel and slowing, swelling into a cloud that leans downwind.
-    for (let i = 0; i < 18; i++) {
-      const out = rand(0.2, 4.5)
-      const v = add(d, spread(), 0.9)
-      const speed = rand(2, 9) * (1 - out / 6)
-      const [wx, wz] = wind
-      this.drift(add(muzzle, d, out), [v.x * speed + wx, v.y * speed + 0.4, v.z * speed + wz], rand(4, 7), [rand(1, 1.6), rand(4, 6.5)], pick([0x2a2826, 0x3a3734, 0x1e1d1c, 0x4a4743]), rand(0.55, 0.8), { drag: 1.6, gravity: -0.25 })
+    if (heat > 0.85 && gun.flame > 0) {
+      for (let i = due(12, dt); i > 0; i--) this.flame(muzzle, [d.x * 2, d.y * 2 + 1, d.z * 2], rand(0.15, 0.3), [0.15, gun.flash * 0.12], 0xff9a30)
     }
   }
 
@@ -175,7 +238,9 @@ export class Effects {
     for (let i = 0; i < 6; i++) {
       this.smoke.spawn({
         position: add(above, spread(), 1.2),
-        velocity: [WIND[0] * rand(0.4, 1) + rand(-0.6, 0.6), rand(2.2, 4.2), WIND[1] * rand(0.4, 1) + rand(-0.6, 0.6)],
+        velocity: [rand(-0.6, 0.6), rand(2.2, 4.2), rand(-0.6, 0.6)],
+        turbulence: 0.8,
+        wind: 1,
         life: rand(3.2, 5.2),
         size: [rand(0.5, 0.8), rand(3.4, 5.4)],
         color: pick(SOOT),
@@ -191,7 +256,7 @@ export class Effects {
 
   /** Heat coming off laser eyes that have just burnt. */
   laserSmoke(eye: V) {
-    this.drift(add(eye, spread(), 0.2), [WIND[0] * 0.4, rand(1, 2), WIND[1] * 0.4], rand(1, 1.6), [0.2, rand(1, 1.5)], 0x5a5656, 0.4)
+    this.drift(add(eye, spread(), 0.2), [0, rand(1, 2), 0], rand(1, 1.6), [0.2, rand(1, 1.5)], 0x5a5656, 0.4)
   }
 
   /** A lens flare at `at`: a long level streak and a short upright one, `reach` metres out either way. */
@@ -211,9 +276,9 @@ export class Effects {
     this.smoke.spawn({ position: at, velocity, life, size, color, colorEnd: 0x4a1405, glow: 3, alpha: 0.9, gravity: -2.5, drag: 3, spin: [-2, 2], shape: 'puff' })
   }
 
-  /** A puff that rises, swells and thins out. */
+  /** A puff that rises, swells and thins out, curling as it goes and leaning off with the wind. */
   private drift(at: V, velocity: readonly [number, number, number], life: number, size: [number, number], color: number, alpha: number, more?: Partial<ParticleSpec>) {
-    this.smoke.spawn({ position: at, velocity, life, size, color, alpha, gravity: -0.6, drag: 1.2, spin: [-0.6, 0.6], shape: 'puff', ...more })
+    this.smoke.spawn({ position: at, velocity, life, size, color, alpha, gravity: -0.6, drag: 1.2, turbulence: 0.6, wind: 1, spin: [-0.6, 0.6], shape: 'puff', ...more })
   }
 
   /** One hot speck on an arc, stretched along its flight; `i` picks its colour. */
@@ -298,7 +363,7 @@ export class Effects {
       const speed = rand(6, 15) * scale
       this.spark(at, [direction.x * speed, direction.y * speed, direction.z * speed], rand(0.3, 0.65), rand(0.05, 0.1) * (big ? 1.3 : 1) * Math.sqrt(size), i)
     }
-    this.drift(add(at, out, 0.15), [out.x + WIND[0] * 0.4, out.y + rand(0.6, 1.2), out.z + WIND[1] * 0.4], rand(1.3, 2), [0.3 * scale, rand(1.2, 1.8) * scale], 0x2c2a28, 0.5)
+    this.drift(add(at, out, 0.15), [out.x, out.y + rand(0.6, 1.2), out.z], rand(1.3, 2), [0.3 * scale, rand(1.2, 1.8) * scale], 0x2c2a28, 0.5)
   }
 
   /**

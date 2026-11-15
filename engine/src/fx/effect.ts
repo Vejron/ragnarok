@@ -18,6 +18,12 @@ export interface EffectContext {
   depthFormat: GPUTextureFormat
   /** Changes when the render targets are recreated (a resize): bind groups holding `depthView` must be rebuilt. */
   targetsVersion: number
+  /**
+   * The frame's point lights as the scene shaders read them (`LIGHTS_WGSL`), for an effect's compute
+   * pass: the records, the grid's cells, the grid's corner (world x, z), 1 / its cell size and how many
+   * lights are listed. With none listed the buffers hold an earlier frame's.
+   */
+  lights: { records: GPUBuffer; cells: GPUBuffer; originX: number; originZ: number; perCell: number; count: number }
 }
 
 /**

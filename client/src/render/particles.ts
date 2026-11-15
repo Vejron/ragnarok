@@ -12,6 +12,8 @@ export interface ParticleSpec {
   color: number
   /** Opacity at birth; it fades to nothing by the end. */
   alpha: number
+  /** Keeps that opacity through the first half of its life and thins away over the second: smoke that hangs. */
+  hold?: boolean
   /** Metres per second² pulling it down; negative floats it up. */
   gravity?: number
   /** Share of its speed lost per second. */
@@ -26,6 +28,10 @@ export interface ParticleSpec {
   stretch?: number
   /** Multiplies the colour past 1 so it blooms. */
   glow?: number
+  /** Metres per second the air's churning carries it about, so that smoke rolls and curls. */
+  turbulence?: number
+  /** The share of the wind that carries it, 0 to 1. */
+  wind?: number
   /** `puff` gives smoke a billowy edge; `drop` is a bead of liquid that stays whole until it lands; `glare` is light with no edge at all. */
   shape?: 'round' | 'puff' | 'drop' | 'glare'
 }
@@ -50,6 +56,9 @@ export interface EmitSpec extends Omit<ParticleSpec, 'life'> {
 /** The darkest a particle gets at night, against its colour by day, so smoke and dust stay readable. */
 export const NIGHT_FLOOR = 0.05
 
+/** How fast the wind carries smoke, m/s. Which way it blows is the game's wind (`sim/wind.ts`). */
+export const WIND_SPEED = 1.2
+
 /** The height field particles bounce on is sampled this far to a side of the camera, metres, at `CELL` spacing. */
 const REACH = 128
 const CELL = 2
@@ -60,7 +69,7 @@ const RESAMPLE_SECONDS = 3
 
 /**
  * A pool of soft round billboards in world space: tyre smoke, dust, gravel, spray and sparks. They are
- * simulated and drawn on the GPU (`ParticleSystem`): spawning one writes a 128-byte command, however
+ * simulated and drawn on the GPU (`ParticleSystem`): spawning one writes a 160-byte command, however
  * many are alive. When the pool is full new ones are dropped. The ground a bouncing particle lands on is
  * a height field sampled from `groundAt` around `focus`.
  */
@@ -111,6 +120,7 @@ export class Particles {
       size: spec.size,
       color: dim(spec.color),
       alpha: spec.alpha,
+      hold: spec.hold,
       gravity: spec.gravity,
       drag: spec.drag,
       bounce: spec.bounce,
@@ -119,6 +129,8 @@ export class Particles {
       spin: spec.spin,
       stretch: spec.stretch,
       glow: spec.glow,
+      turbulence: spec.turbulence,
+      wind: spec.wind,
       shape: spec.shape,
     }
     this.root.spawn(engine)
@@ -142,6 +154,11 @@ export class Particles {
       blend: this.blend,
     }
     this.root.emit(engine)
+  }
+
+  /** Which way the wind blows, a unit `[x, z]`: particles with a `wind` share are carried along it at `WIND_SPEED`. */
+  blowing(direction: readonly [number, number]) {
+    this.root.setWind(direction[0] * WIND_SPEED, 0, direction[1] * WIND_SPEED)
   }
 
   /** Where the camera is: the ground field for bouncing particles is kept around it. */
@@ -200,6 +217,8 @@ export function dustCloud(smoke: Pick<Particles, 'spawn'>, at: { x: number; y: n
       alpha: 0.35,
       gravity: -0.15,
       drag: 1.4,
+      turbulence: 0.5,
+      wind: 1,
       spin: [-0.5, 0.5],
       shape: 'puff',
     })

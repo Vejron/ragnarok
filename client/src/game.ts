@@ -1027,6 +1027,9 @@ export class Game {
     if (this.clock.synced) {
       this.waveClock = waveTime(this.clock.tickAt(now))
       seaWind.blowing = wind(this.clock.tickAt(now))
+      this.smoke.blowing(seaWind.blowing)
+      this.glow.blowing(seaWind.blowing)
+      this.trails.blowing(seaWind.blowing)
       setWaterTime(this.waveClock)
     }
     const eye = this.scene.camera.position
