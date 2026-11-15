@@ -644,6 +644,8 @@ pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::B
     let mut roads = Vec::new();
     let mut bridges = Vec::new();
     let mut rails = Vec::new();
+    // `(LINE_*, line)`: fences and power lines.
+    let mut lines: Vec<(u8, Vec<P>)> = Vec::new();
     let mut rail_bridges = Vec::new();
     let mut covers = Vec::new();
     let line = |geometry: &[LatLon]| -> Vec<P> { geometry.iter().map(|g| frame.project(g.lat, g.lon)).collect() };
@@ -727,6 +729,10 @@ pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::B
                 covers.push((kind, vec![points[..points.len() - 1].to_vec()]));
             }
         }
+        // Not part of the chain above: a fence often runs round a closed landuse way of its own.
+        if let Some(kind) = crate::osm::line_kind(&way.tags) {
+            lines.push((kind, line(&way.geometry)));
+        }
         // Not part of the chain above: a tram line is often the same way as the street it runs in.
         if let Some((gauge, kind)) = rail_style(way) {
             let points = line(&way.geometry);
@@ -809,8 +815,14 @@ pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::B
     }
     // After the map's own, which would cut them away where it covers the course.
     covers.extend(course);
+    // OSM's fences and power lines, then the map's own, which replace OSM's inside its outline.
+    let fences = lines.iter().filter(|(kind, _)| matches!(*kind, LINE_FENCE | LINE_FENCE_HIGH)).count();
+    eprintln!("osm: {fences} fences, {} power lines", lines.len() - fences);
+    if let Some(ocad) = ocad {
+        lines.extend(ocad.lines.iter().cloned());
+    }
     // The lines are laid on the ground once the tiles are built, so it is kept for them.
-    let kept = (ocad.is_some_and(|ocad| !ocad.lines.is_empty()) || !lifts.is_empty()).then(|| ground.clone());
+    let kept = (!lines.is_empty() || !lifts.is_empty()).then(|| ground.clone());
     // A lift's own station stands at each of its ends: the station building OSM or the laser has there goes.
     let ends: Vec<P> = lifts.iter().flat_map(|(.., points)| points.first().into_iter().chain(points.last())).copied().collect();
     let over_station = |ring: &[P]| ends.iter().any(|&end| point_in_polygon(end, ring) || (0..ring.len()).any(|i| distance_to_segment(end, ring[i], ring[(i + 1) % ring.len()]) < LIFT_STATION_CLEAR));
@@ -819,8 +831,8 @@ pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::B
     if let Some(ground) = &kept {
         lay_lifts(&mut built, &lifts, half, ground);
     }
-    if let (Some(ocad), Some(ground)) = (ocad, kept) {
-        lay_lines(&mut built, &ocad.lines, half, tile_size, &ground);
+    if let Some(ground) = kept {
+        lay_lines(&mut built, &lines, half, tile_size, &ground);
     }
     if let Some(ocad) = ocad {
         lay_stones(&mut built, &ocad.stony_dots, &ocad.stony_areas, half, tile_size);
@@ -1656,6 +1668,26 @@ mod tests {
         assert_eq!(power.iter().filter(|line| line.end).count(), 1, "only the last run ends on a pole of its own");
         let fences = built.tiles.values().flat_map(|tile| &tile.lines).filter(|line| line.kind == LINE_FENCE).count();
         assert_eq!(fences, 3);
+    }
+
+    #[test]
+    fn osm_fences_and_power_lines_are_laid_without_a_map() {
+        let place = crate::region::Region::Sweden.around(63.82, 20.26, 150.0);
+        let way = |id, (key, value): (&str, &str), x0: f64, x1: f64, z: f64| {
+            let geometry = [[x0, z], [x1, z]].into_iter().map(|[x, z]| {
+                let (lat, lon) = place.frame.unproject(x, z);
+                LatLon { lat, lon }
+            });
+            crate::overpass::Way { id, tags: [(key.to_string(), value.to_string())].into(), geometry: geometry.collect() }
+        };
+        let osm = Osm {
+            ways: vec![way(1, ("barrier", "fence"), -100.0, 100.0, 20.0), way(2, ("power", "minor_line"), -100.0, 100.0, -20.0), way(3, ("barrier", "wall"), -100.0, 100.0, 0.0)],
+            areas: Vec::new(),
+        };
+        let ground = Ground { origin: -15_000, cell: 500, side: 61, heights: vec![0; 61 * 61] };
+        let built = from_osm(&place, 100.0, None, &osm, &[], ground, Placed::default(), None, None, None, &[], None, None, &[]);
+        let kinds: std::collections::BTreeSet<u8> = built.tiles.values().flat_map(|tile| &tile.lines).map(|line| line.kind).collect();
+        assert_eq!(kinds, [LINE_FENCE, LINE_POWER].into(), "a wall is no line");
     }
 
     #[test]

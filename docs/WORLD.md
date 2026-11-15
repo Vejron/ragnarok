@@ -173,7 +173,10 @@ and how many objects it has of each symbol.
   drawn by `render/lines.ts`. A pole is a collider like a rock's, stopping soldiers, vehicles and
   bullets. A fence stops soldiers only (`sim/src/fences.rs`): it is no collider but lines a soldier's
   step is cut short of, the same on server and client, and the bots' grid shuts the cells it runs
-  through. OSM's are not fetched yet.
+  through. They come from the orienteering map and from OSM: `barrier=fence` is a wire fence, or a
+  game fence with `fence_type=game` or a `height` of 1.8 m or more; `power=minor_line` is wooden
+  poles and `power=line` steel pylons (`osm::line_kind`). Inside the map's outline OSM's are cut away
+  and the map's stand alone. OSM's power lines clear no lane in the trees: the laser already sees it.
 - **Looks** (`Tile::look`): every building's own walls and roof, as the importer built them before
   `voxels::bake` cut them into 72 cm cells. Cells stay what is blasted and what holds a building up;
   what is drawn and collided with is the look, with the windows cut out of the walls

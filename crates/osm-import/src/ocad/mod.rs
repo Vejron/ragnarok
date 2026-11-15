@@ -471,8 +471,8 @@ impl Source {
         self.outline.len() >= 3 && point_in_polygon(at, &self.outline)
     }
 
-    /// `osm` with the map in place of what it had inside the outline: buildings go, roads are cut
-    /// where they enter, and the map's own ways join. Bridges stay, as the map draws none.
+    /// `osm` with the map in place of what it had inside the outline: buildings go, roads, fences and
+    /// power lines are cut where they enter, and the map's own ways join. Bridges stay, as the map draws none.
     pub fn over(&mut self, osm: Osm, place: &Place) -> Osm {
         self.report_offset(&osm, place);
         let inside = |point: &LatLon| self.covers(place.frame.project(point.lat, point.lon));
@@ -483,7 +483,8 @@ impl Source {
                 if !way.geometry.iter().any(inside) {
                     ways.push(way);
                 }
-            } else if way.tags.contains_key("highway") && !bridge && way.geometry.iter().any(inside) {
+            } else if (way.tags.contains_key("highway") && !bridge || crate::osm::line_kind(&way.tags).is_some()) && way.geometry.iter().any(inside) {
+                // A fence or a power line is cut as a road is: inside, the map's own lines stand.
                 let Way { id, tags, geometry } = way;
                 let mut run = Vec::new();
                 let mut piece = 0;
@@ -882,7 +883,7 @@ mod tests {
     }
 
     #[test]
-    fn inside_the_outline_the_map_replaces_osm() {
+    fn inside_the_outline_the_map_replaces_osm_roads_fences_and_power_lines() {
         let place = place();
         let mut source = Source { outline: convex_hull(vec![[0.0, 0.0], [100.0, 0.0], [100.0, 100.0], [0.0, 100.0]]), ..Source::default() };
         source.ways.push(line(&place, FIRST_ID, ("highway", "path"), &[[10.0, 10.0], [20.0, 20.0]]));
@@ -894,13 +895,17 @@ mod tests {
                 line(&place, 4, ("highway", "path"), &[[200.0, 0.0], [210.0, 0.0]]),
                 line(&place, 5, ("bridge", "yes"), &[[50.0, 50.0], [55.0, 50.0]]),
                 line(&place, 6, ("railway", "rail"), &[[50.0, 50.0], [55.0, 50.0]]),
+                line(&place, 7, ("barrier", "fence"), &[[50.0, 20.0], [150.0, 20.0], [160.0, 20.0]]),
+                line(&place, 8, ("power", "line"), &[[50.0, 80.0], [60.0, 80.0]]),
             ],
             areas: Vec::new(),
         };
         let merged = source.over(osm, &place);
         let ids: Vec<u64> = merged.ways.iter().map(|way| way.id & 0xffff).collect();
-        // The inner building goes, the road is cut in two, the rest stays, the map's path joins.
-        assert_eq!(ids, [2, 3, 3, 4, 5, 6, 0]);
+        // The inner building goes, the road is cut in two, the fence loses its inner end and the
+        // power line all of itself, the rest stays, the map's path joins.
+        assert_eq!(ids, [2, 3, 3, 4, 5, 6, 7, 0]);
+        assert_eq!(merged.ways[6].geometry.len(), 2, "the fence outside the map");
         assert_eq!(merged.ways[1].geometry.len() + merged.ways[2].geometry.len(), 4);
     }
 
