@@ -82,11 +82,19 @@ struct Surface {
 
 // Which draw of a material with a depth pre-pass this is: 0 the only one, 1 depth only, 2 shaded after it.
 override PREPASS: u32 = 0u;
+${material.coverage ? `// How many samples a pixel has, and which of them the surface covers (\`ShaderMaterial.coverage\`).
+override SAMPLES: u32 = 4u;
+var<private> surfaceMask: u32 = 0xffffffffu;` : ''}
+
+struct FragmentOut {
+  @location(0) color: vec4f,
+${material.coverage ? '  @builtin(sample_mask) mask: u32,' : ''}
+}
 
 ${material.wgsl}
 
 @fragment
-fn fs(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4f {
+fn fs(in: VertexOut, @builtin(front_facing) front: bool) -> FragmentOut {
   var n = normalize(in.normal);
   if (!front) {
     n = -n;
@@ -94,16 +102,19 @@ fn fs(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4f {
   let flags = materials[in.ids.x].params.x;
   let extra = ${material.vertex !== undefined ? 'array<vec4f, 3>(in.extra0, in.extra1, in.extra2)' : 'array<vec4f, 3>()'};
   let c = surface(Surface(in.world, n, in.color, in.uv, in.custom, front, in.viewDepth, extra));
+  var out: FragmentOut;
+${material.coverage ? '  out.mask = surfaceMask;' : ''}
   if (PREPASS == 1u) {
-    return vec4f(0.0);
+    return out;
   }
   if (frame.lightCount.z > 0.5 && in.world.y < frame.lightCount.y) {
     discard;
   }
-  return vec4f(applyFog(c.rgb, flags, in.viewDepth, in.world), c.a);
+  out.color = vec4f(applyFog(c.rgb, flags, in.viewDepth, in.world), c.a);
+  return out;
 }
 `
-  const key = `${material.wgsl}|${material.vertex ?? ''}|${material.shadows}|${fields.map((f) => `${f.name}:${f.type}`).join(',')}|${textureNames.join(',')}`
+  const key = `${material.wgsl}|${material.vertex ?? ''}|${material.shadows}|${material.coverage}|${fields.map((f) => `${f.name}:${f.type}`).join(',')}|${textureNames.join(',')}`
   return {
     key,
     code,

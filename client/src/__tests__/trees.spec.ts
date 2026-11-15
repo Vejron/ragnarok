@@ -14,11 +14,11 @@ describe('tree levels of detail', () => {
       expect(impostor.uvs, `kind ${kind}`).toBeDefined()
       const { full } = treeGeometries(kind)
       for (let i = 0; i < impostor.vertexCount; i++) {
-        // Its pictures' half width, and the upright cylinder it is fitted to, which says it is an impostor.
+        // The scale of its pictures' depth, and the upright cylinder it and they are fitted to, which says it is an impostor.
         const [extent, , radius, half] = Array.from(impostor.custom!.subarray(i * 4, i * 4 + 4))
         expect(half, `kind ${kind}`).toBeGreaterThan(0)
         expect(radius, `kind ${kind}`).toBeGreaterThan(0)
-        // The cylinder holds the solid, and fits in the sphere the pictures frame.
+        // The cylinder holds the solid, and fits in the sphere round it.
         for (let v = 0; v < full.vertexCount; v++) {
           const p = full.positions
           expect(Math.hypot(p[v * 3]! - full.bounds.x, p[v * 3 + 2]! - full.bounds.z), `kind ${kind}`).toBeLessThanOrEqual(radius! + 1e-6)

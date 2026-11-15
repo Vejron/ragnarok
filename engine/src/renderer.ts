@@ -955,6 +955,10 @@ export class Renderer {
         alpha: { srcFactor: 'src-alpha', dstFactor: 'one' },
       }
     }
+    const samples = layer === 'overlay' ? 1 : this.sampleCount
+    const constants: Record<string, number> = {}
+    if (prepass) constants.PREPASS = prepass
+    if (m instanceof ShaderMaterial && m.coverage) constants.SAMPLES = samples
     return this.device.createRenderPipeline({
       label,
       layout,
@@ -963,7 +967,7 @@ export class Renderer {
         module,
         entryPoint: 'fs',
         targets: [{ format: HDR_FORMAT, blend, writeMask: prepass === 1 ? 0 : GPUColorWrite.ALL }],
-        constants: prepass ? { PREPASS: prepass } : undefined,
+        constants,
       },
       primitive: { topology: 'triangle-list', cullMode: m.side === 'front' ? 'back' : m.side === 'back' ? 'front' : 'none' },
       depthStencil: {
@@ -976,7 +980,7 @@ export class Renderer {
         depthBiasSlopeScale: layer !== 'world' ? 0 : m.depthBiasSlope,
       },
       // The overlay draws in the effects pass, onto the resolved image.
-      multisample: { count: layer === 'overlay' ? 1 : this.sampleCount },
+      multisample: { count: samples },
     })
   }
 

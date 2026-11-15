@@ -149,25 +149,41 @@ The style is flat, bright and few-banded, not physically based.
   or behind a felled one, you still see what you aim at. Trees take no shadow. A felled tree's instance
   is scaled to nothing in place.
   Each tree is culled on its own, and drawn as its solid near the camera and as an **impostor** from
-  40 m (`TREE_LEVELS_FROM`; the quality's `treeDetail` scales it, 0.7 at medium and 0.5 at low). An
+  80 m (`TREE_LEVELS_FROM`; the quality's `treeDetail` scales it, 0.7 at medium and 0.5 at low). An
   impostor is one quad showing pictures of the solid (`impostors.ts`): when the first tile is built,
   each kind's full mesh is drawn on the CPU, its own triangles, colours and smoothed normals, from 64
   directions over the upper half of the sky (a hemi-octahedral grid of 8 × 8, its edge the horizon), 64
   pixels a picture, into one atlas of all nine kinds (1536² colour and coverage, and 1536² normal and
-  depth; about 130 ms). The coverage is stored as a signed distance to the outline, so the edge stays
-  smooth however near a picture is drawn and the mips do not thin it, and pixels just off the tree take
-  the nearest one's colour and normal. The foliage shader's `displace` opens the quad to face the
-  camera, fitted to the upright cylinder that holds the tree (a quad sized to its bounding sphere was
-  three times the pixels, and in a forest the shader's cost is its pixels). The fragment shader finds
-  the three pictures nearest the direction to the tree, meets each where the pixel's own line of sight
-  crosses its plane (with the tree's single direction instead, a near tree lost its foot), blends them,
-  and lights the colour and normal found with the same cel bands and winter snow as the solid. The
-  pictures are of the solid itself rather than of ideal shapes: drawn from ellipsoids and cones, their
-  outlines and band edges differed from the faceted solid's, and the fade between them showed.
-  The change is a **cross-fade**, not a swap: over the 12 m before it (`TREE_FADE`, the engine's
-  `DetailLevel.fade`) a tree is drawn as both, and the same 4×4 ordered dither that clears the view
-  inside a crown gives each pixel to one or the other, the impostor's share growing with the distance
-  of the tree's middle, so no pixel is left empty or drawn twice. The impostor's quad is flat, through
+  depth; about 300 ms). Three things make a picture hold as much of the tree as it can:
+  - **It frames the upright cylinder that holds the tree**, stretched to fill the picture both ways
+    (`frameExtent`), not the tree's bounding sphere. A birch seen level was 26 texels tall in a picture
+    of its sphere and is 60 now.
+  - **Its coverage is a signed distance to the outline itself**: the mesh's edges between a face toward
+    the viewer and one turned away, where nothing else of the tree lies over them. Measured between
+    pixels instead, the distance stepped along a slanting edge and had to be blurred, which rounded
+    every corner and put a wobble on every crown. Stored as a distance, the edge stays where it is
+    however near a picture is drawn and the mips do not thin it. Pixels just off the tree take the
+    nearest one's colour and normal.
+  - **The rings of views crowd toward the horizon**, about 0°, 6°, 30° and 73° up rather than every
+    25°: a tree is mostly seen from the ground, and a camera a little above one used to blend its level
+    picture with one from well overhead.
+
+  The foliage shader's `displace` opens the quad to face the camera, fitted to the same cylinder (a
+  quad sized to the bounding sphere was three times the pixels, and in a forest the shader's cost is
+  its pixels), and works out where the direction to the camera falls on the grid of pictures, once a
+  tree. The fragment shader takes the three pictures round it, meets each where the pixel's own line of
+  sight crosses its plane (with the tree's single direction instead, a near tree lost its foot), blends
+  them, and lights the colour and normal found with the same cel bands and winter snow as the solid.
+  The coverage says how much of the pixel lies inside the outline, and that many of the pixel's four
+  samples are drawn (`ShaderMaterial.coverage`), so an impostor's edge is anti-aliased as a solid's is.
+  The pictures are of the solid itself rather than of ideal shapes: drawn from ellipsoids and cones,
+  their outlines and band edges differed from the faceted solid's, and the fade between them showed.
+  The change is a **cross-fade**, not a swap: over the 20 m before it (`TREE_FADE`, the engine's
+  `DetailLevel.fade`) a tree is drawn as both. The impostor takes a share of each pixel's samples that
+  grows with the distance of the tree's middle and the solid takes the rest, so the two blend as the
+  frame resolves and no sample is left empty or drawn twice. With one sample a pixel (quality low) the
+  4×4 ordered dither that clears the view inside a crown gives each pixel to one or the other, which
+  shows as a fine screen. The impostor's quad is flat, through
   the tree's middle, and the solid's surface is up to a crown in front of it: dithered together, the
   ink saw a step at every pixel. So over the third of a band before the fade a solid is pressed toward
   that card, each corner slid along its own line of sight (so it does not move on the screen) to a
@@ -177,7 +193,7 @@ The style is flat, bright and few-banded, not physically based.
   Earlier versions swapped shapes outright: ever fewer-sided solids (far forests read as diamonds),
   then a few-sided solid from 70 m and a billboard a part from 130 m, and both changes showed. The
   shadow pass does not run the vertex shader, so an impostor casts its shadow from a solid
-  (`DetailLevel.shadow`): the few-sided one (a 20-triangle crown) out to 130 m and a crude one (one
+  (`DetailLevel.shadow`): the few-sided one (a 20-triangle crown) out to 160 m and a crude one (one
   octahedron crown, one cone) past it, where only the shadow changes. A felled tree is a mesh of its
   own with a material that never fades. It is the engine's `InstancedMesh.levels`; rocks have it with
   no coarser shapes, for the culling alone.

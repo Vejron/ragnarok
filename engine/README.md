@@ -50,7 +50,7 @@ The difference comes from how GPU state is organised, not from per-call speed:
   - `needsUpdate()` re-sends everything; `needsUpdateRange(first, count)` re-sends only those vertices.
 - **Materials:** `Material` is toon-lit (three's `MeshToonMaterial` maths with a `Ramp`) or unlit.
   - It supports `map`, an object-space `normalMap`, `emissive`, vertex colours, alpha or additive blending, depth bias, double-siding and fog.
-  - `ShaderMaterial` takes a WGSL `surface()` function plus named uniforms and textures.
+  - `ShaderMaterial` takes a WGSL `surface()` function plus named uniforms and textures. With `coverage`, `surface()` may set `surfaceMask`, the samples of the pixel it covers (`SAMPLES` of them): two surfaces that share a pixel's samples blend as the frame resolves, for a cross-fade or an anti-aliased alpha-tested edge.
 - **Textures:** `Texture` takes a canvas, an image or raw RGBA pixels, in sRGB or linear, and generates its own mipmaps.
 - **Models:** `parseGlb` / `loadGlb` read binary glTF: meshes, materials (base colour), skins and animations.
 - **Animation:** `Animator` blends clips with hand-set weights and times, or runs them on its own clock.

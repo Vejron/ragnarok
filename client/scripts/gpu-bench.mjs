@@ -1,7 +1,7 @@
 // What a frame costs the GPU at a Retina laptop's size, view by view.
 //
 // Drives the real game in headless Chrome (WebGPU over Metal) with a 1512×982 window at device scale 2,
-// so the drawing buffer is 3024×1964 at quality `high`, the size of a 14" MacBook Pro's screen. At each
+// so the drawing buffer is 3024×1964 at quality `high` (or `--quality`), the size of a 14" MacBook Pro's screen. At each
 // view it stops the game's loop and times `frames` renders to `onSubmittedWorkDone`: whole frames to the
 // GPU's finish, which headless Metal measures honestly where its per-pass timers do not. Variants
 // (something turned off) are timed alternately with the full frame, `rounds` times, and the medians
@@ -10,6 +10,7 @@
 //   node client/scripts/gpu-bench.mjs [--out <dir>] [--url <url>] [--world <name>] [--views a,b]
 //                                     [--breakdown] [--parts a,b] [--extra 'name=<js>'] [--shoot]
 //                                     [--rounds 5] [--frames 60] [--scale 2] [--label <name>]
+//                                     [--quality high]
 //
 // With no `--url` it starts Vite on port 5287 and loads `worlds/<--world>/`, or the world the editor
 // activated (`worlds/active.json`). `--breakdown` also times the frame with each costly part turned off. Each view's
@@ -59,6 +60,29 @@ const PARTS = [
   ['effects', `(() => { const hid = []; const walk = (n) => { if (n.prepare && n.draw && n.visible) { n.visible = false; hid.push(n) } n.children.forEach(walk) }; walk(e); return () => hid.forEach((n) => { n.visible = true }) })()`],
   ['trees', `(() => { const hid = []; const walk = (n) => { if (n.levels && n.visible) { n.visible = false; hid.push(n) } n.children.forEach(walk) }; walk(e); return () => hid.forEach((n) => { n.visible = true }) })()`],
   ['grass', `(() => { const hid = []; const walk = (n) => { if (n.visible && /grass/i.test(n.name ?? '')) { n.visible = false; hid.push(n) } n.children.forEach(walk) }; walk(e); return () => hid.forEach((n) => { n.visible = true }) })()`],
+]
+
+/**
+ * JS that draws the trees with their levels of detail scaled by `detail` (as the quality's `treeDetail`
+ * does: the renderer's `detail` and the foliage's fade move together), and returns an undo.
+ */
+const treesAt = (detail) => `(() => {
+  const was = r.detail, found = new Set()
+  const walk = (n) => { if (n.levels && n.material?.uniforms?.fadeFrom !== undefined) found.add(n.material); n.children.forEach(walk) }
+  walk(e)
+  const set = (scale) => found.forEach((m) => { m.uniforms.fadeFrom *= scale; m.uniforms.fadeBand *= scale; m.needsUpdate() })
+  set(${detail} / was)
+  r.detail = ${detail}
+  return () => { set(was / ${detail}); r.detail = was }
+})()`
+
+/** What `--parts` can also name, though `--breakdown` leaves them out: the frame drawn another way. */
+const WAYS = [
+  // Every tree as its solid, and every tree past a few metres as its impostor.
+  ['solids', treesAt(20)],
+  ['impostors', treesAt(0.1)],
+  // The trees' levels twice as far out.
+  ['trees2x', treesAt(2)],
 ]
 
 // ---- Vite and Chrome ----
@@ -130,7 +154,7 @@ await send('Runtime.enable')
 await send('Page.enable')
 send('Page.navigate', { url })
 await sleep(3000)
-await evaluate(`localStorage.setItem('ragnarok.quality', 'high'); 1`, 5000)
+await evaluate(`localStorage.setItem('ragnarok.quality', '${option('quality', 'high')}'); 1`, 5000)
 send('Page.navigate', { url })
 await sleep(1000)
 let ready = false
@@ -230,10 +254,10 @@ async function shoot(file) {
 
 const median = (a) => a.slice().sort((x, y) => x - y)[a.length >> 1]
 const views = (option('views', null)?.split(',') ?? Object.keys(VIEWS)).filter((v) => VIEWS[v])
-// `--parts a,b` limits the breakdown to those; `--extra name=<js returning an undo>` adds one of your own.
+// `--parts a,b` limits the breakdown to those (or names one of `WAYS`); `--extra name=<js returning an undo>` adds one of your own.
 const only = option('parts', null)?.split(',')
 const extra = args.flatMap((a, i) => (a === '--extra' ? [args[i + 1].split(/=(.*)/s).slice(0, 2)] : []))
-const variants = [['full', null], ...(flag('breakdown') || only ? PARTS.filter(([p]) => !only || only.includes(p)) : []), ...extra]
+const variants = [['full', null], ...(flag('breakdown') || only ? PARTS.filter(([p]) => !only || only.includes(p)) : []), ...WAYS.filter(([w]) => only?.includes(w)), ...extra]
 const results = {}
 for (const name of views) {
   if (flag('verbose')) console.log(`${name}: placing`)
@@ -258,17 +282,19 @@ for (const name of views) {
     }
   }
   const stats = await evaluate('window.__bench.stats()')
-  // `--shoot`: a screenshot of each variant too, to see what it changes.
+  // `--shoot`: a screenshot of each variant too, to see what it changes, and what it draws.
+  const drawn = {}
   if (flag('shoot')) {
     for (const [variant, off] of variants.slice(1)) {
       await evaluate(`(() => { const g = window.__game, r = g.scene.renderer, e = g.scene.scene; window.__undo = ${off}; return 1 })()`)
       await shoot(`${label}-${name}-${variant}`)
+      drawn[variant] = await evaluate('window.__bench.stats()')
       await evaluate('(() => { window.__undo?.(); return 1 })()')
     }
   }
   await evaluate('window.__bench.resume()')
   const full = median(times.full)
-  results[name] = { size, stats, ms: Object.fromEntries(Object.entries(times).map(([v, t]) => [v, +median(t).toFixed(3)])) }
+  results[name] = { size, stats, drawn, ms: Object.fromEntries(Object.entries(times).map(([v, t]) => [v, +median(t).toFixed(3)])) }
   const parts = Object.entries(results[name].ms).filter(([v]) => v !== 'full').map(([v, ms]) => `${v} −${(full - ms).toFixed(2)}`)
   console.log(`${name.padEnd(7)} ${size}  ${full.toFixed(2)} ms  (${stats.draws} draws, ${(stats.triangles / 1e6).toFixed(2)} M tris)${parts.length ? `\n        ${parts.join('  ')}` : ''}`)
 }

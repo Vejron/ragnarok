@@ -11,7 +11,7 @@ import {
   TREE_SPRUCE,
   type Tree,
 } from '@/world'
-import { IMPOSTOR_ATLAS_PX, IMPOSTOR_FRAMES, IMPOSTOR_FRAME_PX, IMPOSTOR_MARGIN, IMPOSTOR_TILES, bakeImpostor, emptyAtlas, type ImpostorFrame } from './impostors'
+import { IMPOSTOR_ATLAS_PX, IMPOSTOR_FRAMES, IMPOSTOR_FRAME_PX, IMPOSTOR_MARGIN, IMPOSTOR_SPREAD, IMPOSTOR_TILES, bakeImpostor, emptyAtlas, type ImpostorFrame } from './impostors'
 import { buildRocks, isRock } from './rocks'
 import type { Shore } from './shore'
 import { winter } from './season'
@@ -91,9 +91,9 @@ const PROTOTYPES: Record<number, Part[]> = {
  * A forest is mostly far trees: drawn whole they were nine tenths of the frame's triangles. The
  * quality's `treeDetail` scales these.
  */
-export const TREE_LEVELS_FROM = [40, 130]
+export const TREE_LEVELS_FROM = [80, 160]
 /** Metres before the impostor takes over in which the solid dissolves into it, pixel by pixel. */
-export const TREE_FADE = 12
+export const TREE_FADE = 20
 /** A tree's levels: the solid, and the impostor twice over. */
 export const TREE_LEVELS = TREE_LEVELS_FROM.length + 1
 /** The finest level a tree's shadow is cast from: trees take no shadow, so the two are never compared. */
@@ -213,26 +213,20 @@ export interface TreeShapes {
 }
 
 /**
- * The impostor's quad: `uv` is the corner (-1 to 1 across and up), and `custom` the half width of its
- * pictures (unit space), the kind's tile in the atlas, and the radius and half height of the upright
- * cylinder about the middle that holds the tree, which the quad is fitted to (w, never 0, also says it
- * is an impostor). A quad any bigger is pixels the shader works on only to throw away.
+ * The impostor's quad: `uv` is the corner (-1 to 1 across and up), and `custom` the scale of its
+ * pictures' depth (unit space), the kind's tile in the atlas, and the radius and half height of the
+ * upright cylinder about the middle that holds the tree, which the quad and the pictures are fitted to
+ * (w, never 0, also says it is an impostor). A quad any bigger is pixels the shader works on only to
+ * throw away.
  */
-function impostorGeometry(frame: ImpostorFrame, tile: number, solid: Geometry): Geometry {
-  const [cx, cy, cz] = frame.center
-  let radius = 0, half = 0
-  for (let i = 0; i < solid.vertexCount; i++) {
-    const p = solid.positions
-    radius = Math.max(radius, Math.hypot(p[i * 3]! - cx, p[i * 3 + 2]! - cz))
-    half = Math.max(half, Math.abs(p[i * 3 + 1]! - cy))
-  }
+function impostorGeometry(frame: ImpostorFrame, tile: number): Geometry {
   const positions: number[] = []
   const uvs: number[] = []
   const custom: number[] = []
   for (const [u, v] of [[-1, -1], [1, -1], [1, 1], [-1, 1]] as const) {
     positions.push(...frame.center)
     uvs.push(u, v)
-    custom.push(frame.radius * IMPOSTOR_MARGIN, tile, radius, half)
+    custom.push(frame.radius, tile, frame.across, frame.half)
   }
   return new Geometry({
     positions: new Float32Array(positions),
@@ -258,14 +252,21 @@ export function treeGeometries(kind: number): TreeShapes {
   const coarse = shape('coarse')
   const shadow = shape('shadow')
   const bounds = full.bounds
-  const frame: ImpostorFrame = { center: [bounds.x, bounds.y, bounds.z], radius: bounds.radius }
+  // The upright cylinder about the middle that holds the solid.
+  let across = 0, half = 0
+  for (let i = 0; i < full.vertexCount; i++) {
+    const p = full.positions
+    across = Math.max(across, Math.hypot(p[i * 3]! - bounds.x, p[i * 3 + 2]! - bounds.z))
+    half = Math.max(half, Math.abs(p[i * 3 + 1]! - bounds.y))
+  }
+  const frame: ImpostorFrame = { center: [bounds.x, bounds.y, bounds.z], radius: bounds.radius, across, half }
   for (const other of [coarse, shadow]) {
     const b = other.bounds
     bounds.radius = Math.max(bounds.radius, Math.hypot(b.x - bounds.x, b.y - bounds.y, b.z - bounds.z) + b.radius)
   }
   full.custom = new Float32Array(full.vertexCount * 4)
   for (let i = 0; i < full.vertexCount; i++) full.custom.set([bounds.x, bounds.y, bounds.z, 0], i * 4)
-  return { full, impostor: impostorGeometry(frame, tile, full), coarse, shadow, frame }
+  return { full, impostor: impostorGeometry(frame, tile), coarse, shadow, frame }
 }
 
 /** Metres from the eye inside which foliage dissolves, so a view from inside a crown stays clear. */
@@ -278,15 +279,18 @@ const NEAR_FADE = 2.5
  * as it was. Trees take no shadow.
  *
  * The fade: `extra[0].w` is how far into the band the tree is (0 to 1, the same for both, worked out from
- * the middle of its bounds), and of the 16 places of the dither the solid leaves that share and the
- * impostor draws only that share, so each pixel is one or the other.
+ * the middle of its bounds). The impostor draws that share of each pixel's samples and the solid the
+ * rest (`impostorSamples`), so the two blend as the frame resolves; with one sample a pixel, the dither
+ * gives each pixel to one or the other.
  *
  * The impostor: `extra[0].xyz` is the pixel's place in the tree's unit space, from the middle of its
- * bounds, and `extra[1].xyz` the direction to the camera from there. The three pictures nearest that
+ * bounds, and `extra[1].xy` where the direction to the camera from there falls on the grid of pictures. The three pictures nearest that
  * direction are each met where the pixel's line of sight crosses the picture's plane, and blended by
  * how near they are (a dither picking one of them a pixel was cheaper, but the pictures are far enough
- * apart that it speckled); the surface found is lit as the solid's would be. The quad keeps its own depth: writing the surface's cost more than a millisecond in a
- * forest, as it stops the GPU skipping hidden pixels.
+ * apart that it speckled); the surface found is lit as the solid's would be. The pictures' coverage says
+ * how much of the pixel lies inside the outline, and that many of its samples are drawn, so the edge is
+ * as smooth as a solid's. The quad keeps its own depth: writing the surface's cost more than a
+ * millisecond in a forest, as it stops the GPU skipping hidden pixels.
  */
 const FOLIAGE_WGSL = /* wgsl */ `
 const BANDS_AT = array<f32, 4>(0.376, 0.588, 0.804, 1.0);
@@ -295,21 +299,53 @@ const FRAMES = ${IMPOSTOR_FRAMES.toFixed(1)};
 const FRAME_PX = ${IMPOSTOR_FRAME_PX.toFixed(1)};
 const ATLAS_PX = ${IMPOSTOR_ATLAS_PX.toFixed(1)};
 const TILES = ${IMPOSTOR_TILES.toFixed(1)};
+const MARGIN = ${IMPOSTOR_MARGIN.toFixed(6)};
+const SPREAD = ${IMPOSTOR_SPREAD.toFixed(1)};
+// How much of a pixel must lie inside an impostor's outline for each of its four samples to be the tree's.
+const EDGE_AT = array<f32, 4>(0.375, 0.125, 0.875, 0.625);
 
-/** The dither's place (0 to 15) at the pixel under \`world\`. */
-fn ditherAt(world: vec3f) -> u32 {
+/** The pixel under \`world\`. */
+fn pixelAt(world: vec3f) -> vec2u {
   let clip = frame.viewProj * vec4f(world, 1.0);
-  let pixel = vec2u((clip.xy / clip.w * 0.5 + 0.5) * frame.viewport.xy);
+  return vec2u((clip.xy / clip.w * 0.5 + 0.5) * frame.viewport.xy);
+}
+
+/** The dither's place (0 to 15) at \`pixel\`. */
+fn ditherAt(pixel: vec2u) -> u32 {
   // Copied to a variable first: WGSL only indexes a constant array with a constant.
   var bayer = BAYER_AT;
   return bayer[(pixel.y & 3u) * 4u + (pixel.x & 3u)];
+}
+
+/**
+ * Which of a pixel's samples (a bit each) a tree \`fade\` of the way into its impostor draws as the
+ * impostor; its solid draws the rest. With four samples a pixel the share is counted out in samples, the
+ * dither rounding it either way and which sample goes first turning from pixel to pixel, so the two are
+ * blended as the frame resolves. With one, the dither gives the whole pixel to one or the other.
+ */
+fn impostorSamples(fade: f32, pixel: vec2u, dither: f32) -> u32 {
+  if (SAMPLES == 1u) {
+    return select(0u, 1u, dither < fade);
+  }
+  let turn = pixel.x ^ (pixel.y << 1u);
+  var mask = 0u;
+  for (var i = 0u; i < 4u; i++) {
+    if ((f32((i + turn) & 3u) + dither) * 0.25 < fade) {
+      mask |= 1u << i;
+    }
+  }
+  return mask;
 }
 
 /** The direction picture \`cell\` of a kind's grid was taken from (\`decodeView\` in impostors.ts). */
 fn frameView(cell: vec2f) -> vec3f {
   let ab = cell / (FRAMES - 1.0) * 2.0 - 1.0;
   let p = vec2f(ab.x + ab.y, ab.x - ab.y) * 0.5;
-  return normalize(vec3f(p.x, max(0.0, 1.0 - abs(p.x) - abs(p.y)), p.y));
+  // How far in from the grid's edge, squared, is the direction's share of height: the rings crowd the horizon.
+  let inward = max(0.0, 1.0 - abs(p.x) - abs(p.y));
+  let rise = inward * inward;
+  let level = p * ((1.0 - rise) / max(1.0 - inward, 1e-6));
+  return normalize(vec3f(level.x, rise, level.y));
 }
 
 /** One picture's colour and coverage, normal and surface point (unit space, from the middle), weighted. */
@@ -319,7 +355,7 @@ struct Picture {
   hit: vec3f,
 }
 
-fn picture(cell: vec2f, weight: f32, q: vec3f, sight: vec3f, extent: f32, tile: f32, lod: f32) -> Picture {
+fn picture(cell: vec2f, weight: f32, q: vec3f, sight: vec3f, fit: vec4f, lod: f32) -> Picture {
   var out: Picture;
   let v = frameView(cell);
   var right = vec3f(1.0, 0.0, 0.0);
@@ -331,12 +367,14 @@ fn picture(cell: vec2f, weight: f32, q: vec3f, sight: vec3f, extent: f32, tile: 
   let up = cross(v, right);
   // Where the line of sight through the pixel crosses the picture's plane.
   let onPlane = q - sight * (dot(q, v) / max(dot(sight, v), 0.05));
-  let local = vec2f(dot(onPlane, right), dot(onPlane, up)) / extent;
+  // The picture is stretched over the outline, from there, of the cylinder that holds the tree (\`frameExtent\`).
+  let span = vec2f(fit.z, fit.z * v.y + fit.w * length(v.xz)) * MARGIN;
+  let local = vec2f(dot(onPlane, right), dot(onPlane, up)) / span;
   if (weight <= 0.0 || abs(local.x) > 1.0 || abs(local.y) > 1.0) {
     return out;
   }
   let inside = clamp(vec2f(local.x, -local.y) * 0.5 + 0.5, vec2f(0.5 / FRAME_PX), vec2f(1.0 - 0.5 / FRAME_PX));
-  let tileAt = vec2f(tile % TILES, floor(tile / TILES)) * FRAMES;
+  let tileAt = vec2f(fit.y % TILES, floor(fit.y / TILES)) * FRAMES;
   let uv = (tileAt + cell + inside) * (FRAME_PX / ATLAS_PX);
   let albedo = textureSampleLevel(impostorAlbedo, materialSampler, uv, lod);
   // Well off the tree: nothing more to read. Most of the quad is.
@@ -352,7 +390,7 @@ fn picture(cell: vec2f, weight: f32, q: vec3f, sight: vec3f, extent: f32, tile: 
   let nd = textureSampleLevel(impostorNormalDepth, materialSampler, uv, lod);
   out.albedo = vec4f(albedo.rgb * share, share);
   out.normal = (nd.rgb * 2.0 - 1.0) * share;
-  out.hit = (onPlane + v * ((nd.a * 2.0 - 1.0) * extent)) * share;
+  out.hit = (onPlane + v * ((nd.a * 2.0 - 1.0) * fit.x)) * share;
   return out;
 }
 
@@ -372,43 +410,57 @@ fn surface(given: Surface) -> vec4f {
   let lod = clamp(log2(max(max(texels.x, texels.y), 1e-4)), 0.0, 3.0);
   var s = given;
   let fade = s.extra[0].w;
-  let dither = (f32(ditherAt(given.world)) + 0.5) / 16.0;
+  let pixel = pixelAt(given.world);
+  let dither = (f32(ditherAt(pixel)) + 0.5) / 16.0;
   let impostor = s.custom.w > 0.0;
-  // After the depth pre-pass, a pixel drawn at all is one the pre-pass kept: nothing to discard.
+  // After the depth pre-pass, a sample drawn at all is one the pre-pass kept: nothing to discard.
   let keep = PREPASS == 2u;
+  let theirs = impostorSamples(fade, pixel, dither);
   if (impostor) {
-    if (dither >= fade && !keep) {
+    if (theirs == 0u && !keep) {
       discard;
     }
     let q = s.extra[0].xyz;
     let e = s.extra[2];
     // The pictures are picked by the direction to the camera from the tree's middle, the same over the
     // whole tree, but looked up along this pixel's own line of sight: a near tree is seen in perspective.
-    let toward = normalize(s.extra[1].xyz);
     let sight = normalize(worldToTree(frame.cameraPos.xyz - given.world, e));
-    let extent = s.custom.x;
-    // The three pictures around the direction to the camera, on the grid of \`encodeView\`.
-    let sum = abs(toward.x) + max(toward.y, 0.0) + abs(toward.z);
-    let p = toward.xz / max(sum, 1e-6);
-    let g = (vec2f(p.x + p.y, p.x - p.y) * 0.5 + 0.5) * (FRAMES - 1.0);
+    // The three pictures around the direction to the camera: where it falls on their grid.
+    let g = s.extra[1].xy;
     let cell = clamp(floor(g), vec2f(0.0), vec2f(FRAMES - 2.0));
     let f = g - cell;
     var a: Picture;
     var b: Picture;
     var c: Picture;
     if (f.x + f.y < 1.0) {
-      a = picture(cell, 1.0 - f.x - f.y, q, sight, extent, s.custom.y, lod);
-      b = picture(cell + vec2f(1.0, 0.0), f.x, q, sight, extent, s.custom.y, lod);
-      c = picture(cell + vec2f(0.0, 1.0), f.y, q, sight, extent, s.custom.y, lod);
+      a = picture(cell, 1.0 - f.x - f.y, q, sight, s.custom, lod);
+      b = picture(cell + vec2f(1.0, 0.0), f.x, q, sight, s.custom, lod);
+      c = picture(cell + vec2f(0.0, 1.0), f.y, q, sight, s.custom, lod);
     } else {
-      a = picture(cell + vec2f(1.0, 1.0), f.x + f.y - 1.0, q, sight, extent, s.custom.y, lod);
-      b = picture(cell + vec2f(0.0, 1.0), 1.0 - f.x, q, sight, extent, s.custom.y, lod);
-      c = picture(cell + vec2f(1.0, 0.0), 1.0 - f.y, q, sight, extent, s.custom.y, lod);
+      a = picture(cell + vec2f(1.0, 1.0), f.x + f.y - 1.0, q, sight, s.custom, lod);
+      b = picture(cell + vec2f(0.0, 1.0), 1.0 - f.x, q, sight, s.custom, lod);
+      c = picture(cell + vec2f(1.0, 0.0), 1.0 - f.y, q, sight, s.custom, lod);
     }
     let cover = a.albedo.a + b.albedo.a + c.albedo.a;
-    // The coverage is a distance to the silhouette, a half on it.
-    if (cover < 0.5 && !keep) {
-      discard;
+    // The coverage is a distance to the silhouette, a half on it and \`SPREAD\` texels from none to whole:
+    // how much of the pixel is inside the outline, and so which of its samples are the tree's.
+    var mine = theirs;
+    if (SAMPLES == 1u) {
+      mine = select(mine, 0u, cover < 0.5);
+    } else {
+      let within = (cover - 0.5) * (2.0 * SPREAD) / max(0.5 * (texels.x + texels.y), 1e-3) + 0.5;
+      var edges = EDGE_AT;
+      for (var i = 0u; i < 4u; i++) {
+        if (edges[i] >= within) {
+          mine &= ~(1u << i);
+        }
+      }
+    }
+    if (!keep) {
+      if (mine == 0u) {
+        discard;
+      }
+      surfaceMask = mine;
     }
     if (PREPASS == 1u) {
       return vec4f(0.0);
@@ -418,8 +470,12 @@ fn surface(given: Surface) -> vec4f {
     s.world = given.world + treeToWorld((a.hit + b.hit + c.hit) / max(cover, 1e-4) - q, e);
     s.color = vec4f(s.color.rgb * (a.albedo.rgb + b.albedo.rgb + c.albedo.rgb) / max(cover, 1e-4), s.color.a);
   } else {
-    if (dither < fade && !keep) {
-      discard;
+    if (!keep) {
+      let mine = ~theirs & ((1u << SAMPLES) - 1u);
+      if (mine == 0u) {
+        discard;
+      }
+      surfaceMask = mine;
     }
     // Where a fading solid really is: its corners were pressed toward the impostor's card.
     s.world = given.world + s.extra[1].xyz;
@@ -444,6 +500,14 @@ fn surface(given: Surface) -> vec4f {
  * in its pictures; a solid stays where it is. Both work out how far into the fade they are.
  */
 const IMPOSTOR_WGSL = /* wgsl */ `
+/** Where on the grid of a kind's pictures (0 to its last, each way) a direction in unit space falls: \`encodeView\` in impostors.ts. */
+fn viewCell(toward: vec3f) -> vec2f {
+  let level = abs(toward.x) + abs(toward.z);
+  let rise = max(toward.y, 0.0);
+  let p = toward.xz * ((1.0 - sqrt(rise / max(level + rise, 1e-9))) / max(level, 1e-9));
+  return (vec2f(p.x + p.y, p.x - p.y) * 0.5 + 0.5) * ${(IMPOSTOR_FRAMES - 1).toFixed(1)};
+}
+
 fn displace(world: vec3f, custom: vec4f, color: vec4f) -> vec3f {
   let c0 = vertexModel[0].xyz;
   let c1 = vertexModel[1].xyz;
@@ -500,7 +564,7 @@ fn displace(world: vec3f, custom: vec4f, color: vec4f) -> vec3f {
   let inverse = vec3f(1.0 / (crown * crown), 1.0 / (height * height), 1.0 / dot(c2, c2));
   let offset = corner - middle;
   vertexExtra[0] = vec4f(vec3f(dot(c0, offset), dot(c1, offset), dot(c2, offset)) * inverse, fade);
-  vertexExtra[1] = vec4f(vec3f(dot(c0, toward), dot(c1, toward), dot(c2, toward)) * inverse, 0.0);
+  vertexExtra[1] = vec4f(viewCell(vec3f(dot(c0, toward), dot(c1, toward), dot(c2, toward)) * inverse), 0.0, 0.0);
   vertexExtra[2] = vec4f(c0.x, c0.z, height, crown);
   return corner;
 }
@@ -548,6 +612,8 @@ function foliage(atlas: { albedo: Texture; normalDepth: Texture }, fadeFrom: num
     // Impostors stack many deep in a forest, each pixel three pictures' reads: settle what is in front
     // first, then shade only that.
     depthPrepass: true,
+    // The fade and the impostor's outline are counted out in samples.
+    coverage: true,
   })
 }
 

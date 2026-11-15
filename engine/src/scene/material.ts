@@ -235,6 +235,14 @@ export interface ShaderMaterialParams extends Omit<MaterialParams, 'lit' | 'map'
    * shading every layer costs far more than drawing the shape twice. The reflection draws it once.
    */
   depthPrepass?: boolean
+  /**
+   * Lets `surface` say which of a pixel's samples it covers, by setting `surfaceMask` (a bit a sample,
+   * all of them unless it is set). `SAMPLES` is how many there are, 1 without multisampling. Two
+   * surfaces that share a pixel's samples between them are blended as the pass resolves, where a
+   * `discard` gives each pixel wholly to one: a cross-fade without a screen-door pattern, or an
+   * alpha-tested edge that is anti-aliased.
+   */
+  coverage?: boolean
 }
 
 /**
@@ -249,6 +257,7 @@ export class ShaderMaterial extends Material {
   readonly textures: Record<string, Texture>
   readonly shadows: boolean
   readonly depthPrepass: boolean
+  readonly coverage: boolean
 
   constructor(params: ShaderMaterialParams) {
     super({ ...params, lit: false })
@@ -258,5 +267,6 @@ export class ShaderMaterial extends Material {
     this.textures = { ...params.textures }
     this.shadows = params.shadows ?? false
     this.depthPrepass = params.depthPrepass ?? false
+    this.coverage = params.coverage ?? false
   }
 }

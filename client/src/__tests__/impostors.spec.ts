@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { IMPOSTOR_ATLAS_PX, IMPOSTOR_FRAMES, IMPOSTOR_FRAME_PX, IMPOSTOR_MARGIN, bakeImpostor, decodeView, emptyAtlas, encodeView, frameBasis, frameOrigin, frameView } from '@/render/impostors'
+import { IMPOSTOR_ATLAS_PX, IMPOSTOR_FRAMES, IMPOSTOR_FRAME_PX, IMPOSTOR_SPREAD, bakeImpostor, decodeView, emptyAtlas, encodeView, frameBasis, frameExtent, frameOrigin, frameView } from '@/render/impostors'
 import { treeGeometries } from '@/render/trees'
 import { TREE_SPRUCE } from '@/world'
 
@@ -19,6 +19,15 @@ describe('impostor views', () => {
     expect(frameView(0, 3)[1]).toBeCloseTo(0)
     expect(frameView(IMPOSTOR_FRAMES - 1, 5)[1]).toBeCloseTo(0)
     expect(frameView(3, 3)[1]).toBeGreaterThan(0.8)
+  })
+
+  it('crowds the rings of views toward the horizon, where a tree is mostly seen from', () => {
+    const up = (ring: number) => Math.asin(frameView(ring, 3)[1]) * 180 / Math.PI
+    expect(up(1)).toBeGreaterThan(3)
+    expect(up(1)).toBeLessThan(9)
+    expect(up(2)).toBeGreaterThan(20)
+    expect(up(2)).toBeLessThan(36)
+    expect(up(3)).toBeGreaterThan(60)
   })
 
   it('frames each picture square to its view, right level and up toward the sky', () => {
@@ -47,7 +56,7 @@ describe('impostor bake', () => {
     // A side-on picture: on the grid's edge.
     const i = 0, j = 3
     const below = frame.center[1] - 0.25
-    const v = (frame.center[1] - below) / (frame.radius * IMPOSTOR_MARGIN) * 0.5 + 0.5
+    const v = (frame.center[1] - below) / frameExtent(frameView(i, j), frame)[1] * 0.5 + 0.5
     expect(atlas.albedo[at(i, j, 0.5, v) + 3]).toBe(255)
     expect(atlas.albedo[at(i, j, 0.5, 0.5) + 3]).toBe(255)
     // The top corners are sky.
@@ -96,6 +105,42 @@ describe('impostor bake', () => {
     }
     expect(last).toBe(255)
     expect(rising).toBeGreaterThanOrEqual(3)
+  })
+
+  it('fills a side-on picture with the tree, top to bottom and side to side', () => {
+    const i = 0, j = 3
+    const whole = (u: number, v: number) => atlas.albedo[at(i, j, u, v) + 3]! >= 128
+    const rows = Array.from({ length: IMPOSTOR_FRAME_PX }, (_, row) => Array.from({ length: IMPOSTOR_FRAME_PX }, (_, col) => whole((col + 0.5) / IMPOSTOR_FRAME_PX, (row + 0.5) / IMPOSTOR_FRAME_PX)))
+    const tall = rows.filter((row) => row.some(Boolean)).length
+    const wide = Math.max(...rows.map((row) => row.filter(Boolean).length))
+    expect(tall).toBeGreaterThanOrEqual(IMPOSTOR_FRAME_PX - 6)
+    expect(wide).toBeGreaterThanOrEqual(IMPOSTOR_FRAME_PX - 6)
+  })
+
+  it('measures the coverage to the outline itself, so a slanting edge is straight', () => {
+    // The spruce's lowest tier, side-on: a straight slope. Where each row's coverage crosses a half,
+    // found between pixels, lies on one line to a tenth of a pixel.
+    const i = 0, j = 3
+    const [x, y] = frameOrigin(4, i, j)
+    const alpha = (col: number, row: number) => atlas.albedo[((y + row) * IMPOSTOR_ATLAS_PX + x + col) * 4 + 3]! / 255
+    const crossings: [number, number][] = []
+    for (let row = 40; row < 52; row++) {
+      for (let col = 0; col < IMPOSTOR_FRAME_PX / 2; col++) {
+        const a = alpha(col, row), b = alpha(col + 1, row)
+        if (a < 0.5 && b >= 0.5) {
+          crossings.push([row, col + (0.5 - a) / (b - a)])
+          break
+        }
+      }
+    }
+    expect(crossings.length).toBeGreaterThan(8)
+    const slopes = crossings.slice(1).map(([, at], n) => at - crossings[n]![1])
+    const mean = slopes.reduce((sum, slope) => sum + slope, 0) / slopes.length
+    // Runs of rows on one straight edge step by the same amount.
+    const straight = slopes.filter((slope) => Math.abs(slope - mean) < 0.1).length
+    expect(Math.abs(mean)).toBeGreaterThan(0.2)
+    expect(straight).toBe(slopes.length)
+    expect(IMPOSTOR_SPREAD).toBeGreaterThan(1)
   })
 
   it('leaves other kinds\' tiles alone', () => {

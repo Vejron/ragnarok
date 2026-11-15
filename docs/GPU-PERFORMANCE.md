@@ -109,6 +109,34 @@ Kläppudden's shore view went from 5.08 to 4.05 ms at ratio 1.5, and the water l
 The breakdown at the shore before it: sky 1.27 (most of it the water's reflection of it), reflection
 0.33, effects 0.29, shadows 0.29, bloom 0.29, ink 0.19, grass 0.14.
 
+### 5. Solid trees further out, and impostors that look like them
+
+Trees changed to impostors at 40 m, and the pictures showed: wobbling outlines, spikes on the crowns,
+a second outline round a tree while it faded and a screen pattern over it. Four changes, measured on
+`home` at quality high (ratio 1.5, 2268 × 1258), ms per frame, with the trees' share (the frame with
+them hidden, timed alternately):
+
+| view | before | after | trees before | trees after |
+|---|---|---|---|---|
+| forest | 3.41 | 3.25 | 0.61 | 0.44 |
+| vista | 2.92 | 2.86 | 0.59 | 0.54 |
+
+- **The switch is at 80 m, not 40** (`TREE_LEVELS_FROM`), the fade 20 m. A solid is opaque, so the
+  GPU shades each of its pixels once and its edges are anti-aliased; an impostor's pixels are three
+  pictures' reads. Twice as far out cost almost no triangles (1.840 to 1.845 M in the forest) and
+  saved 0.2 ms. Every tree as a solid saved 0.3 ms, at 0.5 M more triangles: the levels stay for
+  weaker GPUs, which take `treeDetail` 0.7 and 0.5.
+- **The pictures frame the tree's cylinder and store a distance to the true outline** (`impostors.ts`),
+  and their views crowd the horizon. These change only what is baked (130 to 300 ms, once) and where a
+  picture is looked up: the trees' share was 0.61 ms before and 0.63 ms after, within the noise.
+- **The fade and the impostor's edge are counted out in samples** (`ShaderMaterial.coverage`): the
+  fragment writes a sample mask, the impostor taking a share of a pixel's four samples and the solid
+  the rest. The mask is written in the depth pre-pass, which discards already, so the GPU loses no
+  hidden-surface removal by it; the shaded draw tests depth `equal` a sample and needs no mask.
+
+`gpu-bench.mjs --parts solids,impostors,trees2x` draws the trees those ways, and `--quality low`
+runs the preset with one sample a pixel.
+
 ## Tried and dropped
 
 - **`rg11b10ufloat` for the HDR image** (4 bytes a pixel, not 8, where the device has
@@ -122,5 +150,6 @@ The breakdown at the shore before it: sky 1.27 (most of it the water's reflectio
 - **GPU culling into indirect draws, and Hi-Z occlusion:** not built. The renderer's CPU time is about
   0.3 ms, WebGPU has no multi-draw-indirect (each indirect draw is still a call), and the pre-pass
   already makes hidden tree pixels cheap.
-- **Trees drawn as solids further out:** cheaper on this GPU (`detail` 2 saves 0.2 ms), but not done.
-  Weaker GPUs pay more for triangles, and the CPU loop over trees grows with the square of the distance.
+- **Every tree a solid, with no impostors:** 0.3 ms cheaper still on this GPU, at 0.5 M more triangles
+  in a town's trees and more in a forest. Weaker GPUs pay more for triangles, and the CPU loop over
+  trees grows with the square of the distance, so the impostor stays past 80 m.
