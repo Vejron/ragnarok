@@ -122,7 +122,8 @@ impl Game {
                 entities: Default::default(),
                 nav: Default::default(),
                 next_id: 1,
-                rng: Rng::from_time(),
+                // A test's world is the same every run, so a test that fails does so every time.
+                rng: if cfg!(test) { Rng::from_seed(0x9e37_79b9_7f4a_7c15) } else { Rng::from_time() },
                 shots: Vec::new(),
                 armor_hits: Vec::new(),
                 marks: Vec::new(),

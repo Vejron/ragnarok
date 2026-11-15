@@ -2,12 +2,25 @@
 resolver = "3"
 members = ["crates/shared", "crates/sim", "crates/sim-wasm", "crates/server", "crates/osm-import", "crates/editor"]
 
+# File and line numbers for backtraces, without the full debug info: it made up most of `target/`,
+# which is what slows every rebuild once it has grown.
+[profile.dev]
+debug = "line-tables-only"
+
 [profile.dev.package."*"]
 opt-level = 3
 
 [profile.release]
 codegen-units = 1
 lto = "thin"
+
+# The client's physics while developing and testing (`npm run build:wasm`): optimised like the release,
+# but rebuilt in pieces after an edit. The shipped build (`npm run build`) uses `release`.
+[profile.wasm-dev]
+inherits = "release"
+lto = false
+codegen-units = 16
+incremental = true
 
 [workspace.package]
 version = "0.1.0"

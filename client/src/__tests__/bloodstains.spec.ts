@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Vector3 } from '@ragnarok/engine'
 import { Bloodstains } from '@/render/bloodstains'
 import { Debris } from '@/render/debris'
@@ -7,6 +7,16 @@ import { Gore } from '@/render/gore'
 import { Particles, type ParticleSpec } from '@/render/particles'
 import type { Character } from '@/render/character'
 import { DEATH_BODY, LIMB_LEG_L, PART_TORSO } from '@/net/codec'
+
+// The blood scatters by `Math.random`: the same draws every run, so what lands where is the same too.
+beforeEach(() => {
+  let seed = 0x2f6e2b1
+  vi.spyOn(Math, 'random').mockImplementation(() => {
+    seed = (seed * 1664525 + 1013904223) >>> 0
+    return seed / 4294967296
+  })
+})
+afterEach(() => vi.restoreAllMocks())
 
 describe('Bloodstains', () => {
   it('lays a blot at once and joins a smear into a strip the way it was dragged', () => {

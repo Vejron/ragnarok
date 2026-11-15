@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { Quat, Vector3 } from '@ragnarok/engine'
-import { beforeAll, describe, expect, it } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { boxOf, triangleCount } from './helpers'
 import { parsePlaneModel, PlaneModel } from '@/render/plane'
 import { PLANE_BOMBS, PLANE_GUN_PIVOTS, PLANE_REAR_LENGTH, PLANE_REAR_PIVOT } from '@/sim/consts'
@@ -23,10 +23,17 @@ function named(plane: PlaneModel, name: string) {
   return plane.root.getObjectByName(name)!
 }
 
+/** The clock the model animates by, milliseconds: a test's own, so no test waits or depends on the machine. */
+let clock = 0
+beforeEach(() => {
+  clock = 1000
+  vi.spyOn(performance, 'now').mockImplementation(() => clock)
+})
+afterEach(() => vi.restoreAllMocks())
+
 /** Lets a little time pass, so the next update has a frame's worth of it. */
 function wait(ms: number) {
-  const start = performance.now()
-  while (performance.now() - start < ms);
+  clock += ms
 }
 
 describe('PlaneModel', () => {

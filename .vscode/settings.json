@@ -1,0 +1,5 @@
+{
+  // rust-analyzer builds into its own directory (target/rust-analyzer), so its checks neither block
+  // nor undo the builds run from the terminal.
+  "rust-analyzer.cargo.targetDir": true
+}

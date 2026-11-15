@@ -6,14 +6,15 @@
   "scripts": {
     "predev": "npm run build:wasm",
     "dev": "vite",
-    "prebuild": "npm run build:wasm",
-    "build": "run-p type-check \"build-only {@}\" --",
+    "prebuild": "npm run build:wasm -- --release",
+    "build": "run-p type-check-only \"build-only {@}\" --",
     "build-only": "vite build",
     "preview": "vite preview",
     "pretest": "npm run build:wasm",
     "test": "vitest",
     "pretype-check": "npm run build:wasm",
     "type-check": "vue-tsc --build",
+    "type-check-only": "vue-tsc --build",
     "lint": "oxlint src",
     "gen:consts": "node scripts/gen-consts.ts",
     "build:wasm": "node scripts/build-wasm.ts"

@@ -59,7 +59,9 @@ To iterate faster:
 - The client's real type check is `vue-tsc --build`. Running `tsc` on the root `tsconfig.json` checks nothing.
 - Vehicle physics tests (`crates/sim/src/vehicle/tests.rs`) run on a small flat world that ends about 200 m out, so a long full-throttle run drives off it.
 - Water in a test world has waves, and the surface depends on `Physics::set_tick`. Call `calm_waters()` for a test that needs still water.
-- The server's world is seeded from the clock (`Rng::from_time`), so a server test that fails now and then is a test relying on luck, not noise. Run the test binary that `cargo test -p server --no-run` names 50 times with the test's name, read the failing assert, and fix the test's set-up. A common cause is a soldier put in mid-air, who falls while the test runs.
+- A server test's world has a fixed seed (`Game::new` under `cfg(test)`), and the client's specs that draw from `Math.random` or animate by `performance.now` mock them, so a test passes or fails the same way every run. Keep it so: never assert on wall-clock time or on unseeded chance. For a test suspected of failing now and then, run the test binary that `cargo test -p server --no-run` names 50 times and read the failing assert.
+- **Keep `target/` small.** Rebuilds slow down badly once it has grown (a `shared` edit took 37 s at 267 GB and under 2 s after a `cargo clean`). When rebuilds feel slow, check `du -sh target` and clean it. `cargo test -p <crate>` and `cargo test --workspace` build the dependencies with different feature sets, so each keeps its own copy.
+- `npm run build:wasm` uses the `wasm-dev` profile (optimised, incremental, a second or two after an edit); only `npm run build` builds the release WASM. Performance runs (`--ignored`, `BENCH=1`) still want `--release`.
 - In zsh, `grep --include=*.rs` fails with "no matches found". Quote the glob, or leave it out.
 - Blender is at `/Applications/Blender.app/Contents/MacOS/Blender`. To build one car and look at it: `Blender -b -P tools/vehicles/build_car.py -- --only <kind> --preview <dir>`.
 
