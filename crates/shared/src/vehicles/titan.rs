@@ -5,8 +5,8 @@ use super::*;
 /// The Titan (`KIND_TITAN`): a giant robot about fifty metres high, one pilot sealed in its head. Its
 /// body is a single box, its torso, held up by two spring legs that are ray casts to the ground and
 /// kept upright by a torque, exactly as a walker's is (its `Gait`). Its pilot moves its two fists
-/// (`TITAN_ARMS`): they hit what they meet and hold what they close on. The right one holds a 40 mm
-/// autocannon that fires along the forearm, and on the left pauldron is a launcher of four vertical tubes
+/// (`TITAN_ARMS`): they hit what they meet and hold what they close on. The right one holds a
+/// three-barrel rotary cannon that fires heavy rounds along the forearm, and on the left pauldron is a launcher of four vertical tubes
 /// that send up the submarine's guided missile (`KIND_MISSILE`), which the pilot then flies. Its feet are solid
 /// and crush what they come down on. Rounds are not shot at the box but at the model's own shape: its
 /// torso's `Role::Hit` solids, and its arms and legs bent as the client draws them (`bend`).
@@ -124,16 +124,31 @@ pub const TITAN_STOMP_VEHICLE_DAMAGE: f32 = 120.0;
 /// A soldier thrown from a fist keeps this share of the fist's speed.
 pub const TITAN_THROW_SHARE: f32 = 1.0;
 
-/// The fist that holds the autocannon: the right (0 is the left).
+/// The fist that holds the rotary cannon: the right (0 is the left).
 pub const TITAN_GUN_HAND: usize = 1;
-/// How far the gun's muzzle is ahead of the fist's middle along the forearm, metres.
-pub const TITAN_GUN_LENGTH: f32 = 7.0;
-/// Ticks between rounds: seven and a half a second, quicker than the Strf 90's five.
-pub const TITAN_GUN_COOLDOWN: u32 = 8;
+/// How far the gun's muzzles are ahead of the fist's middle along the forearm, metres.
+pub const TITAN_GUN_LENGTH: f32 = 8.0;
+/// Its barrels, which turn a third of a turn round the forearm's line between rounds, and how far each
+/// is from that line, metres. Its rounds leave on the line itself.
+pub const TITAN_GUN_BARRELS: u32 = 3;
+pub const TITAN_GUN_BARREL_OFFSET: f32 = 0.75;
+/// Ticks between rounds: two and a half a second.
+pub const TITAN_GUN_COOLDOWN: u32 = 24;
 /// How far a round strays from the bore, radians: a fist is no turret.
 pub const TITAN_GUN_SPREAD: f32 = 0.006;
-/// Heat a round puts in the barrel, of 255: about five seconds of holding the trigger jams it.
-pub const TITAN_GUN_HEAT: f32 = 15.0;
+/// Heat a round puts in the barrels, of 255: about eight seconds of holding the trigger jams it.
+pub const TITAN_GUN_HEAT: f32 = 37.0;
+/// How fast its round leaves the muzzle, m/s: slower than a tank's shell, so it is seen to fly.
+pub const TITAN_ROUND_SPEED: f32 = 110.0;
+/// Its round's burst (`PROJECTILE_ROTARY`): how far it reaches, metres, what it takes off at the middle
+/// and how hard it throws, m/s. Bigger than a tank's armour-piercing shell's, but a little over a third
+/// of a mortar bomb's reach, so it bites a wall about 1.8 m round (`CARVE_REACH`) to the mortar's 5 m.
+pub const TITAN_ROUND_RADIUS: f32 = 4.0;
+pub const TITAN_ROUND_DAMAGE: f32 = 110.0;
+pub const TITAN_ROUND_KNOCK: f32 = 14.0;
+/// The crater it digs, radius and depth, metres, and how hard it knocks a vehicle it strikes, m/s.
+pub const TITAN_ROUND_CRATER: [f32; 2] = [3.0, 0.5];
+pub const TITAN_ROUND_HIT_KNOCK: f32 = 0.35;
 /// The launcher on the left pauldron: how many tubes, and where each one's mouth is, in the hull frame,
 /// on top of its box (`launcher` in `tools/vehicles/build_titan.py`).
 pub const TITAN_TUBES: u8 = 4;
@@ -190,10 +205,10 @@ const SOLIDS: [Solid; 20] = [
     Solid { shape: Shape::Cuboid(TITAN_LAUNCHER_HALF), at: TITAN_LAUNCHER_AT, role: Role::Hit },
 ];
 
-/// A 40 mm armour-piercing round, with high explosive as its other load: the Strf 90's.
-const CANNON: Fire = Fire::Shell { kind: PROJECTILE_CANNON_AP, alt: PROJECTILE_CANNON, speed: SHELL_SPEED, length: TITAN_GUN_LENGTH, ttl: SHELL_TTL_TICKS };
+/// Its heavy round, the one load it has.
+const CANNON: Fire = Fire::Shell { kind: PROJECTILE_ROTARY, alt: PROJECTILE_ROTARY, speed: TITAN_ROUND_SPEED, length: TITAN_GUN_LENGTH, ttl: SHELL_TTL_TICKS };
 
-/// Its weapons: the autocannon in its right fist, fired with the right mouse button (but not while Shift
+/// Its weapons: the rotary cannon in its right fist, fired with the right mouse button (but not while Shift
 /// throws that fist as a punch), and the missile tubes on its left pauldron, fired with G. Fallen, it
 /// can do neither.
 const MOUNTS: &[MountDef] = &[

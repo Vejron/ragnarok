@@ -2196,7 +2196,7 @@ mod tests {
         assert!(graves.iter().all(|grave| grave.base == 250 && grave.z.abs() < 4000), "on the ground, and none in the park");
         // The cemetery's stand along its path only; the churchyard's fill it.
         assert!(cemetery.iter().all(|grave| grave.z.abs() < 1000 && grave.z.abs() > 200), "{:?}", cemetery.iter().map(|grave| grave.z).max());
-        assert!(churchyard.iter().any(|grave| grave.z > 2500) && churchyard.iter().any(|grave| grave.z < -2500));
+        assert!(churchyard.iter().any(|grave| grave.z > 2000) && churchyard.iter().any(|grave| grave.z < -2000));
         // Both are mown grass, and no boulder is left in either.
         assert!(built.tiles.values().flat_map(|tile| &tile.cover).filter(|cover| cover.kind == COVER_PARK).count() >= 3);
         let rock_in_a_yard = |tree: &&Tree| matches!(tree.kind, TREE_ROCK_BOULDER | TREE_ROCK_SLAB) && tree.z.abs() < 3000;

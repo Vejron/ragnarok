@@ -91,14 +91,14 @@ export class Turrets implements Presenter<Frame> {
     if (frame.localId !== null && seats[gunner] === frame.localId) this.world.ownShot()
   }
 
-  /** A Titan's autocannon, in its fist: a 40 mm round out along the forearm, a flash, a kick and the bang. */
+  /** A Titan's rotary cannon, in its fist: a heavy round out along the forearm, a flash, a kick, the barrels turning on and the bang. */
   private fist(titan: TitanModel, seats: readonly number[], frame: Frame) {
     const { origin, direction } = titan.barrel()
     titan.kick()
     const muzzle = origin.addScaledVector(direction, TITAN_GUN_LENGTH)
     this.world.effects.muzzleFlash(muzzle, direction)
-    this.world.lights.flash(muzzle.x, muzzle.y, muzzle.z, { color: 0xffc060, intensity: 4, radius: 18, life: 0.09 })
-    this.world.sounds.cannon([muzzle.x, muzzle.y, muzzle.z], false)
+    this.world.lights.flash(muzzle.x, muzzle.y, muzzle.z, { color: 0xffc060, intensity: 6, radius: 24, life: 0.12 })
+    this.world.sounds.cannon([muzzle.x, muzzle.y, muzzle.z], true)
     if (frame.localId !== null && seats[0] === frame.localId) this.world.ownShot()
   }
 

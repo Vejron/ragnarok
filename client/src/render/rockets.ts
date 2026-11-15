@@ -21,6 +21,8 @@ const ROUND_SHOT = 10
 const GOLF_BALL = 11
 /** `PROJECTILE_CANNON_AP`: an autocannon's armour-piercing round, drawn as the high-explosive one. */
 const CANNON_AP = 12
+/** `PROJECTILE_ROTARY`: a Titan's rotary cannon's heavy round, drawn as big as a mortar bomb. */
+const ROTARY = 13
 
 /** The projectiles in flight: a glowing missile or a tank shell pointed along its velocity, or a tumbling grenade. Their trails are `ProjectileTrails`. */
 export class Rockets {
@@ -87,7 +89,7 @@ export class Rockets {
         mesh = new Mesh(this.bullet, this.bulletMaterial)
       } else if (kind === CANNON || kind === CANNON_AP) {
         mesh = new Mesh(this.smallSlug, this.slugMaterial)
-      } else if (kind === SHELL || kind === HE || kind === MORTAR) {
+      } else if (kind === SHELL || kind === HE || kind === MORTAR || kind === ROTARY) {
         mesh = new Mesh(this.slug, this.slugMaterial)
       } else mesh = new Mesh(this.body, this.material)
       this.meshes.set(id, mesh)

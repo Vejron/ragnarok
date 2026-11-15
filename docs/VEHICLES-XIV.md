@@ -1,6 +1,6 @@
 # Vehicles XIV: the Titan
 
-The Titan is a robot about fifty metres high, with one pilot sealed in its head. Its pilot walks it and moves its two fists: it punches, picks up soldiers and vehicles and throws them, and crushes what it steps on. Its right fist holds a 40 mm autocannon, and on its left shoulder are four vertical launch tubes for the submarine's guided missile ("Weapons", below). Everyone else has to bring it down with shells, rockets and bombs.
+The Titan is a robot about fifty metres high, with one pilot sealed in its head. Its pilot walks it and moves its two fists: it punches, picks up soldiers and vehicles and throws them, and crushes what it steps on. Its right fist holds a three-barrel rotary cannon firing heavy rounds, and on its left shoulder are four vertical launch tubes for the submarine's guided missile ("Weapons", below). Everyone else has to bring it down with shells, rockets and bombs.
 
 It is piloted with mouse and keyboard, or from a VR headset with the pilot's own hands moving its fists ([VR.md](VR.md)), which is built but has not yet run on a headset.
 
@@ -59,9 +59,9 @@ It is piloted with mouse and keyboard, or from a VR headset with the pilot's own
   - soldiers within 3.6 m of its middle are crushed;
   - soldiers on the ground out to 14 m are thrown outwards and knocked off their feet, unhurt;
   - a vehicle under it loses 120 health, which flattens a jeep; buildings, cubes and trees under it are rammed or felled.
-- **Kills** by its fists and feet are its pilot's, as `WEAPON_TITAN` (36). Its gun's and its missiles' are theirs as the Strf 90's autocannon's and the submarine's missile's are.
+- **Kills** by its fists and feet are its pilot's, as `WEAPON_TITAN` (36). Its gun's are theirs as `WEAPON_ROTARY` (37), and its missiles' as the submarine's missile's are.
 - **Weapons**, under mouse and keyboard ("Weapons", below):
-  - **Right click held** fires the 40 mm in the right fist, and **Q** swaps its rounds between armour-piercing and high explosive.
+  - **Right click held** fires the rotary cannon in the right fist.
   - **Shift and a right click** throw the gun fist as a punch instead, and it holds fire. The gun hand never grips: only the left one closes on things.
   - **G** sends a missile up out of the next loaded tube on the left shoulder, for the pilot to fly.
 - **What hurts it.**
@@ -75,20 +75,21 @@ It is piloted with mouse and keyboard, or from a VR headset with the pilot's own
 
 Both are rows of `MountDef` in `titan.rs`, worked by `Gunnery` like any other vehicle's guns, with two new variants in `shared::mounts`.
 
-### The autocannon in its right fist
+### The rotary cannon in its right fist
 
-- **What it fires.** It is the Strf 90's gun: 40 mm armour-piercing rounds, with high explosive as the other load (Q), at `SHELL_SPEED`.
-  - It fires 7.5 rounds a second (`TITAN_GUN_COOLDOWN`, 8 ticks), against the Strf's 5.
-  - Held, it jams after about five seconds (`TITAN_GUN_HEAT`), and clears once it has cooled, as a machine gun does.
-- **Where the rounds go.** They leave the fist's middle along the forearm, from the elbow to the fist, as the arm is bent at that moment (`Muzzle::Fist`, `Physics::forearm`). They first appear `TITAN_GUN_LENGTH` (7 m) out, at the muzzle.
+- **What it fires.** One load, a heavy round (`PROJECTILE_ROTARY`, 13), at `TITAN_ROUND_SPEED` (110 m/s), slower than a tank's shell so that it is seen to fly.
+  - It is drawn as big as a mortar bomb, with a shell's tracer.
+  - It bursts on what it meets: `TITAN_ROUND_RADIUS` (4 m), 110 at the middle, through 25 mm of armour. That is more than a tank's armour-piercing shell's burst, but a little over a third of a mortar bomb's reach. So against a wall it bites about 1.8 m round, to the mortar's 5 m: `a_titans_heavy_round_bites_a_wall_but_less_than_a_mortar_bomb` measures 17 cells to the mortar's 147.
+  - It fires 2.5 rounds a second (`TITAN_GUN_COOLDOWN`, 24 ticks). Its three barrels (`TITAN_GUN_BARRELS`) turn a third of a turn round the forearm's line between rounds. The rounds themselves all leave on that line.
+  - Held, it jams after about eight seconds (`TITAN_GUN_HEAT`), and clears once it has cooled, as a machine gun does.
+- **Where the rounds go.** They leave the fist's middle along the forearm, from the elbow to the fist, as the arm is bent at that moment (`Muzzle::Fist`, `Physics::forearm`). They first appear `TITAN_GUN_LENGTH` (8 m) out, at the muzzles.
   - The gun is aimed by the arm, not by a turret, so the mount is `Aim::Fixed`.
   - Under mouse and keyboard the right fist is held up with its forearm laid on what the middle of the screen is on (`layForearm` in `client/src/titanhands.ts`): the fist goes a forearm's length on from the elbow towards the point, and that is repeated a few times.
   - The fist moves at its own pace and lags the mouse by about a tenth of a second. So the HUD draws a second, open cross where the barrel points now (`titanSight` in `client/src/gauges.ts`), apart from the reticle.
-- **On a wall.** An armour-piercing round's charge is too small for its blast to bite a wall (`CARVE_MIN_RADIUS`), so the round punches the wall out `CANNON_AP_WALL_HOLE` (0.85 m) round where it strikes: a cell or two a round (`Burst::hole`, `punch` in `projectiles.rs`). The Strf 90's gun fires the same round, so it does the same.
 - **The trigger.** It is right click (`BUTTON_ALT`), but not while Shift is held (`Need::Released(BUTTON_RUN)`): Shift and a right click throw the fist as a punch.
 - **The gun hand never grips** (`holds_gun` in `titans.rs`). Closed, it is a fist that punches as the other does.
 - **Its own fist.** A ray that ignores a vehicle passes through that vehicle's own fists and feet (`cast_ray_hit`), so a round leaves through the fist that fires it.
-- **On the wire.** It shows as the vehicle's `turret` (its shots, heat, jam and load), so the presenter draws the flash, the kick and the bang from its counter (`Turrets.fist`), as it does for a tank.
+- **On the wire.** It shows as the vehicle's `turret` (its shots, heat and jam). The presenter draws the flash, the kick, the barrels turning on and the bang from its counter (`Turrets.fist`, `TitanModel.kick`), as it does for a tank. The burst's fireball is a shell's, sized to `TITAN_ROUND_RADIUS` (`WEAPON_ROTARY` in `events.ts`).
 - **It is fallen**, or its pilot is away flying a missile: then it neither aims nor fires (`Need::Upright`).
 
 ### The missile tubes on its left shoulder
@@ -177,13 +178,15 @@ Its hull's middle settles at `TITAN_RIDE_HEIGHT` (33.2 m), measured by `a_titan_
 
 ## The model
 
-`tools/vehicles/build_titan.py` builds `client/public/models/titan.glb` (about 23,000 triangles: its big plates are cut into a 1.2 m grid, `DENT_GRID`, for a shell's dent to press in, [HULL-DAMAGE.md](HULL-DAMAGE.md)): slabs of grey armour over a dark frame, a glowing core in the chest and a glowing visor. Every limb is its own node hanging straight down from its joint (`upper_L/R`, `fore_L/R`, `fist_L/R` with `open_` and `closed_` fingers, `thigh_L/R`, `shin_L/R`, `foot_L/R`), and none is another's child: the client places each. `gun_R` is the autocannon, a child of the right fist, its barrel down the forearm's line out to `GUN` (`TITAN_GUN_LENGTH`). The missile launcher, with its four hatches, is part of `torso`.
+`tools/vehicles/build_titan.py` builds `client/public/models/titan.glb` (about 23,000 triangles: its big plates are cut into a 1.2 m grid, `DENT_GRID`, for a shell's dent to press in, [HULL-DAMAGE.md](HULL-DAMAGE.md)): slabs of grey armour over a dark frame, a glowing core in the chest and a glowing visor. Every limb is its own node hanging straight down from its joint (`upper_L/R`, `fore_L/R`, `fist_L/R` with `open_` and `closed_` fingers, `thigh_L/R`, `shin_L/R`, `foot_L/R`), and none is another's child: the client places each. `gun_R` is the rotary cannon's housing and drum, a child of the right fist. `barrels_R`, also a child of the fist, is its three barrels round the forearm's line, out to `GUN` (`TITAN_GUN_LENGTH`). The client turns it about that line. The missile launcher, with its four hatches, is part of `torso`.
 
 ```sh
 /Applications/Blender.app/Contents/MacOS/Blender -b -P tools/vehicles/build_titan.py -- --preview <dir>
 ```
 
 ## Protocol
+
+`PROJECTILE_ROTARY` (13) and `WEAPON_ROTARY` (37), the rotary cannon's round and its burst, are new values in existing fields, so they left `PROTOCOL_VERSION` where it was.
 
 Protocol 79 ([NETWORKING.md](NETWORKING.md)): 77 brought the Titan, 78 the `step` and `weight` of its walk, 79 the `step` of being off the ground.
 

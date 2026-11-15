@@ -17,6 +17,7 @@ The Strf 90 is a tracked infantry fighting vehicle, modelled on the Swedish CV90
 - **The rounds:**
   - **High explosive** is the helicopter's and walker's autocannon round (`PROJECTILE_CANNON`). It bursts a third as wide as a tank's high explosive shell and goes through 20 mm.
   - **Armour-piercing** is new: `PROJECTILE_CANNON_AP` (12). It goes through about 45 mm close in and 35 mm far out, then bursts behind the plate with half the charge of a tank's armour-piercing shell. That is through the Strf's own sides and the tank's sides, roof and engine deck, but not the tank's sloped glacis or mantlet.
+  - **On a wall** its charge is too small for its blast to bite (`CARVE_MIN_RADIUS` in `combat.rs`), so the round punches the wall out `CANNON_AP_WALL_HOLE` (0.85 m) round where it strikes: a cell or two a round (`Burst::hole`, `punch` in `projectiles.rs`).
 - **The armour** is light all round: a 30 mm glacis sloped at 30°, 30 mm on the turret's face, 18–20 mm sides, 10 mm on the roof and the rear ramp, and 8 mm underneath. The driver's periscope and the gunner's sight are weak spots. Every seat has a crew module, so a round that gets in can kill a troop in the back.
 
 ## The definition

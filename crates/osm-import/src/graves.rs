@@ -20,27 +20,27 @@ pub type Way = (Vec<P>, f64);
 pub type Stone = (P, f64, u8);
 
 /// From one stone to the next along a row, metres.
-const PITCH: f64 = 2.2;
+const PITCH: f64 = 2.8;
 /// From a path's edge to its first row of stones, metres.
 const VERGE: f64 = 1.2;
 /// From one row to the next behind it, away from a path, metres.
-const ROW_GAP: f64 = 2.6;
+const ROW_GAP: f64 = 3.2;
 /// Rows of stones on each side of a path.
 const ROWS: usize = 3;
 /// Rows without a path: between the two rows of a pair, back to back, and the aisle between pairs, metres.
-const BACK_GAP: f64 = 1.8;
-const AISLE: f64 = 3.0;
+const BACK_GAP: f64 = 2.2;
+const AISLE: f64 = 3.6;
 /// The least of a yard's paths, metres of them inside it, for its stones to follow them.
 const PATHS_MIN: f64 = 15.0;
 /// A stone stands this far inside the yard's edge, and off the edge of every road, metres.
-const EDGE_CLEAR: f64 = 1.5;
+const EDGE_CLEAR: f64 = 4.0;
 const ROAD_CLEAR: f64 = 0.8;
 /// No two stones are closer than this, metres.
-const PLOT: f64 = 1.6;
+const PLOT: f64 = 2.0;
 /// A stone stands this far from a tree's trunk, metres.
 const TRUNK_CLEAR: f64 = 1.0;
 /// One plot in this many is left empty.
-const EMPTY_ONE_IN: f64 = 7.0;
+const EMPTY_ONE_IN: f64 = 6.0;
 /// How far a stone is turned off its row, radians either way: they have settled over the years.
 const WOBBLE: f64 = 0.06;
 /// Most stones in one yard.
@@ -252,12 +252,12 @@ mod tests {
         // A 2.5 m path along z = 0 through a 60 m yard.
         let ways = vec![(vec![[-40.0, 0.0], [40.0, 0.0]], 1.25)];
         let stones = layout(&square(-30.0, 30.0), &ways, |_| true, &mut Plots::default());
-        assert!(stones.len() > 100, "{}", stones.len());
+        assert!(stones.len() > 70, "{}", stones.len());
         for side in [1.0, -1.0] {
             for row in 0..ROWS {
                 let z = side * (1.25 + VERGE + row as f64 * ROW_GAP);
                 let in_row: Vec<&Stone> = stones.iter().filter(|(at, ..)| (at[1] - z).abs() < 1e-6).collect();
-                assert!(in_row.len() > 15, "row {row} on side {side}: {}", in_row.len());
+                assert!(in_row.len() > 10, "row {row} on side {side}: {}", in_row.len());
                 for (at, yaw, _) in in_row {
                     // It looks at the path: towards z = 0, within its wobble.
                     let look = facing(*yaw);
@@ -280,7 +280,7 @@ mod tests {
         rows.sort_by(f64::total_cmp);
         rows.dedup_by(|a, b| (*a - *b).abs() < 1e-6);
         // Rows along the long side, in pairs: back to back, then an aisle.
-        assert!(rows.len() >= 10, "{rows:?}");
+        assert!(rows.len() >= 8, "{rows:?}");
         for (index, pair) in rows.windows(2).enumerate() {
             let gap = if index % 2 == 0 { BACK_GAP } else { AISLE };
             assert!((pair[1] - pair[0] - gap).abs() < 1e-6, "{rows:?}");
@@ -354,7 +354,7 @@ mod tests {
         let roads = vec![(vec![[-90.0, 0.0], [90.0, 0.0]], 2.5), (vec![[-90.0, 80.0], [90.0, 80.0]], 6.0)];
         lay(&mut built, &[square(-30.0, 30.0)], &roads, 100.0, &ground);
         let graves: Vec<Grave> = built.tiles.values().flat_map(|tile| tile.graves.iter().copied()).collect();
-        assert!(graves.len() > 100, "{}", graves.len());
+        assert!(graves.len() > 70, "{}", graves.len());
         for (&(col, row), tile) in &built.tiles {
             assert!(!tile.graves.is_empty(), "the yard is over all four tiles");
             assert!(tile.graves.windows(2).all(|pair| (pair[0].x, pair[0].z) < (pair[1].x, pair[1].z)), "in order");

@@ -106,6 +106,8 @@ export const WEAPON_CLAW = 34
 export const WEAPON_MISSILE = 35
 /** A Titan's fist or foot: punched, thrown or stepped on. */
 export const WEAPON_TITAN = 36
+/** A Titan's rotary cannon's heavy round bursting. */
+export const WEAPON_ROTARY = 37
 
 /** `Limbs`'s lost limbs, the low four bits; the same bits above `LIMB_BLEED_SHIFT` still bleed. Mirrors `LIMB_*`. */
 export const LIMB_ARM_L = 1 << 0
@@ -182,6 +184,8 @@ export const PROJECTILE_BALL = 10
 export const PROJECTILE_GOLF_BALL = 11
 /** An autocannon's armour-piercing round: flies and is drawn as `PROJECTILE_CANNON`, bursts smaller. */
 export const PROJECTILE_CANNON_AP = 12
+/** A Titan's rotary cannon's heavy round: as big as a mortar bomb, fired flat, bursting smaller. */
+export const PROJECTILE_ROTARY = 13
 
 /** `Turret`'s flags: a field mortar is hitched to a car, so it is drawn folded up for travel. Mirrors `TURRET_STOWED`. */
 export const TURRET_STOWED = 1 << 0

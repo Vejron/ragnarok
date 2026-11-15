@@ -171,6 +171,8 @@ pub const WEAPON_CLAW: u8 = 34;
 pub const WEAPON_MISSILE: u8 = 35;
 /// A Titan's fist or foot (`KIND_TITAN`): punched, thrown or stepped on.
 pub const WEAPON_TITAN: u8 = 36;
+/// A Titan's rotary cannon's heavy round bursting (`PROJECTILE_ROTARY`).
+pub const WEAPON_ROTARY: u8 = 37;
 
 /// `ClientHands::flags` and `replicated::Titan::flags` bits: a hand is closed (it holds what it closes
 /// on), and a hand is being moved by its pilot (otherwise it hangs).
@@ -258,6 +260,9 @@ pub const PROJECTILE_GOLF_BALL: u8 = 11;
 /// An autocannon's armour-piercing round: flies as `PROJECTILE_CANNON` does, goes through light armour
 /// and bursts small behind it.
 pub const PROJECTILE_CANNON_AP: u8 = 12;
+/// A Titan's rotary cannon's heavy round: a shell as big as a mortar bomb, fired flat, that bursts
+/// on what it meets, smaller than a mortar bomb.
+pub const PROJECTILE_ROTARY: u8 = 13;
 
 /// A message's field: its name, its Rust type and its unit (`UNITS`), or `""` for a count, a set of
 /// bits, an id or text, which have none.

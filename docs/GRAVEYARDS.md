@@ -16,25 +16,25 @@ always gets the same stones: nothing is drawn by chance but from a hash of where
 
 `graves::layout` works on one yard, the roads and paths about it and the plots already taken.
 
-**Along the paths.** Every road or path that runs inside the yard is followed, a point every 2.2 m.
+**Along the paths.** Every road or path that runs inside the yard is followed, a point every 2.8 m.
 At each point three stones stand on each side: the first 1.2 m outside the path's edge, the next
-two 2.6 m further back each, all facing the path. The rows nearest the paths are stood first, so a
+two 3.2 m further back each, all facing the path. The rows nearest the paths are stood first, so a
 back row never crowds out a front one. This is used when at least 15 m of path lies inside the
 yard, so a stub of a path at the gate does not count.
 
 **In rows.** A yard without paths is filled with rows along its longest side, in pairs: the two
-rows of a pair stand 1.8 m apart, back to back, and an aisle of 3 m lies between one pair and the
-next. Stones are 2.2 m apart along a row.
+rows of a pair stand 2.2 m apart, back to back, and an aisle of 3.6 m lies between one pair and the
+next. Stones are 2.8 m apart along a row.
 
 A stone is stood only where all of this holds:
 
-- it is inside the yard (holes in the area are respected) and 1.5 m from its edge;
+- it is inside the yard (holes in the area are respected) and 4 m from its edge;
 - it is 0.8 m off the edge of every road and path;
 - it is outside every building, 1 m from every tree's trunk, not under water, and inside the world;
-- it is 1.6 m from every plot already taken, in this yard or another. A cemetery is often mapped
+- it is 2 m from every plot already taken, in this yard or another. A cemetery is often mapped
   twice, or holds a churchyard, and the plots are shared so it gets its stones once.
 
-About one plot in seven is left empty. A yard gets at most 2000 stones. The rocks the importer
+About one plot in six is left empty. A yard gets at most 2000 stones. The rocks the importer
 scatters over every park (`props::scatter`) are taken away again inside a yard.
 
 ## The stones

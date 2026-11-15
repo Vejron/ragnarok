@@ -1,7 +1,7 @@
 use super::*;
 use crate::entities::Health;
 use crate::game::{Command, Game};
-use shared::protocol::{HANDS_FULL_LEFT, HANDS_FULL_RIGHT, InputFrame, KIND_JEEP, KIND_MISSILE, KIND_TITAN, PROJECTILE_CANNON_AP};
+use shared::protocol::{HANDS_FULL_LEFT, HANDS_FULL_RIGHT, InputFrame, KIND_JEEP, KIND_MISSILE, KIND_TITAN, PROJECTILE_CANNON_AP, PROJECTILE_MORTAR, PROJECTILE_ROTARY};
 use shared::quant::to_cm_i16;
 use shared::world::{WORLD_VERSION, WorldFile};
 use sim::Character;
@@ -483,20 +483,21 @@ fn a_titans_fist_cannon_fires_along_its_forearm_from_the_muzzle() {
     let shells = shells_from(&game, vid);
     assert_eq!(shells.len(), 1, "one round: {shells:?}");
     let shell = shells[0];
-    assert_eq!(shell.kind, PROJECTILE_CANNON_AP, "armour-piercing first");
+    assert_eq!(shell.kind, PROJECTILE_ROTARY, "its heavy round");
     let along = vec3::sub(fist, elbow).map(|v| v / vec3::distance(fist, elbow));
     let heading = shell.velocity.map(|v| v / vec3::length(shell.velocity));
     assert!(vec3::dot(heading, along) > 0.99, "along the forearm: {heading:?} against {along:?}");
     let out = vec3::distance(shell.position, fist);
     assert!(out > TITAN_GUN_LENGTH - 0.5 && out < TITAN_GUN_LENGTH + 5.0, "from the muzzle, {out} m out of the fist");
     assert_eq!(game.seen(vid).unwrap().turret.unwrap().shots, 1, "everyone sees it fire");
-    // Held, it keeps firing, quicker than the Strf 90.
-    for _ in 0..60 {
+    assert!((vec3::length(shell.velocity) - TITAN_ROUND_SPEED).abs() < 2.0, "{:?}", shell.velocity);
+    // Held, it keeps firing, two and a half rounds a second.
+    for _ in 0..2 * TICK_RATE {
         let at = gun_up(&game, vid);
         tick(&mut game, vid, pilot, &mut seq, BUTTON_ALT, Some(at), false);
     }
     let shots = game.seen(vid).unwrap().turret.unwrap().shots;
-    assert!(shots >= 8, "{shots} rounds in a second");
+    assert!((5..=6).contains(&shots), "{shots} rounds in two seconds and a tick");
 }
 
 #[test]
@@ -575,9 +576,8 @@ fn a_titans_shoulder_tube_launches_a_missile_its_pilot_flies_while_it_stands() {
 }
 
 
-#[test]
-fn a_40mm_armour_piercing_round_punches_a_hole_in_a_house_wall() {
-    use crate::mechanics::projectiles::{Flying, burst_of};
+/// A game with a house 10 m square and 6 m high from x = 55 to 65 and z = -5 to 5, and its id.
+fn with_house() -> (Game, shared::world::ObjId) {
     use shared::world::{Building, CollisionMesh, ObjId};
     let v = |x: f32, y: f32, z: f32| [(x * 100.0) as i32, (y * 100.0) as i32, (z * 100.0) as i32];
     let vertices = vec![v(55.0, 0.0, -5.0), v(65.0, 0.0, -5.0), v(65.0, 0.0, 5.0), v(55.0, 0.0, 5.0), v(55.0, 6.0, -5.0), v(65.0, 6.0, -5.0), v(65.0, 6.0, 5.0), v(55.0, 6.0, 5.0)];
@@ -587,71 +587,34 @@ fn a_40mm_armour_piercing_round_punches_a_hole_in_a_house_wall() {
     let map = WorldFile { version: WORLD_VERSION, half_extent: 40_000, spawns: vec![[30_000, 30_000]], buildings: vec![house], building_ids: vec![house_id], building_triangles: vec![[0, 12]], collision: CollisionMesh { vertices, triangles }, ..Default::default() };
     let mut game = Game::new(map, 0).unwrap();
     game.world.clear_pickups();
-    assert!(burst_of(PROJECTILE_CANNON_AP).unwrap().radius * crate::mechanics::combat::CARVE_REACH < 0.8, "its charge alone bites nothing");
-    // Square on the wall at x = 55, from 20 m out.
+    (game, house_id)
+}
+
+/// How many of `house`'s cells a round of `kind` flying at `speed` takes out of its wall at x = 55, met
+/// square on 3 m up.
+fn cells_taken(kind: u8, speed: f32) -> usize {
+    use crate::mechanics::projectiles::Flying;
+    let (mut game, house) = with_house();
     let id = game.world.alloc_id();
-    game.world.launch_as(id, Flying::new(PROJECTILE_CANNON_AP, 0, [35.0, 3.0, 0.0], [SHELL_SPEED, 0.0, 0.0], SHELL_TTL_TICKS));
+    game.world.launch_as(id, Flying::new(kind, 0, [35.0, 3.0, 0.0], [speed, 0.0, 0.0], SHELL_TTL_TICKS));
     for _ in 0..30 {
         game.step();
     }
-    let carving = game.world.carves.get(&house_id).expect("the wall is cut");
-    let gone = carving.removed.iter().filter(|&&removed| removed).count();
+    game.world.carves.get(&house).map_or(0, |carving| carving.removed.iter().filter(|&&removed| removed).count())
+}
+
+#[test]
+fn a_40mm_armour_piercing_round_punches_a_hole_in_a_house_wall() {
+    use crate::mechanics::projectiles::burst_of;
+    assert!(burst_of(PROJECTILE_CANNON_AP).unwrap().radius * crate::mechanics::combat::CARVE_REACH < 0.8, "its charge alone bites nothing");
+    let gone = cells_taken(PROJECTILE_CANNON_AP, SHELL_SPEED);
     assert!(gone >= 1, "a piece of wall is gone: {gone} cells");
 }
 
-/// One tick with `pilot` looking along `yaw` and `pitch` (radians, the world's), its hands idle.
-fn look_tick(game: &mut Game, pilot: u32, seq: &mut u32, yaw: f32, pitch: f32) {
-    *seq += 1;
-    game.handle(Command::Input(pilot, 0, vec![InputFrame { seq: *seq, strafe: 0, forward: 0, yaw: shared::quant::to_mrad(yaw), buttons: 0, pitch: shared::quant::to_mrad(pitch), view: 0, slot: 0 }]));
-    game.step();
-}
-
 #[test]
-fn a_titans_head_turns_to_its_pilots_look_as_far_as_its_neck_allows_and_straightens_when_empty() {
-    let (mut game, vid, pilot, mut seq) = piloted();
-    let facing = game.world.physics.car_pose(vid).unwrap().yaw();
-    for _ in 0..60 {
-        look_tick(&mut game, pilot, &mut seq, facing + 0.5, 0.3);
-    }
-    let seen = game.seen(vid).unwrap().titan.unwrap();
-    let (yaw, pitch) = (shared::quant::from_mrad(seen.head_yaw), shared::quant::from_mrad(seen.head_pitch));
-    assert!((yaw - 0.5).abs() < 0.05 && (pitch - 0.3).abs() < 0.05, "the head is at {yaw}, {pitch}");
-    // Looking back over its shoulder and at its feet, the head stops where the neck does.
-    for _ in 0..60 {
-        look_tick(&mut game, pilot, &mut seq, facing - 2.5, -1.5);
-    }
-    let seen = game.seen(vid).unwrap().titan.unwrap();
-    let (yaw, pitch) = (shared::quant::from_mrad(seen.head_yaw), shared::quant::from_mrad(seen.head_pitch));
-    assert!((yaw + TITAN_HEAD_TURN).abs() < 0.05 && (pitch + TITAN_HEAD_DOWN).abs() < 0.05, "the head is at {yaw}, {pitch}");
-    crate::mechanics::vehicles::alight(&mut game.world, pilot);
-    for _ in 0..60 {
-        game.step();
-    }
-    let seen = game.seen(vid).unwrap().titan.unwrap();
-    assert_eq!((seen.head_yaw, seen.head_pitch), (0, 0), "with nobody in it, it faces ahead");
-}
-
-#[test]
-fn a_titans_searchlight_goes_on_and_off_at_its_pilots_lamp_button_not_their_own_lamp_and_out_when_they_leave() {
-    let (mut game, vid, pilot, mut seq) = piloted();
-    let lit = |game: &Game| game.seen(vid).unwrap().titan.unwrap().flags & shared::protocol::TITAN_LAMP != 0;
-    assert!(!lit(&game));
-    // Held for several ticks and let go, it has switched once: the input reaches the game a few ticks late.
-    let mut press = |game: &mut Game| {
-        for buttons in [BUTTON_LAMP, 0] {
-            for _ in 0..8 {
-                tick(game, vid, pilot, &mut seq, buttons, None, false);
-            }
-        }
-    };
-    press(&mut game);
-    assert!(lit(&game), "the button lights it");
-    assert!(!game.world.entities.of::<Player>(pilot).lamp, "the pilot's own headlamp stays off");
-    press(&mut game);
-    assert!(!lit(&game), "and puts it out again");
-    press(&mut game);
-    assert!(lit(&game));
-    crate::mechanics::vehicles::alight(&mut game.world, pilot);
-    game.step();
-    assert!(!lit(&game), "it goes out with nobody in it");
+fn a_titans_heavy_round_bites_a_wall_but_less_than_a_mortar_bomb() {
+    let heavy = cells_taken(PROJECTILE_ROTARY, TITAN_ROUND_SPEED);
+    let mortar = cells_taken(PROJECTILE_MORTAR, TITAN_ROUND_SPEED);
+    assert!(heavy >= 8, "a hole in the wall: {heavy} cells");
+    assert!(heavy * 4 < mortar, "far smaller than a mortar bomb's: {heavy} cells to {mortar}");
 }

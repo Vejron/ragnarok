@@ -2506,8 +2506,8 @@ export const TECHNICAL_SEAT_HEADS = [[-0.42, 1.0, -0.35], [0.42, 1.0, -0.35], [0
  * The Titan (`KIND_TITAN`): a giant robot about fifty metres high, one pilot sealed in its head. Its
  * body is a single box, its torso, held up by two spring legs that are ray casts to the ground and
  * kept upright by a torque, exactly as a walker's is (its `Gait`). Its pilot moves its two fists
- * (`TITAN_ARMS`): they hit what they meet and hold what they close on. The right one holds a 40 mm
- * autocannon that fires along the forearm, and on the left pauldron is a launcher of four vertical tubes
+ * (`TITAN_ARMS`): they hit what they meet and hold what they close on. The right one holds a
+ * three-barrel rotary cannon that fires heavy rounds along the forearm, and on the left pauldron is a launcher of four vertical tubes
  * that send up the submarine's guided missile (`KIND_MISSILE`), which the pilot then flies. Its feet are solid
  * and crush what they come down on. Rounds are not shot at the box but at the model's own shape: its
  * torso's `Role::Hit` solids, and its arms and legs bent as the client draws them (`bend`).
@@ -2683,20 +2683,43 @@ export const TITAN_STOMP_VEHICLE_DAMAGE = 120.0
 /** A soldier thrown from a fist keeps this share of the fist's speed. */
 export const TITAN_THROW_SHARE = 1.0
 
-/** The fist that holds the autocannon: the right (0 is the left). */
+/** The fist that holds the rotary cannon: the right (0 is the left). */
 export const TITAN_GUN_HAND = 1
 
-/** How far the gun's muzzle is ahead of the fist's middle along the forearm, metres. */
-export const TITAN_GUN_LENGTH = 7.0
+/** How far the gun's muzzles are ahead of the fist's middle along the forearm, metres. */
+export const TITAN_GUN_LENGTH = 8.0
 
-/** Ticks between rounds: seven and a half a second, quicker than the Strf 90's five. */
-export const TITAN_GUN_COOLDOWN = 8
+/**
+ * Its barrels, which turn a third of a turn round the forearm's line between rounds, and how far each
+ * is from that line, metres. Its rounds leave on the line itself.
+ */
+export const TITAN_GUN_BARRELS = 3
+export const TITAN_GUN_BARREL_OFFSET = 0.75
+
+/** Ticks between rounds: two and a half a second. */
+export const TITAN_GUN_COOLDOWN = 24
 
 /** How far a round strays from the bore, radians: a fist is no turret. */
 export const TITAN_GUN_SPREAD = 0.006
 
-/** Heat a round puts in the barrel, of 255: about five seconds of holding the trigger jams it. */
-export const TITAN_GUN_HEAT = 15.0
+/** Heat a round puts in the barrels, of 255: about eight seconds of holding the trigger jams it. */
+export const TITAN_GUN_HEAT = 37.0
+
+/** How fast its round leaves the muzzle, m/s: slower than a tank's shell, so it is seen to fly. */
+export const TITAN_ROUND_SPEED = 110.0
+
+/**
+ * Its round's burst (`PROJECTILE_ROTARY`): how far it reaches, metres, what it takes off at the middle
+ * and how hard it throws, m/s. Bigger than a tank's armour-piercing shell's, but a little over a third
+ * of a mortar bomb's reach, so it bites a wall about 1.8 m round (`CARVE_REACH`) to the mortar's 5 m.
+ */
+export const TITAN_ROUND_RADIUS = 4.0
+export const TITAN_ROUND_DAMAGE = 110.0
+export const TITAN_ROUND_KNOCK = 14.0
+
+/** The crater it digs, radius and depth, metres, and how hard it knocks a vehicle it strikes, m/s. */
+export const TITAN_ROUND_CRATER = [3.0, 0.5] as const
+export const TITAN_ROUND_HIT_KNOCK = 0.35
 
 /**
  * The launcher on the left pauldron: how many tubes, and where each one's mouth is, in the hull frame,

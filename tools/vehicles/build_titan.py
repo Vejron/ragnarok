@@ -20,8 +20,10 @@ Conventions
       `fist_L/R`            the hand's block, origin at its middle (a ball of TITAN_FIST_RADIUS in the physics)
       `open_L/R`            child of the fist: its fingers held out
       `closed_L/R`          child of the fist: its fingers curled in; the game shows one of the two
-      `gun_R`               child of the right fist: the 40 mm autocannon it holds, its barrel along the
-                            forearm out to GUN metres past the fist's middle (TITAN_GUN_LENGTH)
+      `gun_R`               child of the right fist: the rotary cannon's housing it holds, and its drum
+      `barrels_R`           child of the right fist: the cannon's three barrels round the forearm's line, out
+                            to GUN metres past the fist's middle (TITAN_GUN_LENGTH); the game turns them
+                            about that line (their Z here), a third of a turn a round
       `thigh_L/R`           origin at the hip (TITAN_FOOT_HALF sideways, the bottom of the hull), hanging THIGH metres
       `shin_L/R`            origin at the knee, hanging SHIN metres to the ankle
       `foot_L/R`            origin at the ankle; its sole is PAD below
@@ -60,7 +62,8 @@ UPPER, FORE = 12.0, 12.0  # shoulder to elbow, elbow to the fist's middle: TITAN
 FIST = 2.5  # the fist's radius in the physics
 THIGH, SHIN = 13.5, 13.5  # longer than the legs' reach, so that it stands with its knees bent
 PAD = 1.5  # the foot's thickness: ankle origin to sole
-GUN = 7.0  # from the right fist's middle to the gun's muzzle, along the forearm: TITAN_GUN_LENGTH
+GUN = 8.0  # from the right fist's middle to the gun's muzzles, along the forearm: TITAN_GUN_LENGTH
+BARRELS, BARREL_OFFSET = 3, 0.75  # TITAN_GUN_BARRELS, TITAN_GUN_BARREL_OFFSET: round the forearm's line
 # The launcher's box on the left pauldron, its centre and size, and its four tubes' mouths (x, y) on its top.
 LAUNCHER = Vector((-9.2, 0.0, 11.45))  # game TITAN_LAUNCHER_AT [-9.2, 11.45, 0.0]
 LAUNCHER_SIZE = (3.8, 4.6, 2.5)  # twice TITAN_LAUNCHER_HALF, as (x, y, z) here
@@ -221,17 +224,27 @@ for side, label in ((-1, "L"), (1, "R")):
     objects.append(closed.build())
 
     if label == "R":
-        # The 40 mm in the right fist: its barrel along the forearm (down, at rest) through the fingers to
-        # the muzzle brake, on the line its rounds leave by, a receiver on the back of the hand, and a drum
-        # of rounds on its outer side.
+        # The rotary cannon in the right fist: a housing gripped in the hand, with the motor that turns
+        # the barrels on the back of it and a drum of rounds on its outer side.
         gun = Part("gun_R", parent=fist_obj)
-        gun.box((0.0, -0.4, 0.2), (2.4, 2.0, 4.2), DARK)  # receiver
-        gun.cylinder((0.0, 0.0, -GUN / 2 + 0.2), 1.0, GUN - 2.6, METAL, segments=10)  # barrel jacket
-        gun.cylinder((0.0, 0.0, -GUN / 2 - 0.8), 0.6, GUN - 1.2, STEEL, segments=8)  # barrel
-        gun.cylinder((0.0, 0.0, -GUN + 0.5), 1.05, 1.0, DARK, segments=8)  # muzzle brake
-        gun.cylinder((side * 3.0, -0.2, 0.6), 1.6, 1.4, METAL, axis="X", segments=12)  # drum
-        gun.cylinder((side * 3.75, -0.2, 0.6), 0.5, 0.1, LAMP, axis="X", segments=8)  # its round counter
+        gun.box((0.0, -0.4, 0.4), (2.6, 2.2, 4.4), DARK)  # housing
+        gun.cylinder((0.0, -1.9, 0.6), 0.9, 2.4, METAL, segments=10)  # the barrels' motor
+        gun.cylinder((side * 3.2, -0.2, 0.6), 2.0, 1.8, METAL, axis="X", segments=12)  # drum
+        gun.cylinder((side * 4.15, -0.2, 0.6), 0.6, 0.1, LAMP, axis="X", segments=8)  # its round counter
         objects.append(gun.build())
+
+        # Its three barrels round the forearm's line, the line its rounds leave by, held by two clamps,
+        # each with a heavy collar at the muzzle. A node of its own, for the game to turn.
+        barrels = Part("barrels_R", parent=fist_obj)
+        barrels.cylinder((0.0, 0.0, -1.2), 1.35, 1.0, METAL, segments=12)  # rear clamp, at the knuckles
+        barrels.cylinder((0.0, 0.0, -GUN + 1.6), 1.3, 0.7, METAL, segments=12)  # front clamp
+        barrels.cylinder((0.0, 0.0, -GUN / 2 - 0.3), 0.35, GUN - 1.4, DARK, segments=8)  # the spindle
+        for k in range(BARRELS):
+            turn = 2 * math.pi * k / BARRELS
+            x, y = BARREL_OFFSET * math.cos(turn), BARREL_OFFSET * math.sin(turn)
+            barrels.cylinder((x, y, -GUN / 2 - 0.4), 0.42, GUN - 1.2, STEEL, segments=8)  # barrel
+            barrels.cylinder((x, y, -GUN + 0.3), 0.52, 0.6, DARK, segments=8)  # muzzle collar
+        objects.append(barrels.build())
 
 # --------------------------------------------------------------------------------------------------
 # Legs: a heavy thigh, a knee cap, a shin that flares to the ankle and a broad foot

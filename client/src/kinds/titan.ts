@@ -1,4 +1,4 @@
-/** The Titan: one seat in its head, whose pilot walks it, moves its fists, fires the gun in its right fist and the missiles on its left shoulder. */
+/** The Titan: one seat in its head, whose pilot walks it, moves its fists, fires the rotary cannon in its right fist and the missiles on its left shoulder. */
 
 import { KIND_TITAN } from '@/net/codec'
 import { TITAN_DISTANCE } from '@/render/scene'
@@ -11,7 +11,7 @@ export const TITAN: VehicleKind = {
   kind: KIND_TITAN,
   model: (id) => new TitanModel(id),
   load: loadTitanModel,
-  ride: { distance: TITAN_DISTANCE, reload: TITAN_GUN_COOLDOWN, seats: [{ rig: { name: 'titan' }, role: 'titan', board: 'E: pilot the Titan', gauges: ['air', 'heat', 'ammo', 'tubes'] }] },
+  ride: { distance: TITAN_DISTANCE, reload: TITAN_GUN_COOLDOWN, seats: [{ rig: { name: 'titan' }, role: 'titan', board: 'E: pilot the Titan', gauges: ['air', 'heat', 'tubes'] }] },
   // No engine to hum: its feet are heard by the footfalls.
   sound: { voices: PETROL, ...PLAIN, engine: { name: 'none' } },
   // A car's wheel points, far up under its torso, which only touch when it lies fallen. Its reactor is in its chest.

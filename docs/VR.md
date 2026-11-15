@@ -28,7 +28,7 @@ The game can be shown in a VR headset, and a Titan ([VEHICLES-XIV.md](VEHICLES-X
 | Duck your head 25 cm | It crouches, which brings its fists to the ground |
 | A button, right hand | It leaps; held in the air, its foot thrusters fire while the fuel lasts |
 | X button, left hand | The searchlight in its visor goes on or off; it shines where you look |
-| Right index trigger | The autocannon in its right fist fires, along its forearm |
+| Right index trigger | The rotary cannon in its right fist fires, along its forearm |
 | Left index trigger | A missile goes up from its left shoulder, and you fly it as the submarine's officer does; the Titan stands meanwhile |
 
 - Its arms follow yours at their own pace: they swing at 45 m/s at most, so a fast jab of yours becomes a long heavy punch.

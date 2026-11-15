@@ -2,7 +2,7 @@ import { Group, Mesh, type Material, type Node, Matrix4, Quaternion, Vector3 } f
 import { parseToonModel, unlitMaterial } from './models'
 import { toonMaterial } from './toon'
 import { HANDS_GRIP_LEFT, HANDS_GRIP_RIGHT, THRUST_LIFT, TITAN_LAMP, wrapAngle } from '@/net/codec'
-import { TITAN_ANKLE_HEIGHT, TITAN_ELBOW_POLE, TITAN_EYE, TITAN_FIST_REST, TITAN_FOOT_HALF, TITAN_FOREARM_LENGTH, TITAN_GUN_HAND, TITAN_HEAD_DOWN, TITAN_HEAD_PIVOT, TITAN_HEAD_SLEW, TITAN_HEAD_TURN, TITAN_HEAD_UP, TITAN_KNEE_POLE, TITAN_SHIN_LENGTH, TITAN_THIGH_LENGTH, TITAN_UPPER_ARM_LENGTH, TITAN_HALF_EXTENTS, TITAN_RIDE_HEIGHT, TITAN_SHOULDER, TITAN_STEP_LIFT } from '@/sim/consts'
+import { TITAN_ANKLE_HEIGHT, TITAN_ELBOW_POLE, TITAN_EYE, TITAN_FIST_REST, TITAN_FOOT_HALF, TITAN_FOREARM_LENGTH, TITAN_GUN_BARRELS, TITAN_GUN_HAND, TITAN_HEAD_DOWN, TITAN_HEAD_PIVOT, TITAN_HEAD_SLEW, TITAN_HEAD_TURN, TITAN_HEAD_UP, TITAN_KNEE_POLE, TITAN_SHIN_LENGTH, TITAN_THIGH_LENGTH, TITAN_UPPER_ARM_LENGTH, TITAN_HALF_EXTENTS, TITAN_RIDE_HEIGHT, TITAN_SHOULDER, TITAN_STEP_LIFT } from '@/sim/consts'
 import type { Titan } from '@/entities/units'
 import { clamp } from '@/math'
 import type { VehicleModel } from './car'
@@ -96,7 +96,9 @@ const ARM_SWAY_HZ = 1.4
 const ARM_SWAY_DAMPING = 0.3
 const ARM_KNOCK_MOST = 3
 /** How fast a round leaving the gun kicks its fist back along the forearm, m/s. */
-const GUN_KICK = 4
+const GUN_KICK = 6
+/** How quickly the barrels come round to the next one after a round, per second: most of the way in a tenth of a second. */
+const BARREL_TURN_RATE = 25
 
 /** How far ahead of the pilot's eye and below it the searchlight shines from, metres. */
 const LAMP_AHEAD = 0.9
@@ -153,6 +155,9 @@ export class TitanModel implements VehicleModel {
   private readonly fists = [new Vector3(), new Vector3()]
   /** The elbow of the arm that holds the gun (`TITAN_GUN_HAND`), in the hull frame, as drawn. */
   private readonly gunElbow = new Vector3(0, -1, 0)
+  /** The rotary cannon's three barrels (`barrels_R`), and how far round they are still to turn, radians about the forearm's line. */
+  private readonly barrels: Node | null
+  private barrelTurn = 0
   /** Whether each foot was in the air a frame ago, and the way each points, radians about +Y: as it was put down. */
   private readonly stepping = [false, false]
   private readonly pointing = [0, 0]
@@ -186,6 +191,7 @@ export class TitanModel implements VehicleModel {
     this.shin = pair('shin')
     this.foot = pair('foot')
     this.head = model.getObjectByName('head')!
+    this.barrels = model.getObjectByName('barrels_R') ?? null
   }
 
   /**
@@ -252,10 +258,11 @@ export class TitanModel implements VehicleModel {
     return { origin, direction }
   }
 
-  /** The gun fist kicked back along its forearm by a round leaving. */
+  /** The gun fist kicked back along its forearm by a round leaving, and its barrels turned on to the next. */
   kick() {
     const back = this.gunElbow.clone().sub(this.fists[TITAN_GUN_HAND]!).normalize()
     this.knocking[TITAN_GUN_HAND]!.addScaledVector(back, GUN_KICK)
+    this.barrelTurn += (2 * Math.PI) / TITAN_GUN_BARRELS
   }
 
   /** The footfalls since the last call, for the thud that goes with each. */
@@ -297,6 +304,12 @@ export class TitanModel implements VehicleModel {
     }
     this.flying = flying
     this.stamp = now
+    // The barrels come round to the next one, turning about the forearm's line (the fist's Y).
+    if (this.barrels) {
+      const step = this.barrelTurn * (1 - Math.exp(-BARREL_TURN_RATE * dt))
+      this.barrels.rotation.y = (this.barrels.rotation.y + step) % (2 * Math.PI)
+      this.barrelTurn -= step
+    }
     this.height = position[1]
     // The head: where the server has turned it, or for its own pilot where they look now.
     const gaze = this.gaze
