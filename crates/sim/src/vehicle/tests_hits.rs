@@ -148,9 +148,9 @@ fn a_round_at_the_titans_head_hits_it() {
     assert_eq!(hit.and_then(|(_, car)| car), Some(1), "the crest is hit");
     let (hit, _) = from_ahead(&physics, 0.0, 14.5);
     assert!(hit.is_none(), "over the top of it is a miss: {hit:?}");
-    // And the pauldron, out past the box's side.
+    // And the shoulder block, out past the box's side.
     let (hit, _) = from_ahead(&physics, 11.5, 9.0);
-    assert_eq!(hit.and_then(|(_, car)| car), Some(1), "the pauldron is hit");
+    assert_eq!(hit.and_then(|(_, car)| car), Some(1), "the shoulder block is hit");
 }
 
 #[test]

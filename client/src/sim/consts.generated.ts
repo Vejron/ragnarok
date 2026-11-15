@@ -2507,7 +2507,7 @@ export const TECHNICAL_SEAT_HEADS = [[-0.42, 1.0, -0.35], [0.42, 1.0, -0.35], [0
  * body is a single box, its torso, held up by two spring legs that are ray casts to the ground and
  * kept upright by a torque, exactly as a walker's is (its `Gait`). Its pilot moves its two fists
  * (`TITAN_ARMS`): they hit what they meet and hold what they close on. The right one holds a
- * three-barrel rotary cannon that fires heavy rounds along the forearm, and on the left pauldron is a launcher of four vertical tubes
+ * three-barrel rotary cannon that fires heavy rounds along the forearm, and in the top of its left shoulder block are four vertical tubes
  * that send up the submarine's guided missile (`KIND_MISSILE`), which the pilot then flies. Its feet are solid
  * and crush what they come down on. Rounds are not shot at the box but at the model's own shape: its
  * torso's `Role::Hit` solids, and its arms and legs bent as the client draws them (`bend`).
@@ -2722,20 +2722,13 @@ export const TITAN_ROUND_CRATER = [3.0, 0.5] as const
 export const TITAN_ROUND_HIT_KNOCK = 0.35
 
 /**
- * The launcher on the left pauldron: how many tubes, and where each one's mouth is, in the hull frame,
- * on top of its box (`launcher` in `tools/vehicles/build_titan.py`).
+ * The missile tubes: how many, and where each one's mouth is, in the hull frame. They are hatches set
+ * in the top of the left shoulder block (`TUBES` in `tools/vehicles/build_titan.py`).
  */
 export const TITAN_TUBES = 4
-export const TITAN_TUBE_AT = [[-10.1, 12.7, -1.1], [-8.3, 12.7, -1.1], [-10.1, 12.7, 1.1], [-8.3, 12.7, 1.1]] as const
+export const TITAN_TUBE_AT = [[-9.6, 11.3, -1.0], [-7.6, 11.3, -1.0], [-9.6, 11.3, 1.0], [-7.6, 11.3, 1.0]] as const
 
-/**
- * The launcher's box, from the pauldron's top up to the tubes' mouths: half its width, height and
- * depth, metres, and where its middle is in the hull frame.
- */
-export const TITAN_LAUNCHER_HALF = [1.9, 1.25, 2.3] as const
-export const TITAN_LAUNCHER_AT = [-9.2, 11.45, 0.0] as const
-
-/** Ticks for the launcher to load one more tube: as long as a submarine's tube takes. */
+/** Ticks to load one more tube: as long as a submarine's tube takes. */
 export const TITAN_TUBE_RELOAD = 20 * TICK_RATE
 
 /** Ticks between launches, at the least. */

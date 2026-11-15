@@ -550,7 +550,7 @@ fn a_titans_shoulder_tube_launches_a_missile_its_pilot_flies_while_it_stands() {
     assert_eq!(game.seen(vid).unwrap().arms.unwrap().bombs, TITAN_TUBES - 1);
     let pose = game.world.physics.car_pose(vid).unwrap();
     let up = pose.local_dir(vec3::sub(game.world.physics.car_pose(missile).unwrap().position, pose.position));
-    assert!(up[0] < -6.0 && up[1] > 12.0, "out of the left shoulder: {up:?}");
+    assert!(up[0] < -6.0 && up[1] > 11.0, "out of the left shoulder: {up:?}");
     // Flying it, stick forward and the gun's trigger held, the Titan neither walks nor fires.
     let stood = pose.position;
     for _ in 0..90 {

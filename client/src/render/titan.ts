@@ -8,7 +8,13 @@ import { clamp } from '@/math'
 import type { VehicleModel } from './car'
 
 /** Paint colours handed out by vehicle id, so two Titans are told apart. */
-const PAINTS = [0x7f8890, 0x8a8478, 0x6f7c80, 0x86807c] as const
+/** A Titan's two colours, its armour and the second colour under it: which pair it wears goes by its id. */
+const PAINTS = [
+  [0xd99a1c, 0x1c3a78],
+  [0xb8402a, 0x2c3138],
+  [0xd8d4c8, 0x2f5d3a],
+  [0x8a9aa8, 0x7a2f2a],
+] as const
 export const TITAN_MODEL_URL = `${import.meta.env.BASE_URL}models/titan.glb`
 /**
  * Upper arm and forearm, thigh and shin, and how far the ankle is above the sole, metres: the server's,
@@ -36,11 +42,11 @@ let asset: Node | null = null
 
 /**
  * Parses `titan.glb` (built by `tools/vehicles/build_titan.py`) for every `TitanModel` to share. Its
- * materials become flat toon ones to match the rest of the scene (`lamp` ones are unlit); `paint` is
+ * materials become flat toon ones to match the rest of the scene (`lamp` and `visor` ones are unlit); `paint` and `trim` are
  * replaced per Titan. Its parts are not merged: each limb is placed by itself.
  */
 export async function parseTitanModel(data: ArrayBuffer) {
-  asset = parseToonModel(data, (source) => (source.name === 'lamp' ? unlitMaterial(source) : null))
+  asset = parseToonModel(data, (source) => (source.name === 'lamp' || source.name === 'visor' ? unlitMaterial(source) : null))
 }
 
 export async function loadTitanModel(url = TITAN_MODEL_URL) {
@@ -136,6 +142,7 @@ export function headEye(head: readonly [number, number], ahead = 0): Vector3 {
 export class TitanModel implements VehicleModel {
   readonly root = new Group()
   private readonly paint: Material
+  private readonly trim: Material
   private readonly upper: Node[]
   private readonly fore: Node[]
   private readonly fist: Node[]
@@ -177,9 +184,13 @@ export class TitanModel implements VehicleModel {
     if (!asset) throw new Error('loadTitanModel() must finish before Titans are created')
     const model = asset.clone()
     this.root.add(model)
-    this.paint = toonMaterial({ color: PAINTS[id % PAINTS.length]! })
+    const [armour, under] = PAINTS[id % PAINTS.length]!
+    this.paint = toonMaterial({ color: armour })
+    this.trim = toonMaterial({ color: under })
     model.traverse((node) => {
-      if (node instanceof Mesh && node.material.name === 'paint') node.material = this.paint
+      if (!(node instanceof Mesh)) return
+      if (node.material.name === 'paint') node.material = this.paint
+      else if (node.material.name === 'trim') node.material = this.trim
     })
     const pair = (name: string) => ['L', 'R'].map((label) => model.getObjectByName(`${name}_${label}`)!)
     this.upper = pair('upper')
@@ -381,6 +392,7 @@ export class TitanModel implements VehicleModel {
 
   dispose() {
     this.paint.dispose()
+    this.trim.dispose()
     this.root.removeFromParent()
   }
 }

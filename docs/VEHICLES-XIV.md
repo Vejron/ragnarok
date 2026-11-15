@@ -67,7 +67,7 @@ It is piloted with mouse and keyboard, or from a VR headset with the pilot's own
 - **What hurts it.**
   - It has 255 health and feels a tenth of any hit (`Body::tough`), rounded: a rifle or a machine gun round rounds to nothing, and a tank's shell of 100 is 10. That is about 25 shells.
   - Its plates are 50 to 90 mm, so armour-piercing rounds still have to get through.
-  - Its reactor is in its chest behind the glowing core. Shot out, it has no power and falls.
+  - Its reactor is in its chest behind the glowing slot between its chest plates. Shot out, it has no power and falls.
   - A blast shoves it a twenty-fifth as hard as it would a walker. A great enough blow still staggers it, and it catches itself; laid flat, it gets up by itself.
   - Wrecked, it collapses, burns, and is put back at its place like any vehicle.
 
@@ -94,7 +94,7 @@ Both are rows of `MountDef` in `titan.rs`, worked by `Gunnery` like any other ve
 
 ### The missile tubes on its left shoulder
 
-- **The launcher.** A box on the left pauldron (`TITAN_LAUNCHER_*`, a `Role::Hit` solid) holds four tubes (`TITAN_TUBE_AT`).
+- **The tubes.** Four hatches are set in the top of the left shoulder block (`TITAN_TUBE_AT`); there is no launcher box, and the block's own `Role::Hit` solid is what a round meets there.
 - **A launch.** G (`BUTTON_CHUTE`, which the Titan has no other use for) sends up the submarine's guided missile, `KIND_MISSILE` (`Fire::Guided`):
   - It leaves out of the next tube in turn, nose up at `MISSILE_LAUNCH_PITCH`, tipped towards where the pilot looks, at `SUB_LAUNCH_SPEED`.
   - The pilot then flies it from its nose, exactly as the submarine's weapons officer does (`drones::launch_at` with the Titan's seat as `from`).
@@ -126,9 +126,9 @@ The server alone decides what a fist hits or holds: `crates/server/src/mechanics
 
 ## Where rounds meet it
 
-The box it walks with is narrower than its pauldrons, shorter than its head and wider than its waist, and its arms had nothing in them. So rounds are not shot at its physics at all (`Physics::cast_ray_hit` and `Physics::armor_strike` in `crates/sim/src/vehicle.rs`), but at:
+The box it walks with is narrower than its shoulder blocks, shorter than its head and wider than its waist, and its arms had nothing in them. So rounds are not shot at its physics at all (`Physics::cast_ray_hit` and `Physics::armor_strike` in `crates/sim/src/vehicle.rs`), but at:
 
-- **The torso as it is built**: seventeen `Role::Hit` solids in `titan.rs` from the numbers in `build_titan.py` (the chest and waist as `Shape::Frustum`s, the builder's `taper`; the breastplate, hips, codpiece, flanks, collar, head, ear plates, face, crest, pauldrons, reactor and its stacks). A `Role::Hit` solid is never a collider: it pushes and carries nothing, and `extra` is made from the other solids alone (`physical`).
+- **The torso as it is built**: twenty-two `Role::Hit` solids in `titan.rs` from the numbers in `build_titan.py` (the chest and waist as `Shape::Frustum`s, the builder's `taper`; the chest plates, the waist's ribs, pelvis, codpiece, flanks, collar and the plates up from it, head, cheek guards, face, fin, shoulder blocks and their skirts, reactor and its stacks). A `Role::Hit` solid is never a collider: it pushes and carries nothing, and `extra` is made from the other solids alone (`physical`).
 - **Its arms and legs as they are drawn**: a capsule along each bone (`Physics::hit_bones`), bent by the same two-bone IK as the client's (`titan::bend` in `crates/shared`), with the same bone lengths and poles (`TITAN_*_LENGTH`, `TITAN_ELBOW_POLE`, `TITAN_KNEE_POLE`). `the_bend_fixture_matches_the_rust_bend` writes its inputs and answers to `client/src/__tests__/titan-bend.fixture.json` for the client's bend to be checked against.
 - **Its fists and feet**, which are colliders anyway.
 
@@ -178,7 +178,7 @@ Its hull's middle settles at `TITAN_RIDE_HEIGHT` (33.2 m), measured by `a_titan_
 
 ## The model
 
-`tools/vehicles/build_titan.py` builds `client/public/models/titan.glb` (about 23,000 triangles: its big plates are cut into a 1.2 m grid, `DENT_GRID`, for a shell's dent to press in, [HULL-DAMAGE.md](HULL-DAMAGE.md)): slabs of grey armour over a dark frame, a glowing core in the chest and a glowing visor. Every limb is its own node hanging straight down from its joint (`upper_L/R`, `fore_L/R`, `fist_L/R` with `open_` and `closed_` fingers, `thigh_L/R`, `shin_L/R`, `foot_L/R`), and none is another's child: the client places each. `gun_R` is the rotary cannon's housing and drum, a child of the right fist. `barrels_R`, also a child of the fist, is its three barrels round the forearm's line, out to `GUN` (`TITAN_GUN_LENGTH`). The client turns it about that line. The missile launcher, with its four hatches, is part of `torso`.
+`tools/vehicles/build_titan.py` builds `client/public/models/titan.glb` (just under 25,000 triangles: its big plates are cut into a 1.2 m grid, `DENT_GRID`, for a shell's dent to press in, [HULL-DAMAGE.md](HULL-DAMAGE.md)): a stocky, angular machine in two colours (`paint`, the armour, and `trim` under it, a pair per Titan from `PAINTS` in `render/titan.ts`, the first yellow over navy) on a dark frame: a wedge of a chest under two raked plates that meet in a prow with a glowing slot between them, a low block over each shoulder with the small helmet and its red visor sunk between them, heavy forearms behind shields that stand up past the elbows, and broad feet. Every limb is its own node hanging straight down from its joint (`upper_L/R`, `fore_L/R`, `fist_L/R` with `open_` and `closed_` fingers, `thigh_L/R`, `shin_L/R`, `foot_L/R`), and none is another's child: the client places each. `gun_R` is the rotary cannon's housing and drum, a child of the right fist. `barrels_R`, also a child of the fist, is its three barrels round the forearm's line, out to `GUN` (`TITAN_GUN_LENGTH`). The client turns it about that line. The four missile hatches, in the top of the left shoulder block, are part of `torso`.
 
 ```sh
 /Applications/Blender.app/Contents/MacOS/Blender -b -P tools/vehicles/build_titan.py -- --preview <dir>
@@ -197,7 +197,7 @@ Protocol 79 ([NETWORKING.md](NETWORKING.md)): 77 brought the Titan, 78 the `step
 
 ## Tests
 
-- **`crates/sim/src/vehicle/tests_hits.rs`**: an armour-piercing shell on its chest rocks it and it stands again; a shell on a tank's side rocks it away from the hit; rounds meet its arms, its legs where they bend, its head, crest and pauldrons, and miss past its waist inside the box.
+- **`crates/sim/src/vehicle/tests_hits.rs`**: an armour-piercing shell on its chest rocks it and it stands again; a shell on a tank's side rocks it away from the hit; rounds meet its arms, its legs where they bend, its head, fin and shoulder blocks, and miss past its waist inside the box.
 - **`crates/shared/src/vehicles/titan.rs`**: a bend keeps its bones' lengths and bends towards its pole, and matches the fixture the client's is checked against.
 - **`crates/sim/src/vehicle/tests.rs`**: it stands at its ride height with a foot under each hip; walks on one foot at a time with long slow steps, a planted foot never sliding, rising over each foot and going slowest there, stops, turns on the spot and stands again on both; walks on the same from feet put back as a snapshot has them; crouches to bring a fist to the ground and stands again; a fist stays within its reach and its arm's speed, out of its own chest, and hangs when nobody is aboard; a fist shoves a jeep, a closed one carries it off and throws it; a shell's blast barely moves it, a great blow fells it and it gets up; it leaps, its thrusters carry it up and along while the fuel lasts and no higher than its ceiling, and its feet hang; let fall from its ceiling it lands on its feet at a slam's speed, and with the thrusters fired it sets down; put back in the air as a snapshot has it, it flies on the same.
 - **`crates/server/src/mechanics/titans/tests.rs`**: a closed hand picks a soldier up, carries them high, they still fire, and they fly when it opens; an open hand coming down on a soldier does no harm; a closed fist swung through one throws and hurts them; the arms hang unless its own pilot moves them, and when the pilot stops; a foot crushes who is under it and throws those around it, and wrecks a jeep; it feels a tenth of a shell and nothing of a rifle; a fist fells a tree and holes a house; a slam throws and hurts soldiers, shakes those further out, throws and breaks a jeep, fells the tree by it and breaks open the house, and is not felt by the Titan; one that leaps and falls slams where it lands, one set down gently does not, and whoever is in its fist comes down unhurt; a placed one stands, is boarded from between its feet, walks and sets its pilot down; a shell its chest plate stops still rocks it.

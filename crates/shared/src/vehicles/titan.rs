@@ -6,7 +6,7 @@ use super::*;
 /// body is a single box, its torso, held up by two spring legs that are ray casts to the ground and
 /// kept upright by a torque, exactly as a walker's is (its `Gait`). Its pilot moves its two fists
 /// (`TITAN_ARMS`): they hit what they meet and hold what they close on. The right one holds a
-/// three-barrel rotary cannon that fires heavy rounds along the forearm, and on the left pauldron is a launcher of four vertical tubes
+/// three-barrel rotary cannon that fires heavy rounds along the forearm, and in the top of its left shoulder block are four vertical tubes
 /// that send up the submarine's guided missile (`KIND_MISSILE`), which the pilot then flies. Its feet are solid
 /// and crush what they come down on. Rounds are not shot at the box but at the model's own shape: its
 /// torso's `Role::Hit` solids, and its arms and legs bent as the client draws them (`bend`).
@@ -149,15 +149,11 @@ pub const TITAN_ROUND_KNOCK: f32 = 14.0;
 /// The crater it digs, radius and depth, metres, and how hard it knocks a vehicle it strikes, m/s.
 pub const TITAN_ROUND_CRATER: [f32; 2] = [3.0, 0.5];
 pub const TITAN_ROUND_HIT_KNOCK: f32 = 0.35;
-/// The launcher on the left pauldron: how many tubes, and where each one's mouth is, in the hull frame,
-/// on top of its box (`launcher` in `tools/vehicles/build_titan.py`).
+/// The missile tubes: how many, and where each one's mouth is, in the hull frame. They are hatches set
+/// in the top of the left shoulder block (`TUBES` in `tools/vehicles/build_titan.py`).
 pub const TITAN_TUBES: u8 = 4;
-pub const TITAN_TUBE_AT: [[f32; 3]; 4] = [[-10.1, 12.7, -1.1], [-8.3, 12.7, -1.1], [-10.1, 12.7, 1.1], [-8.3, 12.7, 1.1]];
-/// The launcher's box, from the pauldron's top up to the tubes' mouths: half its width, height and
-/// depth, metres, and where its middle is in the hull frame.
-pub const TITAN_LAUNCHER_HALF: [f32; 3] = [1.9, 1.25, 2.3];
-pub const TITAN_LAUNCHER_AT: [f32; 3] = [-9.2, 11.45, 0.0];
-/// Ticks for the launcher to load one more tube: as long as a submarine's tube takes.
+pub const TITAN_TUBE_AT: [[f32; 3]; 4] = [[-9.6, 11.3, -1.0], [-7.6, 11.3, -1.0], [-9.6, 11.3, 1.0], [-7.6, 11.3, 1.0]];
+/// Ticks to load one more tube: as long as a submarine's tube takes.
 pub const TITAN_TUBE_RELOAD: u32 = 20 * TICK_RATE;
 /// Ticks between launches, at the least.
 pub const TITAN_TUBE_COOLDOWN: u32 = TICK_RATE;
@@ -168,48 +164,52 @@ pub const TITAN_TUBE_COOLDOWN: u32 = TICK_RATE;
 ///
 /// After them, the torso as the model is built (`torso` in `tools/vehicles/build_titan.py`, its Blender
 /// (x, y, z) the game's (x, z, -y)), which only rounds meet (`Role::Hit`): the chest that narrows to the
-/// waist, the plates and the core on its front, the hips and the codpiece, the flanks, the collar, the
-/// head with its ear plates, face and crest, the pauldrons over the shoulders, and the reactor on the
-/// back with its two stacks, and the missile launcher on the left pauldron. The box between the shoulders that it walks with is narrower than the
-/// pauldrons, shorter than the head and wider than the waist.
-const SOLIDS: [Solid; 20] = [
+/// waist, the two plates on its front, the waist and its ribs, the pelvis and the codpiece, the flanks,
+/// the collar and the plates from it up to the shoulders, the head with its cheek guards, face and fin,
+/// the block over each shoulder and the skirt hanging from its outer edge, and the reactor on the back
+/// with its two stacks. The box between the shoulders that it walks with is narrower than the shoulder
+/// blocks, shorter than the head and wider than the waist.
+const SOLIDS: [Solid; 24] = [
     Solid { shape: Shape::Cuboid(TITAN_THIGH_HALF), at: [-TITAN_FOOT_HALF, -TITAN_HALF_EXTENTS[1] - TITAN_THIGH_HALF[1], 0.0], role: Role::Part },
     Solid { shape: Shape::Cuboid(TITAN_THIGH_HALF), at: [TITAN_FOOT_HALF, -TITAN_HALF_EXTENTS[1] - TITAN_THIGH_HALF[1], 0.0], role: Role::Part },
     // The chest.
-    Solid { shape: Shape::Frustum { top: [6.5, 4.3], bottom: [5.0, 3.7], half_height: 5.0 }, at: [0.0, 3.0, 0.0], role: Role::Hit },
-    // The chest plates, the core and the plates under it, standing proud of the chest's front.
-    Solid { shape: Shape::Cuboid([5.9, 4.05, 0.55]), at: [0.0, 3.05, -4.5], role: Role::Hit },
-    // The waist.
-    Solid { shape: Shape::Frustum { top: [4.7, 3.3], bottom: [3.8, 2.8], half_height: 2.5 }, at: [0.0, -4.5, 0.0], role: Role::Hit },
-    // The hips and the codpiece.
-    Solid { shape: Shape::Frustum { top: [5.5, 3.7], bottom: [6.3, 3.9], half_height: 1.3 }, at: [0.0, -7.6, 0.0], role: Role::Hit },
-    Solid { shape: Shape::Cuboid([1.8, 1.6, 0.7]), at: [0.0, -8.2, -3.8], role: Role::Hit },
+    Solid { shape: Shape::Frustum { top: [6.8, 4.2], bottom: [4.5, 3.2], half_height: 3.8 }, at: [0.0, 4.2, 0.0], role: Role::Hit },
+    // The chest plates, standing proud of the chest's front.
+    Solid { shape: Shape::Cuboid([6.9, 2.4, 0.7]), at: [0.0, 5.4, -4.6], role: Role::Hit },
+    // The waist, and the ribs down its front.
+    Solid { shape: Shape::Frustum { top: [4.2, 3.0], bottom: [3.7, 2.6], half_height: 3.4 }, at: [0.0, -3.0, 0.0], role: Role::Hit },
+    Solid { shape: Shape::Cuboid([3.4, 2.65, 0.4]), at: [0.0, -2.8, -3.0], role: Role::Hit },
+    // The pelvis and the codpiece.
+    Solid { shape: Shape::Frustum { top: [5.2, 3.3], bottom: [5.8, 3.5], half_height: 1.2 }, at: [0.0, -7.4, 0.0], role: Role::Hit },
+    Solid { shape: Shape::Cuboid([1.9, 1.7, 0.6]), at: [0.0, -8.1, -3.9], role: Role::Hit },
     // The flanks, with their vents.
-    Solid { shape: Shape::Cuboid([0.55, 3.0, 2.8]), at: [-6.0, 1.5, 0.0], role: Role::Hit },
-    Solid { shape: Shape::Cuboid([0.55, 3.0, 2.8]), at: [6.0, 1.5, 0.0], role: Role::Hit },
-    // The collar.
-    Solid { shape: Shape::Cuboid([3.5, 0.8, 3.0]), at: [0.0, 8.6, 0.0], role: Role::Hit },
-    // The head, the ear plates either side of it, the chin guard, visor and brow on its face, and its crest.
+    Solid { shape: Shape::Cuboid([0.75, 2.0, 2.6]), at: [-5.7, 2.6, 0.0], role: Role::Hit },
+    Solid { shape: Shape::Cuboid([0.75, 2.0, 2.6]), at: [5.7, 2.6, 0.0], role: Role::Hit },
+    // The collar, and the plates from it up to the shoulder blocks.
+    Solid { shape: Shape::Cuboid([3.0, 0.8, 3.0]), at: [0.0, 8.6, 0.0], role: Role::Hit },
+    Solid { shape: Shape::Cuboid([2.1, 0.7, 3.4]), at: [-5.1, 8.7, -0.2], role: Role::Hit },
+    Solid { shape: Shape::Cuboid([2.1, 0.7, 3.4]), at: [5.1, 8.7, -0.2], role: Role::Hit },
+    // The head, the cheek guards either side of it, the chin guard, visor and brow on its face, and its fin.
     Solid { shape: Shape::Frustum { top: [1.8, 2.2], bottom: [2.3, 2.5], half_height: 2.1 }, at: [0.0, 11.3, -0.4], role: Role::Hit },
     Solid { shape: Shape::Cuboid([2.85, 1.3, 1.5]), at: [0.0, 11.3, 0.2], role: Role::Hit },
     Solid { shape: Shape::Cuboid([2.1, 1.75, 0.5]), at: [0.0, 11.15, -2.75], role: Role::Hit },
     Solid { shape: Shape::Cuboid([0.6, 0.45, 1.8]), at: [0.0, 13.7, 0.2], role: Role::Hit },
-    // The pauldrons, from the collar out past the shoulders, their outer slabs hanging down.
-    Solid { shape: Shape::Cuboid([3.5, 2.7, 4.4]), at: [-9.2, 7.5, 0.0], role: Role::Hit },
-    Solid { shape: Shape::Cuboid([3.5, 2.7, 4.4]), at: [9.2, 7.5, 0.0], role: Role::Hit },
+    // The shoulder blocks (the missile hatches are in the top of the left one), and their skirts.
+    Solid { shape: Shape::Cuboid([2.8, 1.25, 3.9]), at: [-9.2, 9.95, -0.2], role: Role::Hit },
+    Solid { shape: Shape::Cuboid([2.8, 1.25, 3.9]), at: [9.2, 9.95, -0.2], role: Role::Hit },
+    Solid { shape: Shape::Cuboid([0.65, 1.05, 3.5]), at: [-11.65, 7.65, -0.2], role: Role::Hit },
+    Solid { shape: Shape::Cuboid([0.65, 1.05, 3.5]), at: [11.65, 7.65, -0.2], role: Role::Hit },
     // The reactor on the back, and its two stacks.
-    Solid { shape: Shape::Cuboid([3.8, 4.0, 1.4]), at: [0.0, 3.6, 5.2], role: Role::Hit },
-    Solid { shape: Shape::Cylinder { half_height: 2.5, radius: 0.9 }, at: [-2.6, 9.4, 5.4], role: Role::Hit },
-    Solid { shape: Shape::Cylinder { half_height: 2.5, radius: 0.9 }, at: [2.6, 9.4, 5.4], role: Role::Hit },
-    // The missile launcher on the left pauldron.
-    Solid { shape: Shape::Cuboid(TITAN_LAUNCHER_HALF), at: TITAN_LAUNCHER_AT, role: Role::Hit },
+    Solid { shape: Shape::Cuboid([4.3, 3.2, 1.25]), at: [0.0, 4.0, 5.05], role: Role::Hit },
+    Solid { shape: Shape::Cylinder { half_height: 1.75, radius: 0.9 }, at: [-2.8, 8.65, 5.3], role: Role::Hit },
+    Solid { shape: Shape::Cylinder { half_height: 1.75, radius: 0.9 }, at: [2.8, 8.65, 5.3], role: Role::Hit },
 ];
 
 /// Its heavy round, the one load it has.
 const CANNON: Fire = Fire::Shell { kind: PROJECTILE_ROTARY, alt: PROJECTILE_ROTARY, speed: TITAN_ROUND_SPEED, length: TITAN_GUN_LENGTH, ttl: SHELL_TTL_TICKS };
 
 /// Its weapons: the rotary cannon in its right fist, fired with the right mouse button (but not while Shift
-/// throws that fist as a punch), and the missile tubes on its left pauldron, fired with G. Fallen, it
+/// throws that fist as a punch), and the missile tubes in its left shoulder block, fired with G. Fallen, it
 /// can do neither.
 const MOUNTS: &[MountDef] = &[
     MountDef {
@@ -247,7 +247,7 @@ const MOUNTS: &[MountDef] = &[
 ];
 
 /// Armour a tank would envy, all round: a rifle or a machine gun does nothing to it. The reactor is in
-/// its chest behind the glowing core, and the pilot in the head is above the box, out of any round's way.
+/// its chest behind the glowing slot between its chest plates, and the pilot in the head is above the box, out of any round's way.
 const ARMOR: Armor = Armor {
     plates: &[
         Plate::hull("chest", Zone::Front, 90.0).glances(70.0),
