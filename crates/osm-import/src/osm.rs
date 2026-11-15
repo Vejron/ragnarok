@@ -139,11 +139,17 @@ fn tag<'a, T: Lookup + ?Sized>(tags: &'a T, key: &str) -> Option<&'a str> {
     tags.tag(key)
 }
 
-/// Ground cover: `landuse=*`, some `natural` and some `leisure`. The main query's `COVER_FILTERS`.
+/// A graveyard: a cemetery, or the churchyard round a church. Tombstones are stood in it (`graves`).
+pub fn is_graveyard<T: Lookup + ?Sized>(tags: &T) -> bool {
+    tag(tags, "landuse") == Some("cemetery") || tag(tags, "amenity") == Some("grave_yard")
+}
+
+/// Ground cover: `landuse=*`, some `natural` and some `leisure`, and a churchyard. The main query's `COVER_FILTERS`.
 fn is_cover<T: Lookup + ?Sized>(tags: &T) -> bool {
     tag(tags, "landuse").is_some()
         || matches!(tag(tags, "natural"), Some("wood" | "scrub" | "grassland" | "heath" | "wetland" | "sand" | "beach"))
         || matches!(tag(tags, "leisure"), Some("park" | "garden" | "pitch" | "playground" | "golf_course" | "recreation_ground"))
+        || tag(tags, "amenity") == Some("grave_yard")
 }
 
 /// A way of the main query: a building, a highway, a railway, cover, a fence, a wall or a power line.
@@ -289,5 +295,16 @@ mod tests {
         assert_eq!(kind(&[("barrier", "retaining_wall")]), None, "it holds earth back");
         assert_eq!(kind(&[("power", "cable")]), None, "a buried cable");
         assert!(is_main_way(&tags(&[("barrier", "fence")])), "the main view keeps fences");
+    }
+
+    #[test]
+    fn a_cemetery_and_a_churchyard_are_read_from_their_tags() {
+        assert!(is_graveyard(&tags(&[("landuse", "cemetery")])));
+        assert!(is_graveyard(&tags(&[("amenity", "grave_yard")])));
+        assert!(!is_graveyard(&tags(&[("landuse", "grass")])));
+        assert!(!is_graveyard(&tags(&[("amenity", "place_of_worship")])));
+        assert!(is_main_way(&tags(&[("amenity", "grave_yard")])), "the main view keeps a churchyard");
+        assert!(is_cover_area(&tags(&[("type", "multipolygon"), ("amenity", "grave_yard")])));
+        assert!(crate::overpass::query([0.0; 4]).contains(r#"way[amenity=grave_yard]"#), "and the query asks for it");
     }
 }

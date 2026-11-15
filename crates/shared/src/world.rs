@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::terrain::Ground;
 
-pub const WORLD_VERSION: u8 = 24;
+pub const WORLD_VERSION: u8 = 25;
 
 /// `Manifest::theme`: the world as it always was.
 pub const THEME_PLAIN: u8 = 0;
@@ -316,6 +316,8 @@ pub struct Tile {
     /// collided with is these, with the windows cut out and the pieces in blasted cells gone
     /// (`facade`). Empty when no building of the tile has one.
     pub look: Look,
+    /// The tombstones of the graveyards in the tile (`Grave`): solid, and nothing breaks them.
+    pub graves: Vec<Grave>,
 }
 
 /// Draw-only building surfaces of a tile (`Tile::look`): a mesh wound as the collision mesh is, and
@@ -571,6 +573,9 @@ pub struct WorldFile {
     /// Every fence, wall and power line, in its tile's order, with the `(col, row)` of the tile it came in. Filled by `assemble`.
     #[serde(skip)]
     pub lines: Vec<(u16, u16, Line)>,
+    /// Every tombstone. Filled by `assemble`.
+    #[serde(skip)]
+    pub graves: Vec<Grave>,
     /// Each tile's stony ground (`Tile::stones`), by its `(col, row)`; tiles without any are left out.
     /// Filled by `assemble`.
     #[serde(skip)]
@@ -974,6 +979,61 @@ pub struct Tree {
     pub solid: bool,
 }
 
+/// One tombstone of a graveyard. It stands upright on the ground, is solid, and nothing breaks it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Grave {
+    /// Where it stands, centimetres.
+    pub x: i32,
+    pub z: i32,
+    /// Height of the ground at its foot, centimetres.
+    pub base: i32,
+    /// The way its face looks, milliradians about the vertical: at 0 it faces +Z, and it turns
+    /// towards +X as the angle grows.
+    pub yaw: i16,
+    /// `GRAVE_*`.
+    pub kind: u8,
+}
+
+/// An upright slab with a rounded top.
+pub const GRAVE_HEADSTONE: u8 = 0;
+/// A stone cross on a plinth.
+pub const GRAVE_CROSS: u8 = 1;
+/// A low, wide slab leaning back on its base.
+pub const GRAVE_LOW: u8 = 2;
+
+/// The size of a kind of tombstone: its collider is this box, and the client draws it to fill the
+/// same one (`client/src/world.ts` reads the table from `client/src/sim/tables.generated.json`).
+#[derive(Clone, Copy, Debug)]
+pub struct GraveKindDef {
+    pub kind: u8,
+    pub name: &'static str,
+    /// Half its width across its face, metres.
+    pub half_width: f32,
+    /// Half its thickness from face to back, metres.
+    pub half_depth: f32,
+    /// Height of its top over the ground, metres.
+    pub height: f32,
+}
+
+/// The tombstones. The low stone still stands higher than a soldier steps, so that a bot goes round it.
+pub const GRAVE_KINDS: [GraveKindDef; 3] = [
+    GraveKindDef { kind: GRAVE_HEADSTONE, name: "Headstone", half_width: 0.3, half_depth: 0.08, height: 0.95 },
+    GraveKindDef { kind: GRAVE_CROSS, name: "Cross", half_width: 0.28, half_depth: 0.09, height: 1.2 },
+    GraveKindDef { kind: GRAVE_LOW, name: "Low stone", half_width: 0.42, half_depth: 0.16, height: 0.58 },
+];
+
+/// The definition of a kind of tombstone. Unknown kinds are headstones, as they are drawn.
+pub fn grave_kind_def(kind: u8) -> &'static GraveKindDef {
+    GRAVE_KINDS.iter().find(|def| def.kind == kind).unwrap_or(&GRAVE_KINDS[0])
+}
+
+impl Grave {
+    /// The way its face looks, radians.
+    pub fn heading(&self) -> f32 {
+        f32::from(self.yaw) / 1000.0
+    }
+}
+
 pub const TREE_BIRCH: u8 = 0;
 pub const TREE_PINE: u8 = 1;
 pub const TREE_SPRUCE: u8 = 2;
@@ -1186,6 +1246,7 @@ impl WorldFile {
         for (col, row, tile) in tiles {
             world.ski.extend(tile.ski.iter().cloned());
             world.lines.extend(tile.lines.iter().map(|line| (col, row, line.clone())));
+            world.graves.extend(tile.graves.iter().copied());
             if !tile.stones.is_empty() {
                 world.stones.push((col, row, tile.stones.clone()));
             }
@@ -1272,6 +1333,16 @@ mod tests {
             assert_eq!(def.kind as usize, index, "{} sits at its own id", def.name);
             assert_eq!(object(def.kind, 500, 100).destructible(), !matches!(def.kind, TREE_ROCK_BOULDER | TREE_ROCK_SLAB | TREE_FLAG));
         }
+    }
+
+    #[test]
+    fn every_kind_of_tombstone_is_in_the_table_and_stands_higher_than_a_step() {
+        for (index, def) in GRAVE_KINDS.iter().enumerate() {
+            assert_eq!(def.kind as usize, index, "{} sits at its own id", def.name);
+            assert!(def.height > 0.5 && def.half_width > def.half_depth, "{}", def.name);
+        }
+        assert_eq!(grave_kind_def(200).kind, GRAVE_HEADSTONE);
+        assert!((Grave { yaw: 1571, ..Default::default() }.heading() - std::f32::consts::FRAC_PI_2).abs() < 1e-3);
     }
 
     #[test]
@@ -1373,17 +1444,18 @@ mod tests {
             lines: vec![Line { kind: LINE_POWER, points: vec![[0, 0], [5000, 0]], base: vec![120, 150], end: false }, Line { kind: LINE_WALL, points: vec![[0, 0], [300, 0]], base: vec![120, 125], end: true }],
             stones: vec![0, 40, STONES_ANGULAR | 90, 0],
             look: Look { vertices: vec![[0, 0, 0], [100, 0, 0], [0, 300, 0]], triangles: vec![[0, 1, 2]], buildings: vec![[0, 1, 0], [0, 0, 0]] },
+            graves: vec![Grave { x: 40, z: -60, base: 120, yaw: -1571, kind: GRAVE_CROSS }],
         };
         assert_eq!(Tile::decode(&tile.encode()).unwrap(), tile);
-        assert_eq!(tile.encode()[0], 0x9f, "an array of all 15 fields");
+        assert_eq!(tile.encode()[..3], [0xdc, 0, 16], "an array of all 16 fields");
         // An empty tile is every field still, each empty.
         let empty = Tile::default().encode();
-        assert_eq!(empty[0], 0x9f);
+        assert_eq!(empty[..3], [0xdc, 0, 16]);
         assert_eq!(Tile::decode(&empty).unwrap(), Tile::default());
-        // A tile without its last field, the look (`[[], [], []]`, its last four bytes), is refused.
-        assert_eq!(empty[empty.len() - 4..], [0x93, 0x90, 0x90, 0x90]);
-        let mut short = empty[..empty.len() - 4].to_vec();
-        short[0] = 0x9e;
+        // A tile without its last field, the tombstones (`[]`, its last byte), is refused.
+        assert_eq!(empty[empty.len() - 1], 0x90);
+        let mut short = vec![0x9f];
+        short.extend_from_slice(&empty[3..empty.len() - 1]);
         assert!(Tile::decode(&short).is_err());
         assert_eq!(manifest.tiles[0].path(), "tiles/1_0.msgpack");
     }

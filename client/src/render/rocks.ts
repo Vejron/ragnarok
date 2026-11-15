@@ -234,7 +234,7 @@ function prototypes() {
 }
 
 /** A number 0..1 from a rock's position and `salt`, the same every time it is built. */
-function hashAt(x: number, z: number, salt: number): number {
+export function hashAt(x: number, z: number, salt: number): number {
   let h = Math.imul(Math.round(x * 100) | 0, 0x27d4eb2d) ^ Math.imul(Math.round(z * 100) | 0, 0x165667b1) ^ Math.imul(salt, 0x9e3779b1)
   h = Math.imul(h ^ (h >>> 15), 0x85ebca6b)
   h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35)

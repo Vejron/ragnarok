@@ -253,8 +253,8 @@ pub(crate) fn lift_colliders(lifts: &[shared::world::Lift]) -> Vec<Collider> {
         .collect()
 }
 
-/// The buildings, the rest of the collision mesh (bridges), the tree trunks, the fences and walls and
-/// the power poles of `world`, each building, tree or piece of a fence or wall with the [`Obj`] it is.
+/// The buildings, the rest of the collision mesh (bridges), the tree trunks, the fences and walls, the
+/// power poles and the tombstones of `world`, each building, tree or piece of a fence or wall with the [`Obj`] it is.
 fn object_colliders(world: &WorldFile) -> Result<Vec<(Collider, Option<Obj>)>> {
     let mut colliders = Vec::new();
     let mesh = &world.collision;
@@ -323,7 +323,20 @@ fn object_colliders(world: &WorldFile) -> Result<Vec<(Collider, Option<Obj>)>> {
     colliders.extend(fences::pole_colliders(&lines).into_iter().map(|pole| (pole, None)));
     // A fence or wall is a row of pieces, each broken on its own.
     colliders.extend(fences::piece_colliders(&world.lines).into_iter().map(|(piece, object)| (piece, Some(object))));
+    colliders.extend(world.graves.iter().map(|grave| (grave_collider(grave), None)));
     Ok(colliders)
+}
+
+/// How deep a tombstone is sunk into the ground, metres, so it stands on a slope.
+const GRAVE_SUNK: f32 = 0.3;
+
+/// A tombstone's collider: the box of its kind (`GRAVE_KINDS`), turned to its heading. Like a rock it
+/// stops soldiers, vehicles and bullets, and it is no `Obj`: nothing breaks it.
+fn grave_collider(grave: &shared::world::Grave) -> Collider {
+    let def = shared::world::grave_kind_def(grave.kind);
+    let half_height = (def.height + GRAVE_SUNK) / 2.0;
+    let centre = Vector::new(from_cm(grave.x), from_cm(grave.base) - GRAVE_SUNK + half_height, from_cm(grave.z));
+    ColliderBuilder::cuboid(def.half_width, half_height, def.half_depth).position(Pose::from_parts(centre, Rotation::from_rotation_y(grave.heading()))).build()
 }
 
 /// `f` of every item of `items`, in order, worked out on all the cores.

@@ -55,6 +55,7 @@ The docs are in [docs/](docs/).
 - [VR.md](docs/VR.md): the game in a VR headset through WebXR on WebGPU, to pilot a Titan with your own hands; built but not yet run on a headset
 - [CHURCHES.md](docs/CHURCHES.md): churches get a roof fit, windows, a door and colours of their own: one steep gable down the nave with the sacristy roofed lower, tall round-headed windows, and one open hall inside
 - [BARRIERS.md](docs/BARRIERS.md): fences and walls from OpenStreetMap and orienteering maps, solid piece by piece and breakable: a car drives through a fence and breaks it, a wall stops it unless it is going fast, and tanks, blasts and Titans go through both
+- [GRAVEYARDS.md](docs/GRAVEYARDS.md): tombstones of three kinds in every cemetery and churchyard from OpenStreetMap, stood in rows along the yard's paths or in rows of their own where it has none, solid and unbreakable like rocks
 - [LIFTS.md](docs/LIFTS.md): ski lifts from OpenStreetMap, every one built as a chair lift whose chairs run on the server's clock, boarded with E at a station and ridden round until you jump off
 - [BUSES.md](docs/BUSES.md): public transport, a world option like winter: bus lines found along the major roads, with stops, and buses the server drives along them that anyone can ride, or take once the driver is gone
 

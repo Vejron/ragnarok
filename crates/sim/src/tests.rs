@@ -185,6 +185,33 @@ fn a_fence_stops_a_soldier_and_a_power_pole_stops_them_and_a_ray() {
 }
 
 #[test]
+fn a_tombstone_stops_a_soldier_and_a_ray_across_its_face_and_not_beside_or_over_it() {
+    use shared::world::{GRAVE_HEADSTONE, GRAVE_KINDS, Grave};
+    // A headstone 3 m along +X, its face turned to +X: it is wide along Z and thin along X.
+    let def = GRAVE_KINDS[GRAVE_HEADSTONE as usize];
+    let world = WorldFile { graves: vec![Grave { x: 300, z: 0, base: 0, yaw: 1571, kind: GRAVE_HEADSTONE }], ..flat_world() };
+    let physics = Physics::new(&world).unwrap();
+    let toward = |yaw| InputFrame { seq: 1, strafe: 0, forward: 127, yaw, buttons: BUTTON_RUN, pitch: 0, view: 0, slot: 0 };
+    let mut character = standing();
+    for _ in 0..TICK_RATE * 2 {
+        physics.move_character(&mut character, &toward(-1571), TICK_DT);
+    }
+    let x = character.position[0];
+    assert!(x < 3.0 - def.half_depth - CAPSULE_RADIUS + 0.02 && x > 2.0, "x = {x}");
+    // A round stops on its back, and passes beside it and over its top.
+    let hit = physics.cast_ray_static([0.0, 0.5, def.half_width - 0.05], [1.0, 0.0, 0.0], 10.0);
+    assert!(hit.is_some_and(|d| (d - (3.0 - def.half_depth)).abs() < 0.02), "{hit:?}");
+    assert_eq!(physics.cast_ray_static([0.0, 0.5, def.half_width + 0.05], [1.0, 0.0, 0.0], 10.0), None);
+    assert_eq!(physics.cast_ray_static([0.0, def.height + 0.05, 0.0], [1.0, 0.0, 0.0], 10.0), None);
+    // The streamed world of the client's prediction has the same stone.
+    let manifest = shared::world::Manifest { version: WORLD_VERSION, half_extent: world.half_extent, tile_size: world.half_extent * 2, ..Default::default() };
+    let mut streamed = Physics::streamed(&manifest);
+    streamed.add_tile(&manifest, 0, 0, &shared::world::Tile { graves: world.graves.clone(), ..Default::default() }).unwrap();
+    let hit = streamed.cast_ray_static([0.0, 0.5, 0.0], [1.0, 0.0, 0.0], 10.0);
+    assert!(hit.is_some_and(|d| (d - (3.0 - def.half_depth)).abs() < 0.02), "{hit:?}");
+}
+
+#[test]
 fn a_wall_stops_a_soldier_and_a_ray_until_its_piece_is_broken() {
     use shared::world::{LINE_FENCE, LINE_WALL, Line, ObjId};
     // A wall across x = 5 m in two pieces, and a fence across x = -5 m.

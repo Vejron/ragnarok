@@ -13,6 +13,7 @@ import { reliefPixels, type Pixels, type TerrainBuffers } from './terrainmesh'
 import { prepareTile, type PreparedTile } from './tileprep'
 import { buildTrees } from './trees'
 import { buildLines } from './lines'
+import { buildGraves } from './graves'
 import { stonesTexture } from './stones'
 import { shoreOf, type Shore } from './shore'
 import { TERRAIN_RAMP } from './groundlight'
@@ -149,11 +150,11 @@ export function remeshTerrain(group: Group, buffers: TerrainBuffers) {
 
 /**
  * A prepared tile (`prepareTile`) as meshes: its terrain, roads and rails draped on it, its
- * buildings and bridges merged into one mesh with a colour a vertex, its trees, and its fences,
- * walls and power lines. Water is drawn
+ * buildings and bridges merged into one mesh with a colour a vertex, its trees, its fences,
+ * walls and power lines, and its tombstones. Water is drawn
  * apart (`buildWater`). Only wrapping arrays, so it is cheap enough for the frame.
  */
-export function tileGroup(tile: Pick<TileData, 'cover' | 'detail' | 'trees' | 'lines' | 'stones' | 'water'>, ground: TileGround | null, prepared: PreparedTile): Group {
+export function tileGroup(tile: Pick<TileData, 'cover' | 'detail' | 'trees' | 'lines' | 'graves' | 'stones' | 'water'>, ground: TileGround | null, prepared: PreparedTile): Group {
   const group = new Group()
   // Where the ground meets the water, for what is wet there.
   const shore = ground ? shoreOf(ground, tile.water) : null
@@ -162,6 +163,7 @@ export function tileGroup(tile: Pick<TileData, 'cover' | 'detail' | 'trees' | 'l
   group.add(...mergedMesh(prepared.buildings, new Set(prepared.undrawn)))
   group.add(...buildTrees(tile.trees, shore))
   group.add(...buildLines(tile.lines, ground))
+  group.add(...buildGraves(tile.graves))
   return group
 }
 

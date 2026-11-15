@@ -63,6 +63,11 @@
     {"kind": 4, "height": 1, "half": 0.25, "step": 3, "wall": true},
     {"kind": 5, "height": 2.4, "half": 0.3, "step": 3, "wall": true}
   ],
+  "graveKinds": [
+    {"kind": 0, "name": "Headstone", "halfWidth": 0.3, "halfDepth": 0.08, "height": 0.95},
+    {"kind": 1, "name": "Cross", "halfWidth": 0.28, "halfDepth": 0.09, "height": 1.2},
+    {"kind": 2, "name": "Low stone", "halfWidth": 0.42, "halfDepth": 0.16, "height": 0.58}
+  ],
   "materials": [
     {"id": 0, "name": "Brick", "hp": 40, "blastReach": 1}
   ],

@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { encode } from '@msgpack/msgpack'
-import { RAIL_TRAIN, RAIL_TRAM, ROOF_GABLE, WORLD_BASE, decodeManifest, decodeTile, worldHash } from '@/world'
+import { GRAVE_CROSS, GRAVE_KINDS, RAIL_TRAIN, RAIL_TRAM, ROOF_GABLE, WORLD_BASE, decodeManifest, decodeTile, worldHash } from '@/world'
 import { buildingColors } from '@/render/buildingmesh'
 import { NO_CELLS } from './worlds'
 
@@ -34,6 +34,7 @@ describe('world files', () => {
     let streams = 0
     let bridges = 0
     let rails = 0
+    const graves = new Set<number>()
     for (const ref of world.tiles) {
       const bytes = read(`tiles/${ref.col}_${ref.row}.msgpack`)
       expect(worldHash(bytes), `tile ${ref.col}_${ref.row}`).toBe(ref.hash)
@@ -61,6 +62,14 @@ describe('world files', () => {
           expect(z).toBeLessThanOrEqual(z0 + world.tileSize + 0.02)
         }
       }
+      for (const grave of tile.graves ?? []) {
+        // A tombstone stands in its own tile.
+        expect(grave.x).toBeGreaterThanOrEqual(x0)
+        expect(grave.x).toBeLessThanOrEqual(x0 + world.tileSize)
+        expect(grave.z).toBeGreaterThanOrEqual(z0)
+        expect(grave.z).toBeLessThanOrEqual(z0 + world.tileSize)
+        graves.add(grave.kind)
+      }
       buildings += tile.buildings.length
       streams += tile.streams.length
       rails += tile.rails.length
@@ -81,11 +90,13 @@ describe('world files', () => {
     expect(streams).toBeGreaterThan(0)
     expect(bridges).toBeGreaterThan(0)
     expect(rails).toBeGreaterThan(0)
+    // The synthetic city's graveyards hold every kind of stone.
+    expect([...graves].sort()).toEqual(GRAVE_KINDS.map((def) => def.kind))
   })
 
   /** A tile file with every field empty, `fields` put in by index (`Tile` in `world.rs`). */
   const tileWith = (fields: Record<number, unknown>) =>
-    encode(Object.assign([[], [], [[], []], [2, new Uint8Array()], [], [], new Uint8Array(), [], [], new Uint8Array(), [], [], [], new Uint8Array(), [[], [], []]], fields))
+    encode(Object.assign([[], [], [[], []], [2, new Uint8Array()], [], [], new Uint8Array(), [], [], new Uint8Array(), [], [], [], new Uint8Array(), [[], [], []], []], fields))
 
   it('decodes ground written as residuals of a plane', () => {
     // The bytes `world.rs` pins (`ground_is_written_rounded_as_residuals_of_a_plane_through_its_neighbours`):
@@ -101,6 +112,12 @@ describe('world files', () => {
     expect(decodeTile(tileWith({})).rails).toEqual([])
     const tile = decodeTile(tileWith({ 10: [[144, RAIL_TRAIN, [[0, 0], [1000, -250]]]] }))
     expect(tile.rails).toEqual([{ gauge: 1.44, kind: RAIL_TRAIN, points: [[0, 0], [10, -2.5]] }])
+  })
+
+  it('decodes tombstones, in metres and radians', () => {
+    expect(decodeTile(tileWith({})).graves).toEqual([])
+    const tile = decodeTile(tileWith({ 15: [[1250, -300, 480, -1571, GRAVE_CROSS]] }))
+    expect(tile.graves).toEqual([{ x: 12.5, z: -3, base: 4.8, yaw: -1.571, kind: GRAVE_CROSS }])
   })
 
   it('decodes a building\'s paint, and draws it in its own colours', () => {

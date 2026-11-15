@@ -5,7 +5,7 @@ import { Meter, type Strike } from '../sim/golf'
 import * as items from '../sim/items'
 import tables from '../sim/tables.generated.json'
 import { VEHICLES, isLegged, isTracked, vehicleDef } from '../sim/vehicles'
-import { TREE_BIRCH, TREE_BUSH, TREE_KINDS, TREE_PINE, TREE_ROCK_BOULDER, TREE_ROCK_SLAB, treeKindDef, trunkRadiusCm } from '../world'
+import { GRAVE_CROSS, GRAVE_HEADSTONE, GRAVE_KINDS, GRAVE_LOW, TREE_BIRCH, TREE_BUSH, TREE_KINDS, TREE_PINE, TREE_ROCK_BOULDER, TREE_ROCK_SLAB, graveKindDef, treeKindDef, trunkRadiusCm } from '../world'
 
 // `sim/tables.generated.json` is written from the Rust tables by `cargo test -p shared parity`
 // (`UPDATE_PARITY=1` rewrites it), which fails while it is stale. The client builds its item, vehicle
@@ -34,6 +34,12 @@ describe('gameplay tables come from the server', () => {
   it('has every tree and rock archetype the server does, the birch first as the fallback', () => {
     expect(TREE_KINDS.map((def) => def.kind)).toEqual(tables.treeKinds.map((row) => row.kind))
     expect(treeKindDef(999).kind).toBe(TREE_BIRCH)
+  })
+
+  it('has every kind of tombstone the server does, the headstone first as the fallback', () => {
+    expect(GRAVE_KINDS.map((def) => def.kind)).toEqual([GRAVE_HEADSTONE, GRAVE_CROSS, GRAVE_LOW])
+    expect(GRAVE_KINDS).toEqual(tables.graveKinds)
+    expect(graveKindDef(999).kind).toBe(GRAVE_HEADSTONE)
   })
 
   it('sizes colliders like Tree::trunk_radius: trees by height, rocks by their crown', () => {

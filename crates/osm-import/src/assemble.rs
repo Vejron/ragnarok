@@ -676,11 +676,16 @@ pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::B
     let mut lines: Vec<(u8, Vec<P>)> = Vec::new();
     let mut rail_bridges = Vec::new();
     let mut covers = Vec::new();
+    // The graveyards, each its rings: tombstones are stood in them once the tiles are built (`graves::lay`).
+    let mut yards: Vec<Vec<Vec<P>>> = Vec::new();
     let line = |geometry: &[LatLon]| -> Vec<P> { geometry.iter().map(|g| frame.project(g.lat, g.lon)).collect() };
     for Area { tags, outer, inner, .. } in &osm.areas {
         let Some(kind) = cover_kind(tags) else { continue };
         let rings: Vec<Vec<P>> = join_rings(outer.iter().map(|w| line(w)).collect()).into_iter().chain(join_rings(inner.iter().map(|w| line(w)).collect())).collect();
         if !rings.is_empty() {
+            if crate::osm::is_graveyard(tags) {
+                yards.push(rings.clone());
+            }
             covers.push((kind, rings));
         }
     }
@@ -755,6 +760,9 @@ pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::B
         } else if let Some(kind) = cover_kind(&way.tags) {
             // Only closed ways are areas; an open one is a bank or a fence.
             if points.len() >= 4 && points.first() == points.last() {
+                if crate::osm::is_graveyard(&way.tags) {
+                    yards.push(vec![points[..points.len() - 1].to_vec()]);
+                }
                 covers.push((kind, vec![points[..points.len() - 1].to_vec()]));
             }
         }
@@ -856,8 +864,8 @@ pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::B
         .into_iter()
         .flat_map(|(kind, points)| if matches!(kind, LINE_WALL | LINE_WALL_HIGH) { open_at_roads(&points, &roads) } else { vec![points] }.into_iter().map(move |points| (kind, points)))
         .collect();
-    // The lines are laid on the ground once the tiles are built, so it is kept for them.
-    let kept = (!lines.is_empty() || !lifts.is_empty()).then(|| ground.clone());
+    // The lines and the tombstones are laid on the ground once the tiles are built, so it is kept for them.
+    let kept = (!lines.is_empty() || !lifts.is_empty() || !yards.is_empty()).then(|| ground.clone());
     // A lift's own station stands at each of its ends: the station building OSM or the laser has there goes.
     let ends: Vec<P> = lifts.iter().flat_map(|(.., points)| points.first().into_iter().chain(points.last())).copied().collect();
     let over_station = |ring: &[P]| ends.iter().any(|&end| point_in_polygon(end, ring) || (0..ring.len()).any(|i| distance_to_segment(end, ring[i], ring[(i + 1) % ring.len()]) < LIFT_STATION_CLEAR));
@@ -875,12 +883,15 @@ pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::B
     rail_bridges.extend(shared);
     let (flush, bridges): (Vec<_>, Vec<_>) = bridges.into_iter().partition(|bridge| bridge.3 == Pylons::Flush);
     rail_bridges.extend(flush);
+    // The stones follow a graveyard's paths and stand off every road: the roads as they are drawn, not cut at the tiles.
+    let ways: Vec<(Vec<P>, f64)> = if yards.is_empty() { Vec::new() } else { roads.iter().map(|(points, width, _)| (points.clone(), *width)).collect() };
     let mut built = assemble(frame, half, tile_size, mask, buildings, roads, bridges, rails, rail_bridges, ski, covers, trees, &mapped, ground, water);
     if let Some(ground) = &kept {
         lay_lifts(&mut built, &lifts, half, ground);
-    }
-    if let Some(ground) = kept {
-        lay_lines(&mut built, &lines, half, tile_size, &ground);
+        lay_lines(&mut built, &lines, half, tile_size, ground);
+        crate::graves::lay(&mut built, &yards, &ways, half, ground);
+        let stones: usize = built.tiles.values().map(|tile| tile.graves.len()).sum();
+        eprintln!("graveyards: {} from OpenStreetMap, {stones} tombstones", yards.len());
     }
     if let Some(ocad) = ocad {
         lay_stones(&mut built, &ocad.stony_dots, &ocad.stony_areas, half, tile_size);
@@ -1689,6 +1700,10 @@ fn cover_kind(tags: &std::collections::HashMap<String, String>) -> Option<u8> {
     if let Some(value) = tag("leisure") {
         return matches!(value, "park" | "garden" | "pitch" | "playground" | "golf_course" | "recreation_ground" | "nature_reserve").then_some(COVER_PARK);
     }
+    // A churchyard is mown grass among its stones, as a cemetery is.
+    if tag("amenity") == Some("grave_yard") {
+        return Some(COVER_PARK);
+    }
     match tag("landuse")? {
         "forest" => Some(COVER_WOOD),
         "meadow" | "grass" | "village_green" | "recreation_ground" | "cemetery" | "allotments" | "greenfield" | "flowerbed" => Some(COVER_PARK),
@@ -1867,6 +1882,13 @@ pub fn synthetic_city(half: f64, tile_size: f64, ground: Ground, water: Placed) 
         .map(|(k, &([x, z], size))| ([LINE_FENCE, LINE_WALL, LINE_FENCE_HIGH, LINE_WALL_HIGH][k % 4], vec![[x + size - 1.0, z + 1.0], [x + 1.0, z + 1.0], [x + 1.0, z + size - 1.0]]))
         .collect();
     let kept = (!lines.is_empty()).then(|| ground.clone());
+    // The first two parks are graveyards, so the offline world has tombstones to draw and hide behind:
+    // one with a path across it for its stones to follow, one without, filled with rows.
+    let yards: Vec<Vec<Vec<P>>> = parks.iter().take(2).map(|&([x, z], size)| vec![vec![[x, z], [x + size, z], [x + size, z + size], [x, z + size]]]).collect();
+    if let Some(&([x, z], size)) = parks.first() {
+        roads.push((vec![[x - 2.0, z + size / 2.0], [x + size + 2.0, z + size / 2.0]], 2.5, ROAD_PATH));
+    }
+    let ways: Vec<(Vec<P>, f64)> = roads.iter().map(|(points, width, _)| (points.clone(), *width)).collect();
     // A loose ring of trees in each park, round an open middle.
     for (k, ([x, z], size)) in parks.into_iter().enumerate() {
         for (n, (u, v)) in [(0.2, 0.2), (0.5, 0.15), (0.8, 0.25), (0.85, 0.55), (0.75, 0.85), (0.45, 0.8), (0.15, 0.7), (0.2, 0.45)].into_iter().enumerate() {
@@ -1885,6 +1907,7 @@ pub fn synthetic_city(half: f64, tile_size: f64, ground: Ground, water: Placed) 
     let mut built = assemble(Frame::default(), half, tile_size, None, buildings, roads, bridges, rails, Vec::new(), Vec::new(), covers, trees, &[], ground, water);
     if let Some(ground) = kept {
         lay_lines(&mut built, &lines, half, tile_size, &ground);
+        crate::graves::lay(&mut built, &yards, &ways, half, &ground);
     }
     built
 }
@@ -1934,6 +1957,8 @@ mod tests {
         assert_eq!(cover_kind(&tags(&[("landuse", "forest")])), Some(COVER_WOOD));
         assert_eq!(cover_kind(&tags(&[("leisure", "park")])), Some(COVER_PARK));
         assert_eq!(cover_kind(&tags(&[("landuse", "military")])), None);
+        assert_eq!(cover_kind(&tags(&[("landuse", "cemetery")])), Some(COVER_PARK));
+        assert_eq!(cover_kind(&tags(&[("amenity", "grave_yard")])), Some(COVER_PARK));
         assert_eq!(cover_kind(&tags(&[("natural", "wetland")])), Some(COVER_MARSH));
         assert_eq!(cover_kind(&tags(&[("natural", "wetland"), ("wetland", "bog")])), Some(COVER_MARSH_DEEP));
         assert_eq!(cover_kind(&tags(&[("natural", "wetland"), ("wetland", "wet_meadow")])), Some(COVER_MARSH_FAINT));
@@ -2141,6 +2166,59 @@ mod tests {
         let built = from_osm(&place, 100.0, None, &osm, &[], ground, Placed::default(), None, None, None, &[], None, None, &[]);
         let kinds: std::collections::BTreeSet<u8> = built.tiles.values().flat_map(|tile| &tile.lines).map(|line| line.kind).collect();
         assert_eq!(kinds, [LINE_FENCE, LINE_POWER, LINE_WALL].into());
+    }
+
+    #[test]
+    fn a_graveyard_from_osm_gets_stones_along_its_path_and_a_churchyard_without_one_gets_rows() {
+        let place = crate::region::Region::Sweden.around(63.82, 20.26, 150.0);
+        let way = |id, (key, value): (&str, &str), points: &[P]| {
+            let geometry = points.iter().map(|&[x, z]| {
+                let (lat, lon) = place.frame.unproject(x, z);
+                LatLon { lat, lon }
+            });
+            crate::overpass::Way { id, tags: [(key.to_string(), value.to_string())].into(), geometry: geometry.collect() }
+        };
+        let ring = |x0: f64, z0: f64, x1: f64, z1: f64| [[x0, z0], [x1, z0], [x1, z1], [x0, z1], [x0, z0]];
+        let osm = Osm {
+            ways: vec![
+                way(1, ("landuse", "cemetery"), &ring(-100.0, -40.0, -20.0, 40.0)),
+                way(2, ("highway", "footway"), &[[-110.0, 0.0], [-10.0, 0.0]]),
+                way(3, ("amenity", "grave_yard"), &ring(30.0, -30.0, 90.0, 30.0)),
+                way(4, ("leisure", "park"), &ring(-60.0, 80.0, 60.0, 130.0)),
+            ],
+            areas: Vec::new(),
+        };
+        let ground = Ground { origin: -15_000, cell: 500, side: 61, heights: vec![250; 61 * 61] };
+        let built = from_osm(&place, 100.0, None, &osm, &[], ground, Placed::default(), None, None, None, &[], None, None, &[]);
+        let graves: Vec<Grave> = built.tiles.values().flat_map(|tile| tile.graves.iter().copied()).collect();
+        let (cemetery, churchyard): (Vec<Grave>, Vec<Grave>) = graves.iter().partition(|grave| grave.x < 0);
+        assert!(cemetery.len() > 100 && churchyard.len() > 100, "{} and {}", cemetery.len(), churchyard.len());
+        assert!(graves.iter().all(|grave| grave.base == 250 && grave.z.abs() < 4000), "on the ground, and none in the park");
+        // The cemetery's stand along its path only; the churchyard's fill it.
+        assert!(cemetery.iter().all(|grave| grave.z.abs() < 1000 && grave.z.abs() > 200), "{:?}", cemetery.iter().map(|grave| grave.z).max());
+        assert!(churchyard.iter().any(|grave| grave.z > 2500) && churchyard.iter().any(|grave| grave.z < -2500));
+        // Both are mown grass, and no boulder is left in either.
+        assert!(built.tiles.values().flat_map(|tile| &tile.cover).filter(|cover| cover.kind == COVER_PARK).count() >= 3);
+        let rock_in_a_yard = |tree: &&Tree| matches!(tree.kind, TREE_ROCK_BOULDER | TREE_ROCK_SLAB) && tree.z.abs() < 3000;
+        assert_eq!(built.tiles.values().flat_map(|tile| &tile.trees).filter(rock_in_a_yard).count(), 0);
+    }
+
+    #[test]
+    fn the_synthetic_city_has_a_graveyard_along_a_path_and_one_in_rows() {
+        let built = synthetic_city(300.0, 100.0, Ground::default(), Placed::default());
+        let graves: Vec<Grave> = built.tiles.values().flat_map(|tile| tile.graves.iter().copied()).collect();
+        assert!(graves.len() > 150, "{}", graves.len());
+        let kinds: std::collections::BTreeSet<u8> = graves.iter().map(|grave| grave.kind).collect();
+        assert_eq!(kinds.len(), GRAVE_KINDS.len());
+        // None on a street or the path, in a house or against a fence's line.
+        let roads: Vec<&Road> = built.tiles.values().flat_map(|tile| &tile.roads).collect();
+        for grave in &graves {
+            let at = [f64::from(grave.x) / 100.0, f64::from(grave.z) / 100.0];
+            for road in &roads {
+                let d = road.points.windows(2).map(|pair| distance_to_segment(at, [f64::from(pair[0][0]) / 100.0, f64::from(pair[0][1]) / 100.0], [f64::from(pair[1][0]) / 100.0, f64::from(pair[1][1]) / 100.0])).fold(f64::MAX, f64::min);
+                assert!(d > f64::from(road.width) / 200.0 + 0.5, "{grave:?} is {d} m from a road");
+            }
+        }
     }
 
     #[test]

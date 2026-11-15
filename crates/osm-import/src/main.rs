@@ -688,6 +688,11 @@ fn main() -> Result<()> {
         "trees: {} birch, {} pine, {} spruce, {} ornamental, {} broadleaf, {} columnar, {} low-wide; {} rocks, {} bushes",
         by_kind[0], by_kind[1], by_kind[2], by_kind[3], by_kind[4], by_kind[5], by_kind[6], by_kind[7] + by_kind[8], by_kind[9]
     );
+    let mut graves = [0usize; shared::world::GRAVE_KINDS.len()];
+    for grave in built.tiles.values().flat_map(|tile| &tile.graves) {
+        graves[usize::from(grave.kind).min(graves.len() - 1)] += 1;
+    }
+    eprintln!("tombstones: {} headstones, {} crosses, {} low stones", graves[0], graves[1], graves[2]);
     let mut roofs = [0usize; 4];
     for building in built.tiles.values().flat_map(|tile| &tile.buildings) {
         roofs[usize::from(building.roof_kind).min(3)] += 1;

@@ -3,7 +3,7 @@ import tables from './sim/tables.generated.json'
 
 /** Mirrors `crates/shared/src/world.rs`. Coordinates are metres: +X east, +Z south, +Y up. */
 
-export const WORLD_VERSION = 24
+export const WORLD_VERSION = 25
 
 /** `Manifest::theme`, mirrors `crates/shared/src/world.rs`. */
 export const THEME_WINTER = 1
@@ -150,6 +150,43 @@ export const TREE_KINDS: readonly TreeKindDef[] = tables.treeKinds
 
 /** The definition of an archetype. Unknown kinds are birches, as they are drawn. */
 export const treeKindDef = (kind: number): TreeKindDef => TREE_KINDS.find((def) => def.kind === kind) ?? TREE_KINDS[0]!
+
+export const GRAVE_HEADSTONE = 0
+export const GRAVE_CROSS = 1
+export const GRAVE_LOW = 2
+
+/**
+ * The size of a kind of tombstone, metres: `GRAVE_KINDS` in `crates/shared/src/world.rs`, through
+ * `sim/tables.generated.json`. Its collider is this box, and it is drawn to fill it.
+ */
+export interface GraveKindDef {
+  kind: number
+  name: string
+  /** Half its width across its face. */
+  halfWidth: number
+  /** Half its thickness from face to back. */
+  halfDepth: number
+  /** Height of its top over the ground. */
+  height: number
+}
+
+/** In the server's order, the headstone first. */
+export const GRAVE_KINDS: readonly GraveKindDef[] = tables.graveKinds
+
+/** The definition of a kind of tombstone. Unknown kinds are headstones, as the server collides them. */
+export const graveKindDef = (kind: number): GraveKindDef => GRAVE_KINDS.find((def) => def.kind === kind) ?? GRAVE_KINDS[0]!
+
+/** One tombstone of a graveyard (`Grave` in `crates/shared/src/world.rs`). Metres and radians. */
+export interface Grave {
+  x: number
+  z: number
+  /** Height of the ground at its foot. */
+  base: number
+  /** The way its face looks, about the vertical: along +Z at 0, turning towards +X as it grows. */
+  yaw: number
+  /** `GRAVE_*`. */
+  kind: number
+}
 
 export type Point2 = [number, number]
 
@@ -416,6 +453,8 @@ export interface TileData {
   ski: SkiTrail[]
   /** Fences and power lines; absent in a tile made up in a test. */
   lines?: Line[]
+  /** The tombstones of the tile's graveyards; absent in a tile made up in a test. */
+  graves?: Grave[]
   /**
    * Stony ground, `n × n` cells over the tile with `n = sqrt(length)`, rows along +Z: how stony each
    * is in the low bits (`STONES_DENSITY`, 0 none) and `STONES_ANGULAR` for a boulder field's blocks.
@@ -544,7 +583,7 @@ function flatIndices(triangles: readonly number[][]): Uint32Array {
 }
 
 export function decodeTile(bytes: Uint8Array): TileData {
-  const [buildings, roads, [vertices, triangles], ground, cover, trees, water, streams, bridges, detail, rails, ski, lines, stones, look] = decode(bytes) as [
+  const [buildings, roads, [vertices, triangles], ground, cover, trees, water, streams, bridges, detail, rails, ski, lines, stones, look, graves] = decode(bytes) as [
     [number, number[][], number, number, number, number, number, number, [number[], number[], Uint8Array, Uint8Array], [number, number] | null][],
     [number, number, boolean, number[][]][],
     [number[][], number[][]],
@@ -560,6 +599,7 @@ export function decodeTile(bytes: Uint8Array): TileData {
     [number, number[][], number[], boolean][],
     Uint8Array,
     [number[][], number[][], number[][]],
+    [number, number, number, number, number][],
   ]
   const looks = look[2]
   return {
@@ -602,6 +642,7 @@ export function decodeTile(bytes: Uint8Array): TileData {
     rails: rails.map(([gauge, kind, points]) => ({ gauge: metres(gauge), kind, points: points.map(point) })),
     ski: ski.map(([width, points]) => ({ width: metres(width), points: points.map(point) })),
     lines: lines.map(([kind, points, base, end]) => ({ kind, points: points.map(point), base: base.map(metres), end })),
+    graves: graves.map(([x, z, base, yaw, kind]) => ({ x: metres(x), z: metres(z), base: metres(base), yaw: yaw / 1000, kind })),
     ...(stones.length > 0 ? { stones: stones.slice() } : {}),
     ...(look[1].length > 0 ? { look: { vertices: flatMetres(look[0]), triangles: flatIndices(look[1]) } } : {}),
     bytes,

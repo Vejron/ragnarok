@@ -380,7 +380,7 @@ auth. They are never written to the cache or to the world files. OSM and Umeå's
 
 ### OpenStreetMap
 One read of the box (`osm::load`) returns everything any pass wants (`osm::wants_way`, `wants_relation`,
-`wants_node`): buildings, highways, railways and cover (landuse, natural, leisure) as ways with inline
+`wants_node`): buildings, highways, railways and cover (landuse, natural, leisure, and `amenity=grave_yard`) as ways with inline
 geometry and multipolygon relations for cover, and also water, golf, lifts and ski tracks. Each pass then
 takes its own view of the answer with the tag filter its own Overpass query once had (`Data::main`,
 `osm_water::from`, `osm_golf::from`, `osm_lifts::from`, `osm_ski::from`), so a world comes out the same
@@ -390,7 +390,8 @@ come from the `height` tag, else `building:levels` × 3 + 1, else a guess of 6�
 marsh, by its `wetland` tag: `bog`, `swamp` and `fen` are `COVER_MARSH_DEEP`, `wet_meadow` is
 `COVER_MARSH_FAINT` and the rest `COVER_MARSH` (docs/ORIENTEERING.md has how the client draws them). A
 major or minor road whose `surface` tag is unpaved (`gravel`, `dirt`, `compacted`, `unpaved` and so on) is
-`ROAD_GRAVEL`: drawn as gravel and driven as dirt rather than asphalt. A bridge keeps its class, which
+`ROAD_GRAVEL`: drawn as gravel and driven as dirt rather than asphalt. A `landuse=cemetery` or an
+`amenity=grave_yard` is park cover with tombstones stood in it (docs/GRAVEYARDS.md). A bridge keeps its class, which
 sets its deck's height. Overpass
 often answers 504; the importer tries every endpoint, four rounds, 15 s apart, for each square. A box larger than `--overpass-chunk` is fetched as a grid of squares; ways and relations that cross a border come back twice and are merged by id.
 
@@ -687,6 +688,7 @@ a bridge lengthened onto its bank (`carried_runs` in `assemble.rs`). Such a stre
 routed along and drawn on the minimap like any road, but the client does not paint it on the ground
 under the deck, and nobody spawns on it. A road that crosses under a bridge is not carried.
 `WORLD_VERSION` 24 added each bus stop's sign to its line (`BusLine::signs`).
+`WORLD_VERSION` 25 added the graveyards' tombstones to each tile (`Tile::graves`, GRAVEYARDS.md).
 
 Both sides check `WORLD_VERSION` and read only the current layout: there is no reading of older
 worlds. When the layout changes, bump it in `crates/shared/src/world.rs` **and**

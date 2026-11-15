@@ -74,7 +74,7 @@ impl Physics {
         physics
     }
 
-    /// Adds tile `(col, row)` of `manifest`: its ground, buildings, bridges and trunks. A tile already
+    /// Adds tile `(col, row)` of `manifest`: its ground, buildings, bridges, trunks and tombstones. A tile already
     /// there is replaced.
     pub fn add_tile(&mut self, manifest: &Manifest, col: u16, row: u16, tile: &Tile) -> Result<()> {
         self.remove_tile(col, row);
@@ -83,7 +83,7 @@ impl Physics {
         let ground = tile_ground(manifest, col, row, &tile.ground).map(|ground| self.insert_static(ground, None));
         handles.extend(ground);
         // The tile alone, as the server's merged world holds it: what collides, under the same ids.
-        let solid = Tile { buildings: tile.buildings.clone(), collision: tile.collision.clone(), trees: tile.trees.clone(), bridges: tile.bridges.clone(), lines: tile.lines.clone(), look: tile.look.clone(), ..Default::default() };
+        let solid = Tile { buildings: tile.buildings.clone(), collision: tile.collision.clone(), trees: tile.trees.clone(), bridges: tile.bridges.clone(), lines: tile.lines.clone(), look: tile.look.clone(), graves: tile.graves.clone(), ..Default::default() };
         self.stones.set((col, row), tile.stones.clone());
         self.waters.set((col, row), &tile.ground, &tile.water);
         let alone = Manifest { ground_cell: 0, tiles: Vec::new(), spawns: Vec::new(), ..manifest.clone() };

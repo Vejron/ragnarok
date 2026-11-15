@@ -20,7 +20,7 @@ const BUSH_AREA: f64 = 2_500.0;
 const MAX_PER_COVER: usize = 400;
 
 /// SplitMix64: a well-mixed 64-bit value from a counter.
-fn mix(mut x: u64) -> u64 {
+pub(crate) fn mix(mut x: u64) -> u64 {
     x = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
     x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
     x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
@@ -28,7 +28,7 @@ fn mix(mut x: u64) -> u64 {
 }
 
 /// A value in `[0, 1)` from a hash.
-fn unit(hash: u64) -> f64 {
+pub(crate) fn unit(hash: u64) -> f64 {
     (hash >> 11) as f64 / (1u64 << 53) as f64
 }
 
