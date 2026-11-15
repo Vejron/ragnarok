@@ -23,7 +23,7 @@ use sim::Strike;
 use shared::armor::{Box3, Module, PARTS, Part, PenKind, State, Zone, pack};
 use shared::consts::*;
 use shared::mounts::Need;
-use shared::protocol::{ARMOR_BLOCKED, ARMOR_PIERCED, ARMOR_RICOCHET, ARMOR_SLIT, BURNING, DAMAGE_FIRE, DAMAGE_PARTS, DAMAGE_TURRET, HullMark, MARK_GLANCE, MARK_HOLE, MARK_PIERCED, MARK_SCUFF, MARK_VITAL, ShotEvent, TURRET_GONE, WEAPON_TURRET, WEAPON_WRECK};
+use shared::protocol::{ARMOR_BLOCKED, ARMOR_PIERCED, ARMOR_RICOCHET, ARMOR_SLIT, BURNING, DAMAGE_FIRE, DAMAGE_PARTS, DAMAGE_TURRET, HullMark, MARK_GLANCE, MARK_HEAVY, MARK_HOLE, MARK_PIERCED, MARK_SCUFF, MARK_VITAL, ShotEvent, TURRET_GONE, WEAPON_TURRET, WEAPON_WRECK};
 use shared::quant::{to_cm, to_cm_i16};
 use shared::vehicles::{Role, vehicle_def};
 
@@ -207,6 +207,7 @@ pub fn report(world: &mut World, vid: u32, outcome: &Outcome, point: [f32; 3], d
     if glance && calibre < SPALL_CALIBRE && world.marks.iter().any(|(mark, _)| mark.vehicle == vid && matches!(mark.style, MARK_GLANCE | MARK_SCUFF)) {
         return;
     }
+    let style = if glance && calibre >= SPALL_CALIBRE { style | MARK_HEAVY } else { style };
     let Some(pose) = world.physics.car_pose(vid) else { return };
     let [x, y, z] = pose.local_dir(vec3::sub(point, pose.position)).map(to_cm_i16);
     let [dx, dy, dz] = pose.local_dir(dir).map(|v| (v * 127.0).round().clamp(-127.0, 127.0) as i8);

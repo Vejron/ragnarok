@@ -5,7 +5,7 @@ import { MAX_NAME_CHARS, MAX_SPAWNS } from '@/sim/consts'
 import { HOTBAR_ICONS } from '@/hotbarIcons'
 import { ITEM_NONE, itemDef, LOADOUT_ITEMS, STANDARD_LOADOUT } from '@/sim/items'
 import { insideWorld, mapToWorld, worldToMap } from '@/sim/minimap'
-import { MAP_FILES } from '@/hud/map'
+import { MAP_FILE } from '@/hud/map'
 import { loadManifest, WORLD_BASE, type WorldData } from '@/world'
 import { defaultLook, loadLook, LOOK_OPTIONS, saveLook, type Look } from '@/render/look'
 import { loadQuality, PRESETS, QUALITIES, resolveQuality, saveQuality, type Quality } from '@/render/quality'
@@ -68,8 +68,6 @@ const world = shallowRef<WorldData | null>(null)
 const hash = ref(0)
 const worldError = ref<string | null>(null)
 const mapMissing = ref(false)
-/** Which of `MAP_FILES` the map is being tried as: the next when one is not there. */
-const mapFile = ref(0)
 const notice = ref<string | null>(null)
 let noticeTimer = 0
 
@@ -83,10 +81,9 @@ onMounted(async () => {
   }
 })
 
-const mapUrl = computed(() => (world.value ? `${WORLD_BASE}${MAP_FILES[mapFile.value]}` : ''))
+const mapUrl = computed(() => (world.value ? `${WORLD_BASE}${MAP_FILE}` : ''))
 function mapFailed() {
-  if (mapFile.value < MAP_FILES.length - 1) mapFile.value++
-  else mapMissing.value = true
+  mapMissing.value = true
 }
 const playUrl = import.meta.env.BASE_URL
 const displayName = computed(() => sanitizeName(profile.value.name) || 'Player')

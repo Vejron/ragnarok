@@ -12,12 +12,15 @@ Conventions
     into Y up, chest along -Z, which is the game's vehicle frame (body axes +X right, +Y up, -Z forward).
   * Origin is the centre of the hull collider, its torso (a 12 x 16 x 8 m box, TITAN_HALF_EXTENTS).
   * Nodes the game looks up by name. None is the child of another limb: the game places each by IK.
-      `torso`               chest, shoulders, head and hips, fixed to the hull
+      `torso`               chest, shoulders, head and hips, fixed to the hull, with the missile launcher
+                            on the left pauldron (TITAN_LAUNCHER_*, TITAN_TUBE_AT)
       `upper_L/R`           upper arm, origin at the shoulder (TITAN_SHOULDER), hanging down UPPER metres
       `fore_L/R`            forearm, origin at the elbow, hanging down FORE metres to the fist's middle
       `fist_L/R`            the hand's block, origin at its middle (a ball of TITAN_FIST_RADIUS in the physics)
       `open_L/R`            child of the fist: its fingers held out
       `closed_L/R`          child of the fist: its fingers curled in; the game shows one of the two
+      `gun_R`               child of the right fist: the 40 mm autocannon it holds, its barrel along the
+                            forearm out to GUN metres past the fist's middle (TITAN_GUN_LENGTH)
       `thigh_L/R`           origin at the hip (TITAN_FOOT_HALF sideways, the bottom of the hull), hanging THIGH metres
       `shin_L/R`            origin at the knee, hanging SHIN metres to the ankle
       `foot_L/R`            origin at the ankle; its sole is PAD below
@@ -30,6 +33,7 @@ import math
 import os
 import sys
 
+import bmesh
 import bpy
 from mathutils import Vector
 
@@ -54,6 +58,11 @@ UPPER, FORE = 12.0, 12.0  # shoulder to elbow, elbow to the fist's middle: TITAN
 FIST = 2.5  # the fist's radius in the physics
 THIGH, SHIN = 13.5, 13.5  # longer than the legs' reach, so that it stands with its knees bent
 PAD = 1.5  # the foot's thickness: ankle origin to sole
+GUN = 7.0  # from the right fist's middle to the gun's muzzle, along the forearm: TITAN_GUN_LENGTH
+# The launcher's box on the left pauldron, its centre and size, and its four tubes' mouths (x, y) on its top.
+LAUNCHER = Vector((-9.2, 0.0, 11.45))  # game TITAN_LAUNCHER_AT [-9.2, 11.45, 0.0]
+LAUNCHER_SIZE = (3.8, 4.6, 2.5)  # twice TITAN_LAUNCHER_HALF, as (x, y, z) here
+TUBES = [(-10.1, 1.1), (-8.3, 1.1), (-10.1, -1.1), (-8.3, -1.1)]  # TITAN_TUBE_AT's x and -z
 
 bpy.ops.wm.read_factory_settings(use_empty=True)
 scene = bpy.context.scene
@@ -68,7 +77,27 @@ MATERIALS[:] = [
 PAINT, DARK, METAL, STEEL, LAMP = range(5)
 
 
+# The big plates are cut into a grid this fine, metres, so a shell's dent (scars.wgsl, about a metre
+# across on a Titan) has vertices to press in; flat faces stay flat. Only faces of at least PLATE_AREA
+# square metres are cut: the small parts and the drums' sides are left as they are, to keep it cheap.
+DENT_GRID = 1.2
+PLATE_AREA = 6.0
+
+
 class Part(common.Part):
+    def build(self):
+        bmesh.ops.remove_doubles(self.bm, verts=self.bm.verts, dist=1e-4)
+        plates = {face for face in self.bm.faces if face.calc_area() >= PLATE_AREA}
+        for _ in range(6):
+            long = {edge for face in plates if face.is_valid for edge in face.edges if edge.calc_length() > DENT_GRID}
+            if not long:
+                break
+            made = bmesh.ops.subdivide_edges(self.bm, edges=list(long), cuts=1, use_grid_fill=True)
+            # The faces the cut plates became are plates still.
+            plates = {face for face in self.bm.faces if face.calc_area() >= DENT_GRID * DENT_GRID * 0.5 and any(e.calc_length() > DENT_GRID for e in face.edges)}
+        bmesh.ops.triangulate(self.bm, faces=[face for face in self.bm.faces if len(face.verts) > 4])
+        return super().build()
+
     def taper(self, centre, top, bottom, height, mat):
         """A box that narrows (or widens) from `top` to `bottom`, each an (x, y) size, `height` tall along Z."""
         cx, cy, cz = centre
@@ -118,6 +147,15 @@ for side in (-1, 1):
     torso.taper((side * 9.2, 0.0, 8.6), (5.4, 7.6), (7.0, 8.8), 2.4, PAINT)
     torso.box((side * 11.6, 0.0, 7.0), (1.2, 8.0, 4.4), PAINT)
     torso.box((side * 9.2, 0.0, 9.95), (3.4, 5.0, 0.5), METAL)
+# The missile launcher on the left pauldron: an armoured box with four tube hatches in its top, and a
+# cheek plate down its outer side.
+top = LAUNCHER.z + LAUNCHER_SIZE[2] / 2
+torso.box(LAUNCHER, LAUNCHER_SIZE, METAL)
+torso.box((LAUNCHER.x - LAUNCHER_SIZE[0] / 2 - 0.2, 0.0, LAUNCHER.z - 0.2), (0.4, LAUNCHER_SIZE[1] + 0.4, LAUNCHER_SIZE[2] + 0.4), PAINT)
+for x, y in TUBES:
+    torso.cylinder((x, y, top + 0.05), 0.75, 0.3, DARK, segments=10)  # the hatch's rim
+    torso.cylinder((x, y, top + 0.2), 0.55, 0.15, PAINT, segments=10)  # the hatch
+    torso.box((x, y, top + 0.3), (0.3, 1.0, 0.1), LAMP)  # its warning stripe
 # The back: a reactor housing with two stacks.
 torso.box((0.0, -HY - 1.0, 3.6), (7.6, 2.4, 8.0), METAL)
 torso.box((0.0, -HY - 2.3, 3.6), (5.0, 0.5, 5.6), DARK)
@@ -173,6 +211,19 @@ for side, label in ((-1, "L"), (1, "R")):
         closed.box((x, 1.7, -1.3), (1.0, 0.9, 1.5), METAL)  # knuckles to the front
     closed.box((-side * 0.4, 2.1, -0.4), (3.0, 0.9, 1.0), DARK)  # thumb across them
     objects.append(closed.build())
+
+    if label == "R":
+        # The 40 mm in the right fist: its barrel along the forearm (down, at rest) through the fingers to
+        # the muzzle brake, on the line its rounds leave by, a receiver on the back of the hand, and a drum
+        # of rounds on its outer side.
+        gun = Part("gun_R", parent=fist_obj)
+        gun.box((0.0, -0.4, 0.2), (2.4, 2.0, 4.2), DARK)  # receiver
+        gun.cylinder((0.0, 0.0, -GUN / 2 + 0.2), 1.0, GUN - 2.6, METAL, segments=10)  # barrel jacket
+        gun.cylinder((0.0, 0.0, -GUN / 2 - 0.8), 0.6, GUN - 1.2, STEEL, segments=8)  # barrel
+        gun.cylinder((0.0, 0.0, -GUN + 0.5), 1.05, 1.0, DARK, segments=8)  # muzzle brake
+        gun.cylinder((side * 3.0, -0.2, 0.6), 1.6, 1.4, METAL, axis="X", segments=12)  # drum
+        gun.cylinder((side * 3.75, -0.2, 0.6), 0.5, 0.1, LAMP, axis="X", segments=8)  # its round counter
+        objects.append(gun.build())
 
 # --------------------------------------------------------------------------------------------------
 # Legs: a heavy thigh, a knee cap, a shin that flares to the ankle and a broad foot

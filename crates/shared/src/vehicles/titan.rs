@@ -4,9 +4,12 @@ use super::*;
 
 /// The Titan (`KIND_TITAN`): a giant robot about fifty metres high, one pilot sealed in its head. Its
 /// body is a single box, its torso, held up by two spring legs that are ray casts to the ground and
-/// kept upright by a torque, exactly as a walker's is (its `Gait`). It has no guns. Its pilot moves its
-/// two fists (`TITAN_ARMS`): they hit what they meet and hold what they close on. Its feet are solid
-/// and crush what they come down on.
+/// kept upright by a torque, exactly as a walker's is (its `Gait`). Its pilot moves its two fists
+/// (`TITAN_ARMS`): they hit what they meet and hold what they close on. The right one holds a 40 mm
+/// autocannon that fires along the forearm, and on the left pauldron is a launcher of four vertical tubes
+/// that send up the submarine's guided missile (`KIND_MISSILE`), which the pilot then flies. Its feet are solid
+/// and crush what they come down on. Rounds are not shot at the box but at the model's own shape: its
+/// torso's `Role::Hit` solids, and its arms and legs bent as the client draws them (`bend`).
 pub const TITAN_SEATS: usize = 1;
 /// Half the torso's box, metres. The hull frame has its origin at the box's centre.
 pub const TITAN_HALF_EXTENTS: [f32; 3] = [6.0, 8.0, 4.0];
@@ -74,6 +77,24 @@ pub const TITAN_SHIFT_TIME: f32 = 0.35;
 pub const TITAN_STEP_LIFT: f32 = 4.5;
 /// Half extents of each thigh, a solid on the hull that hangs from the hip, metres.
 pub const TITAN_THIGH_HALF: [f32; 3] = [2.0, 3.5, 2.4];
+/// The bones of its limbs as the model is built (`UPPER`, `FORE`, `THIGH`, `SHIN` and `PAD` in
+/// `tools/vehicles/build_titan.py`): shoulder to elbow, elbow to the fist's middle, hip to knee and knee
+/// to ankle, metres, and how far the ankle is above the sole.
+pub const TITAN_UPPER_ARM_LENGTH: f32 = 12.0;
+pub const TITAN_FOREARM_LENGTH: f32 = 12.0;
+pub const TITAN_THIGH_LENGTH: f32 = 13.5;
+pub const TITAN_SHIN_LENGTH: f32 = 13.5;
+pub const TITAN_ANKLE_HEIGHT: f32 = 1.5;
+/// Which way the right elbow bends, in the hull frame: out, down and back. The left mirrors it in X.
+pub const TITAN_ELBOW_POLE: [f32; 3] = [0.7, -0.5, 0.6];
+/// Which way the knees bend, in the hull frame: forward, a little down.
+pub const TITAN_KNEE_POLE: [f32; 3] = [0.0, -0.15, -1.0];
+/// How thick each bone is to a round, as the radius of a capsule along it, metres: the upper arm, the
+/// forearm, the thigh and the shin with their plates.
+pub const TITAN_UPPER_ARM_RADIUS: f32 = 2.1;
+pub const TITAN_FOREARM_RADIUS: f32 = 2.5;
+pub const TITAN_THIGH_RADIUS: f32 = 2.6;
+pub const TITAN_SHIN_RADIUS: f32 = 2.7;
 /// Where it is boarded from and where its pilot is set down, in the hull frame: on the ground between
 /// its feet, and ahead of them.
 pub const TITAN_BOARD: [f32; 3] = [0.0, -32.2, 0.0];
@@ -94,11 +115,111 @@ pub const TITAN_STOMP_VEHICLE_DAMAGE: f32 = 120.0;
 /// A soldier thrown from a fist keeps this share of the fist's speed.
 pub const TITAN_THROW_SHARE: f32 = 1.0;
 
+/// The fist that holds the autocannon: the right (0 is the left).
+pub const TITAN_GUN_HAND: usize = 1;
+/// How far the gun's muzzle is ahead of the fist's middle along the forearm, metres.
+pub const TITAN_GUN_LENGTH: f32 = 7.0;
+/// Ticks between rounds: seven and a half a second, quicker than the Strf 90's five.
+pub const TITAN_GUN_COOLDOWN: u32 = 8;
+/// How far a round strays from the bore, radians: a fist is no turret.
+pub const TITAN_GUN_SPREAD: f32 = 0.006;
+/// Heat a round puts in the barrel, of 255: about five seconds of holding the trigger jams it.
+pub const TITAN_GUN_HEAT: f32 = 15.0;
+/// The launcher on the left pauldron: how many tubes, and where each one's mouth is, in the hull frame,
+/// on top of its box (`launcher` in `tools/vehicles/build_titan.py`).
+pub const TITAN_TUBES: u8 = 4;
+pub const TITAN_TUBE_AT: [[f32; 3]; 4] = [[-10.1, 12.7, -1.1], [-8.3, 12.7, -1.1], [-10.1, 12.7, 1.1], [-8.3, 12.7, 1.1]];
+/// The launcher's box, from the pauldron's top up to the tubes' mouths: half its width, height and
+/// depth, metres, and where its middle is in the hull frame.
+pub const TITAN_LAUNCHER_HALF: [f32; 3] = [1.9, 1.25, 2.3];
+pub const TITAN_LAUNCHER_AT: [f32; 3] = [-9.2, 11.45, 0.0];
+/// Ticks for the launcher to load one more tube: as long as a submarine's tube takes.
+pub const TITAN_TUBE_RELOAD: u32 = 20 * TICK_RATE;
+/// Ticks between launches, at the least.
+pub const TITAN_TUBE_COOLDOWN: u32 = TICK_RATE;
+
 /// The thighs: solids on the hull, from the hips down. They stop short of the knee, so that crouched
-/// they clear the ground; below them the shins are the feet's own solids (`TITAN_FEET`).
-const THIGHS: [Solid; 2] = [
+/// they clear the ground; below them the shins are the feet's own solids (`TITAN_FEET`). They are for
+/// the physics only: rounds meet the legs as the model bends them.
+///
+/// After them, the torso as the model is built (`torso` in `tools/vehicles/build_titan.py`, its Blender
+/// (x, y, z) the game's (x, z, -y)), which only rounds meet (`Role::Hit`): the chest that narrows to the
+/// waist, the plates and the core on its front, the hips and the codpiece, the flanks, the collar, the
+/// head with its ear plates, face and crest, the pauldrons over the shoulders, and the reactor on the
+/// back with its two stacks, and the missile launcher on the left pauldron. The box between the shoulders that it walks with is narrower than the
+/// pauldrons, shorter than the head and wider than the waist.
+const SOLIDS: [Solid; 20] = [
     Solid { shape: Shape::Cuboid(TITAN_THIGH_HALF), at: [-TITAN_FOOT_HALF, -TITAN_HALF_EXTENTS[1] - TITAN_THIGH_HALF[1], 0.0], role: Role::Part },
     Solid { shape: Shape::Cuboid(TITAN_THIGH_HALF), at: [TITAN_FOOT_HALF, -TITAN_HALF_EXTENTS[1] - TITAN_THIGH_HALF[1], 0.0], role: Role::Part },
+    // The chest.
+    Solid { shape: Shape::Frustum { top: [6.5, 4.3], bottom: [5.0, 3.7], half_height: 5.0 }, at: [0.0, 3.0, 0.0], role: Role::Hit },
+    // The chest plates, the core and the plates under it, standing proud of the chest's front.
+    Solid { shape: Shape::Cuboid([5.9, 4.05, 0.55]), at: [0.0, 3.05, -4.5], role: Role::Hit },
+    // The waist.
+    Solid { shape: Shape::Frustum { top: [4.7, 3.3], bottom: [3.8, 2.8], half_height: 2.5 }, at: [0.0, -4.5, 0.0], role: Role::Hit },
+    // The hips and the codpiece.
+    Solid { shape: Shape::Frustum { top: [5.5, 3.7], bottom: [6.3, 3.9], half_height: 1.3 }, at: [0.0, -7.6, 0.0], role: Role::Hit },
+    Solid { shape: Shape::Cuboid([1.8, 1.6, 0.7]), at: [0.0, -8.2, -3.8], role: Role::Hit },
+    // The flanks, with their vents.
+    Solid { shape: Shape::Cuboid([0.55, 3.0, 2.8]), at: [-6.0, 1.5, 0.0], role: Role::Hit },
+    Solid { shape: Shape::Cuboid([0.55, 3.0, 2.8]), at: [6.0, 1.5, 0.0], role: Role::Hit },
+    // The collar.
+    Solid { shape: Shape::Cuboid([3.5, 0.8, 3.0]), at: [0.0, 8.6, 0.0], role: Role::Hit },
+    // The head, the ear plates either side of it, the chin guard, visor and brow on its face, and its crest.
+    Solid { shape: Shape::Frustum { top: [1.8, 2.2], bottom: [2.3, 2.5], half_height: 2.1 }, at: [0.0, 11.3, -0.4], role: Role::Hit },
+    Solid { shape: Shape::Cuboid([2.85, 1.3, 1.5]), at: [0.0, 11.3, 0.2], role: Role::Hit },
+    Solid { shape: Shape::Cuboid([2.1, 1.75, 0.5]), at: [0.0, 11.15, -2.75], role: Role::Hit },
+    Solid { shape: Shape::Cuboid([0.6, 0.45, 1.8]), at: [0.0, 13.7, 0.2], role: Role::Hit },
+    // The pauldrons, from the collar out past the shoulders, their outer slabs hanging down.
+    Solid { shape: Shape::Cuboid([3.5, 2.7, 4.4]), at: [-9.2, 7.5, 0.0], role: Role::Hit },
+    Solid { shape: Shape::Cuboid([3.5, 2.7, 4.4]), at: [9.2, 7.5, 0.0], role: Role::Hit },
+    // The reactor on the back, and its two stacks.
+    Solid { shape: Shape::Cuboid([3.8, 4.0, 1.4]), at: [0.0, 3.6, 5.2], role: Role::Hit },
+    Solid { shape: Shape::Cylinder { half_height: 2.5, radius: 0.9 }, at: [-2.6, 9.4, 5.4], role: Role::Hit },
+    Solid { shape: Shape::Cylinder { half_height: 2.5, radius: 0.9 }, at: [2.6, 9.4, 5.4], role: Role::Hit },
+    // The missile launcher on the left pauldron.
+    Solid { shape: Shape::Cuboid(TITAN_LAUNCHER_HALF), at: TITAN_LAUNCHER_AT, role: Role::Hit },
+];
+
+/// A 40 mm armour-piercing round, with high explosive as its other load: the Strf 90's.
+const CANNON: Fire = Fire::Shell { kind: PROJECTILE_CANNON_AP, alt: PROJECTILE_CANNON, speed: SHELL_SPEED, length: TITAN_GUN_LENGTH, ttl: SHELL_TTL_TICKS };
+
+/// Its weapons: the autocannon in its right fist, fired with the right mouse button (but not while Shift
+/// throws that fist as a punch), and the missile tubes on its left pauldron, fired with G. Fallen, it
+/// can do neither.
+const MOUNTS: &[MountDef] = &[
+    MountDef {
+        seat: 0,
+        aim: Aim::Fixed,
+        muzzle: Muzzle::Fist { hand: TITAN_GUN_HAND },
+        fire: CANNON,
+        trigger: BUTTON_ALT,
+        cooldown: TITAN_GUN_COOLDOWN,
+        spread: TITAN_GUN_SPREAD,
+        recoil: 0.0,
+        heat: TITAN_GUN_HEAT,
+        ammo: None,
+        needs: &[Need::Upright, Need::Released(BUTTON_RUN)],
+        show: Show::Turret,
+        eye: None,
+        sight: false,
+    },
+    MountDef {
+        seat: 0,
+        aim: Aim::Fixed,
+        muzzle: Muzzle::Turns(&TITAN_TUBE_AT),
+        fire: Fire::Guided { kind: KIND_MISSILE, speed: SUB_LAUNCH_SPEED, pitch: MISSILE_LAUNCH_PITCH },
+        trigger: BUTTON_CHUTE,
+        cooldown: TITAN_TUBE_COOLDOWN,
+        spread: 0.0,
+        recoil: 0.0,
+        heat: 0.0,
+        ammo: Some(Ammo { full: TITAN_TUBES, refill: Refill::Regrow(TITAN_TUBE_RELOAD) }),
+        needs: &[Need::Upright],
+        show: Show::Rack,
+        eye: None,
+        sight: false,
+    },
 ];
 
 /// Armour a tank would envy, all round: a rifle or a machine gun does nothing to it. The reactor is in
@@ -149,6 +270,9 @@ pub const TITAN_GAIT: Gait = Gait {
     getup_share: 3.0,
     rise: TITAN_RISE,
     blast_share: 0.04,
+    // An armour-piercing shell on its chest rocks it about two degrees, and it is still again in under a
+    // second and a half: `an_ap_shell_on_the_titans_chest_rocks_it_and_it_stands_again`.
+    hit_share: 4.5,
     feet: Some(Feet {
         half: TITAN_SHIN_HALF,
         stride: TITAN_STRIDE,
@@ -161,6 +285,12 @@ pub const TITAN_GAIT: Gait = Gait {
         tilt: 0.04,
         pulse: 0.3,
         crouch_pace: 0.4,
+        thigh: TITAN_THIGH_LENGTH,
+        shin: TITAN_SHIN_LENGTH,
+        ankle: TITAN_ANKLE_HEIGHT,
+        thigh_radius: TITAN_THIGH_RADIUS,
+        shin_radius: TITAN_SHIN_RADIUS,
+        knee_pole: TITAN_KNEE_POLE,
     }),
     jets: Some(TITAN_JETS),
 };
@@ -195,6 +325,11 @@ pub const TITAN_ARMS: Arms = Arms {
     accel: TITAN_FIST_ACCEL,
     rest: TITAN_FIST_REST,
     lift: TITAN_LIFT_MASS,
+    upper: TITAN_UPPER_ARM_LENGTH,
+    fore: TITAN_FOREARM_LENGTH,
+    upper_radius: TITAN_UPPER_ARM_RADIUS,
+    fore_radius: TITAN_FOREARM_RADIUS,
+    elbow_pole: TITAN_ELBOW_POLE,
 };
 
 pub(super) const TITAN: VehicleDef = VehicleDef {
@@ -202,7 +337,7 @@ pub(super) const TITAN: VehicleDef = VehicleDef {
     name: "Titan",
     hp: 255,
     seats: TITAN_SEATS,
-    mounts: &[],
+    mounts: MOUNTS,
     car_wheels: false,
     crew: Exposure::Sealed,
     seat_heads: &[],
@@ -229,7 +364,7 @@ pub(super) const TITAN: VehicleDef = VehicleDef {
         tank: Some(TITAN_FUEL),
         buttons: Buttons::Stride,
         aims: false,
-        solids: &THIGHS,
+        solids: &SOLIDS,
         tongue: 0.0,
         slide: 0.0,
         roll: 0.0,
@@ -251,3 +386,101 @@ pub(super) const TITAN: VehicleDef = VehicleDef {
     exit: Some(TITAN_EXIT),
     fittings: &[],
 };
+
+/// Two-bone IK, as the client bends the Titan's limbs to draw them (`bend` in
+/// `client/src/render/titan.ts`, which this must match): where the joint between a bone `a` long from
+/// `root` and one `b` long to `target` is, bent towards `pole`, and where the second bone ends. A target
+/// out of the bones' reach is brought to the end of it. Returns `(joint, end)`.
+pub fn bend(root: [f32; 3], target: [f32; 3], a: f32, b: f32, pole: [f32; 3]) -> ([f32; 3], [f32; 3]) {
+    use crate::vec3::{dot, sub};
+    // A vector's direction, or the vector itself when it has no length, as three.js normalises.
+    let unit = |v: [f32; 3]| {
+        let length = dot(v, v).sqrt();
+        if length > 0.0 { v.map(|c| c / length) } else { v }
+    };
+    let mut along = sub(target, root);
+    let reach = dot(along, along).sqrt().max((a - b).abs() + 0.01).min(a + b - 0.01);
+    if dot(along, along) < 1e-8 {
+        along = [0.0, -1.0, 0.0];
+    }
+    let along = unit(along);
+    // How far along the line the joint is, and how far off it.
+    let foot = (a * a - b * b + reach * reach) / (2.0 * reach);
+    let off = (a * a - foot * foot).max(0.0).sqrt();
+    let across = dot(pole, along);
+    let mut side: [f32; 3] = std::array::from_fn(|i| pole[i] - along[i] * across);
+    if dot(side, side) < 1e-6 {
+        side = std::array::from_fn(|i| [1.0, 0.0, 0.0][i] - along[i] * along[0]);
+    }
+    let side = unit(side);
+    let joint = std::array::from_fn(|i| root[i] + along[i] * foot + side[i] * off);
+    let end = std::array::from_fn(|i| root[i] + along[i] * reach);
+    (joint, end)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Where a bend's joint and end are put, against what they are asked: the bones keep their lengths.
+    #[test]
+    fn a_bend_keeps_its_bones_lengths_and_bends_towards_its_pole() {
+        let (joint, end) = bend([8.5, 6.0, 0.0], [10.0, -15.0, -3.0], TITAN_UPPER_ARM_LENGTH, TITAN_FOREARM_LENGTH, TITAN_ELBOW_POLE);
+        let length = |a: [f32; 3], b: [f32; 3]| crate::vec3::distance(a, b);
+        assert!((length([8.5, 6.0, 0.0], joint) - TITAN_UPPER_ARM_LENGTH).abs() < 1e-3, "{joint:?}");
+        assert!((length(joint, end) - TITAN_FOREARM_LENGTH).abs() < 1e-3, "{joint:?} {end:?}");
+        assert!((length(end, [10.0, -15.0, -3.0])) < 1e-3, "within reach, the end is the target: {end:?}");
+        assert!(joint[0] > 9.25 && joint[2] > -1.5, "the elbow goes out and back: {joint:?}");
+        // Out of reach, the arm points straight at it.
+        let (_, end) = bend([0.0; 3], [0.0, -100.0, 0.0], 12.0, 12.0, TITAN_ELBOW_POLE);
+        assert!((end[1] + 23.99).abs() < 1e-3, "{end:?}");
+    }
+
+    /// A bend's inputs: its root, its target, its two bones' lengths and its pole.
+    type Case = ([f32; 3], [f32; 3], f32, f32, [f32; 3]);
+
+    /// Inputs for the client's bend to be checked against, and what this bend makes of them.
+    const BEND_CASES: [Case; 10] = [
+        ([8.5, 6.0, 0.0], [10.0, -15.0, -3.0], 12.0, 12.0, [0.7, -0.5, 0.6]),
+        ([-8.5, 6.0, 0.0], [-10.0, -15.0, -3.0], 12.0, 12.0, [-0.7, -0.5, 0.6]),
+        ([8.5, 6.0, 0.0], [8.5, 6.0, -30.0], 12.0, 12.0, [0.7, -0.5, 0.6]),
+        ([8.5, 6.0, 0.0], [9.0, 4.0, -5.0], 12.0, 12.0, [0.7, -0.5, 0.6]),
+        ([8.5, 6.0, 0.0], [8.5, 6.0, 0.0], 12.0, 12.0, [0.7, -0.5, 0.6]),
+        ([5.0, -8.0, 0.0], [5.0, -32.5, 0.0], 13.5, 13.5, [0.0, -0.15, -1.0]),
+        ([-5.0, -8.0, 0.0], [-3.0, -20.0, -9.0], 13.5, 13.5, [0.0, -0.15, -1.0]),
+        ([5.0, -8.0, 0.0], [5.0, -8.0, -40.0], 13.5, 13.5, [0.0, -0.15, -1.0]),
+        ([0.0, 0.0, 0.0], [10.0, 0.0, 0.0], 12.0, 12.0, [1.0, 0.0, 0.0]),
+        ([1.0, 2.0, 3.0], [-4.0, -6.0, 7.0], 9.0, 5.0, [0.2, 0.9, -0.4]),
+    ];
+
+    /// `client/src/__tests__/titan-bend.fixture.json` holds `BEND_CASES` and this bend's answers, for
+    /// the client's bend to be checked against; `UPDATE_PARITY=1 cargo test -p shared` rewrites it.
+    #[test]
+    fn the_bend_fixture_matches_the_rust_bend() {
+        let number = |v: f32| format!("{v:.5}").trim_end_matches('0').trim_end_matches('.').to_string();
+        let point = |p: [f32; 3]| format!("[{}, {}, {}]", number(p[0]), number(p[1]), number(p[2]));
+        let cases: Vec<String> = BEND_CASES
+            .iter()
+            .map(|&(root, target, a, b, pole)| {
+                let (joint, end) = bend(root, target, a, b, pole);
+                format!(
+                    "    {{ \"root\": {}, \"target\": {}, \"a\": {}, \"b\": {}, \"pole\": {}, \"joint\": {}, \"end\": {} }}",
+                    point(root),
+                    point(target),
+                    number(a),
+                    number(b),
+                    point(pole),
+                    point(joint),
+                    point(end)
+                )
+            })
+            .collect();
+        let actual = format!("{{\n  \"cases\": [\n{}\n  ]\n}}\n", cases.join(",\n"));
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../client/src/__tests__/titan-bend.fixture.json");
+        if std::env::var_os("UPDATE_PARITY").is_some() {
+            std::fs::write(&path, &actual).unwrap();
+        }
+        let committed = std::fs::read_to_string(&path).expect("client/src/__tests__/titan-bend.fixture.json; regenerate with UPDATE_PARITY=1");
+        assert_eq!(committed, actual, "the Titan's bend changed: regenerate client/src/__tests__/titan-bend.fixture.json with UPDATE_PARITY=1");
+    }
+}

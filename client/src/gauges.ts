@@ -5,8 +5,9 @@ import type { Arms, Pintle, Turret } from '@/entities/units'
 import type { HudStats } from '@/hud'
 import { ARMS_JAMMED, ARMS_REAR_JAMMED, PINTLE_JAMMED, TURRET_JAMMED } from '@/net/codec'
 import type { PlaneModel } from '@/render/plane'
+import type { TitanModel } from '@/render/titan'
 import type { VehicleFx } from '@/render/tyres'
-import { PLANE_STALL_SPEED } from '@/sim/consts'
+import { MOUNT_AIM_RANGE, PLANE_STALL_SPEED, TITAN_GUN_LENGTH } from '@/sim/consts'
 
 /** A sight's position on screen, kept off its very edges. */
 const clamp01 = (value: number) => Math.min(0.94, Math.max(0.06, value))
@@ -50,4 +51,18 @@ export function pilotSights(camera: { project(point: Vector3): unknown }, plane:
     nose: toScreen(origin.clone().addScaledVector(direction, 150)),
     aim: toScreen(new Vector3().copy(plane.root.position).addScaledVector(wanted, 150)),
   }
+}
+
+/**
+ * Where on the screen a Titan's fist gun points, as fractions of its width and height: what the line of
+ * its forearm, out of the muzzle, meets (`castRay`), or the end of a gun's aim. The fist lags the mouse,
+ * so this is where a round would go now, not where the reticle is. Null when it is off the screen.
+ */
+export function titanSight(camera: { project(point: Vector3): unknown }, titan: TitanModel, castRay: (origin: [number, number, number], direction: [number, number, number], max: number) => number | null): [number, number] | null {
+  const { origin, direction } = titan.barrel()
+  const muzzle = origin.addScaledVector(direction, TITAN_GUN_LENGTH)
+  const reach = castRay([muzzle.x, muzzle.y, muzzle.z], [direction.x, direction.y, direction.z], MOUNT_AIM_RANGE) ?? MOUNT_AIM_RANGE
+  const point = muzzle.addScaledVector(direction, reach)
+  if (!camera.project(point) || Math.abs(point.x) > 1 || Math.abs(point.y) > 1) return null
+  return [(point.x + 1) / 2, (1 - point.y) / 2]
 }

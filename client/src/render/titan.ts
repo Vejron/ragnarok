@@ -2,20 +2,22 @@ import { Group, Mesh, type Material, type Node, Matrix4, Quaternion, Vector3 } f
 import { parseToonModel, unlitMaterial } from './models'
 import { toonMaterial } from './toon'
 import { HANDS_GRIP_LEFT, HANDS_GRIP_RIGHT, THRUST_LIFT, wrapAngle } from '@/net/codec'
-import { TITAN_FIST_REST, TITAN_FOOT_HALF, TITAN_HALF_EXTENTS, TITAN_RIDE_HEIGHT, TITAN_SHOULDER, TITAN_STEP_LIFT } from '@/sim/consts'
+import { TITAN_ANKLE_HEIGHT, TITAN_ELBOW_POLE, TITAN_FIST_REST, TITAN_FOOT_HALF, TITAN_FOREARM_LENGTH, TITAN_GUN_HAND, TITAN_KNEE_POLE, TITAN_SHIN_LENGTH, TITAN_THIGH_LENGTH, TITAN_UPPER_ARM_LENGTH, TITAN_HALF_EXTENTS, TITAN_RIDE_HEIGHT, TITAN_SHOULDER, TITAN_STEP_LIFT } from '@/sim/consts'
 import type { Titan } from '@/entities/units'
 import type { VehicleModel } from './car'
 
 /** Paint colours handed out by vehicle id, so two Titans are told apart. */
 const PAINTS = [0x7f8890, 0x8a8478, 0x6f7c80, 0x86807c] as const
 export const TITAN_MODEL_URL = `${import.meta.env.BASE_URL}models/titan.glb`
-/** Upper arm and forearm, shoulder to elbow and elbow to the fist's middle, metres (`UPPER`, `FORE` in build_titan.py). */
-const UPPER = 12
-const FORE = 12
-/** Thigh and shin, hip to knee and knee to ankle, metres, and how far the ankle is above the sole (`THIGH`, `SHIN`, `PAD`). */
-const THIGH = 13.5
-const SHIN = 13.5
-const PAD = 1.5
+/**
+ * Upper arm and forearm, thigh and shin, and how far the ankle is above the sole, metres: the server's,
+ * whose hit shapes are bent by the same IK (`UPPER`, `FORE`, `THIGH`, `SHIN`, `PAD` in build_titan.py).
+ */
+const UPPER = TITAN_UPPER_ARM_LENGTH
+const FORE = TITAN_FOREARM_LENGTH
+const THIGH = TITAN_THIGH_LENGTH
+const SHIN = TITAN_SHIN_LENGTH
+const PAD = TITAN_ANKLE_HEIGHT
 /** A `titan` component's `step` with both feet off the ground (`Step::Airborne` on the server). */
 export const STEP_AIRBORNE = 203
 
@@ -87,6 +89,14 @@ export function hang(node: Node, from: Vector3, to: Vector3, back: Vector3) {
   node.quaternion.setFromRotationMatrix(basis.makeBasis(x, y, z).elements)
 }
 
+/** How fast a round's blow knocks a Titan's fist from where it is held, m/s for a shell through the forearm; how fast the arm swings back, Hz, how much of each swing is lost, and the furthest it is knocked, metres. */
+const ARM_KNOCK = 9
+const ARM_SWAY_HZ = 1.4
+const ARM_SWAY_DAMPING = 0.3
+const ARM_KNOCK_MOST = 3
+/** How fast a round leaving the gun kicks its fist back along the forearm, m/s. */
+const GUN_KICK = 4
+
 /**
  * A Titan: its torso on the hull, and its arms and legs bent by IK to where the server has its fists
  * and feet (`Titan`). Nothing here decides where a limb is: with no word from the server yet the arms
@@ -107,6 +117,8 @@ export class TitanModel implements VehicleModel {
   private limbs: Titan | null = null
   /** Each fist's middle in the hull frame, as drawn. */
   private readonly fists = [new Vector3(), new Vector3()]
+  /** The elbow of the arm that holds the gun (`TITAN_GUN_HAND`), in the hull frame, as drawn. */
+  private readonly gunElbow = new Vector3(0, -1, 0)
   /** Whether each foot was in the air a frame ago, and the way each points, radians about +Y: as it was put down. */
   private readonly stepping = [false, false]
   private readonly pointing = [0, 0]
@@ -118,6 +130,9 @@ export class TitanModel implements VehicleModel {
   private height = 0
   private slammed: { at: [number, number, number]; speed: number } | null = null
   private steps: { at: [number, number, number]; weight: number }[] = []
+  /** How far each fist is knocked from where it is held by rounds striking its arm, metres in the hull frame, and how fast. */
+  private readonly knocked = [new Vector3(), new Vector3()]
+  private readonly knocking = [new Vector3(), new Vector3()]
 
   constructor(id: number) {
     if (!asset) throw new Error('loadTitanModel() must finish before Titans are created')
@@ -138,6 +153,23 @@ export class TitanModel implements VehicleModel {
     this.foot = pair('foot')
   }
 
+  /**
+   * A round struck `node`, part of this model, going along `way` (unit, the hull's frame), with
+   * `strength` (1 a shell through): an arm it struck swings back with the blow and comes back.
+   */
+  recoil(node: Node, way: Vector3, strength: number) {
+    for (let at: Node | null = node; at && at !== this.root; at = at.parent) {
+      for (let index = 0; index < 2; index++) {
+        const parts = [this.upper[index], this.fore[index], this.fist[index]]
+        if (!parts.includes(at)) continue
+        // A blow on the forearm or the fist swings it further than one by the shoulder.
+        const reach = at === this.upper[index] ? 0.5 : 1
+        this.knocking[index]!.addScaledVector(way, ARM_KNOCK * strength * reach)
+        return
+      }
+    }
+  }
+
   /** Where the server has its fists and feet, or null before it has said. */
   setLimbs(limbs: Titan | null) {
     this.limbs = limbs
@@ -147,6 +179,25 @@ export class TitanModel implements VehicleModel {
   fistWorld(hand: number): Vector3 {
     this.root.updateWorldMatrix(true, false)
     return this.fists[hand]!.clone().applyMatrix4(new Matrix4().fromArray(this.root.matrixWorld))
+  }
+
+  /**
+   * The gun in its fist, as drawn: the fist's middle in the world, where its rounds leave from, and the
+   * way the forearm points from the elbow, which they go.
+   */
+  barrel(): { origin: Vector3; direction: Vector3 } {
+    this.root.updateWorldMatrix(true, false)
+    const world = new Matrix4().fromArray(this.root.matrixWorld)
+    const fist = this.fists[TITAN_GUN_HAND]!
+    const origin = fist.clone().applyMatrix4(world)
+    const direction = fist.clone().sub(this.gunElbow).normalize().applyQuaternion(this.root.quaternion)
+    return { origin, direction }
+  }
+
+  /** The gun fist kicked back along its forearm by a round leaving. */
+  kick() {
+    const back = this.gunElbow.clone().sub(this.fists[TITAN_GUN_HAND]!).normalize()
+    this.knocking[TITAN_GUN_HAND]!.addScaledVector(back, GUN_KICK)
   }
 
   /** The footfalls since the last call, for the thud that goes with each. */
@@ -203,11 +254,20 @@ export class TitanModel implements VehicleModel {
       const wanted = limbs
         ? new Vector3(index === 0 ? limbs.lx : limbs.rx, index === 0 ? limbs.ly : limbs.ry, index === 0 ? limbs.lz : limbs.rz)
         : new Vector3(side * TITAN_FIST_REST[0], TITAN_FIST_REST[1], TITAN_FIST_REST[2])
-      bend(shoulder, wanted, UPPER, FORE, new Vector3(side * 0.7, -0.5, 0.6), joint, end)
+      // Knocked by the rounds striking the arm: a damped spring back to where it is held.
+      const knocked = this.knocked[index]!
+      const knocking = this.knocking[index]!
+      const w = 2 * Math.PI * ARM_SWAY_HZ
+      knocking.addScaledVector(knocked, -w * w * Math.min(dt, 0.05)).multiplyScalar(Math.max(0, 1 - 2 * ARM_SWAY_DAMPING * w * Math.min(dt, 0.05)))
+      knocked.addScaledVector(knocking, Math.min(dt, 0.05))
+      if (knocked.length() > ARM_KNOCK_MOST) knocked.setLength(ARM_KNOCK_MOST)
+      wanted.add(knocked)
+      bend(shoulder, wanted, UPPER, FORE, new Vector3(side * TITAN_ELBOW_POLE[0], TITAN_ELBOW_POLE[1], TITAN_ELBOW_POLE[2]), joint, end)
       hang(this.upper[index]!, shoulder, joint, back)
       hang(this.fore[index]!, joint, end, back)
       hang(this.fist[index]!, end, end.clone().addScaledVector(end.clone().sub(joint).normalize(), 1), back)
       this.fists[index]!.copy(end)
+      if (index === TITAN_GUN_HAND) this.gunElbow.copy(joint)
       const gripping = (flags & (index === 0 ? HANDS_GRIP_LEFT : HANDS_GRIP_RIGHT)) !== 0
       this.open[index]!.visible = !gripping
       this.closed[index]!.visible = gripping
@@ -221,7 +281,7 @@ export class TitanModel implements VehicleModel {
       const progress = step?.foot === index ? step.progress : null
       if (progress !== null) sole.y += TITAN_STEP_LIFT * Math.sin(Math.PI * progress)
       const ankle = sole.clone().setY(sole.y + PAD).sub(new Vector3(...position)).applyQuaternion(unturn)
-      bend(hip, ankle, THIGH, SHIN, new Vector3(0, -0.15, -1), joint, end)
+      bend(hip, ankle, THIGH, SHIN, new Vector3(...TITAN_KNEE_POLE), joint, end)
       hang(this.thigh[index]!, hip, joint, back)
       hang(this.shin[index]!, joint, end, back)
       // The foot stays flat. On the ground it points the way it was put down, while the Titan turns over

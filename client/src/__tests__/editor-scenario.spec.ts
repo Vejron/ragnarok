@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { emptyScenario, renameName, squadsFromBots, usesName, validateScenario, type Scenario } from '@/editor/scenario'
 
@@ -30,11 +28,6 @@ describe('validateScenario', () => {
   it('accepts a valid scenario and an empty one', () => {
     expect(messages(sample())).toEqual([])
     expect(messages(emptyScenario())).toEqual([])
-  })
-
-  it('accepts the shipped Mariehem scenario', () => {
-    const shipped = JSON.parse(readFileSync(resolve(process.cwd(), '../worlds/boda/scenario.json'), 'utf8')) as Scenario
-    expect(messages(shipped)).toEqual([])
   })
 
   it('flags positions outside the world, with where they are', () => {

@@ -134,6 +134,14 @@ pub struct Arms {
     pub rest: [f32; 3],
     /// The heaviest vehicle a closed fist picks up, kilograms.
     pub lift: f32,
+    /// The arm's bones as they are drawn, shoulder to elbow and elbow to the fist's middle, metres, and
+    /// how thick each is to a round, as the radius of a capsule along it.
+    pub upper: f32,
+    pub fore: f32,
+    pub upper_radius: f32,
+    pub fore_radius: f32,
+    /// Which way the right elbow bends (see `titan::bend`).
+    pub elbow_pole: [f32; 3],
 }
 
 /// A giant's feet, which are solid and which it stands on: a column for each shin. A planted foot does
@@ -164,6 +172,15 @@ pub struct Feet {
     pub pulse: f32,
     /// The share of its speed it keeps when it is crouched right down.
     pub crouch_pace: f32,
+    /// The leg's bones as they are drawn, hip to knee and knee to ankle, metres, how far the ankle is
+    /// above the sole, and how thick each bone is to a round, as the radius of a capsule along it.
+    pub thigh: f32,
+    pub shin: f32,
+    pub ankle: f32,
+    pub thigh_radius: f32,
+    pub shin_radius: f32,
+    /// Which way the knees bend (see `titan::bend`).
+    pub knee_pole: [f32; 3],
 }
 
 /// Thrusters in a legged kind's feet: it leaps from the ground, and they carry it up and about while
@@ -299,6 +316,10 @@ pub struct Gait {
     pub rise: f32,
     /// The share of a blast's shove it takes: 1 for a walker, less for something far heavier.
     pub blast_share: f32,
+    /// The share of the turn a round's knock gives where it strikes (`Physics::strike_car`) that it
+    /// takes: 1 for a walker. Of the knock's push it takes `blast_share`, so a giant that takes little of
+    /// the push and more of the turn rocks where it stands rather than sliding back.
+    pub hit_share: f32,
     /// Its feet, when they are solids of their own. `None` leaves the legs to the hull's `solids`.
     pub feet: Option<Feet>,
     /// Thrusters in its feet, if it has them.
@@ -338,6 +359,7 @@ impl Gait {
         getup_share: WALKER_GETUP_SHARE,
         rise: 0.0,
         blast_share: 1.0,
+        hit_share: 1.0,
         feet: None,
         jets: None,
     };
@@ -462,6 +484,12 @@ pub enum Shape {
     /// Upright, so a turret needs no turning with its gun.
     Cylinder { half_height: f32, radius: f32 },
     Cuboid([f32; 3]),
+    /// Upright: a cylinder `half_height` either side of its middle with a ball of `radius` on each end,
+    /// metres.
+    Capsule { half_height: f32, radius: f32 },
+    /// A box that narrows or widens upwards, as the Titan's builder's `taper` does: half its width (X)
+    /// and its depth (Z) at the top and at the bottom, and half its height, metres.
+    Frustum { top: [f32; 2], bottom: [f32; 2], half_height: f32 },
 }
 
 /// What else a solid is, beyond something to hit.
@@ -472,4 +500,9 @@ pub enum Role {
     Turret,
     /// Wings: kept clear of the world when the vehicle is placed (the sim's `Physics::car_fits`).
     Wings,
+    /// Only something for a round to hit: it is not in the physics at all, so it pushes nothing and
+    /// nothing pushes it. A kind with any of these is shot at them (and at its limbs) instead of at its
+    /// hull and its other solids, which are left to stand and walk on: see the sim's
+    /// `Physics::armor_strike`.
+    Hit,
 }

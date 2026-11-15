@@ -302,7 +302,7 @@ mod tests {
         struct Area {
             tiles: Vec<crate::grid::Tile>,
         }
-        let text = std::fs::read_to_string("../../worlds/kulla/area.json").unwrap();
+        let text = std::fs::read_to_string("../../worlds/home/area.json").unwrap();
         let area: Area = serde_json::from_str(&text).unwrap();
         let region = crate::region::Region::Sweden;
         let centres: Vec<(f64, f64)> = area.tiles.iter().map(|tile| {

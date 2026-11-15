@@ -2,7 +2,7 @@ import { COMMON_WGSL } from './common.wgsl'
 import { MARSH_WGSL } from './marsh.wgsl'
 import { STONES_WGSL } from './stones.wgsl'
 import { SUN_SHADOW_WGSL } from './sunshadow.wgsl'
-import { VERTEX_WGSL } from './vertex.wgsl'
+import { vertexWgsl } from './vertex.wgsl'
 import { WALLS_WGSL } from './walls.wgsl'
 import { WORN_WGSL } from './worn.wgsl'
 import { ASPHALT_WGSL } from './asphalt.wgsl'
@@ -11,11 +11,12 @@ import { WET_WGSL } from './wet.wgsl'
 /**
  * The shader for every ordinary mesh. Toon lighting matches three's MeshToonMaterial with a gradient
  * map: base / π × (sun × ramp(N·L) × shadow + hemisphere), then linear fog. Unlit materials skip the
- * lighting. One shader for both keeps lit and unlit meshes in the same batches.
+ * lighting. One shader for both keeps lit and unlit meshes in the same batches. With `vertexScars`,
+ * scars press a damaged mesh's vertices in as well as shading its dents.
  */
-export const STANDARD_WGSL = /* wgsl */ `
+export const standardWgsl = (vertexScars: boolean) => /* wgsl */ `
 ${COMMON_WGSL}
-${VERTEX_WGSL}
+${vertexWgsl(false, vertexScars)}
 
 // Group 1 holds what the shadow pass must not see bound: it renders into the shadow map.
 @group(1) @binding(0) var ramps: texture_2d<f32>;
@@ -45,6 +46,12 @@ const CRATER_EMBER = vec3f(3.0, 0.8, 0.15);
 // How much deeper than they are craters are drawn (their slope and shadow), and how dark a rim's ink line is.
 const CRATER_SLOPE = 1.4;
 const CRATER_INK = 0.35;
+// A scarred mesh's bare metal (where paint is torn off) and its char (scars.wgsl).
+const SCAR_BARE = vec3f(0.46, 0.46, 0.48);
+const SCAR_CHAR = vec3f(0.018, 0.016, 0.014);
+const SCAR_HOLE_RGB = vec3f(0.004, 0.003, 0.003);
+// How strongly a dent's slope shades it against the sun, beyond what the toon ramp's bands show.
+const SCAR_RELIEF = 2.4;
 
 @fragment
 fn fs(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4f {
@@ -123,11 +130,36 @@ fn fs(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4f {
     wet = (1.0 - smoothstep(0.2, 0.36, above)) * (1.0 - marks.earth);
     rgb *= mix(1.0, 0.6, wet);
   }
+  // Scars (scars.wgsl): a damaged mesh's dents, soot, holes and gouges, worked out in its own frame.
+  let scarObject = objects[in.ids.z];
+  let scarred = scarObject.misc.w != 0u && scarObject.misc.z == 0u;
+  var scar = ScarLook(vec3f(0.0), 1.0, 0.0, 0.0, 0.0, 0.0, vec3f(0.0), 0.0, vec3f(0.0));
+  // The dents' slope in the world: the cofactor matrix over the determinant is the inverse-transpose.
+  var scarSlope = vec3f(0.0);
+  if (scarred) {
+    let m = scarObject.model;
+    let worldNormal = normalize(in.normal) * select(-1.0, 1.0, front);
+    let localNormal = normalize(vec3f(dot(m[0].xyz, worldNormal), dot(m[1].xyz, worldNormal), dot(m[2].xyz, worldNormal)));
+    let localUp = normalize(vec3f(m[0].y / dot(m[0].xyz, m[0].xyz), m[1].y / dot(m[1].xyz, m[1].xyz), m[2].y / dot(m[2].xyz, m[2].xyz)));
+    scar = scarLook(scarObject.misc.w, toObject(m, in.world), localNormal, localUp, frame.fog.w);
+    let det = abs(dot(m[0].xyz, cross(m[1].xyz, m[2].xyz)));
+    let g = normalMatrix(m) * scar.slope / max(det, 1e-8);
+    scarSlope = g - worldNormal * dot(g, worldNormal);
+    rgb = mix(rgb, SCAR_BARE, scar.bare);
+    rgb *= 1.0 - scar.soot * 0.8;
+    rgb = mix(rgb, SCAR_CHAR, scar.char);
+    rgb = mix(rgb, scar.temper, scar.temperAmount);
+    rgb = mix(rgb, SCAR_HOLE_RGB, scar.hole);
+    // The dent's relief: the side of it turned to the sun lit, the far side in shade, past the ramp's bands.
+    rgb *= scar.shade * clamp(1.0 - SCAR_RELIEF * dot(scarSlope, frame.sunDir.xyz), 0.35, 1.8);
+  }
   if ((flags & MAT_LIT) != 0u) {
     var n = normalize(in.normal);
     if ((flags & MAT_NORMAL_MAP) != 0u) {
       n = normalize(normalMatrix(objects[in.ids.z].model) * mapped);
     }
+    // The dents' slope tips the normal.
+    n = normalize(n - scarSlope);
     // A heightfield's normal goes as (-dh/dx, 1, -dh/dz): the craters' slope tips it.
     n = normalize(n - vec3f(marks.slope.x, 0.0, marks.slope.y) * n.y + vec3f(stones.tilt.x, 0.0, stones.tilt.y) * n.y);
     if (!front) {
@@ -158,6 +190,12 @@ fn fs(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4f {
     if (wet > 0.0) {
       rgb += marshShine(n, in.world, 0.0, wet * 0.8, shadow);
     }
+    if (scar.bare > 0.0) {
+      // Bare metal glints in the sun where paint is torn off it.
+      let toEye = normalize(frame.cameraPos.xyz - in.world);
+      let half = normalize(frame.sunDir.xyz + toEye);
+      rgb += frame.sunColor.rgb * pow(max(dot(n, half), 0.0), 48.0) * scar.bare * shadow * 0.3;
+    }
     if (rain.x + rain.y > 0.0) {
       rgb += wetSheen(n, in.world, rain);
     }
@@ -165,7 +203,7 @@ fn fs(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4f {
       rgb += marshShine(n, in.world, marsh.pool, marsh.sheen, shadow);
     }
   }
-  rgb = rgb * (1.0 - marks.ink * CRATER_INK) + CRATER_EMBER * marks.heat;
+  rgb = rgb * (1.0 - marks.ink * CRATER_INK) + CRATER_EMBER * marks.heat + scar.heat;
   return vec4f(applyFog(rgb, flags, in.viewDepth, in.world), in.color.a * texel.a);
 }
 `

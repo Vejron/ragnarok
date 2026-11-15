@@ -18,7 +18,11 @@ const HINTS: Record<Seat, (stats: Stats) => string> = {
   hen: ({ canSwitchSeat }) => `W/S walk · A/D turn · Space leap, hold to flap, then glide · W in the air to fly forward · Click or F lay an egg${canSwitchSeat ? SWITCH : ''}`,
   tupp: ({ canSwitchSeat }) => `W/S walk · A/D turn · Mouse aim the eyes (the head turns within 50°) · Hold click or F to charge the laser · Space leap, hold to flap, then glide${canSwitchSeat ? SWITCH : ''}`,
   walker: ({ canSwitchSeat }) => `W/S walk · A/D turn · Mouse aim the guns (the body follows within 30°) · Click or F fire${canSwitchSeat ? SWITCH : ''}`,
-  titan: () => 'W/S walk · A/D turn · Mouse aim the fists · Click left or right to punch with that fist · Hold Shift to reach out open-handed, then click to close on what is there · Let go to throw · C crouch to reach the ground · Space leap, hold it to fly on the thrusters while the fuel lasts, and hold it again to break a fall or come down hard without · B look out from its head, or from behind',
+  titan: ({ ammo, jammed, heat, tubes }) => {
+    const gun = jammed ? 'jammed!' : (heat ?? 0) > 0.6 ? 'overheating' : 'ready'
+    const missiles = !tubes ? '' : tubes.loaded > 0 ? `${tubes.loaded} ${tubes.loaded === 1 ? 'missile' : 'missiles'} ready` : 'tubes reloading…'
+    return `W/S walk · A/D turn · Mouse aim the fists · Left click punch · Hold right click fire the cannon in the right fist (${ammo ?? 'AP'} ${gun}) · Q ${swapRound(ammo)} · G launch a missile from the shoulder and fly it (${missiles}) · Hold Shift to reach out open-handed, then left click to close on what is there, right click to punch · Let go to throw · C crouch to reach the ground · Space leap, hold it to fly on the thrusters while the fuel lasts, and hold it again to break a fall or come down hard without · B look out from its head, or from behind`
+  },
   strv: ({ ammo, reload }) => `W/S gas and brake · A/D turn the tank to aim · Mouse look · Hold right mouse for the gun sight · Click or F fire · Q ${swapRound(ammo)} · ${ammo} ${loaded(reload)}`,
   mortar: ({ range, reload }) => `Mouse aim sets the bearing · W/S range ${Math.round(range)} m · Hold right-click to lay from above · Click or F fire · ${loaded(reload)}`,
   drone: () => 'Mouse look and steer · W fly where you look · S back off · A/D strafe · Space climb · Shift sink · Click or F detonate · E recall',

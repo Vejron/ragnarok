@@ -2,7 +2,7 @@
 // change the Rust and run `npm run gen:consts`. Client-only constants live in consts.ts.
 
 /** Wire schema version. Bumped on any incompatible protocol or world-format change. */
-export const PROTOCOL_VERSION = 79
+export const PROTOCOL_VERSION = 80
 
 /**
  * Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
@@ -192,7 +192,10 @@ export const BUTTON_HITCH = 1 << 9
 export const BUTTON_RANGE_UP = 1 << 10
 export const BUTTON_RANGE_DOWN = 1 << 11
 
-/** One press: open or cut the parachute while in the air. Like a jump it is not repeated. */
+/**
+ * One press: open or cut the parachute while in the air, or, for a Titan's pilot, send up a missile
+ * from its shoulder (G). Like a jump it is not repeated.
+ */
 export const BUTTON_CHUTE = 1 << 12
 
 /** One press, at a gun that has two kinds of round: load the other one (Q). Like a jump it is not repeated. */
@@ -907,6 +910,32 @@ export const AP_BLAST_KNOCK = 8.0
 export const CRATER_AP_RADIUS = 1.6
 export const CRATER_AP_DEPTH = 0.3
 
+/**
+ * The knock a round gives the vehicle it strikes, where it strikes it (`Physics::strike_car`): the
+ * change in the whole vehicle's speed, m/s, pushed at the point it met, so a hit high on a tall hull
+ * rocks it. On top of what its burst does (the blast pushes from the middle). An armour-piercing
+ * shell's is the hardest, solid steel at speed; then a cannonball's and a bomb's, a high-explosive
+ * shell's, a rocket's and a mortar bomb's, and an autocannon's rounds'. Bullets give none.
+ */
+export const AP_HIT_KNOCK = 0.6
+export const BALL_HIT_KNOCK = 0.5
+export const BOMB_HIT_KNOCK = 0.5
+export const SHELL_HIT_KNOCK = 0.4
+export const ROCKET_HIT_KNOCK = 0.3
+export const MORTAR_HIT_KNOCK = 0.3
+export const CANNON_AP_HIT_KNOCK = 0.25
+export const CANNON_HIT_KNOCK = 0.15
+
+/**
+ * How far round the point where an autocannon's armour-piercing round strikes a wall it punches the
+ * wall out, metres: a cell or two (`carve::CELL`, 0.72 m) a round. Its little charge is too small to
+ * bite a wall by itself (`CARVE_MIN_RADIUS` in `combat.rs`).
+ */
+export const CANNON_AP_WALL_HOLE = 0.85
+
+/** The share of its knock a round that glances off gives. */
+export const RICOCHET_KNOCK_SHARE = 0.3
+
 /** Most shot events one snapshot carries; the rest are cosmetic and dropped. A shotgun pull is ten. */
 export const MAX_SHOT_EVENTS = 24
 
@@ -1510,6 +1539,12 @@ export const MISSILE_POP_CRATER = [2.4, 0.4] as const
 export const MISSILE_IMPACT_DV = 3.0
 export const MISSILE_PROXIMITY = 1.5
 export const MISSILE_FALL_TICKS = 3 * TICK_RATE
+
+/**
+ * How far its nose is up from level as it leaves a launch tube, radians: all but straight up (about 89
+ * degrees), tipped just enough towards where its flier looks that it pitches over that way.
+ */
+export const MISSILE_LAUNCH_PITCH = 1.55
 
 /**
  * The field mortar (`KIND_MORTAR`): a towed, unpowered two-wheeler with one gunner, who aims its bearing
@@ -2415,9 +2450,12 @@ export const TECHNICAL_SEAT_HEADS = [[-0.42, 1.0, -0.35], [0.42, 1.0, -0.35], [0
 /**
  * The Titan (`KIND_TITAN`): a giant robot about fifty metres high, one pilot sealed in its head. Its
  * body is a single box, its torso, held up by two spring legs that are ray casts to the ground and
- * kept upright by a torque, exactly as a walker's is (its `Gait`). It has no guns. Its pilot moves its
- * two fists (`TITAN_ARMS`): they hit what they meet and hold what they close on. Its feet are solid
- * and crush what they come down on.
+ * kept upright by a torque, exactly as a walker's is (its `Gait`). Its pilot moves its two fists
+ * (`TITAN_ARMS`): they hit what they meet and hold what they close on. The right one holds a 40 mm
+ * autocannon that fires along the forearm, and on the left pauldron is a launcher of four vertical tubes
+ * that send up the submarine's guided missile (`KIND_MISSILE`), which the pilot then flies. Its feet are solid
+ * and crush what they come down on. Rounds are not shot at the box but at the model's own shape: its
+ * torso's `Role::Hit` solids, and its arms and legs bent as the client draws them (`bend`).
  */
 export const TITAN_SEATS = 1
 
@@ -2521,6 +2559,32 @@ export const TITAN_STEP_LIFT = 4.5
 export const TITAN_THIGH_HALF = [2.0, 3.5, 2.4] as const
 
 /**
+ * The bones of its limbs as the model is built (`UPPER`, `FORE`, `THIGH`, `SHIN` and `PAD` in
+ * `tools/vehicles/build_titan.py`): shoulder to elbow, elbow to the fist's middle, hip to knee and knee
+ * to ankle, metres, and how far the ankle is above the sole.
+ */
+export const TITAN_UPPER_ARM_LENGTH = 12.0
+export const TITAN_FOREARM_LENGTH = 12.0
+export const TITAN_THIGH_LENGTH = 13.5
+export const TITAN_SHIN_LENGTH = 13.5
+export const TITAN_ANKLE_HEIGHT = 1.5
+
+/** Which way the right elbow bends, in the hull frame: out, down and back. The left mirrors it in X. */
+export const TITAN_ELBOW_POLE = [0.7, -0.5, 0.6] as const
+
+/** Which way the knees bend, in the hull frame: forward, a little down. */
+export const TITAN_KNEE_POLE = [0.0, -0.15, -1.0] as const
+
+/**
+ * How thick each bone is to a round, as the radius of a capsule along it, metres: the upper arm, the
+ * forearm, the thigh and the shin with their plates.
+ */
+export const TITAN_UPPER_ARM_RADIUS = 2.1
+export const TITAN_FOREARM_RADIUS = 2.5
+export const TITAN_THIGH_RADIUS = 2.6
+export const TITAN_SHIN_RADIUS = 2.7
+
+/**
  * Where it is boarded from and where its pilot is set down, in the hull frame: on the ground between
  * its feet, and ahead of them.
  */
@@ -2549,6 +2613,41 @@ export const TITAN_STOMP_VEHICLE_DAMAGE = 120.0
 
 /** A soldier thrown from a fist keeps this share of the fist's speed. */
 export const TITAN_THROW_SHARE = 1.0
+
+/** The fist that holds the autocannon: the right (0 is the left). */
+export const TITAN_GUN_HAND = 1
+
+/** How far the gun's muzzle is ahead of the fist's middle along the forearm, metres. */
+export const TITAN_GUN_LENGTH = 7.0
+
+/** Ticks between rounds: seven and a half a second, quicker than the Strf 90's five. */
+export const TITAN_GUN_COOLDOWN = 8
+
+/** How far a round strays from the bore, radians: a fist is no turret. */
+export const TITAN_GUN_SPREAD = 0.006
+
+/** Heat a round puts in the barrel, of 255: about five seconds of holding the trigger jams it. */
+export const TITAN_GUN_HEAT = 15.0
+
+/**
+ * The launcher on the left pauldron: how many tubes, and where each one's mouth is, in the hull frame,
+ * on top of its box (`launcher` in `tools/vehicles/build_titan.py`).
+ */
+export const TITAN_TUBES = 4
+export const TITAN_TUBE_AT = [[-10.1, 12.7, -1.1], [-8.3, 12.7, -1.1], [-10.1, 12.7, 1.1], [-8.3, 12.7, 1.1]] as const
+
+/**
+ * The launcher's box, from the pauldron's top up to the tubes' mouths: half its width, height and
+ * depth, metres, and where its middle is in the hull frame.
+ */
+export const TITAN_LAUNCHER_HALF = [1.9, 1.25, 2.3] as const
+export const TITAN_LAUNCHER_AT = [-9.2, 11.45, 0.0] as const
+
+/** Ticks for the launcher to load one more tube: as long as a submarine's tube takes. */
+export const TITAN_TUBE_RELOAD = 20 * TICK_RATE
+
+/** Ticks between launches, at the least. */
+export const TITAN_TUBE_COOLDOWN = TICK_RATE
 
 /**
  * The tupp (`KIND_TUPP`): a giant robot rooster of the Swedish Hedemora breed, one driver in a cockpit

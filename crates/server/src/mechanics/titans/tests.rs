@@ -1,7 +1,7 @@
 use super::*;
 use crate::entities::Health;
 use crate::game::{Command, Game};
-use shared::protocol::{HANDS_FULL_RIGHT, InputFrame, KIND_JEEP, KIND_TITAN};
+use shared::protocol::{HANDS_FULL_LEFT, HANDS_FULL_RIGHT, InputFrame, KIND_JEEP, KIND_MISSILE, KIND_TITAN, PROJECTILE_CANNON_AP};
 use shared::quant::to_cm_i16;
 use shared::world::{WORLD_VERSION, WorldFile};
 use sim::Character;
@@ -43,11 +43,25 @@ fn in_hull(game: &Game, vid: u32, world: [f32; 3]) -> [i16; 3] {
 
 /// One tick with `pilot` holding `buttons` and asking for its right fist at `right` (world), `closed` or not.
 fn tick(game: &mut Game, vid: u32, pilot: u32, seq: &mut u32, buttons: u16, right: Option<[f32; 3]>, closed: bool) {
+    tick_hand(game, vid, pilot, seq, buttons, 1, right, closed);
+}
+
+/// One tick with `pilot` holding `buttons` and asking for fist `hand` (0 the left, 1 the right) at `at`
+/// (world), `closed` or not; the other hangs.
+#[allow(clippy::too_many_arguments)]
+fn tick_hand(game: &mut Game, vid: u32, pilot: u32, seq: &mut u32, buttons: u16, hand: usize, at: Option<[f32; 3]>, closed: bool) {
     *seq += 1;
     game.handle(Command::Input(pilot, 0, vec![InputFrame { seq: *seq, strafe: 0, forward: 0, yaw: 0, buttons, pitch: 0, view: 0, slot: 0 }]));
-    let [rx, ry, rz] = right.map_or([0; 3], |point| in_hull(game, vid, point));
-    let flags = if right.is_some() { HANDS_REACH_RIGHT } else { 0 } | if closed { HANDS_GRIP_RIGHT } else { 0 };
-    game.handle(Command::Hands(pilot, ClientHands { tag: shared::protocol::C_HANDS, lx: 0, ly: 0, lz: 0, rx, ry, rz, flags }));
+    let [x, y, z] = at.map_or([0; 3], |point| in_hull(game, vid, point));
+    let (reach, grip) = [(HANDS_REACH_LEFT, HANDS_GRIP_LEFT), (HANDS_REACH_RIGHT, HANDS_GRIP_RIGHT)][hand];
+    let flags = if at.is_some() { reach } else { 0 } | if closed { grip } else { 0 };
+    let mut hands = ClientHands { tag: shared::protocol::C_HANDS, lx: 0, ly: 0, lz: 0, rx: 0, ry: 0, rz: 0, flags };
+    if hand == 0 {
+        (hands.lx, hands.ly, hands.lz) = (x, y, z);
+    } else {
+        (hands.rx, hands.ry, hands.rz) = (x, y, z);
+    }
+    game.handle(Command::Hands(pilot, hands));
     game.step();
 }
 
@@ -74,49 +88,49 @@ fn crouched() -> (Game, u32, u32, u32) {
 fn a_closed_hand_picks_a_soldier_up_carries_them_and_throws_them_when_it_opens() {
     let (mut game, vid, pilot, mut seq) = crouched();
     let victim = join(&mut game);
-    let spot = [TITAN_SHOULDER[0], -12.0];
+    let spot = [-TITAN_SHOULDER[0], -12.0];
     stand(&mut game, victim, spot);
     let over = [spot[0], TITAN_FIST_RADIUS + 0.2, spot[1]];
     // The open hand comes down beside them and does them no harm.
     for _ in 0..150 {
         stand(&mut game, victim, spot);
-        tick(&mut game, vid, pilot, &mut seq, BUTTON_CROUCH, Some(over), false);
+        tick_hand(&mut game, vid, pilot, &mut seq, BUTTON_CROUCH, 0, Some(over), false);
     }
     assert_eq!(game.world.entities.of::<Player>(victim).held, None);
     assert_eq!(hp(&game, victim), PLAYER_MAX_HP, "an open hand coming down on them does not hurt");
     // It closes on them.
     for _ in 0..5 {
-        tick(&mut game, vid, pilot, &mut seq, BUTTON_CROUCH, Some(over), true);
+        tick_hand(&mut game, vid, pilot, &mut seq, BUTTON_CROUCH, 0, Some(over), true);
     }
-    assert_eq!(game.world.entities.of::<Player>(victim).held, Some(Fist { titan: vid, hand: 1 }), "picked up in the right hand");
-    assert_eq!(game.seen(victim).unwrap().held, Some(shared::replicated::Held { vehicle: vid, hand: 1 }));
-    assert!(game.seen(vid).unwrap().titan.unwrap().flags & HANDS_FULL_RIGHT != 0, "everyone sees the hand is full");
+    assert_eq!(game.world.entities.of::<Player>(victim).held, Some(Fist { titan: vid, hand: 0 }), "picked up in the left hand");
+    assert_eq!(game.seen(victim).unwrap().held, Some(shared::replicated::Held { vehicle: vid, hand: 0 }));
+    assert!(game.seen(vid).unwrap().titan.unwrap().flags & HANDS_FULL_LEFT != 0, "everyone sees the hand is full");
     // The Titan stands, and lifts them high.
     for _ in 0..360 {
         let pose = game.world.physics.car_pose(vid).unwrap();
-        let ahead = pose.world_point([TITAN_SHOULDER[0], 0.0, -15.0]);
-        tick(&mut game, vid, pilot, &mut seq, 0, Some(ahead), true);
+        let ahead = pose.world_point([-TITAN_SHOULDER[0], 0.0, -15.0]);
+        tick_hand(&mut game, vid, pilot, &mut seq, 0, 0, Some(ahead), true);
     }
     let carried = game.world.entities.of::<Player>(victim).character;
     assert!(carried.position[1] > 25.0 && carried.down == 0, "carried high, on their feet: {carried:?}");
-    let fist = game.world.physics.limbs(vid).unwrap().fists_world[1];
+    let fist = game.world.physics.limbs(vid).unwrap().fists_world[0];
     assert!(vec3::distance(carried.position, held_at(fist)) < 1.5, "on the fist: {carried:?} against {fist:?}");
     // They can still shoot from up there.
     let ammo = game.world.entities.of::<Player>(victim).hands.hotbar[0].ammo;
     for n in 0..30 {
         game.handle(Command::Input(victim, 0, vec![InputFrame { seq: n + 1, strafe: 0, forward: 0, yaw: 0, buttons: BUTTON_FIRE, pitch: 0, view: 0, slot: 0 }]));
         let pose = game.world.physics.car_pose(vid).unwrap();
-        tick(&mut game, vid, pilot, &mut seq, 0, Some(pose.world_point([TITAN_SHOULDER[0], 0.0, -15.0])), true);
+        tick_hand(&mut game, vid, pilot, &mut seq, 0, 0, Some(pose.world_point([-TITAN_SHOULDER[0], 0.0, -15.0])), true);
     }
     assert!(game.world.entities.of::<Player>(victim).hands.hotbar[0].ammo < ammo, "a held soldier fires their rifle");
     // Swung forward and let go, they fly.
     for _ in 0..14 {
         let pose = game.world.physics.car_pose(vid).unwrap();
-        tick(&mut game, vid, pilot, &mut seq, 0, Some(pose.world_point([TITAN_SHOULDER[0], 6.0, -40.0])), true);
+        tick_hand(&mut game, vid, pilot, &mut seq, 0, 0, Some(pose.world_point([-TITAN_SHOULDER[0], 6.0, -40.0])), true);
     }
     let before = hp(&game, victim);
     let pose = game.world.physics.car_pose(vid).unwrap();
-    tick(&mut game, vid, pilot, &mut seq, 0, Some(pose.world_point([TITAN_SHOULDER[0], 6.0, -40.0])), false);
+    tick_hand(&mut game, vid, pilot, &mut seq, 0, 0, Some(pose.world_point([-TITAN_SHOULDER[0], 6.0, -40.0])), false);
     let thrown = game.world.entities.of::<Player>(victim);
     let speed = thrown.character.knock[0].hypot(thrown.character.knock[1]);
     assert!(thrown.held.is_none() && speed > 20.0 && thrown.character.down > 0, "thrown as fast as the fist went: {speed} m/s, {:?}", thrown.character);
@@ -400,4 +414,187 @@ fn a_titan_that_leaps_and_falls_slams_where_it_lands_and_one_set_down_gently_doe
         assert!(game.world.entities.of::<Player>(held).held.is_some(), "and still in its fist");
         assert_eq!(hp(&game, vid), vehicle_def(KIND_TITAN).hp, "and it takes no harm itself");
     }
+}
+
+#[test]
+fn a_blocked_ap_shell_still_knocks_the_vehicle() {
+    use crate::mechanics::armor::{Outcome, armor_of};
+    use crate::mechanics::projectiles::{Flying, pen_of};
+    use shared::protocol::PROJECTILE_SHELL;
+    let mut game = game();
+    let vid = titan(&mut game);
+    let pose = game.world.physics.car_pose(vid).unwrap();
+    // At its chest from 12 m out, twenty degrees off its nose: too oblique for a shell to get through.
+    let at = pose.world_point([0.0, 4.0, -4.0]);
+    let off = 20f32.to_radians();
+    let dir = pose.world_dir([-off.sin(), 0.0, off.cos()]);
+    let from = vec3::along(at, dir, -12.0);
+    let outcome = armor_of(&game.world, vid, from, dir, 20.0, pen_of(PROJECTILE_SHELL).near);
+    assert!(matches!(outcome, Some(Outcome::Blocked { .. })), "the chest plate stops it: {outcome:?}");
+    let still = game.world.physics.car_motion(vid).unwrap().angvel;
+    assert!(vec3::length(still) < 0.01, "it stands still before: {still:?}");
+    let id = game.world.alloc_id();
+    game.world.launch_as(id, Flying::new(PROJECTILE_SHELL, 0, from, dir.map(|v| v * SHELL_SPEED), SHELL_TTL_TICKS));
+    for _ in 0..10 {
+        game.step();
+    }
+    assert!(!game.world.in_flight().contains_key(&id), "the shell is spent");
+    let motion = game.world.physics.car_motion(vid).unwrap();
+    let rocked = game.world.physics.car_pose(vid).unwrap();
+    println!("titan after a blocked shell: {motion:?}, up {:?}", rocked.world_dir([0.0, 1.0, 0.0]));
+    assert!(vec3::length(motion.angvel) > 0.02, "the hit rocks it although it did not get in: {motion:?}");
+    assert!(rocked.world_dir([0.0, 1.0, 0.0])[2] > 0.0, "back, away from the hit: {rocked:?}");
+}
+
+/// A game with a piloted Titan standing at the origin: the Titan, its pilot and the pilot's input count.
+fn piloted() -> (Game, u32, u32, u32) {
+    let mut game = game();
+    let pilot = join(&mut game);
+    let vid = titan(&mut game);
+    assert!(crate::mechanics::seat(&mut game.world, pilot, vid, 0));
+    (game, vid, pilot, 0)
+}
+
+/// The shells in the air that Titan `vid` fired.
+fn shells_from(game: &Game, vid: u32) -> Vec<crate::mechanics::projectiles::Flying> {
+    game.world.in_flight().into_values().filter(|flying| flying.source == vid).collect()
+}
+
+/// Where the right fist is asked to be to hold the gun up ahead of the Titan at `vid`: out in front of
+/// the right shoulder, a little low.
+fn gun_up(game: &Game, vid: u32) -> [f32; 3] {
+    game.world.physics.car_pose(vid).unwrap().world_point([TITAN_SHOULDER[0], TITAN_SHOULDER[1] - 4.0, -18.0])
+}
+
+#[test]
+fn a_titans_fist_cannon_fires_along_its_forearm_from_the_muzzle() {
+    let (mut game, vid, pilot, mut seq) = piloted();
+    for _ in 0..120 {
+        let at = gun_up(&game, vid);
+        tick(&mut game, vid, pilot, &mut seq, 0, Some(at), false);
+    }
+    assert!(shells_from(&game, vid).is_empty(), "nothing fires until the trigger is pulled");
+    let (elbow, fist) = game.world.physics.forearm(vid, TITAN_GUN_HAND).unwrap();
+    // An input reaches the server's tick after it is sent.
+    for _ in 0..2 {
+        let at = gun_up(&game, vid);
+        tick(&mut game, vid, pilot, &mut seq, BUTTON_ALT, Some(at), false);
+    }
+    let shells = shells_from(&game, vid);
+    assert_eq!(shells.len(), 1, "one round: {shells:?}");
+    let shell = shells[0];
+    assert_eq!(shell.kind, PROJECTILE_CANNON_AP, "armour-piercing first");
+    let along = vec3::sub(fist, elbow).map(|v| v / vec3::distance(fist, elbow));
+    let heading = shell.velocity.map(|v| v / vec3::length(shell.velocity));
+    assert!(vec3::dot(heading, along) > 0.99, "along the forearm: {heading:?} against {along:?}");
+    let out = vec3::distance(shell.position, fist);
+    assert!(out > TITAN_GUN_LENGTH - 0.5 && out < TITAN_GUN_LENGTH + 5.0, "from the muzzle, {out} m out of the fist");
+    assert_eq!(game.seen(vid).unwrap().turret.unwrap().shots, 1, "everyone sees it fire");
+    // Held, it keeps firing, quicker than the Strf 90.
+    for _ in 0..60 {
+        let at = gun_up(&game, vid);
+        tick(&mut game, vid, pilot, &mut seq, BUTTON_ALT, Some(at), false);
+    }
+    let shots = game.seen(vid).unwrap().turret.unwrap().shots;
+    assert!(shots >= 8, "{shots} rounds in a second");
+}
+
+#[test]
+fn a_titans_cannon_holds_fire_while_shift_throws_its_fist() {
+    let (mut game, vid, pilot, mut seq) = piloted();
+    for _ in 0..60 {
+        let at = gun_up(&game, vid);
+        tick(&mut game, vid, pilot, &mut seq, BUTTON_ALT | BUTTON_RUN, Some(at), true);
+    }
+    assert!(shells_from(&game, vid).is_empty(), "a punch is not a burst");
+    assert_eq!(game.seen(vid).unwrap().turret.unwrap().shots, 0);
+}
+
+#[test]
+fn a_titans_gun_hand_punches_but_never_grips() {
+    let (mut game, vid, pilot, mut seq) = crouched();
+    let victim = join(&mut game);
+    let spot = [TITAN_SHOULDER[0], -12.0];
+    stand(&mut game, victim, spot);
+    let over = [spot[0], TITAN_FIST_RADIUS + 0.2, spot[1]];
+    for _ in 0..150 {
+        stand(&mut game, victim, spot);
+        tick(&mut game, vid, pilot, &mut seq, BUTTON_CROUCH, Some(over), false);
+    }
+    for _ in 0..10 {
+        tick(&mut game, vid, pilot, &mut seq, BUTTON_CROUCH, Some(over), true);
+    }
+    assert_eq!(game.world.entities.of::<Player>(victim).held, None, "the hand with the gun closes on nobody");
+    assert_eq!(game.seen(vid).unwrap().titan.unwrap().flags & HANDS_FULL_RIGHT, 0);
+}
+
+/// One tick of `pilot` holding `buttons` and the stick `forward`, with no hands sent.
+fn drive(game: &mut Game, pilot: u32, seq: &mut u32, buttons: u16, forward: i8) {
+    *seq += 1;
+    game.handle(Command::Input(pilot, 0, vec![InputFrame { seq: *seq, strafe: 0, forward, yaw: 0, buttons, pitch: 0, view: 0, slot: 0 }]));
+    game.step();
+}
+
+#[test]
+fn a_titans_shoulder_tube_launches_a_missile_its_pilot_flies_while_it_stands() {
+    use crate::game::Seat;
+    let (mut game, vid, pilot, mut seq) = piloted();
+    assert_eq!(game.seen(vid).unwrap().arms.unwrap().bombs, TITAN_TUBES, "its tubes are loaded");
+    // An input reaches the server's tick after it is sent.
+    drive(&mut game, pilot, &mut seq, BUTTON_CHUTE, 0);
+    drive(&mut game, pilot, &mut seq, BUTTON_CHUTE, 0);
+    let missile = game.world.entities.all::<Vehicle>().find(|(_, vehicle)| vehicle.kind == KIND_MISSILE).map(|(id, _)| id).expect("a missile goes up");
+    assert_eq!(game.world.entities.of::<Player>(pilot).seat, Some(Seat { vehicle: missile, index: 0, remote: true, from: Some((vid, 0)) }));
+    assert_eq!(game.world.entities.of::<Seats>(vid).rider(0), Some(pilot), "their body stays in the Titan");
+    assert_eq!(game.seen(vid).unwrap().arms.unwrap().bombs, TITAN_TUBES - 1);
+    let pose = game.world.physics.car_pose(vid).unwrap();
+    let up = pose.local_dir(vec3::sub(game.world.physics.car_pose(missile).unwrap().position, pose.position));
+    assert!(up[0] < -6.0 && up[1] > 12.0, "out of the left shoulder: {up:?}");
+    // Flying it, stick forward and the gun's trigger held, the Titan neither walks nor fires.
+    let stood = pose.position;
+    for _ in 0..90 {
+        drive(&mut game, pilot, &mut seq, BUTTON_ALT, 127);
+    }
+    let moved = game.world.physics.car_pose(vid).unwrap().position;
+    assert!(vec3::distance([moved[0], 0.0, moved[2]], [stood[0], 0.0, stood[2]]) < 1.0, "it stood: {stood:?} to {moved:?}");
+    assert!(shells_from(&game, vid).is_empty(), "the missile's stick and trigger are not the Titan's");
+    let flown = game.world.physics.car_pose(missile).unwrap().position;
+    assert!(flown[1] > stood[1] + 20.0, "the missile climbed: {flown:?}");
+    // A fresh press sets it off, and the pilot is back in the Titan.
+    drive(&mut game, pilot, &mut seq, 0, 0);
+    drive(&mut game, pilot, &mut seq, BUTTON_FIRE, 0);
+    drive(&mut game, pilot, &mut seq, 0, 0);
+    drive(&mut game, pilot, &mut seq, 0, 0);
+    assert!(!game.world.entities.has::<Vehicle>(missile), "it went off");
+    assert_eq!(game.world.entities.of::<Player>(pilot).seat, Some(Seat { vehicle: vid, index: 0, remote: false, from: None }));
+    // The tube loads again.
+    for _ in 0..TITAN_TUBE_RELOAD {
+        game.step();
+    }
+    assert_eq!(game.seen(vid).unwrap().arms.unwrap().bombs, TITAN_TUBES, "loaded again");
+}
+
+
+#[test]
+fn a_40mm_armour_piercing_round_punches_a_hole_in_a_house_wall() {
+    use crate::mechanics::projectiles::{Flying, burst_of};
+    use shared::world::{Building, CollisionMesh, ObjId};
+    let v = |x: f32, y: f32, z: f32| [(x * 100.0) as i32, (y * 100.0) as i32, (z * 100.0) as i32];
+    let vertices = vec![v(55.0, 0.0, -5.0), v(65.0, 0.0, -5.0), v(65.0, 0.0, 5.0), v(55.0, 0.0, 5.0), v(55.0, 6.0, -5.0), v(65.0, 6.0, -5.0), v(65.0, 6.0, 5.0), v(55.0, 6.0, 5.0)];
+    let triangles = vec![[0, 1, 5], [0, 5, 4], [1, 2, 6], [1, 6, 5], [2, 3, 7], [2, 7, 6], [3, 0, 4], [3, 4, 7], [4, 5, 6], [4, 6, 7], [0, 2, 1], [0, 3, 2]];
+    let house = Building { height: 600, footprint: vec![[5500, -500], [6500, -500], [6500, 500], [5500, 500]], base: 0, first: 0, walls: 8, roof: 2, ..Default::default() };
+    let house_id = ObjId { col: 1, row: 1, index: 0 };
+    let map = WorldFile { version: WORLD_VERSION, half_extent: 40_000, spawns: vec![[30_000, 30_000]], buildings: vec![house], building_ids: vec![house_id], building_triangles: vec![[0, 12]], collision: CollisionMesh { vertices, triangles }, ..Default::default() };
+    let mut game = Game::new(map, 0).unwrap();
+    game.world.clear_pickups();
+    assert!(burst_of(PROJECTILE_CANNON_AP).unwrap().radius * crate::mechanics::combat::CARVE_REACH < 0.8, "its charge alone bites nothing");
+    // Square on the wall at x = 55, from 20 m out.
+    let id = game.world.alloc_id();
+    game.world.launch_as(id, Flying::new(PROJECTILE_CANNON_AP, 0, [35.0, 3.0, 0.0], [SHELL_SPEED, 0.0, 0.0], SHELL_TTL_TICKS));
+    for _ in 0..30 {
+        game.step();
+    }
+    let carving = game.world.carves.get(&house_id).expect("the wall is cut");
+    let gone = carving.removed.iter().filter(|&&removed| removed).count();
+    assert!(gone >= 1, "a piece of wall is gone: {gone} cells");
 }

@@ -130,21 +130,24 @@ A wreck coming back as new (`Vehicle::renew`) has every part whole and its fire 
   glances off or is stopped leaves a mark only if that vehicle has no glance or scuff waiting for
   the snapshot yet: a squad's rifles on a tank make one scuff per snapshot, not dozens. Holes and
   shells always leave one. `WEAPON_AP` is an AP shell's burst (a shot event); `WEAPON_SHELL` stays
-  high explosive's.
+  high explosive's. A glance or a scuff from a shell or a cannon (20 mm or more) also has
+  `MARK_HEAVY`, so the client draws a dent worth keeping rather than a chip in the paint.
 - `S_ARMOR` (`Armor`), to the shooter (`HIT_DEALT`) and to the crew (`HIT_TAKEN`): the result
   (`ARMOR_RICOCHET`, `_BLOCKED`, `_PIERCED`, `_SLIT`), the parts hurt and finished off, and the seats
   whose occupant was killed. The client turns these into callouts under the crosshair
   (`client/src/callouts.ts`, `sim/armor.ts`), such as "No penetration ×4", "Penetration", "Engine
   destroyed" or "Driver killed". A bullet through an unarmoured vehicle's skin is called out only if it hit
   something inside; it still leaves a hole.
-- Holes and scuffs stay on the vehicle (`client/src/render/hullmarks.ts`). The server's point is on
-  its boxes and drums, which only approximate the model. So the client follows the round's path from
-  0.8 m before that point to 0.8 m past it into the model's triangles (`render/surface.ts`), and the
-  mark goes where the path first meets one: flat on that triangle and parented to its mesh, so it
-  slopes with the glacis and turns with the turret or the gun. Failing that it uses the model's
-  nearest surface, and failing that the hull box. A hole's rim glows and cools over 5 s. There are
-  at most 40 marks a vehicle, and they are cleared when it comes back as new. The sparks, fragments
-  and sounds come from the same spot.
+- Marks stay on the vehicle as scars on the mesh they struck (`client/src/render/hullmarks.ts`,
+  [HULL-DAMAGE.md](HULL-DAMAGE.md)): a dented, sooted hole ringed with blued steel that glows and
+  cools, a scorched dent where a plate stopped a shell, a gouge to bare metal where one glanced off,
+  and a chip in the paint for a bullet. The server's point is on its boxes and drums, which only
+  approximate the model. So the client follows the round's path from 0.8 m before that point to
+  0.8 m past it into the model's triangles (`render/surface.ts`), and the scar goes on the mesh the
+  path first meets, in that mesh's frame, so it slopes with the glacis and turns with the turret, the
+  gun or a Titan's arm. Failing that it uses the model's nearest surface. A mesh keeps 18 scars and 6
+  chips, the oldest giving way, and they are cleared when the vehicle comes back as new. The sparks,
+  fragments and sounds come from the same spot.
 - Each slit is drawn as a dark gap on the model (`entities/presenters/slits.ts`, from
   `Armor::slits` in the tables). It goes where a round going straight in through the slit's box crosses
   the model, so a level shot at the gap goes through it. On a shallow plate such as the tank's glacis,

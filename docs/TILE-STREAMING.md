@@ -70,8 +70,9 @@ sequenceDiagram
   WV->>TW: drop: forget its ground
 ```
 
-**The tile file** (`Tile` in `crates/shared/src/world.rs`, world version 14) is msgpack. The bulky fields are binary, so decoding is mostly taking views:
-- **Ground and water:** heights in centimetres as `bin`s of little-endian `i16`s (`samples16`). `decodeTile` reads them as one `Int16Array` each and converts them to metres.
+**The tile file** (`Tile` in `crates/shared/src/world.rs`) is msgpack. The bulky fields are binary, so decoding is mostly taking views:
+- **Ground:** most of what a client downloads, so it is packed (`heights`): rounded to `GROUND_STEP` (2 cm), each sample written as its difference from the plane through its left, above and above-left neighbours, zigzagged, as `[step, bin]` with every low byte first and then every high byte. On smooth ground the differences are mostly 0 and ±1, and the home world's heights come to 4.8 MB after brotli instead of 12.8 MB.
+- **Water:** heights in centimetres as a `bin` of little-endian `i32`s (`samples32`), read as an `Int32Array` and converted to metres. It is one level over wide areas, so it compresses to almost nothing as it is.
 - **Detail slopes:** a `bin` of `i8`s (`samples8`).
 - **Building cells:** packed into `bin`s (`Bits`).
 

@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::terrain::Ground;
 
-pub const WORLD_VERSION: u8 = 17;
+pub const WORLD_VERSION: u8 = 19;
 
 /// `Manifest::theme`: the world as it always was.
 pub const THEME_PLAIN: u8 = 0;
@@ -133,15 +133,12 @@ pub struct Manifest {
     /// ground is the plane y = 0. It divides `tile_size`.
     pub ground_cell: i32,
     /// `THEME_*`: what the season is.
-    #[serde(default)]
     pub theme: u8,
     /// The ski lifts, whole: both the server (riders) and the client (chairs) need every one of them
     /// wherever the player is, so they are not cut into the tiles.
-    #[serde(default)]
     pub lifts: Vec<Lift>,
     /// Winter: the lakes and the sea stay open rather than freezing, so boats and submarines still
     /// sail. Nothing in any other season.
-    #[serde(default)]
     pub open_water: bool,
 }
 
@@ -195,16 +192,16 @@ impl TileRef {
 }
 
 /// One tile file: the buildings and roads inside it, their collision mesh and the ground under it.
-/// Written by hand (`TileOut`), so the fields at the end are left out when they are empty.
-#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+/// A msgpack array of every field, in order.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Tile {
     pub buildings: Vec<Building>,
     pub roads: Vec<Road>,
     pub collision: CollisionMesh,
     /// Ground heights, centimetres, row-major with `tile_size / ground_cell + 1` samples a side.
     /// The last row and column are shared with the neighbouring tile, so a tile stands alone.
-    /// Empty when the world has no terrain.
-    #[serde(with = "samples32")]
+    /// Empty when the world has no terrain. Written rounded to `GROUND_STEP` (`heights`).
+    #[serde(with = "heights")]
     pub ground: Vec<i32>,
     /// What covers the ground here (water, woods, parks, ...), clipped to the tile. The client
     /// bakes it, with the roads, into the terrain's texture; nothing simulates it.
@@ -215,50 +212,42 @@ pub struct Tile {
     /// or `NO_WATER` where there is none. Empty when the tile has no water. Lakes and wide rivers
     /// are carved into `ground`, so the depth under a sample is `water - ground`; the client draws
     /// the surface wherever that is positive. Nothing simulates it.
-    #[serde(default, with = "samples32")]
+    #[serde(with = "samples32")]
     pub water: Vec<i32>,
     /// Streams: narrow watercourses drawn as ribbons draped on the ground, clipped to the tile.
-    #[serde(default)]
     pub streams: Vec<Stream>,
     /// Bridges: ranges of this tile's collision triangles (the importer builds them there, so
     /// they are collided with and drawn from the same mesh).
-    #[serde(default)]
     pub bridges: Vec<Bridge>,
     /// Fine ground relief for the client's lighting: for each texel of a square grid over the tile
     /// (row-major, rows along +Z, `n × n` with `n = sqrt(len / 2)`), the slope `(dh/dx, dh/dz)` of the
     /// ground there, each in units of `1 / DETAIL_SLOPE_SCALE`. Finer than `ground`; nothing
     /// simulates it. Empty when the tile has no relief finer than its ground or none was baked.
-    #[serde(default, with = "samples8")]
+    #[serde(with = "samples8")]
     pub detail: Vec<i8>,
     /// Railway tracks, clipped to the tile. Drawn on the ground; nothing simulates them.
-    #[serde(default)]
     pub rails: Vec<Rail>,
     /// Groomed ski tracks, clipped to the tile. Skis run faster on them (`ski::SkiMap`).
-    #[serde(default)]
     pub ski: Vec<SkiTrail>,
-    /// Fences and power lines (`Line`). Drawn, not simulated. Left out of the file when there are
-    /// none, so a world without them is written as it was before they existed.
-    #[serde(default)]
+    /// Fences and power lines (`Line`). Drawn, not simulated.
     pub lines: Vec<Line>,
     /// Stony ground: for each cell of a square grid over the tile (row-major, rows along +Z, `n × n`
     /// with `n = sqrt(len)`), how stony it is in the low bits (`STONES_DENSITY`, 0 none) and whether
     /// the stones are blocks of a boulder field rather than cobbles (`STONES_ANGULAR`). Empty when the
     /// tile has none. The client draws it; it slows whoever crosses it.
-    #[serde(default, deserialize_with = "bits")]
+    #[serde(deserialize_with = "bits", serialize_with = "bin")]
     pub stones: Vec<u8>,
     /// The buildings' own walls and roofs: what the importer built before it cut them into cells
     /// (`voxels::bake`). Cells are what is blasted and what holds a building up; what is drawn and
     /// collided with is these, with the windows cut out and the pieces in blasted cells gone
-    /// (`facade`). Empty in a world made before there were looks, where the cells are drawn and
-    /// collided with as boxes. Left out of the file when empty.
-    #[serde(default)]
+    /// (`facade`). Empty when no building of the tile has one.
     pub look: Look,
 }
 
 /// Draw-only building surfaces of a tile (`Tile::look`): a mesh wound as the collision mesh is, and
 /// for each of the tile's buildings, by index, `[first, walls, roof]`: its wall triangles from `first`,
 /// then its roof triangles. `[0, 0, 0]` for a building without a look (it keeps its own collision
-/// triangles, or the world predates looks).
+/// triangles).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Look {
     pub vertices: Vec<[i32; 3]>,
@@ -292,7 +281,6 @@ pub struct BuildingLook {
     pub windows: Vec<crate::windows::Window>,
     /// What stands inside it and is collided with (`interior::rooms`, without the steps drawn over
     /// the stairs): floors and the stairs' slopes. Empty for a house without.
-    #[serde(default)]
     pub inside: Vec<crate::carve::Tri>,
 }
 
@@ -311,57 +299,9 @@ fn bits<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Vec<u8>, D:
     Ok(Bits::deserialize(deserializer)?.0)
 }
 
-/// How a `Tile` is written: a msgpack array, field by field, so a field left out at the end must
-/// take every one after it along. `lines`, `stones` and `look` are left out when there is nothing in
-/// them or after them, so a world without them is written as it was before they existed.
-#[derive(Serialize)]
-struct TileOut<'a> {
-    buildings: &'a Vec<Building>,
-    roads: &'a Vec<Road>,
-    collision: &'a CollisionMesh,
-    #[serde(with = "samples32")]
-    ground: &'a Vec<i32>,
-    cover: &'a Vec<Cover>,
-    trees: &'a Vec<Tree>,
-    #[serde(with = "samples32")]
-    water: &'a Vec<i32>,
-    streams: &'a Vec<Stream>,
-    bridges: &'a Vec<Bridge>,
-    #[serde(with = "samples8")]
-    detail: &'a Vec<i8>,
-    rails: &'a Vec<Rail>,
-    ski: &'a Vec<SkiTrail>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    lines: Option<&'a Vec<Line>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    stones: Option<Bits>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    look: Option<&'a Look>,
-}
-
-impl Serialize for Tile {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let look = (!self.look.is_empty()).then_some(&self.look);
-        let stones = (!self.stones.is_empty() || look.is_some()).then(|| Bits(self.stones.clone()));
-        TileOut {
-            buildings: &self.buildings,
-            roads: &self.roads,
-            collision: &self.collision,
-            ground: &self.ground,
-            cover: &self.cover,
-            trees: &self.trees,
-            water: &self.water,
-            streams: &self.streams,
-            bridges: &self.bridges,
-            detail: &self.detail,
-            rails: &self.rails,
-            ski: &self.ski,
-            lines: (!self.lines.is_empty() || stones.is_some()).then_some(&self.lines),
-            stones,
-            look,
-        }
-        .serialize(serializer)
-    }
+/// Bytes as a msgpack `bin`, as `Bits` writes them.
+fn bin<S: serde::Serializer>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error> {
+    serializer.serialize_bytes(bytes)
 }
 
 /// A fence or a power line in a tile. Drawn, not simulated: nothing collides with it.
@@ -433,11 +373,9 @@ pub struct WorldFile {
     /// Outdoor spawn points `[x, z]`, centimetres. Their height is the ground's.
     pub spawns: Vec<[i32; 2]>,
     /// Side of a tile, centimetres.
-    #[serde(default)]
     pub tile_size: i32,
     /// Which tiles of the square grid belong to the world, `grid × grid`, row-major (`row * grid
     /// + col`). Empty means every tile does (a world built by hand).
-    #[serde(default)]
     pub inside: Vec<bool>,
     /// Static collision mesh for everything above ground (buildings).
     pub collision: CollisionMesh,
@@ -478,7 +416,6 @@ pub struct WorldFile {
     /// Each building's own walls and roof and the windows on them (`BuildingLook`), by index like
     /// `buildings`, for a building that has a look; empty for one without. Its collider is built from
     /// these (`sim::building_solid`), with the windows cut out, and a round through a window is seen.
-    #[serde(default)]
     pub looks: Vec<BuildingLook>,
     /// `trees[i]`'s identity. Filled by `assemble`; empty for a world built by hand.
     #[serde(skip)]
@@ -566,12 +503,9 @@ pub struct Building {
     /// roof; the server and clients make the boxes to collide with, and the clients the faces to
     /// draw, from them. Empty
     /// (`dims` all 0) for a building too big to cut, which keeps its own triangles.
-    #[serde(default)]
     pub cells: Cells,
     /// `[wall, roof]` as `0xRRGGBB`, where the importer knows them (France: the roof from the aerial
-    /// photo). Without it a client picks the colours itself. Left out of the file when `None`, so a
-    /// world without colours is the same bytes as before there were any.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// photo). Without it a client picks the colours itself.
     pub paint: Option<[u32; 2]>,
 }
 
@@ -622,8 +556,9 @@ impl<'de> Deserialize<'de> for Bits {
     }
 }
 
-/// A tile's ground or water heights written as a msgpack `bin` of little-endian `i32`s, not an array
-/// of numbers: a 1 m tile has 66,049 of each, which the client then reads as one `Int32Array`.
+/// A tile's water heights written as a msgpack `bin` of little-endian `i32`s, not an array of
+/// numbers: a 1 m tile has 66,049, which the client then reads as one `Int32Array`. The water is one
+/// level over wide areas, so it compresses to almost nothing as it is.
 mod samples32 {
     use serde::{Deserialize, Deserializer, Serializer};
 
@@ -634,10 +569,90 @@ mod samples32 {
 
     pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<i32>, D::Error> {
         let bytes = super::Bits::deserialize(deserializer)?.0;
-        if bytes.len() % 4 != 0 {
+        if !bytes.len().is_multiple_of(4) {
             return Err(serde::de::Error::custom("a byte count that is not a multiple of 4 for i32 samples"));
         }
         Ok(bytes.chunks_exact(4).map(|quad| i32::from_le_bytes([quad[0], quad[1], quad[2], quad[3]])).collect())
+    }
+}
+
+/// The step a tile's ground heights are rounded to when written, centimetres. Finer steps are noise
+/// in the elevation data, and dropping them makes the written heights (`heights`), most of what a
+/// client downloads, a fifth smaller again after compression. On a 1 m grid it moves the lighting by
+/// under half a percent and changes a slope by at most 2 cm a metre. 5 cm would save a fifth more,
+/// but turns gentle slopes into terraces whose slope changes by up to 8 cm a metre.
+pub const GROUND_STEP: i32 = 2;
+
+/// A tile's ground heights as written: rounded to `GROUND_STEP`, each sample in steps replaced by
+/// how far it is from what its neighbours predict (left + above - above-left, a plane through them),
+/// zigzagged to unsigned and split into two planes, every sample's low byte and then every high byte.
+/// On smooth ground the residuals are mostly 0 and ±1, so the file compresses to under half of the
+/// plain heights'. The msgpack is `[step, bin]`; a tile without terrain has an empty `bin`.
+mod heights {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    use super::{Bits, GROUND_STEP};
+
+    /// The grid's side, if `len` samples make a square one (0 for none).
+    fn side(len: usize) -> Option<usize> {
+        let side = (len as f64).sqrt().round() as usize;
+        (side * side == len).then_some(side)
+    }
+
+    /// The plane through the left, above and above-left samples at `i`, or the one sample there is
+    /// on the first row or column.
+    fn predict(v: &[i32], i: usize, side: usize) -> i32 {
+        let (x, z) = (i % side, i / side);
+        match (x > 0, z > 0) {
+            (true, true) => v[i - 1].wrapping_add(v[i - side]).wrapping_sub(v[i - side - 1]),
+            (true, false) => v[i - 1],
+            (false, true) => v[i - side],
+            (false, false) => 0,
+        }
+    }
+
+    /// The residual planes of `samples`, or why they cannot be written: a grid that is not square,
+    /// or a residual past 16 bits (a cliff of over 650 m between neighbouring samples).
+    pub(super) fn pack(samples: &[i32], step: i32) -> Result<Vec<u8>, &'static str> {
+        let side = side(samples.len()).ok_or("ground heights that are not a square grid")?;
+        let steps: Vec<i32> = samples.iter().map(|&h| (h + step / 2).div_euclid(step)).collect();
+        let n = steps.len();
+        let mut planes = vec![0; 2 * n];
+        for i in 0..n {
+            let residual = steps[i] - predict(&steps, i, side);
+            let zigzag = u16::try_from((residual << 1) ^ (residual >> 31)).map_err(|_| "a ground height too far from its neighbours")?;
+            planes[i] = zigzag as u8;
+            planes[n + i] = (zigzag >> 8) as u8;
+        }
+        Ok(planes)
+    }
+
+    /// The heights, centimetres, that `pack` made `planes` from at `step`.
+    pub(super) fn unpack(planes: &[u8], step: i32) -> Option<Vec<i32>> {
+        if !planes.len().is_multiple_of(2) {
+            return None;
+        }
+        let n = planes.len() / 2;
+        let side = side(n)?;
+        let mut steps = vec![0; n];
+        for i in 0..n {
+            let zigzag = planes[i] as i32 | (planes[n + i] as i32) << 8;
+            steps[i] = predict(&steps, i, side).wrapping_add((zigzag >> 1) ^ -(zigzag & 1));
+        }
+        Some(steps.into_iter().map(|s| s.wrapping_mul(step)).collect())
+    }
+
+    pub fn serialize<S: Serializer>(samples: &[i32], serializer: S) -> Result<S::Ok, S::Error> {
+        let planes = pack(samples, GROUND_STEP).map_err(serde::ser::Error::custom)?;
+        (GROUND_STEP, Bits(planes)).serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<i32>, D::Error> {
+        let (step, Bits(planes)) = <(i32, Bits)>::deserialize(deserializer)?;
+        if step <= 0 {
+            return Err(serde::de::Error::custom("a ground step that is not positive"));
+        }
+        unpack(&planes, step).ok_or_else(|| serde::de::Error::custom("ground residuals that are not two planes of a square grid"))
     }
 }
 
@@ -1155,34 +1170,55 @@ mod tests {
         };
         assert_eq!(Tile::decode(&tile.encode()).unwrap(), tile);
         assert_eq!(tile.encode()[0], 0x9f, "an array of all 15 fields");
-        // A look without lines or stones takes empty ones along, to keep its place.
-        let bare = Tile { lines: Vec::new(), stones: Vec::new(), ..tile.clone() };
-        assert_eq!(bare.encode()[0], 0x9f);
-        assert_eq!(Tile::decode(&bare.encode()).unwrap(), bare);
-        // Stones without lines: the empty lines are written, to keep the stones in their place.
-        let stony = Tile { lines: Vec::new(), look: Look::default(), ..tile.clone() };
-        let bytes = stony.encode();
-        assert_eq!(bytes[0], 0x9e, "an array of all 14 fields");
-        assert_eq!(Tile::decode(&bytes).unwrap(), stony);
-        // Without lines a tile is written as it was before they existed, and reads back the same.
-        let plain = Tile { lines: Vec::new(), stones: Vec::new(), look: Look::default(), ..tile.clone() };
-        let bytes = plain.encode();
-        assert_eq!(bytes[0], 0x9c, "an array of the 12 fields before lines");
-        assert_eq!(Tile::decode(&bytes).unwrap(), plain);
+        // An empty tile is every field still, each empty.
+        let empty = Tile::default().encode();
+        assert_eq!(empty[0], 0x9f);
+        assert_eq!(Tile::decode(&empty).unwrap(), Tile::default());
+        // A tile without its last field, the look (`[[], [], []]`, its last four bytes), is refused.
+        assert_eq!(empty[empty.len() - 4..], [0x93, 0x90, 0x90, 0x90]);
+        let mut short = empty[..empty.len() - 4].to_vec();
+        short[0] = 0x9e;
+        assert!(Tile::decode(&short).is_err());
         assert_eq!(manifest.tiles[0].path(), "tiles/1_0.msgpack");
     }
 
     #[test]
-    fn ground_water_and_detail_are_written_as_little_endian_bytes() {
-        let tile = Tile { ground: vec![1, -2, 300], water: vec![NO_WATER, 40, 40], detail: vec![-1, 5], ..Default::default() };
+    fn water_and_detail_are_written_as_little_endian_bytes() {
+        let tile = Tile { water: vec![NO_WATER, 40, 40], detail: vec![-1, 5], ..Default::default() };
         let bytes = tile.encode();
         // msgpack `bin 8` (0xc4), its length, then the samples low byte first: what the client reads
         // as an `Int32Array` or `Int8Array` (`decodeTile`).
         let find = |needle: &[u8]| bytes.windows(needle.len()).any(|w| w == needle);
-        assert!(find(&[0xc4, 12, 1, 0, 0, 0, 0xfe, 0xff, 0xff, 0xff, 0x2c, 0x01, 0, 0]));
         assert!(find(&[0xc4, 12, 0, 0, 0, 0x80, 40, 0, 0, 0, 40, 0, 0, 0]));
         assert!(find(&[0xc4, 2, 0xff, 5]));
         assert_eq!(Tile::decode(&bytes).unwrap(), tile);
+    }
+
+    #[test]
+    fn ground_is_written_rounded_as_residuals_of_a_plane_through_its_neighbours() {
+        // A 2 × 2 grid on a slope, one sample off it by a centimetre.
+        let tile = Tile { ground: vec![100, 120, 140, 161], ..Default::default() };
+        let bytes = tile.encode();
+        // `[2, bin]`: in steps 50, 60, 70, 81 → residuals 50, 10, 20, 1 (81 - (60 + 70 - 50)),
+        // zigzagged 100, 20, 40, 2, low bytes then high.
+        let find = |needle: &[u8]| bytes.windows(needle.len()).any(|w| w == needle);
+        assert!(find(&[0x92, 2, 0xc4, 8, 100, 20, 40, 2, 0, 0, 0, 0]), "{bytes:x?}");
+        assert_eq!(Tile::decode(&bytes).unwrap().ground, [100, 120, 140, 162], "rounded to the step");
+        // Written again, it is the same.
+        let again = Tile::decode(&bytes).unwrap();
+        assert_eq!(Tile::decode(&again.encode()).unwrap(), again);
+    }
+
+    #[test]
+    fn ground_reads_back_rounded_and_refuses_what_it_cannot_pack() {
+        let hills: Vec<i32> = (0..9).map(|i| i * 37 - 140).collect();
+        for ground in [hills, Vec::new()] {
+            let back = Tile::decode(&Tile { ground: ground.clone(), ..Default::default() }.encode()).unwrap().ground;
+            let rounded: Vec<i32> = ground.iter().map(|&h| (h + GROUND_STEP / 2).div_euclid(GROUND_STEP) * GROUND_STEP).collect();
+            assert_eq!(back, rounded, "{ground:?}");
+        }
+        assert!(heights::pack(&[1, -2, 300], GROUND_STEP).is_err(), "not a square grid");
+        assert!(heights::pack(&[0, 0, 0, 200_000], GROUND_STEP).is_err(), "a 2 km cliff");
     }
 
     #[test]

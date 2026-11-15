@@ -23,6 +23,11 @@ export class Mesh extends Node {
   held = false
   /** Multiplies the material colour and opacity for this mesh alone: per-object tint without a new material. */
   readonly tint = new Float32Array([1, 1, 1, 1])
+  /**
+   * The scene's scar slot this mesh is damaged by (`Scars.alloc`, HULL-DAMAGE.md), 0 for none: its shader
+   * dents, scorches and holes it where the slot's scars are. Not for instanced or skinned meshes.
+   */
+  scars = 0
 
   constructor(public geometry: Geometry, public material: Material) {
     super()

@@ -124,6 +124,12 @@ pub struct Burst {
     pub upward: bool,
     /// The crater it digs where it bursts on the ground: radius and depth, metres; zero for none.
     pub crater: [f32; 2],
+    /// The knock it gives a vehicle it strikes, where it strikes it, m/s (`Physics::strike_car`); zero
+    /// for none.
+    pub hit_knock: f32,
+    /// How far round where it strikes a wall a solid shot punches it out, metres, whatever its blast
+    /// bites; zero for none.
+    pub hole: f32,
 }
 
 /// Moves at the start of `Gunnery`'s tick rather than at the end of `Combat`'s.
@@ -203,23 +209,23 @@ impl Flying {
 }
 
 const fn blast(weapon: u8, radius: f32, damage: f32, knock: f32) -> Burst {
-    Burst { weapon, radius, damage, knock, upward: false, crater: [0.0, 0.0] }
+    Burst { weapon, radius, damage, knock, upward: false, crater: [0.0, 0.0], hit_knock: 0.0, hole: 0.0 }
 }
 
 /// What a projectile of `kind` does when it bursts; `None` for one that only goes out.
 pub fn burst_of(kind: u8) -> Option<Burst> {
     Some(match kind {
-        PROJECTILE_ROCKET => Burst { crater: [CRATER_ROCKET_RADIUS, CRATER_ROCKET_DEPTH], ..blast(WEAPON_ROCKET, ROCKET_BLAST_RADIUS, ROCKET_DAMAGE, ROCKET_KNOCK) },
-        PROJECTILE_SHELL => Burst { crater: [CRATER_AP_RADIUS, CRATER_AP_DEPTH], ..blast(WEAPON_AP, AP_BLAST_RADIUS, AP_BLAST_DAMAGE, AP_BLAST_KNOCK) },
-        PROJECTILE_HE => Burst { crater: [CRATER_SHELL_RADIUS, CRATER_SHELL_DEPTH], ..blast(WEAPON_SHELL, EXPLOSION_RADIUS, EXPLOSION_DAMAGE, EXPLOSION_KNOCK) },
-        PROJECTILE_CANNON => Burst { crater: [CRATER_CANNON_RADIUS, CRATER_CANNON_DEPTH], ..blast(WEAPON_AUTOCANNON, CANNON_RADIUS, CANNON_DAMAGE, CANNON_KNOCK) },
+        PROJECTILE_ROCKET => Burst { crater: [CRATER_ROCKET_RADIUS, CRATER_ROCKET_DEPTH], hit_knock: ROCKET_HIT_KNOCK, ..blast(WEAPON_ROCKET, ROCKET_BLAST_RADIUS, ROCKET_DAMAGE, ROCKET_KNOCK) },
+        PROJECTILE_SHELL => Burst { crater: [CRATER_AP_RADIUS, CRATER_AP_DEPTH], hit_knock: AP_HIT_KNOCK, ..blast(WEAPON_AP, AP_BLAST_RADIUS, AP_BLAST_DAMAGE, AP_BLAST_KNOCK) },
+        PROJECTILE_HE => Burst { crater: [CRATER_SHELL_RADIUS, CRATER_SHELL_DEPTH], hit_knock: SHELL_HIT_KNOCK, ..blast(WEAPON_SHELL, EXPLOSION_RADIUS, EXPLOSION_DAMAGE, EXPLOSION_KNOCK) },
+        PROJECTILE_CANNON => Burst { crater: [CRATER_CANNON_RADIUS, CRATER_CANNON_DEPTH], hit_knock: CANNON_HIT_KNOCK, ..blast(WEAPON_AUTOCANNON, CANNON_RADIUS, CANNON_DAMAGE, CANNON_KNOCK) },
         // The armour-piercing autocannon round's small charge: about half a tank shell's.
-        PROJECTILE_CANNON_AP => Burst { crater: [CRATER_AP_RADIUS / 2.0, CRATER_AP_DEPTH], ..blast(WEAPON_AUTOCANNON, AP_BLAST_RADIUS / 2.0, AP_BLAST_DAMAGE / 2.0, AP_BLAST_KNOCK / 2.0) },
-        PROJECTILE_BOMB => Burst { crater: [CRATER_BOMB_RADIUS, CRATER_BOMB_DEPTH], ..blast(WEAPON_BOMB, BOMB_RADIUS, BOMB_DAMAGE, BOMB_KNOCK) },
-        PROJECTILE_MORTAR => Burst { crater: [CRATER_MORTAR_RADIUS, CRATER_MORTAR_DEPTH], ..blast(WEAPON_MORTAR, MORTAR_RADIUS, MORTAR_DAMAGE, MORTAR_KNOCK) },
+        PROJECTILE_CANNON_AP => Burst { crater: [CRATER_AP_RADIUS / 2.0, CRATER_AP_DEPTH], hit_knock: CANNON_AP_HIT_KNOCK, hole: CANNON_AP_WALL_HOLE, ..blast(WEAPON_AUTOCANNON, AP_BLAST_RADIUS / 2.0, AP_BLAST_DAMAGE / 2.0, AP_BLAST_KNOCK / 2.0) },
+        PROJECTILE_BOMB => Burst { crater: [CRATER_BOMB_RADIUS, CRATER_BOMB_DEPTH], hit_knock: BOMB_HIT_KNOCK, ..blast(WEAPON_BOMB, BOMB_RADIUS, BOMB_DAMAGE, BOMB_KNOCK) },
+        PROJECTILE_MORTAR => Burst { crater: [CRATER_MORTAR_RADIUS, CRATER_MORTAR_DEPTH], hit_knock: MORTAR_HIT_KNOCK, ..blast(WEAPON_MORTAR, MORTAR_RADIUS, MORTAR_DAMAGE, MORTAR_KNOCK) },
         PROJECTILE_GRENADE => Burst { upward: true, crater: [CRATER_GRENADE_RADIUS, CRATER_GRENADE_DEPTH], ..blast(WEAPON_GRENADE, GRENADE_BLAST_RADIUS, GRENADE_DAMAGE, GRENADE_KNOCK) },
         PROJECTILE_EGG => Burst { upward: true, crater: [CRATER_EGG_RADIUS, CRATER_EGG_DEPTH], ..blast(WEAPON_EGG, HEN_EGG_BLAST_RADIUS, HEN_EGG_DAMAGE, HEN_EGG_KNOCK) },
-        PROJECTILE_BALL => Burst { crater: [CRATER_BALL_RADIUS, CRATER_BALL_DEPTH], ..blast(WEAPON_BALL, BALL_BLAST_RADIUS, BALL_BLAST_DAMAGE, BALL_BLAST_KNOCK) },
+        PROJECTILE_BALL => Burst { crater: [CRATER_BALL_RADIUS, CRATER_BALL_DEPTH], hit_knock: BALL_HIT_KNOCK, ..blast(WEAPON_BALL, BALL_BLAST_RADIUS, BALL_BLAST_DAMAGE, BALL_BLAST_KNOCK) },
         _ => return None,
     })
 }
@@ -431,8 +437,23 @@ fn set_off(world: &mut World, burst: Burst, owner: u32, point: [f32; 3], dir: [f
     let attacker = world.entities.has::<Player>(owner).then_some(owner);
     let dir = if burst.upward { [0.0, 1.0, 0.0] } else { dir };
     blast_at(world, Blast { point, radius: burst.radius, damage: burst.damage, knock: burst.knock, dir, attacker, weapon: burst.weapon }, direct);
+    if burst.hole > 0.0 && direct.is_none() {
+        punch(world, point, dir, burst.hole);
+    }
     // After the blast, so a building it bit has stood on the old ground when it fell.
     world.dig_crater(point, burst.crater[0], burst.crater[1]);
+}
+
+/// A solid shot going along `dir` punches the walls and placed cubes it struck at `point` out `radius`
+/// metres round: round the middle of the first cell in, so that a round square on a wall takes it.
+fn punch(world: &mut World, point: [f32; 3], dir: [f32; 3], radius: f32) {
+    let into = vec3::along(point, dir, shared::carve::CELL as f32 / 200.0);
+    for object in world.physics.objects_near(into, radius) {
+        if let sim::Obj::Building(id) = object {
+            world.carve(id, into, radius);
+        }
+    }
+    world.blast_cubes(into, radius);
 }
 
 /// How far along `dir` from `from`, within `step`, a round goes into open water (its still level), if it does.
@@ -483,6 +504,12 @@ fn step_striking(world: &mut World, id: u32, dt: f32, strikes: Strikes) {
             let weapon = world.entities.get::<Burst>(id).map_or(WEAPON_SHELL, |burst| burst.weapon);
             super::life::damage_entity(world, victim, super::life::Harm::new(PLAYER_MAX_HP, attacker, weapon).from(point));
         }
+        // What it knocks a vehicle it strikes by, where it strikes it.
+        let hit_knock = world.entities.get::<Burst>(id).map_or(0.0, |burst| burst.hit_knock);
+        // A rocket goes off on whatever vehicle it meets, with no armour to turn it.
+        if let (false, None, Some((_, Some(vid)))) = (strikes.armor, body, hit) {
+            world.physics.strike_car(vid, dir, point, hit_knock);
+        }
         // A vehicle was hit first: its armor decides whether it bursts on it or glances off.
         let mut direct = None;
         if let (true, None, Some((_, Some(vid)))) = (strikes.armor, body, hit) {
@@ -496,6 +523,8 @@ fn step_striking(world: &mut World, id: u32, dt: f32, strikes: Strikes) {
                     let normal = pose.map_or(normal, |pose| pose.world_dir(normal));
                     let point = pose.map_or(point, |pose| pose.world_point(at));
                     armor::report(world, vid, &outcome, point, dir, pen.calibre, armor::Inside::default(), attacker);
+                    // A glance gives it a little of the knock.
+                    world.physics.strike_car(vid, dir, point, hit_knock * RICOCHET_KNOCK_SHARE);
                     let out = armor::reflect(dir, normal);
                     s.velocity = out.map(|v| v * speed * armor::RICOCHET_KEEP);
                     // Just clear of the plate, so the next step does not hit it again.
@@ -514,6 +543,8 @@ fn step_striking(world: &mut World, id: u32, dt: f32, strikes: Strikes) {
                         done.add(armor::inside(world, vid, entry));
                     }
                     armor::report(world, vid, &outcome, point, dir, pen.calibre, done, attacker);
+                    // Stopped or through, the round's whole knock goes into the vehicle where it met it.
+                    world.physics.strike_car(vid, dir, point, hit_knock);
                     direct = Some(Direct { vehicle: vid, scale: outcome.share(pen.kind), turret: outcome.turret() });
                 }
                 None => {}

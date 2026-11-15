@@ -2,6 +2,7 @@ import { Effect, type EffectContext } from './fx/effect'
 import { GeometryArena, VERTEX_LAYOUT, type GeometrySlot } from './gpu/arena'
 import { BoneTable } from './gpu/bones'
 import { CraterBuffers } from './gpu/craters'
+import { ScarBuffers } from './gpu/scars'
 import { LightBuffers } from './gpu/lights'
 import { MaterialTable } from './gpu/materials'
 import { ObjectTable } from './gpu/objects'
@@ -9,7 +10,7 @@ import { MaterialResources } from './gpu/resources'
 import { TextureStore, type TextureSlot } from './gpu/textures'
 import { GpuTimer } from './gpu/timer'
 import { SHADOW_WGSL } from './materials/shadow.wgsl'
-import { STANDARD_WGSL } from './materials/standard.wgsl'
+import { standardWgsl } from './materials/standard.wgsl'
 import { Frustum } from './math/frustum'
 import * as mat4 from './math/mat4'
 import { Bloom } from './passes/bloom'
@@ -29,10 +30,14 @@ import { ShaderMaterial, type Material } from './scene/material'
 import { FADE_MARGIN, InstancedMesh, Mesh, levelAt } from './scene/mesh'
 import type { Node } from './scene/node'
 import { Craters } from './scene/craters'
+import { Scars } from './scene/scars'
 import type { Scene } from './scene/scene'
 import { Texture } from './scene/texture'
 import { SkinnedMesh } from './scene/skin'
 
+
+/** Storage buffers the vertex stage needs for scars to dent vertices: the scene's six, the scar list and the particles' two. One past WebGPU's default 8. */
+const VERTEX_SCAR_BUFFERS = 9
 /** Where a mesh is drawn: with the world, held in front of the camera over it, or as an overlay over everything. */
 type Layer = 'world' | 'held' | 'overlay'
 
@@ -205,6 +210,7 @@ export class Renderer {
   private readonly objects: ObjectTable
   private readonly bones: BoneTable
   private readonly craters: CraterBuffers
+  private readonly scars: ScarBuffers
   private readonly lights: LightBuffers
   private drawList = new Uint32Array(4096)
   private drawListBuffer: GPUBuffer
@@ -313,6 +319,8 @@ export class Renderer {
   private shadowsOn = false
   /** The device came from an adapter a headset can show. */
   xrCompatible = false
+  /** Whether scars press vertices in (the device allows the vertex stage `VERTEX_SCAR_BUFFERS`), or only shade the dents. */
+  readonly vertexScars: boolean
   /** Where this frame is drawn, when not to the canvas (`renderEye`). */
   private eye: EyeTarget | null = null
 
@@ -326,7 +334,9 @@ export class Renderer {
     const requiredFeatures: GPUFeatureName[] = []
     if (adapter.features.has('timestamp-query')) requiredFeatures.push('timestamp-query')
     // The geometry arena is one vertex buffer; take what the GPU allows rather than the 256 MB default.
-    const requiredLimits = { maxBufferSize: adapter.limits.maxBufferSize }
+    // Scars dent vertices when the vertex stage may read one more storage buffer than the default 8:
+    // asked for where the adapter has it (VERTEX_SCAR_BUFFERS).
+    const requiredLimits = { maxBufferSize: adapter.limits.maxBufferSize, maxStorageBuffersPerShaderStage: Math.min(adapter.limits.maxStorageBuffersPerShaderStage, VERTEX_SCAR_BUFFERS) }
     const device = await adapter.requestDevice({ requiredFeatures, requiredLimits })
     const renderer = new Renderer(canvas, device, options)
     renderer.xrCompatible = forHeadset !== null
@@ -335,6 +345,7 @@ export class Renderer {
 
   constructor(readonly canvas: HTMLCanvasElement, readonly device: GPUDevice, options: RendererOptions = {}) {
     this.sampleCount = options.sampleCount ?? 4
+    this.vertexScars = device.limits.maxStorageBuffersPerShaderStage >= VERTEX_SCAR_BUFFERS
     device.lost.then((info) => {
       if (options.onDeviceLost) options.onDeviceLost(info)
       else console.error(`WebGPU device lost: ${info.message}`)
@@ -357,6 +368,7 @@ export class Renderer {
     this.objects = new ObjectTable(device)
     this.bones = new BoneTable(device)
     this.craters = new CraterBuffers(device, new Craters())
+    this.scars = new ScarBuffers(device, new Scars())
     this.lights = new LightBuffers(device, this.lightGrid)
     this.drawListBuffer = this.makeDrawListBuffer(this.drawList.length)
     this.comparisonSampler = device.createSampler({ compare: 'less-equal', magFilter: 'linear', minFilter: 'linear' })
@@ -381,6 +393,8 @@ export class Renderer {
         { binding: 10, visibility: fragment, texture: { sampleType: 'float' } },
         { binding: 11, visibility: fragment, sampler: { type: 'filtering' } },
         { binding: 12, visibility: fragment, sampler: { type: 'filtering' } },
+        // The vertex stage reads it only where the device allows it a ninth storage buffer (particles bind two of their own).
+        { binding: 13, visibility: this.vertexScars ? GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT : GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } },
       ],
     })
     this.sky = new SkyPass(device, this.sceneLayout, this.sampleCount, HDR_FORMAT, DEPTH_FORMAT)
@@ -395,7 +409,7 @@ export class Renderer {
     })
     this.mainLayout = device.createPipelineLayout({ bindGroupLayouts: [this.sceneLayout, this.lightingLayout, this.resources.texturesLayout] })
     this.shadowLayout = device.createPipelineLayout({ bindGroupLayouts: [this.sceneLayout] })
-    this.standardModule = device.createShaderModule({ label: 'standard', code: STANDARD_WGSL })
+    this.standardModule = device.createShaderModule({ label: 'standard', code: standardWgsl(this.vertexScars) })
     this.shadowModule = device.createShaderModule({ label: 'shadow', code: SHADOW_WGSL })
     this.shadowPipelines = (['back', 'none'] as GPUCullMode[]).map((cullMode) =>
       device.createRenderPipeline({
@@ -565,6 +579,7 @@ export class Renderer {
     this.bones.flush()
     this.uploadDrawList()
     this.craters.upload(scene.craters)
+    this.scars.upload(scene.scars)
     this.lights.upload(this.lightGrid)
     this.bindScene()
 
@@ -1148,6 +1163,7 @@ export class Renderer {
         { binding: 10, resource: this.sky.cloudMap.createView() },
         { binding: 11, resource: this.sky.skySampler },
         { binding: 12, resource: this.sky.cloudSampler },
+        { binding: 13, resource: { buffer: this.scars.list } },
       ],
     })
   }

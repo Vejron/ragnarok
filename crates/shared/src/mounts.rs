@@ -85,6 +85,11 @@ pub enum Muzzle {
     Twin { pivot: [f32; 3], x: f32, drop: f32 },
     /// One barrel at `at` in the turret's frame, on a turret ring at `ring`: it goes round with the turret.
     Pintle { ring: [f32; 3], at: [f32; 3] },
+    /// A gun held in fist `hand` of a vehicle with arms (`Spec::arms`, 0 the left and 1 the right): its
+    /// rounds leave the fist's middle along the forearm, from the elbow to the fist, as the arm is bent
+    /// at that moment. It is aimed by moving the arm, so its mount is `Aim::Fixed`; and a hand that
+    /// holds a gun never closes on anything.
+    Fist { hand: usize },
 }
 
 /// What leaves a mount.
@@ -107,6 +112,11 @@ pub enum Fire {
     Beam { charge: u32, burn: u32, recover: u32, length: f32, radius: f32, damage: u8, vehicle: u8, plane: u8, weapon: u8, range: f32, pen: Pen },
     /// Something let go (`PROJECTILE_*`): it leaves with the vehicle's velocity plus `toss` (hull frame).
     Drop { kind: u8, toss: [f32; 3], ttl: u32 },
+    /// A guided missile (a drone `kind`, `KIND_MISSILE`) sent up out of a launch tube, its nose `pitch`
+    /// radians up from level towards where the occupant looks, at `speed` m/s. The occupant then flies it
+    /// from its nose as a submarine's officer does, their body staying in their seat, and is back in it
+    /// once it is gone.
+    Guided { kind: u8, speed: f32, pitch: f32 },
 }
 
 /// What a mount carries and how it gets more.
@@ -139,6 +149,9 @@ pub enum Need {
     Height(f32),
     /// Pointing at least this far, radians, either side of the nose to fire: clear of the pilot.
     Clear(f32),
+    /// This button (`BUTTON_*`) is not held: a Titan's gun fist thrown as a punch (Shift held) does not
+    /// fire.
+    Released(u16),
 }
 
 /// Where the snapshot shows a mount. Until components replicate on their own (protocol v2) a vehicle
@@ -218,6 +231,21 @@ mod tests {
                     assert!(matches!(mount.aim, Aim::Mount { .. }), "{}", def.name);
                 }
                 assert!(mount.ammo.is_none_or(|ammo| ammo.full > 0), "{}", def.name);
+            }
+        }
+    }
+
+    #[test]
+    fn a_gun_in_a_fist_is_held_by_a_vehicle_with_arms_and_a_guided_missile_runs_out() {
+        for def in VEHICLES {
+            for mount in def.mounts {
+                if let Muzzle::Fist { hand } = mount.muzzle {
+                    assert!(def.spec.arms.is_some() && hand < 2, "{}", def.name);
+                    assert_eq!(mount.aim, Aim::Fixed, "{}", def.name);
+                }
+                if matches!(mount.fire, Fire::Guided { .. }) {
+                    assert!(mount.ammo.is_some(), "{}", def.name);
+                }
             }
         }
     }

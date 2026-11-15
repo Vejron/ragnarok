@@ -124,6 +124,16 @@ export class AimMarks {
       p.ring(x, y, 13, 4.5, 0x000000, 0.45, 40)
       p.ring(x, y, 13, 3, loading ? 0xffbe78 : 0xffffff, loading ? 0.9 : 0.95, loading ? 20 : 40, loading)
     }
+    // Where a Titan's fist gun points: a cross open in the middle, apart from the reticle, which is where the fists go.
+    if (s.seat === 'titan' && s.nose) {
+      const [x, y] = [s.nose[0] * p.width, s.nose[1] * p.height]
+      p.rect(x - 9, y - 1.5, 18, 3, 0x000000, 0.4)
+      p.rect(x - 1.5, y - 9, 3, 18, 0x000000, 0.4)
+      p.rect(x - 8, y - 0.5, 6, 1, s.jammed ? 0xffbe78 : 0xffeca0, 0.95)
+      p.rect(x + 2, y - 0.5, 6, 1, s.jammed ? 0xffbe78 : 0xffeca0, 0.95)
+      p.rect(x - 0.5, y - 8, 1, 6, s.jammed ? 0xffbe78 : 0xffeca0, 0.95)
+      p.rect(x - 0.5, y + 2, 1, 6, s.jammed ? 0xffbe78 : 0xffeca0, 0.95)
+    }
     if (s.seat === 'aviator') {
       if (s.nose) {
         const [x, y] = [s.nose[0] * p.width, s.nose[1] * p.height]

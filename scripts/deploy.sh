@@ -40,15 +40,18 @@ echo "==> building client"
 (cd client && npm ci && npm run build)
 rm -rf client/dist/dev   # the dev world (scripts/world-dev.sh) is copied from public/; never ship it as a subdirectory
 if [[ "$WORLD_DIR" != client/public ]]; then
-  # Serve WORLD_DIR's world at the root instead: the client fetches /world.msgpack, /tiles/ and /minimap.webp (or .png).
+  # Serve WORLD_DIR's world at the root instead: the client fetches /world.msgpack, /tiles/ and /minimap.webp.
   echo "==> using world from $WORLD_DIR"
-  rm -rf client/dist/tiles client/dist/world.msgpack client/dist/minimap.png client/dist/minimap.webp
+  rm -rf client/dist/tiles client/dist/world.msgpack client/dist/minimap.webp
   cp -R "$WORLD_DIR/tiles" client/dist/tiles
   cp "$WORLD_DIR/world.msgpack" client/dist/world.msgpack
-  for map in minimap.webp minimap.png; do
-    if [[ -f "$WORLD_DIR/$map" ]]; then cp "$WORLD_DIR/$map" "client/dist/$map"; fi
-  done
+  if [[ -f "$WORLD_DIR/minimap.webp" ]]; then cp "$WORLD_DIR/minimap.webp" client/dist/minimap.webp; fi
 fi
+
+# Brotli copies of the client, the models and the world's tiles, which the server sends in their place
+# to browsers that accept brotli (all do). Made after the world is in place, so its tiles are compressed too.
+echo "==> compressing"
+node client/scripts/precompress.mjs client/dist
 
 # The hand-placed spawns, vehicles and items live in the world's area.json, which the server reads
 # next to world.msgpack. It is not served, so it goes in through its own path, never client/dist.

@@ -164,7 +164,7 @@ fn a_zombie_far_from_what_it_heard_heads_straight_for_it_without_looking_for_a_w
 
 /// Not a regression test: what a horde costs a tick on a real world, with someone to chase and with
 /// only blasts to go to. `RAGNAROK_WORLD` picks the world.
-/// `RAGNAROK_WORLD=worlds/bussjobanan/world.msgpack cargo test -p server -- --ignored --nocapture horde_tick_cost`
+/// `RAGNAROK_WORLD=worlds/home/world.msgpack cargo test -p server -- --ignored --nocapture horde_tick_cost`
 #[test]
 #[ignore]
 fn horde_tick_cost() {

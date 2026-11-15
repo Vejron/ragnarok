@@ -6,7 +6,7 @@ import { Backoff } from './net/backoff'
 import { RttEstimator, ServerClock } from './net/clock'
 import { Transport } from './net/transport'
 import {
-  BUTTON_CROUCH, BUTTON_FIRE, BUTTON_JUMP, BUTTON_RELOAD, BUTTON_RUN, CROUCH_EYE_DROP, PRONE_EYE_HEIGHT, SLIDE_MIN_SPEED, EYE_HEIGHT, INPUT_REDUNDANCY, PLAYER_MAX_HP, PROTOCOL_VERSION,
+  BUTTON_ALT, BUTTON_CHUTE, BUTTON_CROUCH, BUTTON_FIRE, BUTTON_JUMP, BUTTON_RELOAD, BUTTON_RUN, CROUCH_EYE_DROP, PRONE_EYE_HEIGHT, SLIDE_MIN_SPEED, EYE_HEIGHT, INPUT_REDUNDANCY, PLAYER_MAX_HP, PROTOCOL_VERSION,
   SHELL_COOLDOWN_TICKS, STANDING_Y, STANCE_CHUTE, STANCE_DIVE, STANCE_DOWN, STANCE_PRONE, STANCE_SWIM,
   TICK_MS, TICK_RATE, TITAN_FIST_RADIUS, TITAN_REACH, LIFT_RIDER_CENTRE, BLOOM_RECOVER, STAMINA_FULL, ONE_ARM_SWAY, BACKPACK_SPEED, CARRY_SKIS, SUB_LAUNCH_DEPTH } from './sim/consts'
 import { easeSway, sway, swayAmplitude } from './sway'
@@ -52,6 +52,7 @@ import { MortarArc } from './render/mortar-arc'
 import { ProjectileTrails } from './render/trails'
 import { Rockets } from './render/rockets'
 import { Rounds } from './render/rounds'
+import { Flinch } from './render/flinch'
 import { HullMarks } from './render/hullmarks'
 import { Callouts } from './callouts'
 import { saveLook, type Look } from './render/look'
@@ -73,7 +74,7 @@ import { loadVehicleModels } from './kinds'
 import { animationFocus, Crowd } from './render/character'
 import { Events } from './events'
 import { Arcs } from './arcs'
-import { cockpit, mountGun, pilotSights, roofGun } from './gauges'
+import { cockpit, mountGun, pilotSights, roofGun, titanSight } from './gauges'
 import { prompt } from './prompt'
 import { Surroundings } from './surroundings'
 import { Cameras } from './cameras'
@@ -318,8 +319,10 @@ export class Game {
   private readonly trails = new ProjectileTrails()
   /** A plane's machine gun rounds in flight, drawn as bullets. */
   private readonly rounds = new Rounds(this.rocketModels, this.trails, (at) => this.effects.pelletStrike(at))
-  /** Holes and scuffs where rounds struck armoured vehicles. */
-  private readonly hullMarks = new HullMarks()
+  /** Dents, scorches, holes and gouges where rounds struck armoured vehicles, drawn as the scene's scars. */
+  private readonly hullMarks: HullMarks
+  /** Vehicles rocking from the rounds that strike them, as drawn. */
+  private readonly flinch = new Flinch()
   /** What the armour made of the player's rounds, and of the rounds that struck their vehicle. */
   private readonly callouts = new Callouts()
   /** The backpack's circle and carrier (BACKPACK.md). */
@@ -392,6 +395,8 @@ export class Game {
   private ducked = false
   /** The headset's jump button was down last frame. */
   private jumping = false
+  /** The headset's left and right index triggers were pulled last frame, for a Titan's pilot. */
+  private triggered: [boolean, boolean] = [false, false]
   /** The world's ski lifts, drawn, once the world is known. */
   private liftView: LiftView | null = null
   /** Where the camera goes while seated, by the seat's rig. */
@@ -430,6 +435,7 @@ export class Game {
 
   constructor(container: HTMLElement, private readonly onStats: (stats: HudStats) => void) {
     this.scene = new Scene(container)
+    this.hullMarks = new HullMarks(this.scene.scene.scars)
     this.bodies = new Bodies(this.avatars, this.gore, this.callouts, this.chase)
     this.perf = new PerfReadout(() => this.scene.renderer, () => `quality ${resolveQuality(this.qualitySetting)}${this.qualitySetting === 'auto' ? ' (auto)' : ''}   msaa ${this.scene.quality.msaa}x   scale ${this.scene.renderScale.toFixed(2)}`)
     this.adaptive.floor = this.scene.quality.minScale
@@ -475,6 +481,7 @@ export class Game {
       seated: () => this.seat?.vehicle ?? null,
       listen: () => this.listen(),
       ownShot: () => (this.lastShotAt = performance.now()),
+      flinch: this.flinch,
       shake: (at, radius, strength) => {
         const distance = this.scene.camera.position.distanceTo(new Vector3(at[0], at[1], at[2]))
         if (distance < radius * 4) this.chase.kick(strength * (1 - distance / (radius * 4)))
@@ -486,6 +493,7 @@ export class Game {
     this.events = new Events({
       scene: this.scene, effects: this.effects, scorches: this.scorches, sounds: this.sounds, debris: this.debris, damageNumbers: this.damageNumbers, rockets: this.rocketModels, trails: this.trails, rounds: this.rounds,
       hullMarks: this.hullMarks,
+      flinch: this.flinch,
       blips: this.blips, avatars: this.avatars, vehicles: this.vehicles, wear: this.wear, view: this.view, chase: this.chase, surroundings: this.surroundings,
       fx: () => this.fxWorld, localId: () => this.localId, driving: () => this.driver?.driving ?? null,
       struckGolfBall: (id) => {
@@ -612,6 +620,7 @@ export class Game {
     this.flying.clear()
     this.rounds.clear()
     this.hullMarks.clear()
+    this.flinch.forget()
     this.callouts.clear()
     this.people.clear()
     this.machines.clear()
@@ -954,6 +963,8 @@ export class Game {
     this.ducked = false
     if (this.jumping) this.input.hold(BUTTON_JUMP, false)
     this.jumping = false
+    if (this.triggered[1]) this.input.hold(BUTTON_ALT, false)
+    this.triggered = [false, false]
     this.input.wear(false)
     this.scene.see(null)
     if (!this.disposed) this.frameHandle = this.nextFrame()
@@ -962,6 +973,8 @@ export class Game {
   /**
    * Takes what the headset says for this frame: its eyes to draw for, the left thumbstick to walk and
    * turn with (the right one turns too), a ducked head to crouch, and the right hand's A button to jump.
+   * Piloting a Titan, the right index trigger fires the gun in its right fist and a pull of the left
+   * launches a missile from its shoulder.
    */
   private readHeadset() {
     if (!this.headset) return
@@ -976,6 +989,11 @@ export class Game {
     // The right controller's lower face button (A) leaps and fires the thrusters.
     if (this.worn.jump !== this.jumping) this.input.hold(BUTTON_JUMP, this.worn.jump)
     this.jumping = this.worn.jump
+    const titan = this.seat?.index === 0 && vehicleDef(this.seat.kind).fists
+    const [launch, fire] = titan ? this.worn.triggers : [false, false]
+    if (fire !== this.triggered[1]) this.input.hold(BUTTON_ALT, fire)
+    if (launch && !this.triggered[0]) this.input.tap(BUTTON_CHUTE)
+    this.triggered = [launch, fire]
   }
 
   private frame(now: number) {
@@ -1367,7 +1385,10 @@ export class Game {
     const cars = this.vehicles.placed
     const aviator = view?.rig.name === 'aviator'
     const plane = aviator && seat ? this.vehicles.model(seat.vehicle) : undefined
-    const sights = plane instanceof PlaneModel ? pilotSights(this.scene.camera, plane, this.input.yaw, this.input.pitch) : { nose: null, aim: null }
+    const titan = view?.role === 'titan' && seat ? this.vehicles.model(seat.vehicle) : undefined
+    const sights = plane instanceof PlaneModel
+      ? pilotSights(this.scene.camera, plane, this.input.yaw, this.input.pitch)
+      : titan instanceof TitanModel ? { nose: titanSight(this.scene.camera, titan, (origin, direction, max) => this.motor?.castRay(origin, direction, max)?.t ?? null), aim: null } : { nose: null, aim: null }
     const hitView = this.hits.view(now, this.input.yaw)
     const gauges = view?.gauges
     const link = view?.rig.name === 'fpv' ? view.rig : null
@@ -1402,6 +1423,8 @@ export class Game {
       ammo: gauges?.includes('ammo') ? ((ride?.turret?.flags ?? 0) & TURRET_ALT ? 'HE' : 'AP') : null,
       reload: this.reloaded(now, ride ? rideView(ride.kind).reload : SHELL_COOLDOWN_TICKS),
       ...(gauges?.includes('pintle') ? roofGun(ride?.pintle ?? null) : gauges?.includes('heat') ? mountGun(ride?.turret ?? null) : cockpit(gauges?.includes('cockpit') ? (ride?.arms ?? null) : null, aviator, seat ? this.vehicles.fx(seat.vehicle) : undefined, ride ? rideView(ride.kind).stall : undefined)),
+      // A Titan's missile tubes, as pips over its gun's heat.
+      ...(gauges?.includes('tubes') ? { bombs: ride?.arms?.bombs ?? null } : {}),
       air: gauges?.includes('air') ? (this.driver?.thrust?.air ?? null) : gauges?.includes('wind') && seat ? this.sailing(seat.vehicle, now) : null,
       stamina: !seated && able ? { left: 1 - local.spent / STAMINA_FULL, winded: local.winded } : null,
       breath: !seated && player.alive && player.breath < 1 ? player.breath : null,
@@ -1431,7 +1454,7 @@ export class Game {
       depth: ride?.kind === KIND_SUBMARINE ? this.depthOf(ride) : null,
       tubes: view?.rig.name === 'periscope' && ride?.sub
         ? { loaded: [0, 1, 2, 3].filter((tube) => (ride.sub!.tubes & (1 << tube)) !== 0).length, clear: this.depthOf(ride) <= SUB_LAUNCH_DEPTH }
-        : null,
+        : gauges?.includes('tubes') && ride?.arms ? { loaded: ride.arms.bombs, clear: true } : null,
       aiming: this.aiming,
       armed: handy && gun !== undefined && !reading,
       crossGap: gun ? Math.max(MIN_CROSS_GAP, spreadPixels(effectiveSpread(gun, this.input.aimHeld, (local.lost & LIMB_ARMS) !== 0, this.bloomOf(gun, now)), this.scene.camera.fov, window.innerHeight)) : MIN_CROSS_GAP,

@@ -15,12 +15,11 @@
 //!     cargo run -p osm-import -- --refresh                     # download everything again
 //!     cargo run -p osm-import -- --clear-cache                 # delete .cache/osm-import
 //!     cargo run -p osm-import -- --fetch-osm sweden             # OpenStreetMap offline, from Geofabrik
-//!     cargo run -p osm-import -- --bake worlds/x/world.msgpack  # bake the cubes into an older world
 //!
 //! Credentials, data sources and the cache are described in `WORLD.md`.
 
 use osm_import::region::{Place, Region};
-use osm_import::{assemble, bushes, cache, canopy, dem, detail, grid, ground, hydro, ign, lidar, minimap, osm, overpass, paint, pbf, progress, roof, species, trees, voxels, water};
+use osm_import::{assemble, bushes, cache, canopy, dem, detail, grid, ground, hydro, ign, lidar, minimap, osm, overpass, paint, pbf, progress, roof, species, trees, water};
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use std::path::PathBuf;
@@ -94,10 +93,6 @@ struct Args {
     /// An orienteering map (`.ocd`) to build from where it reaches (`ocad`); an area's `ocad` otherwise.
     #[arg(long)]
     ocad: Option<PathBuf>,
-    /// Bake the buildings' cubes into a world written before they were (world version 10), in
-    /// place: its manifest, and the tiles next to it. Nothing is downloaded.
-    #[arg(long)]
-    bake: Option<PathBuf>,
     /// Skip OpenStreetMap and generate a procedural grid city (works offline).
     #[arg(long)]
     synthetic: bool,
@@ -447,60 +442,6 @@ fn photo(args: &Args, place: &Place, mask: Option<&std::collections::BTreeSet<(u
     ign::photo(&rects).inspect_err(|error| eprintln!("no roof colours: {error:#}")).ok()
 }
 
-/// `--bake`: reads the world at `path`, bakes every tile (`voxels::bake`), gives the cubes houses
-/// share to one of them (`voxels::share`) and writes it back as the current world version, with the
-/// tiles' new hashes. A world baked already is only shared again, which changes nothing once done.
-fn bake_world(path: &std::path::Path) -> Result<()> {
-    use shared::world::{Manifest, TileRef, WORLD_VERSION, Tile, world_hash};
-    let bytes = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
-    let mut manifest = match Manifest::decode(&bytes) {
-        Ok(manifest) => manifest,
-        // Before version 15 the manifest held the origin where the frame is now: every such world is
-        // Swedish, so its frame is the equirectangular one around that origin.
-        Err(error) => {
-            #[derive(serde::Deserialize)]
-            struct Old(u8, (f64, f64), i32, i32, Vec<[i32; 2]>, Vec<TileRef>, i32);
-            let Old(version, origin, half_extent, tile_size, spawns, tiles, ground_cell) =
-                rmp_serde::from_slice(&bytes).map_err(|_| error).with_context(|| format!("decoding {}", path.display()))?;
-            Manifest { version, frame: shared::world::Frame::Equirect { origin }, half_extent, tile_size, spawns, tiles, ground_cell, theme: 0, lifts: Vec::new(), open_water: false }
-        }
-    };
-    anyhow::ensure!(
-        manifest.version + 1 >= WORLD_VERSION && manifest.version <= WORLD_VERSION,
-        "{} is world version {}; only {} and {} can be baked",
-        path.display(),
-        manifest.version,
-        WORLD_VERSION - 1,
-        WORLD_VERSION
-    );
-    let dir = path.parent().map(PathBuf::from).unwrap_or_default();
-    let mut tiles = Vec::new();
-    let mut before = 0;
-    for entry in &manifest.tiles {
-        let file = dir.join(entry.path());
-        let bytes = std::fs::read(&file).with_context(|| format!("reading {}", file.display()))?;
-        before += bytes.len();
-        let mut tile = Tile::decode(&bytes).with_context(|| format!("decoding {}", file.display()))?;
-        voxels::bake(&mut tile);
-        tiles.push(tile);
-    }
-    let shared = voxels::share(&mut tiles.iter_mut().collect::<Vec<_>>());
-    let mut after = 0;
-    let mut refs = Vec::new();
-    for (entry, tile) in manifest.tiles.iter().zip(&tiles) {
-        let file = dir.join(entry.path());
-        let baked = tile.encode();
-        after += baked.len();
-        std::fs::write(&file, &baked).with_context(|| format!("writing {}", file.display()))?;
-        refs.push(TileRef { hash: world_hash(&baked), ..*entry });
-    }
-    manifest.tiles = refs;
-    manifest.version = WORLD_VERSION;
-    std::fs::write(path, manifest.encode()).with_context(|| format!("writing {}", path.display()))?;
-    eprintln!("baked {} tiles: {} KiB before, {} KiB after; {shared} cubes shared by two houses kept by one", manifest.tiles.len(), before / 1024, after / 1024);
-    Ok(())
-}
-
 /// Distance between terrain height samples when neither `--cell` nor the area says, metres: a
 /// power of two, so a 256 m tile is `2^k + 1` samples a side, which the client simplifies best.
 const DEFAULT_CELL: f64 = 4.0;
@@ -550,9 +491,6 @@ fn main() -> Result<()> {
         Some("winter") => true,
         Some(theme) => bail!("unknown theme {theme:?}"),
     };
-    if let Some(path) = &args.bake {
-        return bake_world(path);
-    }
     if args.clear_cache {
         let freed = cache::clear(&args.cache)?;
         eprintln!("cleared {} ({} MiB)", args.cache.display(), freed / (1024 * 1024));
@@ -764,11 +702,6 @@ fn main() -> Result<()> {
     }
     if let Some(map) = &map {
         std::fs::write(dir.join("minimap.webp"), map).context("writing minimap.webp")?;
-        // The PNG an older import wrote would be shown in its place by a client that finds no WebP.
-        let old = dir.join("minimap.png");
-        if old.exists() {
-            std::fs::remove_file(&old).context("removing the old minimap.png")?;
-        }
     }
     std::fs::write(&args.out, &manifest).with_context(|| format!("writing {}", args.out.display()))?;
     let course_path = dir.join(shared::golf::COURSE_FILE);

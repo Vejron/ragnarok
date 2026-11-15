@@ -12,12 +12,16 @@
 //! - **A slam.** Come down out of the air at `TITAN_SLAM_SPEED` or faster, it lands as a blast would,
 //!   wider and harder the faster it fell: soldiers are thrown and hurt, vehicles thrown and broken,
 //!   buildings bitten down and trees felled.
+//!
+//! Its guns (the autocannon in its right fist and the missile tubes on its shoulder) are mounts, worked
+//! by `Gunnery`; the hand that holds the gun never grips.
 
 use super::Mechanic;
 use super::life::{Harm, damage_entity};
 use crate::entities::With;
 use crate::game::{Fist, Player, Seats, Vehicle, World};
 use shared::consts::*;
+use shared::mounts::Muzzle;
 use shared::protocol::{ClientHands, HANDS_GRIP_LEFT, HANDS_GRIP_RIGHT, HANDS_REACH_LEFT, HANDS_REACH_RIGHT, WEAPON_TITAN};
 use shared::quant::from_cm;
 use shared::vec3;
@@ -88,6 +92,11 @@ pub fn held_in(world: &World, vid: u32, hand: usize) -> Option<u32> {
 /// Where a soldier held in a fist at `fist` is: standing on top of it, clear of its ball.
 fn held_at(fist: [f32; 3]) -> [f32; 3] {
     [fist[0], fist[1] + TITAN_FIST_RADIUS + STAND_CENTRE, fist[2]]
+}
+
+/// Whether hand `hand` of vehicle `vid` holds a gun (`Muzzle::Fist`).
+fn holds_gun(world: &World, vid: u32, hand: usize) -> bool {
+    world.entities.get::<Vehicle>(vid).is_some_and(|vehicle| vehicle_def(vehicle.kind).mounts.iter().any(|mount| mount.muzzle == Muzzle::Fist { hand }))
 }
 
 /// Throws soldier `id` with `velocity`, knocking them down if it is hard enough to.
@@ -280,7 +289,8 @@ impl Titans {
                 let_go(world, vid, hand, velocity, pilot);
                 continue;
             }
-            if asked[hand].closed && !was[hand] && !full {
+            // A hand that holds a gun closes on nothing: closed, it is only a fist to punch with.
+            if asked[hand].closed && !was[hand] && !full && !holds_gun(world, vid, hand) {
                 grab(world, vid, hand, fist);
                 continue;
             }

@@ -3,7 +3,7 @@ import tables from './sim/tables.generated.json'
 
 /** Mirrors `crates/shared/src/world.rs`. Coordinates are metres: +X east, +Z south, +Y up. */
 
-export const WORLD_VERSION = 17
+export const WORLD_VERSION = 19
 
 /** `Manifest::theme`, mirrors `crates/shared/src/world.rs`. */
 export const THEME_WINTER = 1
@@ -383,7 +383,7 @@ export function trunkRadiusCm(kind: number, heightCm: number, crownCm: number): 
 const noCollision = (): CollisionMesh => ({ vertices: new Float32Array(), triangles: new Uint32Array() })
 
 export function decodeManifest(bytes: Uint8Array): WorldData {
-  const [version, frame, halfExtent, tileSize, spawns, tiles, groundCell, theme, lifts, openWater] = decode(bytes) as [number, [number, number, number], number, number, number[][], number[][], number, number?, [number, number, number[][], number[], number[]][]?, boolean?]
+  const [version, frame, halfExtent, tileSize, spawns, tiles, groundCell, theme, lifts, openWater] = decode(bytes) as [number, [number, number, number], number, number, number[][], number[][], number, number, [number, number, number[][], number[], number[]][], boolean]
   if (version !== WORLD_VERSION) throw new Error(`world version ${version}, expected ${WORLD_VERSION}`)
   const refs = tiles.map(([col, row, hash]) => ({ col: col!, row: row!, hash: hash! }))
   const grid = Math.max(1, Math.ceil((2 * halfExtent) / Math.max(tileSize, 1)))
@@ -399,9 +399,9 @@ export function decodeManifest(bytes: Uint8Array): WorldData {
     spawns: spawns.map(point),
     tiles: refs,
     groundCell: metres(groundCell),
-    theme: theme ?? 0,
-    lifts: (lifts ?? []).map(([kind, seats, points, base, cable]) => ({ kind, seats, points: points.map(point), base: base.map(metres), cable: cable.map(metres) })),
-    openWater: openWater ?? false,
+    theme,
+    lifts: lifts.map(([kind, seats, points, base, cable]) => ({ kind, seats, points: points.map(point), base: base.map(metres), cable: cable.map(metres) })),
+    openWater,
     inside,
     collision: noCollision(),
     bytes,
@@ -419,6 +419,27 @@ export function decodeManifest(bytes: Uint8Array): WorldData {
 function int32s(bin: Uint8Array): Int32Array {
   const bytes = bin.byteOffset % 4 === 0 ? bin : bin.slice()
   return new Int32Array(bytes.buffer, bytes.byteOffset, bytes.length >> 2)
+}
+
+/**
+ * A tile's ground heights, metres, as the file writes them (`heights` in `world.rs`): `[step, residuals]`,
+ * each sample in steps as its difference from the plane through its left, above and above-left
+ * neighbours, zigzagged and split into a plane of low bytes and one of high bytes.
+ */
+function groundMetres([step, planes]: [number, Uint8Array]): Float32Array {
+  const n = planes.length >> 1
+  const side = Math.round(Math.sqrt(n))
+  if (side * side !== n || planes.length !== 2 * n) throw new Error(`ground residuals of ${planes.length} bytes are not a square grid`)
+  const steps = new Int32Array(n)
+  const out = new Float32Array(n)
+  for (let i = 0; i < n; i++) {
+    const x = i % side
+    const predicted = i < side ? (x > 0 ? steps[i - 1]! : 0) : x > 0 ? steps[i - 1]! + steps[i - side]! - steps[i - side - 1]! : steps[i - side]!
+    const zigzag = planes[i]! | (planes[n + i]! << 8)
+    steps[i] = predicted + ((zigzag >>> 1) ^ -(zigzag & 1))
+    out[i] = (steps[i]! * step) / 100
+  }
+  return out
 }
 
 /** Centimetres to metres, as `metres` would map them. With `water`, `NO_WATER_CM` becomes `NO_WATER`. */
@@ -454,23 +475,23 @@ function flatIndices(triangles: readonly number[][]): Uint32Array {
 
 export function decodeTile(bytes: Uint8Array): TileData {
   const [buildings, roads, [vertices, triangles], ground, cover, trees, water, streams, bridges, detail, rails, ski, lines, stones, look] = decode(bytes) as [
-    [number, number[][], number, number, number, number, number, [number[], number[], Uint8Array, Uint8Array]?, [number, number]?][],
+    [number, number[][], number, number, number, number, number, [number[], number[], Uint8Array, Uint8Array], [number, number] | null][],
     [number, number, number[][]][],
     [number[][], number[][]],
-    Uint8Array,
+    [number, Uint8Array],
     [number, number[][][]][],
     [number, number, number, number, number, number, boolean][],
     Uint8Array,
     [number, number[][]][],
-    [number, number, number][] | undefined,
-    Uint8Array | undefined,
-    [number, number, number[][]][] | undefined,
-    [number, number[][]][] | undefined,
-    [number, number[][], number[], boolean][] | undefined,
-    Uint8Array | undefined,
-    [number[][], number[][], number[][]] | undefined,
+    [number, number, number][],
+    Uint8Array,
+    [number, number, number[][]][],
+    [number, number[][]][],
+    [number, number[][], number[], boolean][],
+    Uint8Array,
+    [number[][], number[][], number[][]],
   ]
-  const looks = look?.[2]
+  const looks = look[2]
   return {
     buildings: buildings.map(([height, footprint, base, first, walls, roof, roofKind, cells, paint], index) => ({
       height: metres(height),
@@ -481,11 +502,11 @@ export function decodeTile(bytes: Uint8Array): TileData {
       roof,
       roofKind,
       cells:
-        cells && cells[1][0]! * cells[1][1]! * cells[1][2]! > 0
+        cells[1][0]! * cells[1][1]! * cells[1][2]! > 0
           ? { origin: cells[0] as [number, number, number], dims: cells[1] as [number, number, number], solid: cells[2], roof: cells[3] }
           : null,
-      paint: paint ?? null,
-      look: looks?.[index] && looks[index]![1]! + looks[index]![2]! > 0 ? { first: looks[index]![0]!, walls: looks[index]![1]!, roof: looks[index]![2]!, footprint: Int32Array.from(footprint.flat()) } : null,
+      paint,
+      look: looks[index] && looks[index]![1]! + looks[index]![2]! > 0 ? { first: looks[index]![0]!, walls: looks[index]![1]!, roof: looks[index]![2]!, footprint: Int32Array.from(footprint.flat()) } : null,
     })),
     roads: roads.map(([width, kind, points]) => ({ width: metres(width), kind, points: points.map(point) })),
     cover: cover.map(([kind, rings]) => ({ kind, rings: rings.map((ring) => ring.map(point)) })),
@@ -501,17 +522,17 @@ export function decodeTile(bytes: Uint8Array): TileData {
       trunkHeight: metres(Math.trunc((height * treeKindDef(kind).colliderHeightPct) / 100)),
     })),
     collision: { vertices: flatMetres(vertices), triangles: flatIndices(triangles) },
-    ground: inMetres(int32s(ground)),
+    ground: groundMetres(ground),
     water: inMetres(int32s(water), true),
     streams: streams.map(([width, points]) => ({ width: metres(width), points: points.map(point) })),
-    bridges: (bridges ?? []).map(([first, deck, steel]) => ({ first, deck, steel })),
+    bridges: bridges.map(([first, deck, steel]) => ({ first, deck, steel })),
     // A copy of its own: a view would keep the whole file alive, and be cloned whole to the worker.
-    detail: detail && detail.length > 0 ? new Int8Array(detail.slice().buffer) : undefined,
-    rails: (rails ?? []).map(([gauge, kind, points]) => ({ gauge: metres(gauge), kind, points: points.map(point) })),
-    ski: (ski ?? []).map(([width, points]) => ({ width: metres(width), points: points.map(point) })),
-    lines: (lines ?? []).map(([kind, points, base, end]) => ({ kind, points: points.map(point), base: base.map(metres), end })),
-    ...(stones && stones.length > 0 ? { stones: stones.slice() } : {}),
-    ...(look && look[1].length > 0 ? { look: { vertices: flatMetres(look[0]), triangles: flatIndices(look[1]) } } : {}),
+    detail: detail.length > 0 ? new Int8Array(detail.slice().buffer) : undefined,
+    rails: rails.map(([gauge, kind, points]) => ({ gauge: metres(gauge), kind, points: points.map(point) })),
+    ski: ski.map(([width, points]) => ({ width: metres(width), points: points.map(point) })),
+    lines: lines.map(([kind, points, base, end]) => ({ kind, points: points.map(point), base: base.map(metres), end })),
+    ...(stones.length > 0 ? { stones: stones.slice() } : {}),
+    ...(look[1].length > 0 ? { look: { vertices: flatMetres(look[0]), triangles: flatIndices(look[1]) } } : {}),
     bytes,
   }
 }

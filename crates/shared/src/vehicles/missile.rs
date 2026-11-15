@@ -48,6 +48,9 @@ pub const MISSILE_POP_CRATER: [f32; 2] = [2.4, 0.4];
 pub const MISSILE_IMPACT_DV: f32 = 3.0;
 pub const MISSILE_PROXIMITY: f32 = 1.5;
 pub const MISSILE_FALL_TICKS: u32 = 3 * TICK_RATE;
+/// How far its nose is up from level as it leaves a launch tube, radians: all but straight up (about 89
+/// degrees), tipped just enough towards where its flier looks that it pitches over that way.
+pub const MISSILE_LAUNCH_PITCH: f32 = 1.55;
 
 /// Fired from a tube, not from a soldier's hand: the submarine places it.
 const GUIDED: DroneDef = DroneDef {

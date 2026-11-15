@@ -4,6 +4,7 @@ import { ARMS_CUT, DAMAGE_WHEELS, KIND_MISSILE, KIND_SHIP, KIND_SHIP_GUN, KIND_T
 import type { Debris } from '@/render/debris'
 import type { Effects } from '@/render/effects'
 import type { Rounds } from '@/render/rounds'
+import type { Flinch } from '@/render/flinch'
 import { HenModel } from '@/render/hen'
 import { VehicleFx, slamDust, type FxWorld } from '@/render/tyres'
 import { kindView } from '@/kinds'
@@ -15,7 +16,7 @@ import { WalkerModel } from '@/render/walker'
 import type { VehicleModel } from '@/render/car'
 import type { DrivenPose } from '@/sim/driver'
 import type { VehiclePose } from '@/sim/motor'
-import { SHIP_DECK_Y, SHIP_GUN_HALF_EXTENTS, SHIP_GUN_X, SHIP_GUN_Z, TITAN_SLAM_FULL, TITAN_SLAM_RADIUS, TITAN_SLAM_RADIUS_FULL, TITAN_SLAM_SPEED, vehicleMaxHp } from '@/sim/consts'
+import { SHIP_DECK_Y, SHIP_GUN_HALF_EXTENTS, SHIP_GUN_X, SHIP_GUN_Z, TITAN_RIDE_HEIGHT, TITAN_SLAM_FULL, TITAN_SLAM_RADIUS, TITAN_SLAM_RADIUS_FULL, TITAN_SLAM_SPEED, vehicleMaxHp } from '@/sim/consts'
 import { vehicleDef } from '@/sim/vehicles'
 import type { VehicleSounds } from '@/vehicleaudio'
 import type { Frame, Presenter } from '../presenter'
@@ -93,6 +94,8 @@ export interface VehicleWorld {
   ownShot: () => void
   /** Something heavy came down at `at`: shakes the view by up to `strength` if it is within a few `radius` of it. */
   shake?: (at: readonly [number, number, number], radius: number, strength: number) => void
+  /** Vehicles rocking from the rounds that strike them, as drawn. */
+  flinch?: Flinch
 }
 
 /**
@@ -225,7 +228,12 @@ export class Vehicles implements Presenter<Frame> {
     if (model instanceof HenModel) model.setFlags(jets)
     // A Titan's limbs are where the server has them.
     if (model instanceof TitanModel) model.setLimbs(entity.titan ?? null)
-    model.update(position, [rotation[0], rotation[1], rotation[2], rotation[3]], steer, seats, turret, arms)
+    // Rocked by the rounds striking it, about the ground under it; a Titan's legs bend to keep its feet
+    // where they stand. Not the Titan its own pilot looks out of: the visor would swing through the view.
+    const drawnAt: [number, number, number] = [x, y, z]
+    const drawnTurn: [number, number, number, number] = [rotation[0], rotation[1], rotation[2], rotation[3]]
+    if (!(mine && kind === KIND_TITAN)) this.world.flinch?.pose(id, drawnAt, drawnTurn, kind === KIND_TITAN ? TITAN_RIDE_HEIGHT : vehicleDef(kind).halfExtents[1], frame.dt)
+    model.update(drawnAt, drawnTurn, steer, seats, turret, arms)
     if (model instanceof TankModel) model.setPintle(pintle)
     if (model instanceof SubmarineModel) {
       model.setSub(entity.sub ?? null, frame.dt, this.subView())

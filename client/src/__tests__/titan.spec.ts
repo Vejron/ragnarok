@@ -9,7 +9,7 @@ import { fistsFromHands, PILOT_ARM, PILOT_SHOULDER_DOWN, PILOT_SHOULDER_OUT, rev
 import { kindView } from '@/kinds'
 import { seatView } from '@/seats'
 import { HANDS_GRIP_LEFT, HANDS_GRIP_RIGHT, HANDS_REACH_LEFT, HANDS_REACH_RIGHT, KIND_TITAN, THRUST_AIR, THRUST_LIFT } from '@/net/codec'
-import { BUTTON_ALT, BUTTON_FIRE, BUTTON_RUN, TITAN_FIST_REST, TITAN_REACH, TITAN_RIDE_HEIGHT, TITAN_SHOULDER, TITAN_STEP_LIFT } from '@/sim/consts'
+import { BUTTON_ALT, BUTTON_FIRE, BUTTON_RUN, TITAN_ELBOW_POLE, TITAN_FIST_REST, TITAN_FOREARM_LENGTH, TITAN_REACH, TITAN_UPPER_ARM_LENGTH, TITAN_RIDE_HEIGHT, TITAN_SHOULDER, TITAN_STEP_LIFT } from '@/sim/consts'
 import { aimsReticle, seatHint } from '@/seathints'
 import { vehicleDef } from '@/sim/vehicles'
 import type { Titan } from '@/entities/units'
@@ -38,7 +38,10 @@ describe('TitanModel', () => {
   it('is cheap enough to draw, is what its kind builds, and has a fist to move', () => {
     const titan = kindView(KIND_TITAN).model(1)
     expect(titan).toBeInstanceOf(TitanModel)
-    expect(triangleCount(titan.root)).toBeLessThan(3000)
+    // Its big plates are cut into a 1.2 m grid for the scars' dents to press in (build_titan.py's
+    // DENT_GRID): about 23,000 triangles, which cost 0.06 ms more than the 3,000 of the plain boxes with
+    // a Titan filling a 2268×1258 frame.
+    expect(triangleCount(titan.root)).toBeLessThan(25_000)
     expect(vehicleDef(KIND_TITAN).fists).toBe(true)
     expect(vehicleDef(KIND_TITAN).board).not.toBeNull()
     titan.dispose()
@@ -137,7 +140,7 @@ describe('TitanModel', () => {
     expect(slam!.speed).toBeCloseTo(30, 3)
     expect(slam!.at).toEqual([STANDING[0], 0, STANDING[2]])
     expect(titan.takeSlam()).toBeNull()
-    expect(seatView(KIND_TITAN, 0).gauges).toEqual(['air'])
+    expect(seatView(KIND_TITAN, 0).gauges).toEqual(['air', 'heat', 'ammo', 'tubes'])
     now.mockRestore()
     titan.dispose()
   })
@@ -170,10 +173,9 @@ describe('a Titan under mouse and keyboard', () => {
   it('holds both fists up in a guard, open, towards what it looks at', () => {
     const hands = new TitanHands().step(0, aim, HULL, IDENTITY)
     expect(hands.flags).toBe(HANDS_REACH_LEFT | HANDS_REACH_RIGHT)
-    for (const hand of [0, 1]) {
-      expect(fist(hands, hand).distanceTo(shoulder(hand))).toBeLessThan(TITAN_REACH * 0.6)
-      expect(fist(hands, hand).z).toBeLessThan(-5)
-    }
+    // The left close in; the right, with the gun, held out to lay it.
+    expect(fist(hands, 0).distanceTo(shoulder(0))).toBeLessThan(TITAN_REACH * 0.6)
+    for (const hand of [0, 1]) expect(fist(hands, hand).z).toBeLessThan(-5)
   })
 
   it('throws a closed fist at the point on a click, and brings it back when it is let go', () => {
@@ -201,14 +203,43 @@ describe('a Titan under mouse and keyboard', () => {
     const local = new Vector3(near.x, near.y - HULL[1], near.z)
     expect(fist(reach, 0).x).toBeLessThan(local.x - 2.5)
     expect(fist(reach, 1).x).toBeGreaterThan(local.x + 2.5)
-    expect(fist(reach, 1).distanceTo(local)).toBeLessThan(4)
-    const grip = controller.step(BUTTON_RUN | BUTTON_ALT, near, HULL, IDENTITY)
-    expect(grip.flags & HANDS_GRIP_RIGHT).not.toBe(0)
-    expect(fist(grip, 1).distanceTo(fist(reach, 1))).toBeLessThan(1e-6)
-    const carry = controller.step(BUTTON_ALT, near, HULL, IDENTITY)
-    expect(carry.flags & HANDS_GRIP_RIGHT).not.toBe(0)
-    expect(fist(carry, 1).distanceTo(shoulder(1))).toBeLessThan(TITAN_REACH * 0.6)
-    expect(controller.step(0, near, HULL, IDENTITY).flags & HANDS_GRIP_RIGHT).toBe(0)
+    expect(fist(reach, 0).distanceTo(local)).toBeLessThan(4)
+    // The left hand grips: the right holds the gun.
+    const grip = controller.step(BUTTON_RUN | BUTTON_FIRE, near, HULL, IDENTITY)
+    expect(grip.flags & HANDS_GRIP_LEFT).not.toBe(0)
+    expect(fist(grip, 0).distanceTo(fist(reach, 0))).toBeLessThan(1e-6)
+    const carry = controller.step(BUTTON_FIRE, near, HULL, IDENTITY)
+    expect(carry.flags & HANDS_GRIP_LEFT).not.toBe(0)
+    expect(fist(carry, 0).distanceTo(shoulder(0))).toBeLessThan(TITAN_REACH * 0.6)
+    expect(controller.step(0, near, HULL, IDENTITY).flags & HANDS_GRIP_LEFT).toBe(0)
+  })
+
+  it('holds the gun fist up with its forearm laid on the point, open, and keeps it there while it fires', () => {
+    const controller = new TitanHands()
+    const local = new Vector3(aim.x, aim.y - HULL[1], aim.z)
+    const pole = new Vector3(TITAN_ELBOW_POLE[0], TITAN_ELBOW_POLE[1], TITAN_ELBOW_POLE[2])
+    for (const buttons of [0, BUTTON_ALT]) {
+      const hands = controller.step(buttons, aim, HULL, IDENTITY)
+      expect(hands.flags & HANDS_GRIP_RIGHT).toBe(0)
+      // The forearm as the model bends it points at the point.
+      const joint = new Vector3()
+      const end = new Vector3()
+      bend(shoulder(1), fist(hands, 1), TITAN_UPPER_ARM_LENGTH, TITAN_FOREARM_LENGTH, pole, joint, end)
+      const along = end.clone().sub(joint).normalize()
+      expect(along.dot(local.clone().sub(end).normalize())).toBeGreaterThan(0.995)
+      expect(fist(hands, 1).distanceTo(shoulder(1))).toBeLessThan(TITAN_REACH)
+    }
+  })
+
+  it('throws the gun fist as a punch on Shift and a right click, and never grips with it', () => {
+    const controller = new TitanHands()
+    controller.step(BUTTON_RUN, aim, HULL, IDENTITY)
+    const punch = controller.step(BUTTON_RUN | BUTTON_ALT, aim, HULL, IDENTITY)
+    expect(punch.flags & HANDS_GRIP_RIGHT).not.toBe(0)
+    expect(fist(punch, 1).distanceTo(shoulder(1))).toBeGreaterThan(TITAN_REACH)
+    const near = new Vector3(8, TITAN_RIDE_HEIGHT - 8, -14)
+    controller.step(BUTTON_RUN, near, HULL, IDENTITY)
+    expect(controller.step(BUTTON_RUN, near, HULL, IDENTITY).flags & HANDS_GRIP_RIGHT).toBe(0)
   })
 
   it('keeps a fist at its side when the look is behind it', () => {
@@ -220,7 +251,11 @@ describe('a Titan under mouse and keyboard', () => {
     const seat = seatView(KIND_TITAN, 0)
     expect(seat.rig.name).toBe('titan')
     expect(aimsReticle(seat.role)).toBe(true)
-    expect(seatHint(seat.role, { ammo: null, reload: 1, range: 0, canSwitchSeat: false, jammed: false, heat: null })).toContain('punch')
+    const hint = seatHint(seat.role, { ammo: 'AP', reload: 1, range: 0, canSwitchSeat: false, jammed: false, heat: 0, tubes: { loaded: 3, clear: true } })
+    expect(hint).toContain('punch')
+    expect(hint).toContain('cannon')
+    expect(hint).toContain('3 missiles ready')
+    expect(seat.gauges).toContain('tubes')
   })
 })
 

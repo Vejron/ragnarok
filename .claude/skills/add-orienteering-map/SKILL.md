@@ -56,7 +56,7 @@ Then look at `<scratch>/minimap.webp` with the Read tool. The map should sit whe
 
 ## 5. Put the world in place
 
-Either rebuild into the world itself (the same command with `--out worlds/<name>/world.msgpack`, or **Generate world** in the editor), or, when only the minimap changed, copy `<scratch>/minimap.webp` into `worlds/<name>/`. The client loads `minimap.webp` before an older `minimap.png`. A local server needs a restart to pick up a rebuilt world.
+Either rebuild into the world itself (the same command with `--out worlds/<name>/world.msgpack`, or **Generate world** in the editor), or, when only the minimap changed, copy `<scratch>/minimap.webp` into `worlds/<name>/`. A local server needs a restart to pick up a rebuilt world.
 
 ## 6. Commit and deploy
 

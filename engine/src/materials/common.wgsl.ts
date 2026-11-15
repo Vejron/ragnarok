@@ -1,4 +1,5 @@
 import { CRATERS_WGSL } from './craters.wgsl'
+import { SCARS_WGSL } from './scars.wgsl'
 import { LIGHTS_WGSL } from './lights.wgsl'
 import { SKY_WGSL } from './sky.wgsl'
 
@@ -53,7 +54,7 @@ struct Frame {
 struct Object {
   model: mat4x4f,
   tint: vec4f,
-  // material index, flags (OBJ_*), first bone + 1 (0 when not skinned), unused.
+  // material index, flags (OBJ_*), first bone + 1 (0 when not skinned), scar slot + 1 (0 when unscarred: Mesh.scars).
   misc: vec4u,
 }
 
@@ -110,7 +111,15 @@ fn normalMatrix(m: mat4x4f) -> mat3x3f {
   return cof * sign(dot(c0, cof[0]));
 }
 
+// A point in the world in the frame of an unskinned object with \`model\`, whose axes are square to one
+// another (any rotation and scale, no shear): its own position there, without inverting the matrix.
+fn toObject(m: mat4x4f, world: vec3f) -> vec3f {
+  let q = world - m[3].xyz;
+  return vec3f(dot(m[0].xyz, q) / dot(m[0].xyz, m[0].xyz), dot(m[1].xyz, q) / dot(m[1].xyz, m[1].xyz), dot(m[2].xyz, q) / dot(m[2].xyz, m[2].xyz));
+}
+
 ${CRATERS_WGSL}
+${SCARS_WGSL}
 ${LIGHTS_WGSL}
 ${SKY_WGSL}
 `

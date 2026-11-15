@@ -27,9 +27,12 @@ The game can be shown in a VR headset, and a Titan ([VEHICLES-XIV.md](VEHICLES-X
 | Right thumbstick | Left and right turn too |
 | Duck your head 25 cm | It crouches, which brings its fists to the ground |
 | A button, right hand | It leaps; held in the air, its foot thrusters fire while the fuel lasts |
+| Right index trigger | The autocannon in its right fist fires, along its forearm |
+| Left index trigger | A missile goes up from its left shoulder, and you fly it as the submarine's officer does; the Titan stands meanwhile |
 
 - Its arms follow yours at their own pace: they swing at 45 m/s at most, so a fast jab of yours becomes a long heavy punch.
 - A fist moving at 8 m/s or more hits only if it is closed. An open hand does no harm, so reach for a soldier open-handed and then squeeze.
+- The right hand holds the gun, so squeezing it never picks anything up: it only makes a fist to punch with.
 
 ## How it is put together
 

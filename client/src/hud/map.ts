@@ -24,21 +24,17 @@ export interface MapMarks {
   pulse: number
 }
 
-/** The importer's map picture, by name: a WebP now, a PNG from a world imported before. Tried in this order. */
-export const MAP_FILES = ['minimap.webp', 'minimap.png'] as const
+/** The importer's map picture, by name. */
+export const MAP_FILE = 'minimap.webp'
 
-/** The world's map picture from the folder at `base` (`MAP_FILES`, the first there is), or null when the world has none. */
-export async function loadMap(base: string): Promise<HTMLImageElement | null> {
-  for (const file of MAP_FILES) {
-    const image = await new Promise<HTMLImageElement | null>((resolve) => {
-      const image = new Image()
-      image.onload = () => resolve(image)
-      image.onerror = () => resolve(null)
-      image.src = `${base}${file}`
-    })
-    if (image) return image
-  }
-  return null
+/** The world's map picture from the folder at `base` (`MAP_FILE`), or null when the world has none. */
+export function loadMap(base: string): Promise<HTMLImageElement | null> {
+  return new Promise((resolve) => {
+    const image = new Image()
+    image.onload = () => resolve(image)
+    image.onerror = () => resolve(null)
+    image.src = `${base}${MAP_FILE}`
+  })
 }
 
 /**

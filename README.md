@@ -33,6 +33,7 @@ The docs are in [docs/](docs/).
 - [BUILDING.md](docs/BUILDING.md): placing cubes with bricks
 - [INTERIORS.md](docs/INTERIORS.md): floors and stairs inside every house big enough, worked out from its footprint, with its door open and its floors blasted like its walls
 - [CRATERS.md](docs/CRATERS.md) and [SCORCH.md](docs/SCORCH.md): shells digging the ground, and the marks they leave
+- [HULL-DAMAGE.md](docs/HULL-DAMAGE.md): what a round leaves on a vehicle: dents, soot, holes ringed with blued steel and gouges, drawn by the mesh's own shader, and the blow that rocks it, a Titan too
 - [DRONES.md](docs/DRONES.md): FPV and loitering drones
 - [GYRO-AIM.md](docs/GYRO-AIM.md): aiming on a phone by turning it
 - [BACKPACK.md](docs/BACKPACK.md): backpack mode
@@ -49,7 +50,7 @@ The docs are in [docs/](docs/).
 - [VEHICLES-XI.md](docs/VEHICLES-XI.md): the seaplane, an amphibious biplane on pontoons that lands on water, armed as the triplane is
 - [VEHICLES-XII.md](docs/VEHICLES-XII.md): the Strf 90, a CV90-style infantry fighting vehicle with a 40 mm autocannon firing armour-piercing or high explosive, and two troops who leave by the rear ramp
 - [VEHICLES-XIII.md](docs/VEHICLES-XIII.md): the snowracer, a steerable sled for two that slides down ski slopes about as fast as a snowmobile drives, with a small motor to creep back up
-- [VEHICLES-XIV.md](docs/VEHICLES-XIV.md): the Titan, a robot fifty metres high whose pilot moves its fists: it punches, picks up soldiers and vehicles and throws them, crushes what it steps on, and flies a while on the thrusters in its feet to come down as a blast
+- [VEHICLES-XIV.md](docs/VEHICLES-XIV.md): the Titan, a robot fifty metres high whose pilot moves its fists: it punches, picks up soldiers and vehicles and throws them, crushes what it steps on, fires a 40 mm autocannon from its right fist and guided missiles from tubes on its left shoulder, and flies a while on the thrusters in its feet to come down as a blast
 - [VR.md](docs/VR.md): the game in a VR headset through WebXR on WebGPU, to pilot a Titan with your own hands; built but not yet run on a headset
 - [LIFTS.md](docs/LIFTS.md): ski lifts from OpenStreetMap, every one built as a chair lift whose chairs run on the server's clock, boarded with E at a station and ridden round until you jump off
 
@@ -143,5 +144,7 @@ DOMAIN="$TARGET_DOMAIN" scripts/deploy.sh "$SSH_USER@$SSH_HOST"
 ```
 
 To ship a world other than `client/public`, set `WORLD_DIR`, e.g. `WORLD_DIR=worlds/ersboda-alidhem`; its `area.json` and `scenario.json` go in with it.
+
+The deploy writes a brotli copy (`.br`) of every compressible file in `client/dist`, the world's tiles included (`client/scripts/precompress.mjs`), and the server sends it to any browser that accepts brotli. Only brotli is written: the server takes encodings in the order the browser lists them, and browsers list gzip first.
 
 Commit first: the image is tagged with the current `HEAD`. A protocol bump shows players with the old page open the "reload" banner once the new container is up.

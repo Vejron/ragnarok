@@ -27,7 +27,7 @@ pub use crate::vehicles::titan::*;
 pub use crate::vehicles::walker::*;
 
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
-pub const PROTOCOL_VERSION: u8 = 79;
+pub const PROTOCOL_VERSION: u8 = 80;
 
 /// Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
 /// `crate::vehicles`.
@@ -149,7 +149,8 @@ pub const BUTTON_HITCH: u16 = 1 << 9;
 /// Held by a mortar's gunner to walk the range dial out and in (W and S).
 pub const BUTTON_RANGE_UP: u16 = 1 << 10;
 pub const BUTTON_RANGE_DOWN: u16 = 1 << 11;
-/// One press: open or cut the parachute while in the air. Like a jump it is not repeated.
+/// One press: open or cut the parachute while in the air, or, for a Titan's pilot, send up a missile
+/// from its shoulder (G). Like a jump it is not repeated.
 pub const BUTTON_CHUTE: u16 = 1 << 12;
 /// One press, at a gun that has two kinds of round: load the other one (Q). Like a jump it is not repeated.
 pub const BUTTON_AMMO: u16 = 1 << 13;
@@ -650,6 +651,25 @@ pub const AP_BLAST_DAMAGE: f32 = 70.0;
 pub const AP_BLAST_KNOCK: f32 = 8.0;
 pub const CRATER_AP_RADIUS: f32 = 1.6;
 pub const CRATER_AP_DEPTH: f32 = 0.3;
+/// The knock a round gives the vehicle it strikes, where it strikes it (`Physics::strike_car`): the
+/// change in the whole vehicle's speed, m/s, pushed at the point it met, so a hit high on a tall hull
+/// rocks it. On top of what its burst does (the blast pushes from the middle). An armour-piercing
+/// shell's is the hardest, solid steel at speed; then a cannonball's and a bomb's, a high-explosive
+/// shell's, a rocket's and a mortar bomb's, and an autocannon's rounds'. Bullets give none.
+pub const AP_HIT_KNOCK: f32 = 0.6;
+pub const BALL_HIT_KNOCK: f32 = 0.5;
+pub const BOMB_HIT_KNOCK: f32 = 0.5;
+pub const SHELL_HIT_KNOCK: f32 = 0.4;
+pub const ROCKET_HIT_KNOCK: f32 = 0.3;
+pub const MORTAR_HIT_KNOCK: f32 = 0.3;
+pub const CANNON_AP_HIT_KNOCK: f32 = 0.25;
+pub const CANNON_HIT_KNOCK: f32 = 0.15;
+/// How far round the point where an autocannon's armour-piercing round strikes a wall it punches the
+/// wall out, metres: a cell or two (`carve::CELL`, 0.72 m) a round. Its little charge is too small to
+/// bite a wall by itself (`CARVE_MIN_RADIUS` in `combat.rs`).
+pub const CANNON_AP_WALL_HOLE: f32 = 0.85;
+/// The share of its knock a round that glances off gives.
+pub const RICOCHET_KNOCK_SHARE: f32 = 0.3;
 /// Most shot events one snapshot carries; the rest are cosmetic and dropped. A shotgun pull is ten.
 pub const MAX_SHOT_EVENTS: usize = 24;
 /// Most hull marks (`S_MARKS`) a player is sent with one snapshot.

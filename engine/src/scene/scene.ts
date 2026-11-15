@@ -1,5 +1,6 @@
 import { PointLights } from './lights'
 import { Craters } from './craters'
+import { Scars } from './scars'
 import { Color, Vec3 } from '../math/vec'
 import { Node } from './node'
 import type { Sky } from './sky'
@@ -141,6 +142,8 @@ export class Scene extends Node {
   readonly lights = new PointLights()
   /** Craters the ground's materials (`craters: true`) are marked by: SCORCH.md. */
   readonly craters = new Craters()
+  /** Damage drawn on meshes' surfaces (`Mesh.scars`): HULL-DAMAGE.md. */
+  readonly scars = new Scars()
   toneMapping: ToneMapping = 'none'
   exposure = 1
 }

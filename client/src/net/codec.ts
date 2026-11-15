@@ -125,6 +125,8 @@ export const MARK_HOLE = 2
 export const MARK_PIERCED = 3
 /** Set on a hole's style when its round hurt a part inside: the hole smoke and fire come out of. Mirrors `MARK_VITAL`. */
 export const MARK_VITAL = 1 << 7
+/** Set on a glance's or a scuff's style when its round was a shell's, not a bullet's: a dent worth keeping. Mirrors `MARK_HEAVY`. */
+export const MARK_HEAVY = 1 << 6
 
 /** `Armor`'s result: what a vehicle's armour made of a round. Mirrors `ARMOR_*`. */
 export const ARMOR_RICOCHET = 0

@@ -10,6 +10,7 @@
 
 use super::*;
 use crate::TREE_GROUP;
+use shared::vehicles::titan::bend;
 use shared::vehicles::{Feet, Step};
 
 /// The collision group of a giant's limbs. A giant's own hull leaves this group out of what it touches,
@@ -138,6 +139,11 @@ impl Limbs {
     /// Whether `collider` is one of these limbs.
     pub(super) fn owns(&self, collider: ColliderHandle) -> bool {
         self.fists.iter().any(|fist| fist.collider == collider) || self.feet.as_ref().is_some_and(|feet| feet.iter().any(|foot| foot.collider == collider))
+    }
+
+    /// Its fists' and feet's colliders.
+    pub(super) fn colliders(&self) -> impl Iterator<Item = ColliderHandle> + '_ {
+        self.fists.iter().map(|fist| fist.collider).chain(self.feet.iter().flatten().map(|foot| foot.collider))
     }
 
     /// The feet it stands on, once they have been found under it.
@@ -293,6 +299,55 @@ impl Physics {
             weight: limbs.stance.weight,
             impact: limbs.stance.impact,
         })
+    }
+
+    /// The bones of vehicle `id`'s limbs as rounds meet them, in the world: each a capsule from one end
+    /// to the other, of a radius, metres. Empty for a vehicle without limbs.
+    pub fn hit_bones(&self, id: u32) -> Vec<([f32; 3], [f32; 3], f32)> {
+        self.cars.get(&id).map_or_else(Vec::new, |car| self.bones(car).into_iter().map(|(from, to, radius)| (from.into(), to.into(), radius)).collect())
+    }
+
+    /// Where the forearm of vehicle `id`'s arm `hand` (0 the left, 1 the right) is, in the world, bent as
+    /// the client draws it: its elbow and the middle of its fist. A gun held in that fist fires along it.
+    pub fn forearm(&self, id: u32, hand: usize) -> Option<([f32; 3], [f32; 3])> {
+        let car = self.cars.get(&id)?;
+        let pose = *self.bodies.get(car.body)?.position();
+        let (_, elbow, end) = arm(car, hand)?;
+        Some(((pose * Vector::from(elbow)).into(), (pose * Vector::from(end)).into()))
+    }
+
+    /// The bones of `car`'s limbs, in the world, bent as the client draws them (`TitanModel.update` in
+    /// `client/src/render/titan.ts`): each upper arm from its shoulder to its elbow and each forearm on
+    /// to its fist, and each thigh from its hip to its knee and each shin on to the ankle over where its
+    /// foot is (lifted, while it steps). A foot not yet found under it has no leg.
+    pub(super) fn bones(&self, car: &Car) -> Vec<(Vector, Vector, f32)> {
+        let (Some(limbs), Some(body)) = (&car.limbs, self.bodies.get(car.body)) else { return Vec::new() };
+        let pose = *body.position();
+        let world = |point: [f32; 3]| pose * Vector::from(point);
+        let mut bones = Vec::with_capacity(8);
+        if let Some(arms) = car.spec.arms {
+            for index in 0..limbs.fists.len() {
+                let Some((shoulder, elbow, end)) = arm(car, index) else { continue };
+                bones.push((world(shoulder), world(elbow), arms.upper_radius));
+                bones.push((world(elbow), world(end), arms.fore_radius));
+            }
+        }
+        if let (Some(gait), Some(feet)) = (car.spec.gait, &limbs.feet)
+            && let Some(shape) = gait.feet
+        {
+            for (index, foot) in feet.iter().enumerate().filter(|(_, foot)| foot.at.x != f32::MAX) {
+                let hip = [side(index) * gait.foot_half, -car.spec.half_extents[1], 0.0];
+                let up = match limbs.stance.step {
+                    Step::Swinging(stepping, progress) if stepping == index => lifted(&shape, progress),
+                    _ => 0.0,
+                };
+                let ankle = pose.inverse() * (foot.at + Vector::new(0.0, up + shape.ankle, 0.0));
+                let (knee, end) = bend(hip, ankle.into(), shape.thigh, shape.shin, shape.knee_pole);
+                bones.push((world(hip), world(knee), shape.thigh_radius));
+                bones.push((world(knee), world(end), shape.shin_radius));
+            }
+        }
+        bones
     }
 
     /// The vehicles the ball of `radius` at `centre` overlaps, but for `but`: what a fist or a foot is on.
@@ -565,4 +620,14 @@ impl Physics {
             }
         }
     }
+}
+
+/// Arm `index` of `car` as the client bends it, in the hull frame: its shoulder, its elbow and the end
+/// of its forearm, at the fist's middle when that is within reach. `None` for a car without arms.
+fn arm(car: &Car, index: usize) -> Option<([f32; 3], [f32; 3], [f32; 3])> {
+    let (arms, limbs) = (car.spec.arms?, car.limbs.as_ref()?);
+    let fist = limbs.fists.get(index)?;
+    let shoulder: [f32; 3] = mirrored(arms.shoulder, index).into();
+    let (elbow, end) = bend(shoulder, fist.at.into(), arms.upper, arms.fore, mirrored(arms.elbow_pole, index).into());
+    Some((shoulder, elbow, end))
 }

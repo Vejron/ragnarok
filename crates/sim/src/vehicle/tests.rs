@@ -2395,3 +2395,43 @@ fn a_titan_put_back_in_the_air_as_a_snapshot_has_it_flies_on_the_same() {
     println!("replayed in the air {off} m off");
     assert!(off < 0.05 && physics.limbs(1).unwrap().step == shared::vehicles::Step::Airborne, "half a second on, it is where it was the first time: {off} m off");
 }
+
+/// 400 m square of 2 m cells: dry at 0 north of z = 0, then a lake whose bed drops at 1 in 4 to 10 m
+/// deep, its still surface at 0.
+fn deep_lake() -> WorldFile {
+    let side = 201u32;
+    let mut heights = Vec::new();
+    let mut water = Vec::new();
+    for j in 0..side {
+        for _ in 0..side {
+            let z = j as f32 * 2.0 - 200.0;
+            let ground = if z > 0.0 { 0.0 } else { -(-z * 0.25).min(10.0) };
+            heights.push((ground * 100.0).round() as i32);
+            water.push(if ground < 0.0 { 0 } else { shared::world::NO_WATER });
+        }
+    }
+    WorldFile { ground: shared::terrain::Ground { origin: -20_000, cell: 200, side, heights }, water, ..flat() }
+}
+
+#[test]
+fn a_titan_walks_into_a_lake_on_its_bed_at_its_full_speed() {
+    let mut physics = Physics::new(&deep_lake()).unwrap();
+    physics.add_car(1, KIND_TITAN, [0.0, TITAN_LEG_LENGTH + TITAN_HALF_EXTENTS[1] + 0.5, 40.0], 0.0);
+    run(&mut physics, COAST, 300);
+    // Walked from the shore to where the lake is 10 m deep.
+    let mut slowest = f32::MAX;
+    let mut pose = physics.car_pose(1).unwrap();
+    while pose.position[2] > -120.0 {
+        pose = run(&mut physics, CarControls { throttle: 1.0, ..DRIVEN }, 1);
+        if pose.position[2] < -10.0 {
+            slowest = slowest.min(pose.forward_speed);
+        }
+    }
+    let pose = run(&mut physics, COAST, 300);
+    let limbs = physics.limbs(1).unwrap();
+    println!("titan in the lake: {pose:?}, feet {:?}, slowest {slowest} m/s", limbs.feet);
+    assert!(slowest > 0.8 * TITAN_MAX_SPEED, "the water does not hold it back: {slowest} m/s");
+    assert!(limbs.feet.iter().all(|foot| (foot[1] + 10.0).abs() < 0.1), "both feet stand on the bed: {:?}", limbs.feet);
+    // Its feet are a stride apart, so it stands a little lower than on both under its hips.
+    assert!((pose.position[1] - (TITAN_RIDE_HEIGHT - 10.0)).abs() < 1.5, "its hull rides its height over the bed, not the surface: {pose:?}");
+}

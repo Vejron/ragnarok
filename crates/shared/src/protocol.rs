@@ -206,6 +206,9 @@ pub const MARK_PIERCED: u8 = 3;
 /// Set on a hole's style when the round that made it hurt a part inside (the engine, the fuel): the
 /// hole the smoke and fire come out of.
 pub const MARK_VITAL: u8 = 1 << 7;
+/// Set on a glance's or a scuff's style when the round was a shell or a cannon's (`SPALL_CALIBRE` or
+/// more), not a bullet: a dent and a scorch worth keeping, where a bullet's is a chip in the paint.
+pub const MARK_HEAVY: u8 = 1 << 6;
 
 /// `Armor::result`: what a vehicle's armour made of a round.
 pub const ARMOR_RICOCHET: u8 = 0;

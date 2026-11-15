@@ -47,7 +47,7 @@ export interface SeatView {
   /** Its occupant stands rather than sits: a technical's gunner, on their feet in the bed behind the gun. */
   stand?: true
   /** The gauges the HUD shows from it. */
-  gauges?: readonly ('air' | 'eggs' | 'cockpit' | 'range' | 'ammo' | 'pintle' | 'heat' | 'wind')[]
+  gauges?: readonly ('air' | 'eggs' | 'cockpit' | 'range' | 'ammo' | 'pintle' | 'heat' | 'wind' | 'tubes')[]
   /** The arc drawn ahead of what it fires: a mortar's bomb, or where a plane's bomb would land. */
   arc?: 'mortar' | 'bombs'
 }

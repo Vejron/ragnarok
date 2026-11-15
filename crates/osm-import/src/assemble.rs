@@ -57,7 +57,7 @@ pub(crate) fn point_in_polygon([x, z]: P, polygon: &[P]) -> bool {
     inside
 }
 
-fn distance_to_segment([px, pz]: P, [ax, az]: P, [bx, bz]: P) -> f64 {
+pub(crate) fn distance_to_segment([px, pz]: P, [ax, az]: P, [bx, bz]: P) -> f64 {
     let (dx, dz) = (bx - ax, bz - az);
     let length = dx * dx + dz * dz;
     let t = if length > 0.0 { (((px - ax) * dx + (pz - az) * dz) / length).clamp(0.0, 1.0) } else { 0.0 };
@@ -310,8 +310,9 @@ type Outline = (Vec<P>, f64, Option<[u32; 2]>, Option<f64>);
 /// it into square tiles of `tile_size` metres.
 ///
 /// `ground` is the terrain over the whole grid of tiles (see `crate::ground`), or flat.
-/// `trees` are `(position, TREE_*, height, crown radius, planted)`; those that fall on a building or
-/// a road or a track are dropped. A tree is solid (has a trunk collider) when it is planted, in the
+/// `trees` are `(position, TREE_*, height, crown radius, planted)`; those that fall on a road or a
+/// track, stand too near a building (`thin::clear_of_walls`), or are thinned out of the woods
+/// (`thin::woods`) are dropped. A tree is solid (has a trunk collider) when it is planted, in the
 /// register, or stands within `SOLID_REACH` of a road, a track or a building.
 /// `rails` are `(centre line, gauge, RAIL_*)`; `rail_bridges` carry tracks and are built like road
 /// bridges, but draw no road. No rocks or shrubs are made up inside `mapped`, an orienteering map's outline.
@@ -506,6 +507,10 @@ fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collecti
     let roads: Vec<(&[P], f64)> = roads.iter().map(|(points, width, _)| (&points[..], *width)).chain(rails.iter().map(|(points, gauge, _)| (&points[..], ballast(*gauge)))).chain(ski.iter().map(|points| (&points[..], SKI_TRAIL_WIDTH))).collect();
     let road_boxes: Vec<[f64; 4]> = roads.iter().map(|(points, width)| reach_box(points, width / 2.0 + SOLID_REACH)).collect();
     let footprint_boxes: Vec<[f64; 4]> = footprints.iter().map(|footprint| reach_box(footprint, SOLID_REACH)).collect();
+    // Each tree that may stand where it is, with whether it is near a road or building.
+    let mut standing: Vec<(crate::thin::Planted, bool)> = Vec::new();
+    // Trees dropped for standing against a house: `[from the laser, planted]`.
+    let mut against_walls = [0usize; 2];
     for (at, kind, height, crown, planted) in trees.into_iter().chain(props) {
         if at[0].abs() > inner || at[1].abs() > inner {
             continue;
@@ -528,11 +533,25 @@ fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collecti
         if on_building || on_road || on_bridge || on_course {
             continue;
         }
-        if !near {
-            near = footprints.iter().zip(&footprint_boxes).any(|(footprint, b)| {
-                in_box(b, at) && (0..footprint.len()).any(|i| distance_to_segment(at, footprint[i], footprint[(i + 1) % footprint.len()]) < SOLID_REACH)
-            });
+        let wall = footprints
+            .iter()
+            .zip(&footprint_boxes)
+            .filter(|(_, b)| in_box(b, at))
+            .flat_map(|(footprint, _)| (0..footprint.len()).map(|i| distance_to_segment(at, footprint[i], footprint[(i + 1) % footprint.len()])))
+            .fold(f64::MAX, f64::min);
+        // A tree keeps its trunk and its crown off a house; rocks and shrubs may stand against one.
+        if crate::thin::is_tree(kind) && !crate::thin::clear_of_walls(wall, crown) {
+            against_walls[usize::from(planted)] += 1;
+            continue;
         }
+        standing.push(((at, kind, height, crown, planted), near || wall < SOLID_REACH));
+    }
+    // The woods are thinned among the trees that stand, so none is crowded out by one that does not.
+    let keep = crate::thin::woods(&standing.iter().map(|(tree, _)| *tree).collect::<Vec<_>>());
+    if !standing.is_empty() {
+        eprintln!("trees: {} against a house ({} of them planted), {} thinned out of the woods", against_walls[0] + against_walls[1], against_walls[1], keep.iter().filter(|keep| !**keep).count());
+    }
+    for (((at, kind, height, crown, _), near), _) in standing.into_iter().zip(keep).filter(|(_, keep)| *keep) {
         let tile = tiles.entry(manifest.tile_at(cm(at[0]), cm(at[1]))).or_default();
         tile.trees.push(Tree {
             x: cm(at[0]),
@@ -1345,6 +1364,8 @@ pub fn synthetic_city(half: f64, tile_size: f64, ground: Ground, water: Placed) 
     let mut buildings = Vec::new();
     let mut roads = Vec::new();
     let mut covers = Vec::new();
+    // Each park's corner and side, metres.
+    let mut parks = Vec::new();
     let count = (half * 2.0 / PITCH).floor() as i32;
     let start = -(count as f64) * PITCH / 2.0;
     let mut seed: u64 = 0x2545_f491;
@@ -1367,6 +1388,7 @@ pub fn synthetic_city(half: f64, tile_size: f64, ground: Ground, water: Placed) 
             if next() < 0.15 {
                 // A little park.
                 covers.push((COVER_PARK, vec![vec![[bx, bz], [bx + size, bz], [bx + size, bz + size], [bx, bz + size]]]));
+                parks.push(([bx, bz], size));
                 continue;
             }
             let half_size = size / 2.0 - 1.0;
@@ -1401,6 +1423,14 @@ pub fn synthetic_city(half: f64, tile_size: f64, ground: Ground, water: Placed) 
             let kind = (i + j) as u8 % 7;
             let (height, crown) = crate::trees::size(kind, (i * 100 + j) as u64, None);
             trees.push(([line + STREET / 2.0 + 1.5, along], kind, height, crown, true));
+        }
+    }
+    // A loose ring of trees in each park, round an open middle.
+    for (k, ([x, z], size)) in parks.into_iter().enumerate() {
+        for (n, (u, v)) in [(0.2, 0.2), (0.5, 0.15), (0.8, 0.25), (0.85, 0.55), (0.75, 0.85), (0.45, 0.8), (0.15, 0.7), (0.2, 0.45)].into_iter().enumerate() {
+            let kind = ((k + n) % 7) as u8;
+            let (height, crown) = crate::trees::size(kind, (k * 10 + n) as u64, None);
+            trees.push(([x + u * size, z + v * size], kind, height, crown, true));
         }
     }
     // A bridge over the pond (`synthetic_water`), so the offline world has one to draw and cross.
@@ -1582,6 +1612,23 @@ mod tests {
         assert_eq!(trees.len(), 1, "the tree on the ballast is dropped");
         assert!(trees[0].solid, "the one beside the line is near it");
         assert!(built.manifest.spawns.iter().all(|&[_, z]| (z - 1000).abs() > 100), "no spawn on the track");
+    }
+
+    #[test]
+    fn trees_keep_their_trunks_and_crowns_off_a_house_and_shrubs_need_not() {
+        // A 10 m house with its west wall at x = 20; trees west of it, along one line.
+        let house = (vec![[20.0, 20.0], [30.0, 20.0], [30.0, 30.0], [20.0, 30.0]], 6.0, None, None, None);
+        let trees = vec![
+            ([19.0, 22.0], TREE_BIRCH, 8.0, 0.8, true),
+            ([17.5, 25.0], TREE_BIRCH, 8.0, 3.0, false),
+            ([16.0, 28.0], TREE_BIRCH, 8.0, 3.0, false),
+            ([19.0, 26.0], TREE_BUSH, 1.5, 1.0, false),
+        ];
+        let built = assemble(Frame::default(), 150.0, 100.0, None, vec![house], vec![], vec![], vec![], vec![], vec![], vec![], trees, &[], Ground::default(), Placed::default());
+        let mut standing: Vec<(i32, u8)> = built.tiles.values().flat_map(|tile| &tile.trees).map(|tree| (tree.z, tree.kind)).collect();
+        standing.sort();
+        // The planted tree's trunk is a metre from the wall, the next one's crown reaches it.
+        assert_eq!(standing, [(2600, TREE_BUSH), (2800, TREE_BIRCH)]);
     }
 
     #[test]

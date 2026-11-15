@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { encode } from '@msgpack/msgpack'
 import { RAIL_TRAIN, RAIL_TRAM, ROOF_GABLE, WORLD_BASE, decodeManifest, decodeTile, worldHash } from '@/world'
 import { buildingColors } from '@/render/buildingmesh'
+import { NO_CELLS } from './worlds'
 
 // The committed synthetic world (`fixtures/world/`); the real one is generated and git-ignored.
 const read = (path: string) => new Uint8Array(readFileSync(resolve(process.cwd(), '../fixtures/world', path)))
@@ -82,16 +83,29 @@ describe('world files', () => {
     expect(rails).toBeGreaterThan(0)
   })
 
-  it('decodes tracks, and a tile written before them has none', () => {
-    const fields = [[], [], [[], []], [], [], [], [], [], [], []]
-    expect(decodeTile(encode(fields)).rails).toEqual([])
-    const tile = decodeTile(encode([...fields, [[144, RAIL_TRAIN, [[0, 0], [1000, -250]]]]]))
+  /** A tile file with every field empty, `fields` put in by index (`Tile` in `world.rs`). */
+  const tileWith = (fields: Record<number, unknown>) =>
+    encode(Object.assign([[], [], [[], []], [2, new Uint8Array()], [], [], new Uint8Array(), [], [], new Uint8Array(), [], [], [], new Uint8Array(), [[], [], []]], fields))
+
+  it('decodes ground written as residuals of a plane', () => {
+    // The bytes `world.rs` pins (`ground_is_written_rounded_as_residuals_of_a_plane_through_its_neighbours`):
+    // 2 cm steps, residuals 50, 10, 20, 1 zigzagged, low bytes then high.
+    const packed = decodeTile(tileWith({ 3: [2, new Uint8Array([100, 20, 40, 2, 0, 0, 0, 0])] }))
+    expect(Array.from(packed.ground)).toEqual([1, 1.2, 1.4, 1.62].map(Math.fround))
+    // Residuals whose high byte is set: -200 steps zigzags to 399 (0x18f); the last sample adds it to the plane, -200.
+    const steep = decodeTile(tileWith({ 3: [2, new Uint8Array([0, 0x8f, 0, 0x8f, 0, 1, 0, 1])] }))
+    expect(Array.from(steep.ground)).toEqual([0, -4, 0, -8].map(Math.fround))
+  })
+
+  it('decodes tracks', () => {
+    expect(decodeTile(tileWith({})).rails).toEqual([])
+    const tile = decodeTile(tileWith({ 10: [[144, RAIL_TRAIN, [[0, 0], [1000, -250]]]] }))
     expect(tile.rails).toEqual([{ gauge: 1.44, kind: RAIL_TRAIN, points: [[0, 0], [10, -2.5]] }])
   })
 
   it('decodes a building\'s paint, and draws it in its own colours', () => {
-    const house = [600, [[0, 0], [100, 0], [100, 100]], 0, 0, 0, 0, ROOF_GABLE, [[0, 0, 0], [0, 0, 0], new Uint8Array(), new Uint8Array()]]
-    const tile = decodeTile(encode([[house, [...house, [0xf0e6cc, 0x56606e]]], [], [[], []], [], [], [], [], [], [], []]))
+    const house = [600, [[0, 0], [100, 0], [100, 100]], 0, 0, 0, 0, ROOF_GABLE, NO_CELLS]
+    const tile = decodeTile(tileWith({ 0: [[...house, null], [...house, [0xf0e6cc, 0x56606e]]] }))
     expect(tile.buildings.map((b) => b.paint)).toEqual([null, [0xf0e6cc, 0x56606e]])
     expect(buildingColors(tile, 1, 3)).toEqual({ wall: 0xf0e6cc, roof: 0x56606e })
     // Without paint the client picks from its palettes.

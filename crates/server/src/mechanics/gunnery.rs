@@ -94,8 +94,10 @@ fn work(world: &mut World, vid: u32, def: &MountDef, mut mount: Mount, pose: &Ca
     let (charged, burning) = (mount.charge, mount.beam);
     (mount.charge, mount.beam) = (0, 0);
     let Some(occupant) = world.entities.get::<Seats>(vid).and_then(|seats| seats.rider(def.seat)) else { return mount };
-    let Some(input) = world.entities.get::<Player>(occupant).map(|player| player.input) else { return mount };
-    if !def.needs.iter().all(|&need| can_work(world, vid, need, pose)) {
+    // An occupant away flying a missile they sent up from it (`Fire::Guided`) is still in its seat, but
+    // their input is the missile's.
+    let Some(input) = world.entities.get::<Player>(occupant).filter(|player| player.seat.is_some_and(|seat| seat.vehicle == vid)).map(|player| player.input) else { return mount };
+    if !def.needs.iter().all(|&need| can_work(world, vid, need, pose, &input)) {
         return mount;
     }
     let turret_yaw = world.entities.get::<Mounts>(vid).and_then(|mounts| mounts.turret().map(|turret| turret.yaw)).unwrap_or(0.0);
@@ -107,7 +109,7 @@ fn work(world: &mut World, vid: u32, def: &MountDef, mut mount: Mount, pose: &Ca
         if burning > 0 {
             mount.beam = burning - 1;
             if mount.cooldown == 0 {
-                shoot(world, vid, def, &mount, occupant, pose, turret_yaw);
+                let _ = shoot(world, vid, def, &mount, occupant, pose, turret_yaw);
                 mount.shots = mount.shots.wrapping_add(1);
                 mount.cooldown = def.cooldown;
             }
@@ -142,7 +144,8 @@ fn work(world: &mut World, vid: u32, def: &MountDef, mut mount: Mount, pose: &Ca
     if !def.needs.iter().all(|&need| can_fire(world, vid, need, &mount, pose)) {
         return mount;
     }
-    let dir = shoot(world, vid, def, &mount, occupant, pose, turret_yaw);
+    // Nothing went (no fist to fire from, no room for a missile): nothing is spent.
+    let Some(dir) = shoot(world, vid, def, &mount, occupant, pose, turret_yaw) else { return mount };
     if def.recoil != 0.0 {
         // The hull is shoved back along the barrel, level, so it does not dig in.
         world.physics.kick_car(vid, [-dir[0] * def.recoil, 0.0, -dir[2] * def.recoil]);
@@ -187,10 +190,11 @@ fn height(world: &World, pose: &CarPose) -> f32 {
 }
 
 /// Whether a mount can be aimed and fired at all: without this it holds still.
-fn can_work(world: &World, vid: u32, need: Need, pose: &CarPose) -> bool {
+fn can_work(world: &World, vid: u32, need: Need, pose: &CarPose, input: &InputFrame) -> bool {
     match need {
         Need::Upright => pose.up_y >= WALKER_FALLEN_UP,
         Need::Turret => world.entities.of::<Vehicle>(vid).damage[DAMAGE_TURRET] != TURRET_GONE,
+        Need::Released(button) => input.buttons() & button == 0,
         Need::Untowed | Need::Breech | Need::Height(_) | Need::Clear(_) => true,
     }
 }
@@ -202,7 +206,7 @@ fn can_fire(world: &World, vid: u32, need: Need, mount: &Mount, pose: &CarPose) 
         Need::Breech => !super::armor::part_gone(world, vid, Part::Breech),
         Need::Height(least) => height(world, pose) > least,
         Need::Clear(arc) => mount.yaw.abs() >= arc,
-        Need::Upright | Need::Turret => true,
+        Need::Upright | Need::Turret | Need::Released(_) => true,
     }
 }
 
@@ -213,6 +217,8 @@ pub(super) fn pivot(muzzle: Muzzle, mount: &Mount, turret_yaw: f32) -> [f32; 3] 
         Muzzle::One(pivot) | Muzzle::Twin { pivot, .. } => pivot,
         Muzzle::Turns(pivots) => pivots[usize::from(mount.shots) % pivots.len()],
         Muzzle::Pintle { ring, at } => on_turret(ring, at, turret_yaw),
+        // A fist's gun is aimed by its arm (`Aim::Fixed`), never from here.
+        Muzzle::Fist { .. } => [0.0; 3],
     }
 }
 
@@ -237,7 +243,7 @@ pub(super) fn wanted(world: &World, vid: u32, def: &MountDef, occupant: u32, inp
     let camera = eye_at(world, pivot, look_dir, back, up);
     let far = match def.fire {
         Fire::Bullet { range, .. } | Fire::Beam { range, .. } => range,
-        Fire::Shell { .. } | Fire::Rocket { .. } | Fire::Drop { .. } => MOUNT_AIM_RANGE,
+        Fire::Shell { .. } | Fire::Rocket { .. } | Fire::Drop { .. } | Fire::Guided { .. } => MOUNT_AIM_RANGE,
     };
     let start = vec3::along(camera, look_dir, back);
     let rewind = rewind_ticks(world.tick, input.view());
@@ -339,8 +345,9 @@ fn turn(mount: &mut Mount, aim: Aim, input: &InputFrame, want: [f32; 3], pose: &
     }
 }
 
-/// Fires a round of `def` for `occupant`, and returns the barrel's heading (before any spread).
-fn shoot(world: &mut World, vid: u32, def: &MountDef, mount: &Mount, occupant: u32, pose: &CarPose, turret_yaw: f32) -> [f32; 3] {
+/// Fires a round of `def` for `occupant`, and returns the barrel's heading (before any spread); `None`
+/// when nothing could go.
+fn shoot(world: &mut World, vid: u32, def: &MountDef, mount: &Mount, occupant: u32, pose: &CarPose, turret_yaw: f32) -> Option<[f32; 3]> {
     let (origin, dir) = match def.muzzle {
         Muzzle::One(_) | Muzzle::Turns(_) => aim_from(pose, pivot(def.muzzle, mount, turret_yaw), mount.yaw, mount.pitch),
         Muzzle::Twin { pivot, x, drop } => {
@@ -356,6 +363,16 @@ fn shoot(world: &mut World, vid: u32, def: &MountDef, mount: &Mount, occupant: u
             (pose.world_point(std::array::from_fn(|i| pivot[i] + offset[i])), dir)
         }
         Muzzle::Pintle { .. } => aim_from(pose, pivot(def.muzzle, mount, turret_yaw), wrap_angle(turret_yaw + mount.yaw), mount.pitch),
+        Muzzle::Fist { hand } => {
+            // Out of the fist, along the forearm from the elbow.
+            let (elbow, fist) = world.physics.forearm(vid, hand)?;
+            let along = vec3::sub(fist, elbow);
+            let length = vec3::length(along);
+            if length < 1e-3 {
+                return None;
+            }
+            (fist, along.map(|v| v / length))
+        }
     };
     match def.fire {
         Fire::Shell { kind, alt, speed, length, ttl } => {
@@ -390,8 +407,19 @@ fn shoot(world: &mut World, vid: u32, def: &MountDef, mount: &Mount, occupant: u
             let velocity = std::array::from_fn(|i| pose.velocity[i] + toss[i]);
             world.launch(Flying::new(kind, occupant, origin, velocity, ttl).aboard(vid));
         }
+        Fire::Guided { kind, speed, pitch } => {
+            // Nose up out of the tube's mouth, clear of it, towards where its flier looks.
+            let start = [origin[0], origin[1] + MISSILE_HALF_EXTENTS[2] + 0.3, origin[2]];
+            let yaw = world.entities.get::<Player>(occupant).map_or(pose.yaw(), |player| from_mrad(player.input.yaw));
+            super::drones::launch_at(world, occupant, kind, start, yaw, pitch, speed, Some((vid, def.seat)))?;
+            make_noise(world, origin, Some(occupant), HEAR_BLAST);
+            // A press of fire held as it goes is not taken for setting the missile off.
+            if let Some(mut player) = world.entities.get_mut::<Player>(occupant) {
+                player.hands.trigger_held = true;
+            }
+        }
     }
-    dir
+    Some(dir)
 }
 
 /// Fires a shell of `kind` from vehicle `vid` for `gunner`, from `origin` along `dir` (the muzzle's

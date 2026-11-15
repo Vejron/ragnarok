@@ -330,6 +330,9 @@ pub(super) struct Car {
     mounted: Option<Mounted>,
     /// A giant's fists and feet: kinematic bodies of their own (`limbs`).
     limbs: Option<limbs::Limbs>,
+    /// What only rounds meet (its kind's `Role::Hit` solids), each placed in the hull frame. Not in the
+    /// physics: see [`Physics::armor_strike`]. Empty for a kind shot at its hull and solids.
+    hits: Vec<(SharedShape, Vector)>,
 }
 
 /// A vehicle fixed to another one, `on`, at `at` (its own frame), turned `yaw` there.
@@ -344,7 +347,16 @@ impl Car {
     fn owns(&self, collider: ColliderHandle) -> bool {
         self.collider == collider || self.extra.contains(&collider) || self.limbs.as_ref().is_some_and(|limbs| limbs.owns(collider))
     }
+
+    /// Whether rounds are shot at its hit shapes and limbs rather than at its hull and solids.
+    fn shot_at_hits(&self) -> bool {
+        !self.hits.is_empty()
+    }
 }
+
+/// How far from a hull's centre anything of a vehicle shot at its hit shapes reaches, metres: a ray that
+/// passes further off is not tested against them. The Titan's feet are about 35 m below its middle.
+const HIT_REACH: f32 = 60.0;
 
 fn pose_of(position: [f32; 3], yaw: f32) -> Pose {
     Pose::from_parts(Vector::from(position), Rotation::from_rotation_y(yaw))
@@ -418,7 +430,7 @@ pub(crate) fn heavy(kind: u8) -> bool {
 /// a Strv's casemate, a plane's wings, a walker's legs. Heavy vehicles' leave the felled-able trees
 /// out of what they touch, as the hull does.
 pub(crate) fn extra_solids(kind: u8) -> Vec<ColliderBuilder> {
-    let solids = spec(kind).solids.iter().map(|solid| ColliderBuilder::new(solid.shape(0.0)).translation(Vector::from(solid.at)));
+    let solids = physical(spec(kind)).map(|solid| ColliderBuilder::new(solid.shape(0.0)).translation(Vector::from(solid.at)));
     if spec(kind).arms.is_some() {
         solids.map(|collider| collider.collision_groups(limbs::giant_groups())).collect()
     } else if heavy(kind) {
@@ -490,14 +502,34 @@ impl Collide for Solid {
         match self.shape {
             Shape::Cylinder { half_height, radius } => SharedShape::cylinder(half_height + margin, radius + margin),
             Shape::Cuboid([x, y, z]) => SharedShape::cuboid(x + margin, y + margin, z + margin),
+            Shape::Capsule { half_height, radius } => SharedShape::capsule_y(half_height, radius + margin),
+            Shape::Frustum { top, bottom, half_height } => {
+                let (h, corners) = (half_height + margin, [[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]]);
+                let points: Vec<Vector> = corners
+                    .iter()
+                    .flat_map(|[sx, sz]| [Vector::new(sx * (top[0] + margin), h, sz * (top[1] + margin)), Vector::new(sx * (bottom[0] + margin), -h, sz * (bottom[1] + margin))])
+                    .collect();
+                SharedShape::convex_hull(&points).expect("a frustum is not flat")
+            }
         }
     }
 }
 
-/// The handles of `extra` (a car's or a stand-in's extra solids, made from `spec.solids` in order)
+/// A kind's solids that are in the physics, in order: all of `spec.solids` but those only rounds meet
+/// (`Role::Hit`). A car's and a stand-in's `extra` colliders are made from these.
+pub(crate) fn physical(spec: &Spec) -> impl Iterator<Item = &Solid> {
+    spec.solids.iter().filter(|solid| solid.role != Role::Hit)
+}
+
+/// The handles of `extra` (a car's or a stand-in's extra solids, made from `physical(spec)` in order)
 /// whose solid has `role`.
 pub(crate) fn with_role<'a>(spec: &'a Spec, extra: &'a [ColliderHandle], role: Role) -> impl Iterator<Item = ColliderHandle> + 'a {
-    extra.iter().zip(spec.solids).filter(move |(_, solid)| solid.role == role).map(|(&handle, _)| handle)
+    extra.iter().zip(physical(spec)).filter(move |(_, solid)| solid.role == role).map(|(&handle, _)| handle)
+}
+
+/// The index in `spec.solids` of the solid `extra[index]` was made from.
+fn solid_index(spec: &Spec, index: usize) -> Option<u8> {
+    spec.solids.iter().enumerate().filter(|(_, solid)| solid.role != Role::Hit).nth(index).map(|(at, _)| at as u8)
 }
 
 impl Physics {
@@ -579,6 +611,7 @@ impl Physics {
         let collider = self.colliders.insert_with_parent(chassis.build(), body, &mut self.bodies);
         let extra: Vec<ColliderHandle> =
             extra_solids(kind).into_iter().map(|collider| self.colliders.insert_with_parent(collider.density(0.0).friction(0.4).build(), body, &mut self.bodies)).collect();
+        let hits = spec.solids.iter().filter(|solid| solid.role == Role::Hit).map(|solid| (solid.shape(0.0), Vector::from(solid.at))).collect();
         // A helicopter has no wheels, so its controller is never updated.
         let mut controller = DynamicRayCastVehicleController::new(body);
         // Our forward is -Z, but the controller only uses this axis to sign its own speed estimate,
@@ -620,7 +653,7 @@ impl Physics {
                 }
             }
         }
-        self.cars.insert(id, Car { spec, body, collider, extra, controller, steer: 0.0, turn: 0.0, spin: 0.0, flight: CarControls::IDLE, air: (0.0, 0.0), condition: CarCondition::NEW, towed_by: None, tank: spec.tank, firing: 0, mounted: None, limbs: None });
+        self.cars.insert(id, Car { spec, body, collider, extra, controller, steer: 0.0, turn: 0.0, spin: 0.0, flight: CarControls::IDLE, air: (0.0, 0.0), condition: CarCondition::NEW, towed_by: None, tank: spec.tank, firing: 0, mounted: None, limbs: None, hits });
         self.add_limbs(id);
     }
 
@@ -1259,37 +1292,95 @@ impl Physics {
     }
 
     /// Like [`Self::cast_ray`], and also says which vehicle it hit, if it was a vehicle and not the world.
+    ///
+    /// A vehicle shot at its hit shapes (the Titan) is met where they are, its limbs bent as they are
+    /// drawn, and not at its hull or its other solids.
     pub fn cast_ray_hit(&self, origin: [f32; 3], dir: [f32; 3], max: f32, ignore: u32) -> Option<(f32, Option<u32>)> {
         let mut filter = QueryFilter::default();
         // A ship's gun fires over its own ship's side, and its shot never hits it.
         let host = self.cars.get(&ignore).and_then(|car| car.mounted).and_then(|mounted| self.cars.get(&mounted.on)).map(|on| on.body);
-        let not_host = |_: ColliderHandle, collider: &Collider| collider.parent().is_none() || collider.parent() != host;
+        // The hulls whose own colliders rays pass through, for their hit shapes to be met instead.
+        let shot_at_hits: Vec<RigidBodyHandle> = self.cars.values().filter(|car| car.shot_at_hits()).map(|car| car.body).collect();
+        // A vehicle's own fists and feet are bodies of their own: a round from the gun in its fist leaves
+        // through them.
+        let limbs = self.cars.get(&ignore).and_then(|car| car.limbs.as_ref());
+        let passable = |handle: ColliderHandle, collider: &Collider| {
+            let parent = collider.parent();
+            (host.is_none() || parent.is_none() || parent != host) && parent.is_none_or(|parent| !shot_at_hits.contains(&parent)) && limbs.is_none_or(|limbs| !limbs.owns(handle))
+        };
         if let Some(car) = self.cars.get(&ignore) {
             filter = filter.exclude_rigid_body(car.body);
-            if host.is_some() {
-                filter = filter.predicate(&not_host);
-            }
+        }
+        if host.is_some() || !shot_at_hits.is_empty() || limbs.is_some() {
+            filter = filter.predicate(&passable);
         }
         let queries = self.broad_phase.as_query_pipeline(self.narrow_phase.query_dispatcher(), &self.bodies, &self.colliders, filter);
         let ray = Ray::new(Vector::from(origin), Vector::from(dir));
-        let (collider, distance) = queries.cast_ray(&ray, max, true)?;
-        let car = self.cars.iter().find(|(_, car)| car.owns(collider)).map(|(&id, _)| id);
-        Some((distance, car))
+        let mut nearest = queries.cast_ray(&ray, max, true).map(|(collider, distance)| (distance, self.cars.iter().find(|(_, car)| car.owns(collider)).map(|(&id, _)| id)));
+        for (&id, car) in self.cars.iter().filter(|&(&id, car)| id != ignore && car.shot_at_hits()) {
+            let reach = nearest.map_or(max, |(distance, _)| distance);
+            if let Some(hit) = self.cast_hits(car, &ray, reach, false) {
+                nearest = Some((hit.time_of_impact, Some(id)));
+            }
+        }
+        nearest
+    }
+
+    /// Where `ray` first meets, within `max`, the hit shapes of `car` (one shot at them): its torso's
+    /// `Role::Hit` solids and its limbs' bones, and with `fists_and_feet` its fists and feet too, which
+    /// are colliders of their own that a query of the world meets anyway. The normal is in the world.
+    fn cast_hits(&self, car: &Car, ray: &Ray, max: f32, fists_and_feet: bool) -> Option<RayIntersection> {
+        let pose = *self.bodies.get(car.body)?.position();
+        // Nowhere near it.
+        let to = pose.translation - ray.origin;
+        let closest = to.dot(ray.dir).clamp(0.0, max);
+        if (ray.origin + ray.dir * closest - pose.translation).length() > HIT_REACH {
+            return None;
+        }
+        let mut nearest: Option<RayIntersection> = None;
+        let mut take = |hit: Option<RayIntersection>| {
+            if let Some(hit) = hit.filter(|hit| nearest.is_none_or(|nearest| hit.time_of_impact < nearest.time_of_impact)) {
+                nearest = Some(hit);
+            }
+        };
+        for (shape, at) in &car.hits {
+            take(shape.cast_ray_and_get_normal(&(pose * Pose::from_translation(*at)), ray, max, true));
+        }
+        for (from, to, radius) in self.bones(car) {
+            take(Capsule::new(from, to, radius).cast_local_ray_and_get_normal(ray, max, true));
+        }
+        if fists_and_feet && let Some(limbs) = &car.limbs {
+            for collider in limbs.colliders().filter_map(|handle| self.colliders.get(handle)) {
+                take(collider.shape().cast_ray_and_get_normal(collider.position(), ray, max, true));
+            }
+        }
+        nearest
     }
 
     /// Where a ray from `origin` along the unit `dir` meets vehicle `id`'s own solids within `max`, for armor
     /// to judge: how far, which solid it was (`None` for the hull), and the surface normal and the point in
     /// the vehicle's frame. A ray that starts inside a solid has a zero normal.
+    ///
+    /// A vehicle with hit shapes (the Titan) is met only at them, at its limbs' bones and at its fists
+    /// and feet, never at its hull or its other solids, and the solid is always `None`: its plates are all
+    /// on the hull. A point on a limb is given in the hull frame too, where the limb is now.
     pub fn armor_strike(&self, origin: [f32; 3], dir: [f32; 3], max: f32, id: u32) -> Option<Strike> {
         let car = self.cars.get(&id)?;
         let body = self.bodies.get(car.body)?;
+        if car.shot_at_hits() {
+            let ray = Ray::new(Vector::from(origin), Vector::from(dir));
+            let hit = self.cast_hits(car, &ray, max, true)?;
+            let to_local = body.rotation().inverse();
+            let point = ray.point_at(hit.time_of_impact);
+            return Some(Strike { distance: hit.time_of_impact, solid: None, normal: (to_local * hit.normal).into(), point: (to_local * (point - body.translation())).into() });
+        }
         let mine = |handle: ColliderHandle, _: &Collider| car.owns(handle);
         let filter = QueryFilter::default().predicate(&mine);
         let queries = self.broad_phase.as_query_pipeline(self.narrow_phase.query_dispatcher(), &self.bodies, &self.colliders, filter);
         let ray = Ray::new(Vector::from(origin), Vector::from(dir));
         let (collider, hit) = queries.cast_ray_and_get_normal(&ray, max, true)?;
         let to_local = body.rotation().inverse();
-        let solid = car.extra.iter().position(|&handle| handle == collider).map(|index| index as u8);
+        let solid = car.extra.iter().position(|&handle| handle == collider).and_then(|index| solid_index(car.spec, index));
         // A tracked hull's armour is laid out on its box, not on the swept-up ends it drives on: a shot
         // into one meets the face of the box it comes in through, where that face is. The box is cast
         // from a box's breadth back, as the shot may already be inside it but short of the hull.
@@ -1394,6 +1485,26 @@ impl Physics {
         reached
     }
 
+    /// Gives vehicle `id` the knock of a round that struck it at `point` (world) going along `dir`: a
+    /// change of `dv` m/s to the whole of it, pushed at that point, so that it turns it as well, a hit
+    /// high on a tall hull rocking it. A legged kind is shoved by its gait's `blast_share` of the push
+    /// and turned by its `hit_share` of the turn: a giant rocks where it stands rather than sliding. A
+    /// round that struck a limb pushes the hull at the same point.
+    pub fn strike_car(&mut self, id: u32, dir: [f32; 3], point: [f32; 3], dv: f32) {
+        let Some(car) = self.cars.get(&id) else { return };
+        let gait = car.spec.gait;
+        let Some(body) = self.bodies.get_mut(car.body) else { return };
+        let impulse = Vector::from(dir).normalize_or_zero() * (dv * body.mass());
+        match gait {
+            Some(gait) => {
+                let lever = Vector::from(point) - body.center_of_mass();
+                body.apply_impulse(impulse * gait.blast_share, true);
+                body.apply_torque_impulse(lever.cross(impulse) * gait.hit_share, true);
+            }
+            None => body.apply_impulse_at_point(impulse, Vector::from(point), true),
+        }
+    }
+
     pub fn car_motion(&self, id: u32) -> Option<CarMotion> {
         let car = self.cars.get(&id)?;
         let body = self.bodies.get(car.body)?;
@@ -1429,6 +1540,8 @@ impl Physics {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_hits;
 
 /// Rapier's ray-cast wheels push sideways from a tenth of the way down from the centre of mass to
 /// the ground (their private `roll_influence`), so their side grip barely rolls the chassis. This

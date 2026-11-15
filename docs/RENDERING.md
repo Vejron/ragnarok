@@ -525,8 +525,35 @@ Its own README gives the benchmark against three's two renderers, from when a co
     scope.
   - Code that shaders share goes in `COMMON_WGSL` (or a file it includes), or materials compiled
     without it fail.
+  - The vertex stage's storage buffers are all spent at WebGPU's default of 8: the scene group has
+    six, and the particles' pipeline binds two more of its own. The scar list reaches the vertex stage
+    only on a device with a higher `maxStorageBuffersPerShaderStage`. Give any other new scene
+    binding `FRAGMENT` visibility, or the particle pipeline fails to build on a default device.
   - The sky's functions (`sky.wgsl.ts`) use no derivatives, so the panorama's compute pass can call
     them. Keep `dpdx`/`fwidth` out of them, and pass a mip level in instead.
+
+## Scars: damage on a mesh's own surface
+
+Rounds that strike a vehicle leave **scars** (`engine/src/scene/scars.ts`, [HULL-DAMAGE.md](HULL-DAMAGE.md)):
+dents, soot and char, holes ringed with blued steel, gouges to bare metal, and the glow of a fresh hit.
+They are not decal meshes. A mesh given a slot (`Mesh.scars`, written to the free `misc.w` of its
+object record) has its slot's scars worked out by the standard shader itself (`scars.wgsl.ts`):
+
+- **The list.** `Scene.scars` is a pool of 512 slots, one per damaged mesh, of 24 scars each. The
+  first 6 are a ring for bullets' chips, so a machine gun's hail never wipes out a shell's dent. Each
+  scar is three `vec4`s: where it is and its reach, the way the round came, then its style flags,
+  birth time and dent depth. It is uploaded slot by slot when changed, at group 0 binding 13.
+- **In the mesh's frame.** The pixel's position is taken back into the object's frame with
+  `toObject` (no matrix inverse: the axes are square), so scars ride a turret or a Titan's arm.
+- **Dents.** Where the device allows the vertex stage a ninth storage buffer (`Renderer.vertexScars`:
+  the renderer asks for it when the adapter has it), `scarDent` presses the vertices in. Everywhere,
+  the shading draws the dent too, because the toon ramp's few bands swallow a slight tilt of the
+  normal: its slope tips the normal, its bowl is shaded darker, and its slope against the sun is
+  shaded directly (`SCAR_RELIEF`). A low-poly face has few vertices to press, so the shading carries
+  most of a dent there.
+- **Cost.** It is paid only by a scarred mesh's pixels, and its noise only where a scar reaches. A
+  Titan scarred all over and filling a 2268×1258 frame cost 0.28 ms (3.43 against 3.15 ms, timed
+  alternately with the scars on and off).
 
 ## The HUD
 

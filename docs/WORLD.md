@@ -40,7 +40,7 @@ Restart the server afterwards: it reads the whole world at start. The importer c
 | `--osm-water` | Take lakes, rivers, streams and the sea from OpenStreetMap instead of Hydrografi. It has the sea. Instant from a local extract; from Overpass, part of the one query per block. |
 | `--no-roofs` | Buildings stay boxes of their tagged height. The point cloud (the slowest and biggest download) is then only read for trees; add `--no-lidar-trees` to skip it completely. |
 | `--no-trees` | Skip the tree register. |
-| `--no-minimap` | Skip `minimap.webp`, the pre-rendered top-down map (2048 px, 4096 under a `minimap_image`; a lossy WebP written next to `world.msgpack`, replacing the `minimap.png` older imports wrote) that the client shows as minimap and map. |
+| `--no-minimap` | Skip `minimap.webp`, the pre-rendered top-down map (2048 px, 4096 under a `minimap_image`; a lossy WebP written next to `world.msgpack`) that the client shows as minimap and map. |
 | `--no-lidar-trees` | Only the register's trees: no woods, no garden trees. |
 | `--min-tree-height m` | Shortest tree taken from the laser, default 3 m above the terrain. |
 | `--species dir` | Where the unpacked NMD2023 species layers are, default `temp-maps/nmd2023`. See [Tree species](#tree-species). |
@@ -106,6 +106,26 @@ is `TREE_SPRUCE` and contorta stays in with the pine.
 To check a world, `WORLD=kulla cargo test --release -p osm-import world_trees -- --ignored --nocapture`
 prints its trees by kind and a hash of their positions, which a change of species keeps.
 
+## Thinning
+
+The laser finds every crown, and a forest of them costs the client more than a player would miss: foliage
+is alpha-tested, so every crown that overlaps another is paid for pixel by pixel. `assemble` drops, after
+the roads and bridges have taken theirs (`thin.rs`):
+
+- **Trees against a house.** No trunk stands within `TRUNK_CLEARANCE` (1.5 m) of a wall, and no crown
+  reaches one: a tree whose crown radius is more than its distance to the nearest wall goes. Register trees
+  too. Rocks and shrubs may stand against a house.
+- **Suppressed trees.** Tallest first, a tree no taller than `SUPPRESSED` (0.75) of a kept neighbour whose
+  crown touches its own goes: it is in that tree's shade.
+- **Crowded trees.** A tree nearer a kept neighbour of any height than `CROWDED` (0.6) of their two crown
+  radii added goes: the two crowns are nearly one, and the taller stays.
+
+Register trees are never thinned, only kept off the walls. In the home world 106,289 trees would stand
+without it and 81,059 do: 2,688 went from against houses and 22,542 out of the woods. The import prints
+both. The canopy's outline, its gaps and its tallest trees stay. To try other values on a world built
+before thinning, `WORLD=<name> cargo test --release -p osm-import thinning -- --ignored --nocapture`
+measures its trees; the rows after the first switch one of the two rules off.
+
 ## Orienteering maps
 
 An OCAD map (`.ocd`, versions 9 to 2018) is a second source next to OSM, in `ocad/`. Where it reaches it
@@ -159,10 +179,7 @@ and how many objects it has of each symbol.
   what is drawn and collided with is the look, with the windows cut out of the walls
   (`shared::windows`, `render/windows.ts`) and the pieces in blasted cells left out
   (`shared::facade`, `render/lookfracture.ts`), the same on the server and every client, so a roof is
-  the slope it is and a round goes through a window. A tile written before looks has none and its
-  buildings are drawn and collided with as cubes; the field is left out of the file when empty, so
-  the world version is unchanged. Re-import a
-  world to give it looks (`--bake` cannot: a baked world has lost its walls and roofs). A house big
+  the slope it is and a round goes through a window. A house big
   enough also gets floors and stairs, worked out from its footprint and look as the world is
   read and stored nowhere: [INTERIORS.md](INTERIORS.md).
 - **Stony ground** goes in the tiles' `stones` layer: a 2 m grid of grades, the low seven bits how stony
@@ -290,7 +307,7 @@ scripts/world.sh --center 63.83976,20.31514 --half 1375 --out client/public/dev/
 | Page warns the world differs from the server's | `RAGNAROK_WORLD` and `VITE_WORLD_BASE` name different worlds, or the world was regenerated and the server not restarted |
 | `/dev/world.msgpack: 404` in the browser | the dev world isn't generated yet, or `VITE_WORLD_BASE` has no matching directory under `client/public/` |
 | `LM_USER and LM_PASS are not set` | put them in `.env.local`, or add `--synthetic` |
-| World version mismatch | the world was made by an older importer; regenerate it, or, from version 10, bake it in place with `cargo run -p osm-import -- --bake worlds/<name>/world.msgpack` (a version 14 world becomes 15 this way: its origin becomes a Swedish frame) |
+| World version mismatch | the world was made by an older importer; re-import it |
 
 ## Regions: Sweden and France
 
@@ -628,15 +645,14 @@ from them. On the 450-tile Ersboda world that leaves
 the tiles about as big as before (14.2 MB against 14.7 MB). Houses built wall to wall often both
 have a cube in the same place, which would be drawn twice and flicker; after baking, `voxels::share`
 gives each such cube to the first of them, across the whole world (35,626 cubes in Ersboda at 1 m, before the cubes were halved).
-`--bake` does all this to a world written before (version 10) in place, without downloading
-anything, and on a baked world it only shares the cubes again.
-Both sides check `WORLD_VERSION`; bump it in `crates/shared/src/world.rs` **and**
-`client/src/world.ts` when the layout changes. The server tests
+Both sides check `WORLD_VERSION` and read only the current layout: there is no reading of older
+worlds. When the layout changes, bump it in `crates/shared/src/world.rs` **and**
+`client/src/world.ts` and re-import every world (`osm-import --area worlds/<name>/area.json --out worlds/<name>/world.msgpack`, or
+**Generate world** in the editor). The server tests
 `parked_cars_in_the_fixture_world_settle_and_stay_put` and
 `the_fixture_world_gets_its_items_on_open_ground` and client `world.spec.ts` read the small
 synthetic world committed in `fixtures/world/`, so with any format change regenerate and commit it:
-`cargo run -p osm-import -- --synthetic --out fixtures/world/world.msgpack` (or `--bake` it, for a
-change only to the buildings' cubes). The real world in
+`cargo run -p osm-import -- --synthetic --out fixtures/world/world.msgpack`. The real world in
 `client/public` is generated and git-ignored.
 
 ```sh

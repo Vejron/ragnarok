@@ -809,10 +809,11 @@ impl Mechanic for Vehicles {
             switch_seat(world, id);
         }
 
-        // The driver's input becomes the car's controls; an empty car holds its handbrake.
+        // The driver's input becomes the car's controls; an empty car holds its handbrake, as does one whose
+        // driver is away flying a missile they sent up from it (a Titan's pilot).
         for vid in world.entities.ids::<With<Vehicle>>() {
             let hp = world.entities.of::<Health>(vid).hp;
-            let driver = world.entities.of::<Seats>(vid).rider(0).and_then(|driver| world.entities.get::<Player>(driver)).map(|driver| driver.input);
+            let driver = world.entities.of::<Seats>(vid).rider(0).and_then(|driver| world.entities.get::<Player>(driver)).filter(|driver| driver.seat.is_none_or(|seat| seat.vehicle == vid)).map(|driver| driver.input);
             let mut vehicle = world.entities.of_mut::<Vehicle>(vid);
             let towed = world.physics.towed_by(vid).is_some();
             vehicle.controls = if vehicle_def(vehicle.kind).body.towed {

@@ -87,16 +87,21 @@ has the numbers.
 
 The README's "Deploying" section has the full steps. In short: commit first, because the image is tagged with `HEAD`, then load `.env.local` and run `scripts/deploy.sh`.
 
-- **Ship the world that is live.** `WORLD_DIR` defaults to `client/public`, whose `world.msgpack` is stale and stops the new server at start-up (the deploy then rolls back). Find the live world by matching its manifest against the local ones, and pass it as `WORLD_DIR` unless the user asks for another:
+- **Ship the world that is live.** `WORLD_DIR` defaults to `client/public`, which holds no world unless one was generated there. Find the live world by matching its manifest against the local ones, and pass it as `WORLD_DIR` unless the user asks for another:
   ```sh
   set -a; . ./.env.local; set +a
   ssh "$SSH_USER@$SSH_HOST" 'docker exec ragnarok md5sum /app/world.msgpack'
   for f in worlds/*/world.msgpack; do echo "$(md5 -q "$f") $f"; done
   WORLD_DIR=worlds/<live world> DOMAIN="$TARGET_DOMAIN" scripts/deploy.sh "$SSH_USER@$SSH_HOST"
   ```
+  After a world format change the re-imported worlds no longer match the live one: ask which world is live if it isn't clear.
 - **A failed deploy rolls itself back** to the previous container. Read the logs it prints before trying again, and check what is running with `ssh "$SSH_USER@$SSH_HOST" 'docker ps --filter name=^ragnarok$'`.
 
 ## How the code is written
+
+- **No backward compatibility.** The game is in development and nothing outside this repo reads its formats, so a new format replaces the old one. Never read an old format next to the new one, and never add a fallback, a "written before" path, a field left out or defaulted "so old files read the same", a cache kept "so earlier downloads are found again", a conversion tool for old data, or a test of old data. Instead:
+  - Regenerate the data in the same change. For a tile or manifest change, re-import every world in `worlds/` (`osm-import --area worlds/<name>/area.json --out worlds/<name>/world.msgpack`) and `fixtures/world` (`osm-import --synthetic --out fixtures/world/world.msgpack`). For the wire, run `UPDATE_PARITY=1`.
+  - Bump the version (`WORLD_VERSION` in both `world.rs` and `client/src/world.ts`, `PROTOCOL_VERSION`), so a mismatch fails loudly.
 
 - **Comments are full sentences** that say what a thing is in the game's terms, with units (metres, m/s, radians, ticks): "How far the gun kicks back along its line when it fires, metres". Spelling is British (armour, metres, colour). Match the density of the code around you; most `pub const` items and every type carry a doc comment.
 - **Rust is the single source of truth.** Gameplay numbers live in `crates/shared`, and the client reads the generated copies rather than repeating them.

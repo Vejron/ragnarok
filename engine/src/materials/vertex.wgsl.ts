@@ -7,8 +7,10 @@
  * the vertex's colour as the fragment gets it: material × instance tint × vertex colour. `displace`
  * may also read `vertexModel`, the object's (or instance's) model matrix, and `vertexUv`, the vertex's uv,
  * and may write `vertexExtra`, three vec4s handed to the fragment stage interpolated (`Surface.extra`).
+ * With `scars`, a scarred mesh's vertices are pressed in by its dents (scars.wgsl), which needs the scar
+ * list bound to the vertex stage.
  */
-export function vertexWgsl(displace: boolean) {
+export function vertexWgsl(displace: boolean, scars = false) {
   return /* wgsl */ `
 var<private> vertexModel: mat4x4f;
 var<private> vertexUv: vec2f;
@@ -51,7 +53,12 @@ fn vs(in: VertexIn) -> VertexOut {
   }
   vertexModel = model;
   vertexUv = in.uv;
-  ${displace ? 'let world = vec4f(displace((model * vec4f(in.position, 1.0)).xyz, in.custom, color), 1.0);' : 'let world = model * vec4f(in.position, 1.0);'}
+  var position = in.position;
+${scars ? `  // A scarred mesh is pressed in where its scars dent it (scars.wgsl).
+  if (object.misc.w != 0u && object.misc.z == 0u) {
+    position += scarDent(object.misc.w, position);
+  }` : ''}
+  ${displace ? 'let world = vec4f(displace((model * vec4f(position, 1.0)).xyz, in.custom, color), 1.0);' : 'let world = model * vec4f(position, 1.0);'}
   var out: VertexOut;
   out.clip = frame.viewProj * world;
   out.world = world.xyz;

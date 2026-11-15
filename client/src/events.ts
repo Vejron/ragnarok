@@ -4,7 +4,7 @@
  * it happened on, so it lines up with what is drawn.
  */
 
-import { Vector3 } from '@ragnarok/engine'
+import { Quaternion, Vector3 } from '@ragnarok/engine'
 import type { Avatars } from '@/entities/avatars'
 import type { Vehicles } from '@/entities/presenters/vehicles'
 import type { Wear } from '@/entities/presenters/wear'
@@ -12,7 +12,7 @@ import type { Blips } from '@/blips'
 import { HIT_DEER, HIT_KILL, HIT_ROOSTER, HIT_VEHICLE } from '@/feedback'
 import {
   PROJECTILE_BULLET, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_BULLET, WEAPON_CRASH, WEAPON_DRONE, WEAPON_EGG, WEAPON_FLARE, WEAPON_GRENADE, WEAPON_LASER, WEAPON_LAUNCHER, WEAPON_LOITER, WEAPON_MG, WEAPON_MISSILE, WEAPON_MORTAR,
-  MARK_GLANCE, MARK_PIERCED, MARK_SCUFF, MARK_VITAL, WEAPON_AP, WEAPON_BALL, WEAPON_CUP, WEAPON_GLASS, WEAPON_GOLF, WEAPON_SPLASH, WEAPON_PELLET, WEAPON_RICOCHET, WEAPON_ROCKET, WEAPON_SCRAPE, WEAPON_SHELL, WEAPON_SHOTGUN, WEAPON_SNIPER, WEAPON_TURRET, WEAPON_WRECK,
+  KIND_TITAN, MARK_GLANCE, MARK_HEAVY, MARK_PIERCED, MARK_SCUFF, MARK_VITAL, WEAPON_AP, WEAPON_BALL, WEAPON_CUP, WEAPON_GLASS, WEAPON_GOLF, WEAPON_SPLASH, WEAPON_PELLET, WEAPON_RICOCHET, WEAPON_ROCKET, WEAPON_SCRAPE, WEAPON_SHELL, WEAPON_SHOTGUN, WEAPON_SNIPER, WEAPON_TURRET, WEAPON_WRECK,
   type BulletSpawn, type HullMark, type ShotEvent,
 } from '@/net/codec'
 import { CarModel } from '@/render/car'
@@ -21,16 +21,19 @@ import type { DamageNumbers } from '@/render/damagenumbers'
 import type { Debris } from '@/render/debris'
 import type { Effects } from '@/render/effects'
 import type { Scorchmarks } from '@/render/scorchmarks'
-import { locate, type HullMarks } from '@/render/hullmarks'
+import type { Flinch } from '@/render/flinch'
+import { locate, type HullMarks, type MarkKind } from '@/render/hullmarks'
 import { BLASTS, explosion, type ExplosionProfile } from '@/render/explosion'
 import type { Rockets } from '@/render/rockets'
 import type { Rounds } from '@/render/rounds'
 import type { Scene } from '@/render/scene'
+import { TitanModel } from '@/render/titan'
 import { TuppModel } from '@/render/tupp'
 import type { ProjectileTrails } from '@/render/trails'
 import { crashBurst, scrapeSparks, type FxWorld } from '@/render/tyres'
 import { bulletLifeTicks, bulletPosition, bulletTicksTo, bulletVelocity } from '@/sim/ballistics'
-import { AP_BLAST_RADIUS, BALL_BLAST_RADIUS, BOMB_RADIUS, CANNON_RADIUS, EXPLOSION_RADIUS, EYE_HEIGHT, MISSILE_BLAST_RADIUS, MORTAR_RADIUS, ROCKET_BLAST_RADIUS, TICK_RATE, TUPP_LASER_DAMAGE, TUPP_LASER_RANGE, WRECK_BLAST_RADIUS } from '@/sim/consts'
+import { vehicleDef } from '@/sim/vehicles'
+import { AP_BLAST_RADIUS, BALL_BLAST_RADIUS, BOMB_RADIUS, CANNON_RADIUS, EXPLOSION_RADIUS, EYE_HEIGHT, MISSILE_BLAST_RADIUS, MORTAR_RADIUS, ROCKET_BLAST_RADIUS, TICK_RATE, TITAN_RIDE_HEIGHT, TUPP_LASER_DAMAGE, TUPP_LASER_RANGE, WRECK_BLAST_RADIUS } from '@/sim/consts'
 import { DRONE_BLAST_RADIUS, GRENADE_BLAST_RADIUS, hitscanGunFor, ITEM_SNIPER, itemDef, LOITER_BLAST_RADIUS } from '@/sim/items'
 import type { Surroundings } from '@/surroundings'
 import type { VehicleSounds } from '@/vehicleaudio'
@@ -101,8 +104,10 @@ export interface EventWorld {
   trails: ProjectileTrails
   /** Machine gun rounds in flight. */
   rounds: Rounds
-  /** Holes and scuffs on armoured vehicles. */
+  /** Dents, scorches, holes and gouges on armoured vehicles. */
   hullMarks: HullMarks
+  /** Vehicles rocking from the rounds that strike them. */
+  flinch: Flinch
   blips: Blips
   avatars: Avatars
   vehicles: Vehicles
@@ -117,6 +122,12 @@ export interface EventWorld {
   driving: () => number | null
   /** The local player struck golf ball `id`. */
   struckGolfBall: (id: number) => void
+}
+
+/** How big a vehicle of `kind` is against a tank (1), for how far its marks reach and how it rocks: from its hull's size. */
+export function vehicleSize(kind: number) {
+  const [hx, hy, hz] = vehicleDef(kind).halfExtents
+  return Math.min(3, Math.max(0.5, Math.hypot(hx, hy, hz) / 4.2))
 }
 
 export class Events {
@@ -155,30 +166,81 @@ export class Events {
   }
 
   /**
-   * A round meeting a vehicle's armour: sparks off it, a scuff where the plate stopped it, a hole and
-   * fragments where it went through. The server says where in the vehicle's own frame and which way the
-   * round went, so it is put on the vehicle as it is drawn now.
+   * A round meeting a vehicle's armour (HULL-DAMAGE.md): sparks off it, and a scar where it struck: a
+   * gouge where it glanced, a scorched dent where the plate stopped a shell, a hole where it went
+   * through. A shell's blow rocks the vehicle and jolts its crew. The server says where in the vehicle's
+   * own frame and which way the round went, so it is put on the vehicle as it is drawn now.
    */
   private showMark(mark: HullMark) {
-    const { effects, sounds, vehicles } = this.world
+    const { effects, sounds, vehicles, chase, flinch } = this.world
     const placed = vehicles.placed.get(mark.vehicle)
     const model = vehicles.model(mark.vehicle)
     if (!placed || !model) return
     const struck = locate(placed.kind, model.root, mark, { x: mark.dx / 127, y: mark.dy / 127, z: mark.dz / 127 })
     const at: [number, number, number] = [struck.world.x, struck.world.y, struck.world.z]
-    const style = mark.style & ~MARK_VITAL
-    if (style === MARK_GLANCE) {
-      effects.strike(struck.world)
-      sounds.ricochet(at)
-      return
-    }
-    const pierced = style !== MARK_SCUFF
+    const style = mark.style & ~(MARK_VITAL | MARK_HEAVY)
+    const vital = (mark.style & MARK_VITAL) !== 0
+    const size = vehicleSize(placed.kind)
     const big = style === MARK_PIERCED
-    if (pierced) effects.pierce(struck.world, struck.outward, big)
-    else effects.deflect(struck.world, struck.outward)
-    this.world.hullMarks.mark(mark.vehicle, model.root, struck, pierced, big ? 1.2 : pierced ? 0.45 : 0.5, (mark.style & MARK_VITAL) !== 0)
-    if (pierced) sounds.pierce(at, big)
-    else sounds.ricochet(at)
+    // A shell's (or a cannon's) mark, as against a bullet's.
+    const heavy = big || (mark.style & MARK_HEAVY) !== 0
+    const kind: MarkKind = style === MARK_GLANCE ? 'glance' : style === MARK_SCUFF ? 'scuff' : 'hole'
+    const calibre = kind === 'hole' ? (big ? 1.2 : 0.4) : heavy ? 1 : 0.8
+    this.world.hullMarks.mark(mark.vehicle, model.root, struck, kind, calibre, vital, size, !heavy)
+    if (kind === 'glance') {
+      if (heavy) effects.deflect(struck.world, struck.outward, 2 * size)
+      else effects.strike(struck.world)
+      sounds.ricochet(at)
+    } else if (kind === 'hole') {
+      effects.pierce(struck.world, struck.outward, big, big ? size : 1)
+      sounds.pierce(at, big)
+    } else {
+      effects.deflect(struck.world, struck.outward, heavy ? 2.5 * size : 1)
+      sounds.ricochet(at)
+    }
+    // The blow: it rocks the vehicle as drawn, about the ground under it, and jolts whoever is aboard.
+    const strength = kind === 'hole' ? (big ? 1 : 0.15) : heavy ? (kind === 'scuff' ? 0.85 : 0.35) : 0.03
+    const root = model.root
+    const up = new Vector3(0, 1, 0).applyQuaternion(root.quaternion)
+    const pivot = root.position.clone().addScaledVector(up, -(placed.kind === KIND_TITAN ? TITAN_RIDE_HEIGHT : vehicleDef(placed.kind).halfExtents[1]))
+    const way = new Vector3(mark.dx, mark.dy, mark.dz).normalize().applyQuaternion(root.quaternion)
+    flinch.hit(mark.vehicle, size, pivot, struck.world, way, strength)
+    if (model instanceof TitanModel) model.recoil(struck.parent, new Vector3(mark.dx, mark.dy, mark.dz).normalize(), strength)
+    if (heavy && this.aboard(mark.vehicle)) chase.kick(kind === 'hole' ? 0.35 : kind === 'scuff' ? 0.22 : 0.1)
+  }
+
+  /** Whether the local player rides vehicle `id`. */
+  private aboard(id: number) {
+    const local = this.world.localId()
+    if (this.world.driving() === id) return true
+    return local !== null && (this.world.vehicles.placed.get(id)?.seats.includes(local) ?? false)
+  }
+
+  /**
+   * A blast going off by vehicles: soot on the faces of each it reaches, nearest the blast, as wide as
+   * the blast is. The vehicles it struck are marked by the server's own marks; this is the scorch of a
+   * near miss.
+   */
+  private scorchNear(at: Vector3, radius: number) {
+    const { vehicles } = this.world
+    for (const [id, placed] of vehicles.placed) {
+      const model = vehicles.model(id)
+      if (!model) continue
+      const [hx, hy, hz] = vehicleDef(placed.kind).halfExtents
+      const reach = radius + Math.hypot(hx, hy, hz)
+      const centre = new Vector3(placed.x, placed.y, placed.z)
+      const distance = centre.distanceTo(at)
+      if (distance > reach || distance < 1e-3) continue
+      const unturn = new Quaternion(...placed.rotation).invert()
+      const local = at.clone().sub(centre).applyQuaternion(unturn)
+      const toward = local.clone().negate().normalize()
+      const struck = locate(placed.kind, model.root, local, toward, 0, radius)
+      // Only a face the blast was near enough to char.
+      if (struck.world.distanceTo(at) > radius * 0.9) continue
+      const share = 1 - struck.world.distanceTo(at) / radius
+      this.world.hullMarks.mark(id, model.root, struck, 'blast', (radius / 7) * (0.6 + 0.6 * share), false, Math.sqrt(vehicleSize(placed.kind)))
+      this.world.flinch.hit(id, vehicleSize(placed.kind), centre.clone().setY(centre.y - (placed.kind === KIND_TITAN ? TITAN_RIDE_HEIGHT : hy)), struck.world, toward.clone().applyQuaternion(new Quaternion(...placed.rotation)), 0.5 * share)
+    }
   }
 
   /** Draws every bullet where it has got to by `renderTick`, and ends the ones that have arrived. */
@@ -262,6 +324,7 @@ export class Events {
     const throughGlass = !blast && breaksGlass(shot.weapon) && view.glassStruck(shot.x, shot.y, shot.z)
     if (blast) {
       this.blast(to, blast.radius, blast.profile)
+      this.scorchNear(to, blast.radius)
       const at: [number, number, number] = [to.x, to.y, to.z]
       if (blast.sound === 'explosion') sounds.explosion(at)
       else sounds.blast(at, blast.sound)

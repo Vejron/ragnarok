@@ -10,10 +10,11 @@ import { StrfModel } from '@/render/strf'
 import { StrvModel } from '@/render/strvs'
 import { TankModel } from '@/render/tank'
 import { TechnicalModel } from '@/render/technical'
+import { TitanModel } from '@/render/titan'
 import { TuppModel } from '@/render/tupp'
 import { WalkerModel } from '@/render/walker'
 import { arcTime } from '@/render/rounds'
-import { HELI_GUN_LENGTH, MORTAR_BARREL_LENGTH, PAK_BARREL_LENGTH, SHIP_GUN_BARREL_LENGTH, PLANE_GUN_RANGE, STRF_BARREL_LENGTH, STRV_BARREL_LENGTH, TANK_BARREL_LENGTH, TANK_MG_LENGTH, TANK_MG_RANGE, TECHNICAL_MG_LENGTH, TECHNICAL_MG_RANGE, TECHNICAL_MG_SEAT, WALKER_GUN_LENGTH } from '@/sim/consts'
+import { HELI_GUN_LENGTH, MORTAR_BARREL_LENGTH, PAK_BARREL_LENGTH, SHIP_GUN_BARREL_LENGTH, PLANE_GUN_RANGE, STRF_BARREL_LENGTH, STRV_BARREL_LENGTH, TANK_BARREL_LENGTH, TANK_MG_LENGTH, TANK_MG_RANGE, TECHNICAL_MG_LENGTH, TECHNICAL_MG_RANGE, TECHNICAL_MG_SEAT, TITAN_GUN_LENGTH, WALKER_GUN_LENGTH } from '@/sim/consts'
 import type { Frame, Presenter } from '../presenter'
 import type { Entity } from '../units'
 import type { VehicleWorld, Vehicles } from './vehicles'
@@ -51,6 +52,7 @@ export class Turrets implements Presenter<Frame> {
     if (before === undefined || before === shots) return
     if (model instanceof PlaneModel) this.ring(model, (shots - before + 256) % 256)
     else if (model instanceof TechnicalModel) this.machineGun(model, (shots - before + 256) % 256, placed.seats, frame)
+    else if (model instanceof TitanModel) this.fist(model, placed.seats, frame)
     else if (model instanceof TankModel || model instanceof HeliModel || model instanceof WalkerModel || model instanceof MortarModel || model instanceof PakModel || model instanceof ShipGunModel) this.fired(model, shots, placed.seats, frame)
   }
 
@@ -87,6 +89,17 @@ export class Turrets implements Presenter<Frame> {
     // Who fires it: the driver of a walker, a Strv S or a gun on a carriage, the gunner of the rest.
     const gunner = gun instanceof WalkerModel || gun instanceof StrvModel || gun instanceof MortarModel || gun instanceof PakModel || gun instanceof ShipGunModel ? 0 : 1
     if (frame.localId !== null && seats[gunner] === frame.localId) this.world.ownShot()
+  }
+
+  /** A Titan's autocannon, in its fist: a 40 mm round out along the forearm, a flash, a kick and the bang. */
+  private fist(titan: TitanModel, seats: readonly number[], frame: Frame) {
+    const { origin, direction } = titan.barrel()
+    titan.kick()
+    const muzzle = origin.addScaledVector(direction, TITAN_GUN_LENGTH)
+    this.world.effects.muzzleFlash(muzzle, direction)
+    this.world.lights.flash(muzzle.x, muzzle.y, muzzle.z, { color: 0xffc060, intensity: 4, radius: 18, life: 0.09 })
+    this.world.sounds.cannon([muzzle.x, muzzle.y, muzzle.z], false)
+    if (frame.localId !== null && seats[0] === frame.localId) this.world.ownShot()
   }
 
   /** A plane's rear ring gun: each new round a bullet out to what it meets. */

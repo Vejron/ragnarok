@@ -75,30 +75,9 @@ pub fn query([south, west, north, east]: [f64; 4]) -> String {
     query
 }
 
-/// The five queries a box was once asked as (main, water, golf, lifts, ski), each its own cache key,
-/// spelled exactly as they were so the answers already cached are found again.
-fn legacy([south, west, north, east]: [f64; 4]) -> [String; 5] {
-    let bbox = format!("{south},{west},{north},{east}");
-    let mut main = format!("[out:json][timeout:120];(way[\"building\"]({bbox});way[\"highway\"]({bbox});way[\"railway\"]({bbox});");
-    for filter in COVER_FILTERS.split(';') {
-        main.push_str(&format!("way{filter}({bbox});relation[type=multipolygon]{filter}({bbox});"));
-    }
-    main.push_str(");out geom;");
-    let mut water = String::from("[out:json][timeout:120];(");
-    for filter in WATER_FILTERS {
-        water.push_str(&format!("way{filter}({bbox});relation{filter}({bbox});"));
-    }
-    water.push_str(&format!(r#"way["waterway"~"^(river|stream|canal)$"]({bbox});way["natural"="coastline"]({bbox});"#));
-    water.push_str(");out geom;");
-    let golf = format!(r#"[out:json][timeout:120];(way["golf"]({bbox});node["golf"="pin"]({bbox}););out geom;"#);
-    let lifts = format!(r#"[out:json][timeout:120];way["aerialway"~"^({})$"]({bbox});out geom;"#, crate::osm::LIFTS.join("|"));
-    let ski = format!(r#"[out:json][timeout:120];(way["piste:type"~"nordic"]({bbox});relation["piste:type"~"nordic"]({bbox});relation["route"="ski"]({bbox}););out geom;"#);
-    [main, water, golf, lifts, ski]
-}
-
-/// Whether the box's answer is in the cache, as one query or as all of the old five.
+/// Whether the box's answer is in the cache.
 pub fn cached(bbox: [f64; 4]) -> bool {
-    crate::cache::has("overpass", &query(bbox)) || legacy(bbox).iter().all(|query| crate::cache::has("overpass", query))
+    crate::cache::has("overpass", &query(bbox))
 }
 
 /// Fetches each of `pieces` (`[south, west, north, east]`) and merges the answers. The pieces are
@@ -116,23 +95,9 @@ pub fn fetch_pieces(endpoints: &[String], pieces: &[[f64; 4]], retries: usize, p
     Ok(merged)
 }
 
-/// One piece: the one query's answer, or, for a piece cached whole before the queries were one, the
-/// old five. A piece with only some of the five cached is asked for again as one query: one request,
-/// where the missing ones would be up to four.
+/// One piece: the one query's answer.
 fn fetch_piece(endpoints: &[String], piece: [f64; 4], retries: usize, pause: u64) -> Result<Data> {
-    let combined = query(piece);
-    let legacy = legacy(piece);
-    if !crate::cache::has("overpass", &combined) && legacy.iter().all(|query| crate::cache::has("overpass", query)) {
-        let (mut data, mut seen) = (Data::default(), Seen::default());
-        for query in &legacy {
-            data.merge(parse(&run(endpoints, query, retries, pause)?)?, &mut seen);
-        }
-        // Each answer is sorted by id, as the one query's is: so is the merge, and every pass sees its
-        // elements in the order its own query gave them.
-        data.sort();
-        return Ok(data);
-    }
-    parse(&run(endpoints, &combined, retries, pause)?)
+    parse(&run(endpoints, &query(piece), retries, pause)?)
 }
 
 /// An Overpass `out geom` answer as elements. Only way members of relations are kept.
@@ -233,22 +198,5 @@ mod tests {
         assert!((area - (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])).abs() < 1e-9);
         assert_eq!(pieces.iter().map(|p| p[0]).fold(f64::MAX, f64::min), bbox[0]);
         assert_eq!(pieces.iter().map(|p| p[3]).fold(f64::MIN, f64::max), bbox[3]);
-    }
-
-    #[test]
-    fn the_old_queries_are_spelled_as_they_were() {
-        // The cache keys of every area fetched before the queries were one.
-        let [main, water, golf, lifts, ski] = legacy([1.0, 2.0, 3.0, 4.0]);
-        assert_eq!(
-            main,
-            r#"[out:json][timeout:120];(way["building"](1,2,3,4);way["highway"](1,2,3,4);way["railway"](1,2,3,4);way[landuse](1,2,3,4);relation[type=multipolygon][landuse](1,2,3,4);way[natural~"^(wood|scrub|grassland|heath|wetland|sand|beach)$"](1,2,3,4);relation[type=multipolygon][natural~"^(wood|scrub|grassland|heath|wetland|sand|beach)$"](1,2,3,4);way[leisure~"^(park|garden|pitch|playground|golf_course|recreation_ground)$"](1,2,3,4);relation[type=multipolygon][leisure~"^(park|garden|pitch|playground|golf_course|recreation_ground)$"](1,2,3,4););out geom;"#
-        );
-        assert_eq!(
-            water,
-            r#"[out:json][timeout:120];(way["natural"="water"](1,2,3,4);relation["natural"="water"](1,2,3,4);way["waterway"="riverbank"](1,2,3,4);relation["waterway"="riverbank"](1,2,3,4);way["landuse"="reservoir"](1,2,3,4);relation["landuse"="reservoir"](1,2,3,4);way["waterway"~"^(river|stream|canal)$"](1,2,3,4);way["natural"="coastline"](1,2,3,4););out geom;"#
-        );
-        assert_eq!(golf, r#"[out:json][timeout:120];(way["golf"](1,2,3,4);node["golf"="pin"](1,2,3,4););out geom;"#);
-        assert_eq!(lifts, r#"[out:json][timeout:120];way["aerialway"~"^(chair_lift|mixed_lift|drag_lift|t-bar|j-bar|platter|rope_tow|gondola|cable_car|magic_carpet)$"](1,2,3,4);out geom;"#);
-        assert_eq!(ski, r#"[out:json][timeout:120];(way["piste:type"~"nordic"](1,2,3,4);relation["piste:type"~"nordic"](1,2,3,4);relation["route"="ski"](1,2,3,4););out geom;"#);
     }
 }

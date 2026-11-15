@@ -31,6 +31,7 @@ pub mod region;
 pub mod roof;
 pub mod square;
 pub mod species;
+pub mod thin;
 pub mod trees;
 pub mod voxels;
 pub mod water;

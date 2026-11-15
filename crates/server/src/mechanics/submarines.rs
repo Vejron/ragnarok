@@ -55,7 +55,7 @@ fn fire(world: &mut World, vid: u32, id: u32) -> bool {
     let start = [mouth[0], mouth[1].max(level) + rise, mouth[2]];
     let yaw = world.entities.get::<Player>(id).map_or(pose.yaw(), |player| from_mrad(player.input.yaw));
     let from = Some((vid, 1));
-    if launch_at(world, id, KIND_MISSILE, start, yaw, LAUNCH_PITCH, SUB_LAUNCH_SPEED, from).is_none() {
+    if launch_at(world, id, KIND_MISSILE, start, yaw, MISSILE_LAUNCH_PITCH, SUB_LAUNCH_SPEED, from).is_none() {
         return false;
     }
     if mouth[1] < level {
@@ -71,10 +71,6 @@ fn fire(world: &mut World, vid: u32, id: u32) -> bool {
     tracing::debug!(vid, id, tube, "missile launched");
     true
 }
-
-/// How far a missile's nose is up from level as it leaves its tube, radians: all but straight up (about
-/// 89 degrees), tipped just enough towards where its flier looks that it pitches over that way.
-const LAUNCH_PITCH: f32 = 1.55;
 
 impl Mechanic for Submarines {
     fn on_tick(&mut self, world: &mut World, _dt: f32) {

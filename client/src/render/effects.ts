@@ -284,32 +284,39 @@ export class Effects {
   /**
    * A round going through armour at `at`, on a plate facing `outward`: a white-hot flash, molten
    * fragments blown back out of the hole and a wisp of smoke from it. `big` for a shell, which throws
-   * more and further, against a bullet through a slit or a thin plate.
+   * more and further, against a bullet through a slit or a thin plate. `size` scales it all, for a
+   * Titan's great plates.
    */
-  pierce(at: V, outward: V, big: boolean) {
+  pierce(at: V, outward: V, big: boolean, size = 1) {
     const out = norm(outward)
-    const scale = big ? 1 : 0.45
+    const scale = (big ? 1 : 0.45) * size
     this.flash(at, 1.8 * scale, 0.1, 0xffffff, 10)
     this.flash(at, 1.4 * scale, 0.35, 0xff8a2a, 6)
-    const count = big ? 16 : 6
+    const count = Math.round((big ? 16 : 6) * Math.min(2, size))
     for (let i = 0; i < count; i++) {
       const direction = norm(add(out, spread(), 1.4))
       const speed = rand(6, 15) * scale
-      this.spark(at, [direction.x * speed, direction.y * speed, direction.z * speed], rand(0.3, 0.65), rand(0.05, 0.1) * (big ? 1.3 : 1), i)
+      this.spark(at, [direction.x * speed, direction.y * speed, direction.z * speed], rand(0.3, 0.65), rand(0.05, 0.1) * (big ? 1.3 : 1) * Math.sqrt(size), i)
     }
     this.drift(add(at, out, 0.15), [out.x + WIND[0] * 0.4, out.y + rand(0.6, 1.2), out.z + WIND[1] * 0.4], rand(1.3, 2), [0.3 * scale, rand(1.2, 1.8) * scale], 0x2c2a28, 0.5)
   }
 
-  /** Armour stopping a round at `at`, on a plate facing `outward`: sparks glancing off and a puff of grit. */
-  deflect(at: V, outward: V) {
+  /**
+   * Armour stopping a round at `at`, on a plate facing `outward`: sparks glancing off and a puff of grit.
+   * `size` is 1 for a bullet; a shell's is larger, a shell's on a Titan larger still, with a flash of
+   * fire and a gout of smoke off the plate.
+   */
+  deflect(at: V, outward: V, size = 1) {
     const out = norm(outward)
-    this.flash(at, 0.5, 0.07, 0xffffff, 8)
-    for (let i = 0; i < 5; i++) {
+    this.flash(at, 0.5 * size, 0.07, 0xffffff, 8)
+    if (size > 1.5) this.flash(at, 0.7 * size, 0.3, 0xff8a2a, 6)
+    const count = Math.round(5 * Math.min(4, size))
+    for (let i = 0; i < count; i++) {
       const direction = norm(add(out, spread(), 2))
-      const speed = rand(5, 11)
-      this.spark(at, [direction.x * speed, direction.y * speed, direction.z * speed], rand(0.15, 0.27), rand(0.03, 0.06), i)
+      const speed = rand(5, 11) * Math.sqrt(size)
+      this.spark(at, [direction.x * speed, direction.y * speed, direction.z * speed], rand(0.15, 0.27) * Math.sqrt(size), rand(0.03, 0.06) * Math.sqrt(size), i)
     }
-    this.drift(at, [out.x * 0.6, out.y * 0.6 + 0.5, out.z * 0.6], rand(0.4, 0.6), [0.12, 0.7], 0x9a948a, 0.4)
+    this.drift(at, [out.x * 0.6, out.y * 0.6 + 0.5, out.z * 0.6], rand(0.4, 0.6) * Math.sqrt(size), [0.12 * size, 0.7 * size], size > 1.5 ? 0x3a3734 : 0x9a948a, 0.4)
   }
 
   /** The white-hot flash of a blast at `at`; the fire, smoke and debris around it come from `explosion`. */
