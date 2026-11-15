@@ -104,7 +104,7 @@ describe('world files', () => {
   })
 
   it('decodes a building\'s paint, and draws it in its own colours', () => {
-    const house = [600, [[0, 0], [100, 0], [100, 100]], 0, 0, 0, 0, ROOF_GABLE, NO_CELLS]
+    const house = [600, [[0, 0], [100, 0], [100, 100]], 0, 0, 0, 0, ROOF_GABLE, 0, NO_CELLS]
     const tile = decodeTile(tileWith({ 0: [[...house, null], [...house, [0xf0e6cc, 0x56606e]]] }))
     expect(tile.buildings.map((b) => b.paint)).toEqual([null, [0xf0e6cc, 0x56606e]])
     expect(buildingColors(tile, 1, 3)).toEqual({ wall: 0xf0e6cc, roof: 0x56606e })

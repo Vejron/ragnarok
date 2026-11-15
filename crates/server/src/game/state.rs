@@ -726,6 +726,8 @@ pub struct World {
     pub hooks: crate::events::Hooks,
     /// Solid trees by identity, to look their size up from a collider hit.
     pub(super) trees_by_id: HashMap<ObjId, usize>,
+    /// The pieces of the fences and walls by identity.
+    pub(super) lines_by_id: HashMap<ObjId, shared::world::LinePiece>,
     /// Buildings by identity.
     pub(super) buildings_by_id: HashMap<ObjId, usize>,
     /// Health left on buildings and trees that have been hurt but still stand.
@@ -760,6 +762,8 @@ pub struct World {
     pub construct_dirty: std::collections::BTreeSet<shared::construct::Pos>,
     /// The backpack, in a world whose scenario places one (`mechanics::backpack`).
     pub backpack: Option<crate::mechanics::BackpackState>,
+    /// What `Buses` asks of the room: drivers to add and to take away. Drained every tick.
+    pub bus_calls: Vec<crate::mechanics::BusCall>,
 }
 
 impl World {
@@ -790,6 +794,11 @@ impl World {
     /// The tree `id` names, if it is one that can be hit.
     pub fn tree(&self, id: ObjId) -> Option<&Tree> {
         self.trees_by_id.get(&id).and_then(|&index| self.map.trees.get(index))
+    }
+
+    /// The piece of a fence or wall `id` names.
+    pub fn line_piece(&self, id: ObjId) -> Option<&shared::world::LinePiece> {
+        self.lines_by_id.get(&id)
     }
 
     /// How badly the standing building `object` is hurt: 0 (not at all) to `DAMAGE_STAGES`.

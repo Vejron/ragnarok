@@ -127,8 +127,10 @@ All but 502 are dirt underfoot (`surface.ts`): tyres leave marks and throw dust.
 | 517 | Ruined fence | Left out |
 | 518 | Impassable fence | A game fence: posts every 4 m and wire netting 2 m high, its mesh fine at the foot and wider toward the top |
 
-A fence stops a soldier, who cannot climb either kind, and bots go round it; vehicles drive through it
-and bullets pass it. A pole or pylon stops everything, bullets too. The wires stop nothing. A wire is
+A fence stops a soldier, who cannot climb either kind, and bots go round it; vehicles drive through it,
+breaking the pieces they cross, and bullets pass it ([BARRIERS.md](BARRIERS.md)). The map's wall
+symbols are not read yet: walls come from OpenStreetMap only, and only outside the map's outline. A
+pole or pylon stops everything, bullets too. The wires stop nothing. A wire is
 never drawn thinner than about a pixel; further off it is drawn that wide and fainter, so it fades instead
 of breaking up, and it swings a little in the breeze.
 

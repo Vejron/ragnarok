@@ -453,7 +453,7 @@ impl Physics {
             let able = car.flight.powered && car.condition.power > 0.5 && gait.is_none_or(|gait| up.y >= gait.fallen_up);
             // Where the ground is under each foot's hip and under where it would step to.
             let ground = |x: f32, z: f32, top: f32, reach: f32| {
-                let queries = self.broad_phase.as_query_pipeline(self.narrow_phase.query_dispatcher(), &self.bodies, &self.colliders, QueryFilter::only_fixed());
+                let queries = self.broad_phase.as_query_pipeline(self.narrow_phase.query_dispatcher(), &self.bodies, &self.colliders, QueryFilter::only_fixed().groups(crate::past_fences()));
                 queries.cast_ray(&Ray::new(Vector::new(x, top, z), Vector::new(0.0, -1.0, 0.0)), reach, true).map(|(_, distance)| top - distance)
             };
             let nose = pose.rotation * Vector::new(0.0, 0.0, -1.0);

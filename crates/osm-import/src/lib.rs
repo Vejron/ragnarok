@@ -2,8 +2,10 @@
 
 pub mod assemble;
 pub mod bridge;
+pub mod buslines;
 pub mod bushes;
 pub mod catalogue;
+pub mod church;
 pub mod cache;
 pub mod canopy;
 pub mod dem;

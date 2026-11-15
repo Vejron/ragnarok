@@ -598,3 +598,60 @@ fn a_40mm_armour_piercing_round_punches_a_hole_in_a_house_wall() {
     let gone = carving.removed.iter().filter(|&&removed| removed).count();
     assert!(gone >= 1, "a piece of wall is gone: {gone} cells");
 }
+
+/// One tick with `pilot` looking along `yaw` and `pitch` (radians, the world's), its hands idle.
+fn look_tick(game: &mut Game, pilot: u32, seq: &mut u32, yaw: f32, pitch: f32) {
+    *seq += 1;
+    game.handle(Command::Input(pilot, 0, vec![InputFrame { seq: *seq, strafe: 0, forward: 0, yaw: shared::quant::to_mrad(yaw), buttons: 0, pitch: shared::quant::to_mrad(pitch), view: 0, slot: 0 }]));
+    game.step();
+}
+
+#[test]
+fn a_titans_head_turns_to_its_pilots_look_as_far_as_its_neck_allows_and_straightens_when_empty() {
+    let (mut game, vid, pilot, mut seq) = piloted();
+    let facing = game.world.physics.car_pose(vid).unwrap().yaw();
+    for _ in 0..60 {
+        look_tick(&mut game, pilot, &mut seq, facing + 0.5, 0.3);
+    }
+    let seen = game.seen(vid).unwrap().titan.unwrap();
+    let (yaw, pitch) = (shared::quant::from_mrad(seen.head_yaw), shared::quant::from_mrad(seen.head_pitch));
+    assert!((yaw - 0.5).abs() < 0.05 && (pitch - 0.3).abs() < 0.05, "the head is at {yaw}, {pitch}");
+    // Looking back over its shoulder and at its feet, the head stops where the neck does.
+    for _ in 0..60 {
+        look_tick(&mut game, pilot, &mut seq, facing - 2.5, -1.5);
+    }
+    let seen = game.seen(vid).unwrap().titan.unwrap();
+    let (yaw, pitch) = (shared::quant::from_mrad(seen.head_yaw), shared::quant::from_mrad(seen.head_pitch));
+    assert!((yaw + TITAN_HEAD_TURN).abs() < 0.05 && (pitch + TITAN_HEAD_DOWN).abs() < 0.05, "the head is at {yaw}, {pitch}");
+    crate::mechanics::vehicles::alight(&mut game.world, pilot);
+    for _ in 0..60 {
+        game.step();
+    }
+    let seen = game.seen(vid).unwrap().titan.unwrap();
+    assert_eq!((seen.head_yaw, seen.head_pitch), (0, 0), "with nobody in it, it faces ahead");
+}
+
+#[test]
+fn a_titans_searchlight_goes_on_and_off_at_its_pilots_lamp_button_not_their_own_lamp_and_out_when_they_leave() {
+    let (mut game, vid, pilot, mut seq) = piloted();
+    let lit = |game: &Game| game.seen(vid).unwrap().titan.unwrap().flags & shared::protocol::TITAN_LAMP != 0;
+    assert!(!lit(&game));
+    // Held for several ticks and let go, it has switched once: the input reaches the game a few ticks late.
+    let mut press = |game: &mut Game| {
+        for buttons in [BUTTON_LAMP, 0] {
+            for _ in 0..8 {
+                tick(game, vid, pilot, &mut seq, buttons, None, false);
+            }
+        }
+    };
+    press(&mut game);
+    assert!(lit(&game), "the button lights it");
+    assert!(!game.world.entities.of::<Player>(pilot).lamp, "the pilot's own headlamp stays off");
+    press(&mut game);
+    assert!(!lit(&game), "and puts it out again");
+    press(&mut game);
+    assert!(lit(&game));
+    crate::mechanics::vehicles::alight(&mut game.world, pilot);
+    game.step();
+    assert!(!lit(&game), "it goes out with nobody in it");
+}

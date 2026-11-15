@@ -66,6 +66,8 @@ export const VEHICLE_KINDS: { kind: number; name: string; icon: string }[] = [
   { kind: 29, name: 'Snowracer', icon: 'Z' },
   { kind: 22, name: 'Golf cart', icon: 'G' },
   { kind: 23, name: 'Technical', icon: 'Q' },
+  // Parked, with nobody driving it: the buses that run a world's lines come with the lines.
+  { kind: 31, name: 'Bus', icon: 'O' },
   // Her guns come with her. Only on open water, in summer.
   { kind: 18, name: 'Pirate ship', icon: 'X' },
   // Only on open water deep enough to dive in.

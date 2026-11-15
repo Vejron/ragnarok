@@ -149,8 +149,8 @@ export function remeshTerrain(group: Group, buffers: TerrainBuffers) {
 
 /**
  * A prepared tile (`prepareTile`) as meshes: its terrain, roads and rails draped on it, its
- * buildings and bridges merged into one mesh with a colour a vertex, its trees, and its fences and
- * power lines. Water is drawn
+ * buildings and bridges merged into one mesh with a colour a vertex, its trees, and its fences,
+ * walls and power lines. Water is drawn
  * apart (`buildWater`). Only wrapping arrays, so it is cheap enough for the frame.
  */
 export function tileGroup(tile: Pick<TileData, 'cover' | 'detail' | 'trees' | 'lines' | 'stones' | 'water'>, ground: TileGround | null, prepared: PreparedTile): Group {
@@ -253,6 +253,18 @@ export function rebuildBuildings(group: Group, tile: TileData, salt: number, des
     if (mesh.userData.glass && glass) mesh.geometry.dispose()
     else group.add(mesh)
   }
+}
+
+/**
+ * Draws a tile's fences, walls and power lines again without the pieces in `gone` (`linePieceIndex`):
+ * they are merged meshes, so one piece less is the tile's lines built anew.
+ */
+export function rebuildLines(group: Group, tile: Pick<TileData, 'lines'>, ground: TileGround | null, gone: ReadonlySet<number>) {
+  for (const mesh of group.children.filter((child): child is Mesh => child.userData.lines === true && child instanceof Mesh)) {
+    mesh.geometry.dispose()
+    group.remove(mesh)
+  }
+  group.add(...buildLines(tile.lines, ground, gone))
 }
 
 /** Frees a tile's geometry, its terrain texture and its own ribbon materials. Shared materials and tree prototypes stay. */

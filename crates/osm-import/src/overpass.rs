@@ -60,7 +60,7 @@ const WATER_FILTERS: [&str; 3] = [r#"["natural"="water"]"#, r#"["waterway"="rive
 /// `wants_relation`, `wants_node`): also the cache key, so it is the one place that spells it.
 pub fn query([south, west, north, east]: [f64; 4]) -> String {
     let bbox = format!("{south},{west},{north},{east}");
-    let mut query = format!("[out:json][timeout:180];(way[\"building\"]({bbox});way[\"highway\"]({bbox});way[\"railway\"]({bbox});way[\"barrier\"=\"fence\"]({bbox});way[\"power\"~\"^(line|minor_line)$\"]({bbox});");
+    let mut query = format!("[out:json][timeout:180];(way[\"building\"]({bbox});way[\"highway\"]({bbox});way[\"railway\"]({bbox});way[\"barrier\"~\"^(fence|wall|city_wall)$\"]({bbox});way[\"power\"~\"^(line|minor_line)$\"]({bbox});");
     for filter in COVER_FILTERS.split(';') {
         query.push_str(&format!("way{filter}({bbox});relation[type=multipolygon]{filter}({bbox});"));
     }
@@ -69,7 +69,7 @@ pub fn query([south, west, north, east]: [f64; 4]) -> String {
     }
     let lifts = crate::osm::LIFTS.join("|");
     query.push_str(&format!(
-        r#"way["waterway"~"^(river|stream|canal)$"]({bbox});way["natural"="coastline"]({bbox});way["golf"]({bbox});node["golf"="pin"]({bbox});way["aerialway"~"^({lifts})$"]({bbox});way["piste:type"~"nordic"]({bbox});relation["piste:type"~"nordic"]({bbox});relation["route"="ski"]({bbox});"#
+        r#"way["waterway"~"^(river|stream|canal)$"]({bbox});way["natural"="coastline"]({bbox});way["golf"]({bbox});node["golf"="pin"]({bbox});node["highway"="bus_stop"]({bbox});way["aerialway"~"^({lifts})$"]({bbox});way["piste:type"~"nordic"]({bbox});relation["piste:type"~"nordic"]({bbox});relation["route"="ski"]({bbox});"#
     ));
     query.push_str(");out geom;");
     query

@@ -711,6 +711,7 @@ mod tests {
                 )
             })
             .collect();
+        let line_kinds: Vec<String> = crate::world::LINE_KINDS.iter().map(|d| format!("    {{\"kind\": {}, \"height\": {}, \"half\": {}, \"step\": {}, \"wall\": {}}}", d.kind, d.height, d.half, d.step, d.wall)).collect();
         let materials: Vec<String> = crate::construct::MATERIALS
             .iter()
             .enumerate()
@@ -740,10 +741,11 @@ mod tests {
         let standard: Vec<String> = STANDARD_LOADOUT.iter().map(u8::to_string).collect();
         let lines: Vec<String> = consts.iter().map(|(name, value)| format!("    \"{name}\": {value}")).collect();
         format!(
-            "{{\n  \"items\": [\n{}\n  ],\n  \"vehicles\": [\n{}\n  ],\n  \"treeKinds\": [\n{}\n  ],\n  \"materials\": [\n{}\n  ],\n  \"golfMeter\": [\n{}\n  ],\n  \"standardLoadout\": [{}],\n  \"consts\": {{\n{}\n  }}\n}}\n",
+            "{{\n  \"items\": [\n{}\n  ],\n  \"vehicles\": [\n{}\n  ],\n  \"treeKinds\": [\n{}\n  ],\n  \"lineKinds\": [\n{}\n  ],\n  \"materials\": [\n{}\n  ],\n  \"golfMeter\": [\n{}\n  ],\n  \"standardLoadout\": [{}],\n  \"consts\": {{\n{}\n  }}\n}}\n",
             items.join(",\n"),
             vehicles.join(",\n"),
             tree_kinds.join(",\n"),
+            line_kinds.join(",\n"),
             materials.join(",\n"),
             golf_meter.join(",\n"),
             standard.join(", "),

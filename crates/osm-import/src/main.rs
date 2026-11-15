@@ -471,6 +471,9 @@ struct AreaOptions {
     /// Take the water from OSM (`--osm-water`), for a world on the coast: Hydrografi has no sea.
     #[serde(default)]
     osm_water: bool,
+    /// Public transport: find bus lines along the major roads, for the server to run buses on.
+    #[serde(default)]
+    buses: bool,
 }
 
 fn area_options(path: &std::path::Path) -> Result<AreaOptions> {
@@ -642,10 +645,18 @@ fn main() -> Result<()> {
             (!laid.holes.is_empty() || !laid.surfaces.is_empty()).then_some(laid)
         };
         let lifts = osm_import::osm_lifts::from(&data);
+        let bus_stops: Vec<[f64; 2]> = if options.buses { osm_import::buslines::stops(&data).iter().map(|stop| place.frame.project(stop.lat, stop.lon)).collect() } else { Vec::new() };
         drop(data);
         eprintln!("lifts: {} from OpenStreetMap", lifts.len());
         let mut built = assemble::from_osm(&place, args.tile, mask, &osm, &planted, ground, placed, cloud.as_ref(), decks.as_ref(), photo.as_ref(), &ski, ocad.as_ref(), course.as_ref(), &lifts);
         eprintln!("lifts: {} in the world", built.manifest.lifts.len());
+        if options.buses {
+            osm_import::buslines::lay(&mut built, &bus_stops);
+            eprintln!("buses: {} stops from OpenStreetMap, {} lines", bus_stops.len(), built.manifest.bus_lines.len());
+            for line in &built.manifest.bus_lines {
+                eprintln!("buses: a line of {:.0} m with {} stops", line.length(), line.stops.len());
+            }
+        }
         if let (Some(coarse), Some(source)) = (coarse, dem.as_ref()) {
             progress::stage("detail");
             let model = |half: f64| {

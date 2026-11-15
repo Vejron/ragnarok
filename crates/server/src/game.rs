@@ -38,6 +38,7 @@ fn destroyed_entry(object: Obj, yaw: i16, force: u8) -> DestroyedObject {
     let (kind, id) = match object {
         Obj::Tree(id) => (OBJ_TREE, id),
         Obj::Building(id) => (OBJ_BUILDING, id),
+        Obj::Line(id) => (OBJ_LINE, id),
     };
     DestroyedObject { kind, col: id.col, row: id.row, index: id.index, yaw, force }
 }
@@ -100,6 +101,7 @@ impl Game {
                 tick: 0,
                 physics: Physics::new(&map)?,
                 trees_by_id: map.tree_ids.iter().enumerate().filter(|&(index, _)| map.trees[index].solid).map(|(index, &id)| (id, index)).collect(),
+                lines_by_id: shared::world::line_pieces(&map.lines).into_iter().map(|piece| (piece.id, piece)).collect(),
                 buildings_by_id: map.building_ids.iter().enumerate().map(|(index, &id)| (id, index)).collect(),
                 object_hp: HashMap::new(),
                 destroyed: Vec::new(),
@@ -115,6 +117,7 @@ impl Game {
                 construct: Default::default(),
                 construct_dirty: Default::default(),
                 backpack: None,
+                bus_calls: Vec::new(),
                 map,
                 entities: Default::default(),
                 nav: Default::default(),
@@ -280,6 +283,41 @@ impl Game {
         Some(id)
     }
 
+    /// Answers what `Buses` asked for this tick: a driver for each fresh bus, and the dead ones gone.
+    fn staff_buses(&mut self) {
+        use crate::mechanics::{Bus, BusCall, BusDriver, seat};
+        for call in std::mem::take(&mut self.world.bus_calls) {
+            match call {
+                BusCall::Hire(vid) => {
+                    let Some(pose) = self.world.physics.car_pose(vid) else { continue };
+                    let id = self.world.alloc_id();
+                    let at = [pose.position[0], pose.position[2]];
+                    // A civilian: on no team, with empty hands, and no coming back from the dead.
+                    self.world.entities.spawn(id, Player::new("Bus driver".into(), 0, TEAM_NONE, vec![at.map(to_cm)], hotbar_of([shared::items::ITEM_NONE; HOTBAR_SLOTS])));
+                    self.world.entities.insert(id, (soldier_life(), BusDriver));
+                    self.world.entities.remove::<crate::entities::Respawn>(id);
+                    for mechanic in &mut self.mechanics {
+                        mechanic.on_join(&mut self.world, id);
+                    }
+                    self.broadcast(encode(&Profiles { tag: S_PROFILES, players: vec![profile_entry(&self.world, id)] }));
+                    if seat(&mut self.world, id, vid, 0)
+                        && let Some(mut bus) = self.world.entities.get_mut::<Bus>(vid)
+                    {
+                        bus.driver = Some(id);
+                    } else {
+                        // Someone took the seat first: the bus is theirs, and `Buses` sees it has no driver.
+                        self.leave(id);
+                    }
+                }
+                BusCall::Dismiss(id) => {
+                    if self.world.entities.has::<BusDriver>(id) {
+                        self.leave(id);
+                    }
+                }
+            }
+        }
+    }
+
     /// Takes zombie `id` out of the game, as if it had left. Anyone else is left alone.
     pub fn remove_zombie(&mut self, id: u32) {
         if crate::mechanics::is_zombie(&self.world, id) {
@@ -346,6 +384,7 @@ impl Game {
         for mechanic in &mut self.mechanics {
             mechanic.on_tick(&mut self.world, TICK_DT);
         }
+        self.staff_buses();
         if let Some(mut scenario) = self.scenario.take() {
             scenario.tick(self);
             self.scenario = Some(scenario);

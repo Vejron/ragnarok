@@ -881,6 +881,67 @@ fn a_blast_fells_a_tree_in_reach_and_everyone_hears_of_it() {
     assert!(late_told, "a late joiner was not told");
 }
 
+/// A game on a world with a low wall along x = 10 m and a fence along x = 20 m, each from z = -6 m to
+/// 6 m in four 3 m pieces, in tile (2, 3).
+fn game_with_a_wall_and_a_fence() -> Game {
+    use shared::world::{LINE_FENCE, LINE_WALL, Line};
+    let line = |kind, x: i32| Line { kind, points: (-2..=2).map(|i| [x, i * 300]).collect(), base: vec![0; 5], end: true };
+    let map = WorldFile { version: WORLD_VERSION, half_extent: 20_000, spawns: vec![[0, 0]], lines: vec![(2, 3, line(LINE_WALL, 1000)), (2, 3, line(LINE_FENCE, 2000))], ..Default::default() };
+    let mut game = Game::new(map, 0).unwrap();
+    game.world.clear_pickups();
+    game
+}
+
+#[test]
+fn a_blast_breaks_the_pieces_near_it_and_a_late_joiner_is_told_which_are_gone() {
+    use shared::protocol::{Destroyed, OBJ_LINE, S_DESTROYED};
+    let mut game = game_with_a_wall_and_a_fence();
+    let (id, mut inbox) = join(&mut game);
+    while inbox.try_recv().is_ok() {}
+    // Against the wall, by its second piece (z -3 to 0): that piece goes and the far ones stand.
+    blast(&mut game.world, Blast { point: [9.5, 0.5, -1.5], radius: 4.0, damage: 100.0, knock: 0.0, dir: [0.0, 1.0, 0.0], attacker: Some(id), weapon: WEAPON_ROCKET });
+    game.step();
+    let gone: Vec<u32> = game.world.destroyed.iter().map(|(object, _)| match object { Obj::Line(id) => id.index, other => panic!("{other:?}") }).collect();
+    assert!(gone.contains(&1) && !gone.contains(&3), "{gone:?}");
+    assert!(gone.iter().all(|index| index >> 16 == 0), "the fence 10 m off stands: {gone:?}");
+    // The gap lets a ray through, and the piece beside it does not.
+    assert!(game.world.physics.cast_ray_object([0.0, 0.5, -1.5], [1.0, 0.0, 0.0], 15.0).is_none());
+    assert!(game.world.physics.cast_ray_object([0.0, 0.5, 4.5], [1.0, 0.0, 0.0], 15.0).is_some());
+    let told = |inbox: &mut tokio::sync::mpsc::Receiver<Outgoing>| {
+        let mut pieces = Vec::new();
+        while let Ok(Outgoing::Reliable(bytes)) = inbox.try_recv() {
+            if shared::protocol::peek_tag(&bytes) == Some(S_DESTROYED) {
+                let message: Destroyed = decode(&bytes).unwrap();
+                pieces.extend(message.objects.iter().map(|object| (object.kind, object.col, object.row, object.index)));
+            }
+        }
+        pieces
+    };
+    assert!(told(&mut inbox).contains(&(OBJ_LINE, 2, 3, 1)));
+    let (_, mut late) = join(&mut game);
+    assert!(told(&mut late).contains(&(OBJ_LINE, 2, 3, 1)), "a late joiner was not told");
+    // A blast by the fence takes its pieces out too: wire and posts go easily.
+    blast(&mut game.world, Blast { point: [19.0, 0.5, 0.0], radius: 4.0, damage: 40.0, knock: 0.0, dir: [0.0, 1.0, 0.0], attacker: Some(id), weapon: WEAPON_ROCKET });
+    assert!(game.world.destroyed.iter().any(|(object, _)| matches!(object, Obj::Line(id) if id.index >> 16 == 1)));
+}
+
+#[test]
+fn rifle_rounds_chip_a_wall_down_and_go_through_a_fence() {
+    let mut game = game_with_a_wall_and_a_fence();
+    // 60 hit points at a third of a round's 30: six rounds.
+    for round in 0..6 {
+        assert!(game.world.destroyed.is_empty(), "the wall broke after {round} rounds");
+        let (distance, _) = game.world.physics.cast_ray_object([0.0, 0.5, 1.5], [1.0, 0.0, 0.0], 30.0).expect("the wall is in the way");
+        hit_object(&mut game.world, [0.0, 0.5, 1.5], [1.0, 0.0, 0.0], distance, 30);
+    }
+    assert_eq!(game.world.destroyed.len(), 1);
+    game.step();
+    // Through the gap the round carries on through the fence behind it, which stands.
+    assert!(game.world.physics.cast_ray_object([0.0, 0.5, 1.5], [1.0, 0.0, 0.0], 30.0).is_none());
+    hit_object(&mut game.world, [0.0, 0.5, 1.5], [1.0, 0.0, 0.0], 30.0, 255);
+    assert_eq!(game.world.destroyed.len(), 1);
+}
+
 #[test]
 fn a_blast_out_of_reach_leaves_the_tree_standing() {
     let (mut game, _) = game_with_tree();

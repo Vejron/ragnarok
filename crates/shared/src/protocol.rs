@@ -58,8 +58,10 @@ pub const HIT_DEER: u8 = 4;
 /// `Destroyed` entry kinds: what part of the static world fell.
 pub const OBJ_TREE: u8 = 0;
 pub const OBJ_BUILDING: u8 = 1;
+/// A piece of a fence or wall (`shared::world::line_pieces`).
+pub const OBJ_LINE: u8 = 2;
 
-pub use crate::consts::{KIND_DEER, KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MISSILE, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_ROOSTER, KIND_SEAPLANE, KIND_SHIP, KIND_SHIP_GUN, KIND_SNOWMOBILE, KIND_SNOWRACER, KIND_SOLDIER, KIND_SPORTS, KIND_STAG, KIND_STRF, KIND_STRV, KIND_SUBMARINE, KIND_TANK, KIND_TECHNICAL, KIND_TITAN, KIND_TUPP, KIND_WALKER, KIND_ZOMBIE};
+pub use crate::consts::{KIND_BUS, KIND_DEER, KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MISSILE, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_ROOSTER, KIND_SEAPLANE, KIND_SHIP, KIND_SHIP_GUN, KIND_SNOWMOBILE, KIND_SNOWRACER, KIND_SOLDIER, KIND_SPORTS, KIND_STAG, KIND_STRF, KIND_STRV, KIND_SUBMARINE, KIND_TANK, KIND_TECHNICAL, KIND_TITAN, KIND_TUPP, KIND_WALKER, KIND_ZOMBIE};
 
 /// Whether `kind` is a drone: flown from a remote seat by whoever launched it (see the `Drones` mechanic).
 pub fn is_drone(kind: u8) -> bool {
@@ -179,6 +181,8 @@ pub const HANDS_REACH_RIGHT: u8 = 1 << 3;
 /// `replicated::Titan::flags` only: the hand holds something (a soldier or a vehicle).
 pub const HANDS_FULL_LEFT: u8 = 1 << 4;
 pub const HANDS_FULL_RIGHT: u8 = 1 << 5;
+/// `replicated::Titan::flags` only: the searchlight in its visor is on.
+pub const TITAN_LAMP: u8 = 1 << 6;
 
 /// `replicated::Limbs::lost` bits: the limbs a soldier has lost. The same bits shifted up by
 /// `LIMB_BLEED_SHIFT` are the stumps still bleeding.

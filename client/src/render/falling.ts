@@ -43,6 +43,8 @@ const SETTLE = 0.6
 const MAX_FALLING = 24
 /** Above this force a trunk snaps instead of toppling: it is thrown clear, not just tipped. */
 const SNAP = 0.5
+/** Most pieces of fence and wall that throw debris in one frame: a tank along a fence stays cheap. */
+const MAX_BURSTS = 12
 /** How far a trunk bends (radians) before it lets go. */
 const GIVE_ANGLE = 0.12
 
@@ -54,6 +56,8 @@ const GIVE_ANGLE = 0.12
  */
 export class FallingTrees {
   private readonly falling: Falling[] = []
+  /** The debris of fence and wall pieces broken since the last `update`, thrown then. */
+  private readonly bursts: ((fx: TreeFx) => void)[] = []
 
   /** Told when a tree cracks and when it lands, for the sound of it. */
   onNoise: ((noise: TreeNoise) => void) | null = null
@@ -95,7 +99,24 @@ export class FallingTrees {
     return true
   }
 
+  /**
+   * A piece of a fence or wall from `a` to `b` (on the ground), `height` tall, breaks: splinters of
+   * its posts or lumps of its stone are thrown the way of `yaw` (0 faces -Z), harder with `force`
+   * (0..1), and it is heard. Only the debris: the tile's lines are drawn again without the piece.
+   */
+  shatter(a: readonly [number, number, number], b: readonly [number, number, number], height: number, wall: boolean, yaw: number, force = 0) {
+    if (this.bursts.length >= MAX_BURSTS) return
+    const dx = -Math.sin(yaw)
+    const dz = -Math.cos(yaw)
+    const mid = { x: (a[0] + b[0]) / 2, y: (a[1] + b[1]) / 2 + height / 2, z: (a[2] + b[2]) / 2 }
+    this.bursts.push((fx) => debris(fx, a, b, height, wall, dx, dz, force))
+    // Posts snap as a thin trunk does; stone comes down as a tree lands.
+    this.onNoise?.({ phase: wall ? 'thud' : 'crack', at: mid, size: wall ? height * 3 : height })
+  }
+
   update(dt: number, fx: TreeFx) {
+    for (const burst of this.bursts) burst(fx)
+    this.bursts.length = 0
     for (let i = this.falling.length - 1; i >= 0; i--) {
       const fall = this.falling[i]!
       fall.elapsed += dt
@@ -147,6 +168,7 @@ export class FallingTrees {
   /** Forgets the animations in flight, for a tile group that is going away. */
   clear() {
     this.falling.length = 0
+    this.bursts.length = 0
   }
 }
 
@@ -199,6 +221,28 @@ function leaf(fx: TreeFx, at: { x: number; y: number; z: number }, velocity: rea
 /** A billow of dust. */
 function dust(fx: TreeFx, at: { x: number; y: number; z: number }, velocity: readonly [number, number, number], size: number, alpha = 0.45) {
   fx.smoke.spawn({ position: at, velocity, life: rand(1.4, 2.6), size: [size * 0.3, size], color: 0xb5a88c, alpha, gravity: -0.15, drag: 1.4, shape: 'puff' })
+}
+
+const STONE_TONES = [0x8d8a82, 0x9c9a93, 0x77746d, 0x6a6862] as const
+
+/** A lump of stone: heavy, tumbling, bouncing once or twice where it lands. */
+function lump(fx: TreeFx, at: { x: number; y: number; z: number }, velocity: readonly [number, number, number], size: number) {
+  fx.smoke.spawn({ position: at, velocity, life: rand(1.5, 3), size: [size, size], color: pick(STONE_TONES), alpha: 1, gravity: 14, drag: 0.2, bounce: true, spin: [-8, 8] })
+}
+
+/** A piece of a fence or wall breaks (`FallingTrees.shatter`): splinters or stone along it, thrown along `(dx, dz)`. */
+function debris(fx: TreeFx, a: readonly [number, number, number], b: readonly [number, number, number], height: number, wall: boolean, dx: number, dz: number, force: number) {
+  const along = () => {
+    const t = Math.random()
+    return { x: a[0] + (b[0] - a[0]) * t, y: a[1] + (b[1] - a[1]) * t + rand(0.1, height), z: a[2] + (b[2] - a[2]) * t }
+  }
+  const out = () => rand(1, 4 + force * 8)
+  if (wall) {
+    for (let i = 0; i < Math.round(10 + height * 6); i++) lump(fx, along(), [dx * out() + rand(-1.5, 1.5), rand(1, 4 + force * 3), dz * out() + rand(-1.5, 1.5)], rand(0.12, 0.3))
+    for (let i = 0; i < 4; i++) dust(fx, along(), [dx * rand(0.5, 2) + rand(-1, 1), rand(0.3, 1), dz * rand(0.5, 2) + rand(-1, 1)], rand(1.2, 2.4))
+  } else {
+    for (let i = 0; i < 8; i++) chip(fx, along(), [dx * out() + rand(-1.5, 1.5), rand(1.5, 5), dz * out() + rand(-1.5, 1.5)], rand(0.08, 0.16))
+  }
 }
 
 /** The trunk splits: chips and bark thrown the way the tree falls, a cloud at the foot, and leaves shaken loose from the crown. */

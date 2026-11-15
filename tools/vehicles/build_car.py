@@ -3,7 +3,7 @@ Builds the three cars, an open jeep, a low sports car and the thruster Roadster,
 to client/public/models/.
 
     /Applications/Blender.app/Contents/MacOS/Blender -b -P tools/vehicles/build_car.py -- \
-        [--out DIR] [--only jeep|sports|roadster|snowmobile|golf_cart|technical|snowracer] [--preview DIR]
+        [--out DIR] [--only jeep|sports|roadster|snowmobile|golf_cart|technical|snowracer|bus] [--preview DIR]
 
 Everything is procedural and flat-shaded: about a thousand triangles each.
 
@@ -59,6 +59,8 @@ SPECS = {
     "technical": dict(half=(0.95, 0.4, 2.45), wheel_radius=0.58, wheel_width=0.36, track=0.85, axle=1.6, ride=1.08),
     # SNOWRACER_*: `track` is half the runners' stance, `axle` where the steering ski is.
     "snowracer": dict(half=(0.3, 0.15, 0.75), wheel_radius=0.1, wheel_width=0.1, track=0.25, axle=0.55, ride=0.202),
+    # BUS_*: `half` is the frame under the floor; the body stands on it up to 2.3 m over the origin.
+    "bus": dict(half=(1.25, 0.5, 6.0), wheel_radius=0.5, wheel_width=0.3, track=1.05, axle=3.0, ride=1.057),
 }
 
 MATERIAL_COLORS = {
@@ -593,7 +595,79 @@ def build_snowracer():
     return [body_obj, ski.build()]
 
 
-BUILDERS = {"jeep": build_jeep, "sports": build_sports, "roadster": build_roadster, "snowmobile": build_snowmobile, "golf_cart": build_golf_cart, "technical": build_technical, "snowracer": build_snowracer}
+# --------------------------------------------------------------------------------------------------
+# The bus: a twelve-metre city bus. A tub on the frame with the floor a little over the origin, open
+# window frames all round above the sill (so the riders show), a flat roof, a glass windscreen, two
+# doors on the right, and a seat at each of BUS_SEAT_HEADS.
+# --------------------------------------------------------------------------------------------------
+# The rows of passenger seats along the bus (Blender y), front to back, and where the driver sits.
+BUS_ROWS = (3.2, 1.7, 0.2, -1.3, -2.8, -4.3)
+BUS_DRIVER = (-0.75, 4.9)
+# Heights over the origin: the skirt's foot, the floor, the window sill, the roof's underside and its top.
+BUS_FOOT, BUS_FLOOR, BUS_SILL, BUS_EAVE, BUS_TOP = -0.7, 0.1, 0.75, 1.95, 2.3
+
+
+def build_bus():
+    spec = SPECS["bus"]
+    half_x, half_y = spec["half"][0], spec["half"][2]
+    axle, arch = spec["axle"], spec["wheel_radius"] + 0.2
+    body = Part("body")
+    # The underbody, full width between the wheel arches and narrow at them, so the wheels show.
+    under = (BUS_FLOOR + BUS_FOOT) / 2
+    for y0, y1 in ((-half_y, -axle - arch), (-axle + arch, axle - arch), (axle + arch, half_y)):
+        body.box((0.0, (y0 + y1) / 2, under), (2 * half_x, y1 - y0, BUS_FLOOR - BUS_FOOT), PAINT)
+    for y in (-axle, axle):
+        body.box((0.0, y, under), (2 * (spec["track"] - spec["wheel_width"]), 2 * arch, BUS_FLOOR - BUS_FOOT), DARK)
+        # The top of the arch, over the wheel.
+        body.box((0.0, y, BUS_FLOOR - 0.04), (2 * half_x, 2 * arch, 0.08), PAINT)
+    # The sides up to the sill, with a white band under the windows, and the roof.
+    wall = (BUS_SILL + BUS_FLOOR) / 2
+    mirrored(body, half_x - 0.04, 0.0, wall, (0.08, 2 * half_y, BUS_SILL - BUS_FLOOR), PAINT)
+    mirrored(body, half_x - 0.02, 0.0, BUS_SILL - 0.09, (0.06, 2 * half_y - 0.1, 0.14), WHITE)
+    body.box((0.0, 0.0, (BUS_EAVE + BUS_TOP) / 2), (2 * half_x, 2 * half_y, BUS_TOP - BUS_EAVE), PAINT)
+    body.box((0.0, -0.4, BUS_TOP + 0.06), (1.5, 2.6, 0.12), WHITE)
+    # Window pillars between the rows, and one at each corner.
+    pillar = (BUS_EAVE + BUS_SILL) / 2
+    for y in (-half_y + 0.06, -5.05, -3.55, -2.05, -0.55, 0.95, 2.45, 3.95, half_y - 0.06):
+        mirrored(body, half_x - 0.05, y, pillar, (0.1, 0.12, BUS_EAVE - BUS_SILL), PAINT)
+    # The front: a panel under the windscreen, the glass, a destination board over it and the lamps.
+    body.box((0.0, half_y - 0.05, (BUS_SILL + 0.1 + BUS_FOOT) / 2), (2 * half_x, 0.1, BUS_SILL + 0.1 - BUS_FOOT), PAINT)
+    body.box((0.0, half_y - 0.04, (BUS_EAVE + BUS_SILL + 0.1) / 2), (2 * half_x - 0.2, 0.04, BUS_EAVE - BUS_SILL - 0.1), GLASS)
+    body.box((0.0, half_y + 0.01, BUS_EAVE + 0.17), (1.7, 0.04, 0.24), DARK)
+    body.box((0.0, half_y + 0.03, BUS_EAVE + 0.17), (1.1, 0.03, 0.12), LAMP)
+    body.box((0.0, half_y + 0.04, BUS_FOOT + 0.1), (2 * half_x + 0.06, 0.14, 0.24), DARK)
+    for side in (-1, 1):
+        body.cylinder((side * 0.9, half_y + 0.02, -0.2), 0.13, 0.06, LAMP, axis="Y", segments=8)
+        # Mirrors on arms off the front corners.
+        body.box((side * (half_x + 0.22), half_y - 0.1, 1.55), (0.44, 0.05, 0.05), DARK)
+        body.box((side * (half_x + 0.42), half_y - 0.14, 1.4), (0.08, 0.14, 0.4), DARK)
+    # The back: a panel with the engine's grille, a window, tail lamps and the bumper.
+    body.box((0.0, -half_y + 0.05, (1.15 + BUS_FOOT) / 2), (2 * half_x, 0.1, 1.15 - BUS_FOOT), PAINT)
+    body.box((0.0, -half_y + 0.04, (BUS_EAVE + 1.15) / 2), (2 * half_x - 0.3, 0.04, BUS_EAVE - 1.15), GLASS)
+    body.box((0.0, -half_y - 0.01, -0.15), (1.6, 0.04, 0.6), DARK)
+    body.box((0.0, -half_y - 0.04, BUS_FOOT + 0.1), (2 * half_x + 0.06, 0.14, 0.24), DARK)
+    for side in (-1, 1):
+        body.box((side * 1.05, -half_y - 0.01, 0.55), (0.22, 0.04, 0.5), RED)
+    # Two doors on the right: a dark frame down to the step, with two glass leaves in it.
+    for y in (4.6, -0.55):
+        body.box((half_x - 0.01, y, (BUS_EAVE + BUS_FOOT + 0.25) / 2), (0.06, 1.3, BUS_EAVE - BUS_FOOT - 0.25), DARK)
+        for leaf in (-0.31, 0.31):
+            body.box((half_x + 0.01, y + leaf, (BUS_EAVE + BUS_FOOT + 0.45) / 2), (0.05, 0.54, BUS_EAVE - BUS_FOOT - 0.55), GLASS)
+    # The driver's seat, dash and wheel, and a bench seat with a back at each passenger's place.
+    seats = [(BUS_DRIVER[0], BUS_DRIVER[1])] + [(side * 0.85, y) for y in BUS_ROWS for side in (-1, 1)]
+    for x, y in seats:
+        body.box((x, y - 0.05, BUS_FLOOR + 0.25), (0.6, 0.5, 0.5), DARK)
+        body.box((x, y - 0.36, BUS_FLOOR + 0.72), (0.6, 0.1, 0.6), DARK)
+    body.box((BUS_DRIVER[0], half_y - 0.45, BUS_SILL - 0.05), (0.9, 0.5, 0.3), DARK)
+    body.cylinder((BUS_DRIVER[0], BUS_DRIVER[1] + 0.5, BUS_SILL + 0.22), 0.24, 0.04, DARK, axis="Y", segments=12)
+    body_obj = body.build()
+    wheels = add_wheels(spec, lugs=0, rim_ratio=0.55)
+    # BUS_SEAT_HEADS, in this frame: x, -z, y.
+    add_seats([(x, y, 1.3) for x, y in seats])
+    return [body_obj, *wheels]
+
+
+BUILDERS = {"bus": build_bus, "jeep": build_jeep, "sports": build_sports, "roadster": build_roadster, "snowmobile": build_snowmobile, "golf_cart": build_golf_cart, "technical": build_technical, "snowracer": build_snowracer}
 
 
 # --------------------------------------------------------------------------------------------------
@@ -629,11 +703,13 @@ def preview(directory, name):
     cam = bpy.data.objects.new("cam", cam_data)
     scene.collection.objects.link(cam)
     scene.camera = cam
+    # A long body is looked at from further off, in step with its length.
+    far = max(1.0, SPECS[name]["half"][2] / 2.45)
     views = {
-        "three": ("PERSP", Vector((6.5, 6.5, 3.2)), Vector((0, 0, 0.0)), 0),
-        "side": ("ORTHO", Vector((12, 0, 0.0)), Vector((0, 0, 0.0)), 6.5),
-        "front": ("ORTHO", Vector((0, 12, 0.0)), Vector((0, 0, 0.0)), 3.6),
-        "rear": ("PERSP", Vector((-5.5, -6.0, 3.0)), Vector((0, 0, 0.0)), 0),
+        "three": ("PERSP", Vector((6.5, 6.5, 3.2)) * far, Vector((0, 0, 0.0)), 0),
+        "side": ("ORTHO", Vector((12, 0, 0.0)) * far, Vector((0, 0, 0.0)), 6.5 * far),
+        "front": ("ORTHO", Vector((0, 12, 0.0)) * far, Vector((0, 0, 0.0)), 3.6 * far),
+        "rear": ("PERSP", Vector((-5.5, -6.0, 3.0)) * far, Vector((0, 0, 0.0)), 0),
     }
     for view, (kind, pos, target, scale) in views.items():
         cam_data.type = kind

@@ -44,8 +44,8 @@ const ISLAND: usize = 400;
 const NEAR_OPEN: i32 = 2;
 /// What building a chunk costs, counted in the cells a search looks at: about as long.
 const CHUNK_COST: usize = 200;
-/// A cell is shut when a fence passes this near its middle, metres: over half a cell's diagonal, so
-/// no step from cell to cell, straight or slanting, crosses one.
+/// A cell is shut when a fence or wall passes this near its middle, metres: over half a cell's
+/// diagonal, so no step from cell to cell, straight or slanting, crosses one however thin it is.
 const FENCE_REACH: f32 = 0.75;
 /// A straight line is checked every this many metres along it.
 const LINE_STEP: f32 = 0.5;
@@ -301,8 +301,11 @@ fn build_chunk(physics: &Physics, map: &WorldFile, (ci, cj): Cell) -> Box<[f32]>
             let Some(down) = physics.cast_ray_static([x, top, z], [0.0, -1.0, 0.0], FLOOR_FROM + FLOOR_BELOW) else { continue };
             let floor = top - down;
             let half = [CELL / 2.0, (BODY_TOP - STEP_CLEAR) / 2.0, CELL / 2.0];
-            // A fence is no collider, so the box does not meet it: a cell it runs through is shut.
-            if !physics.box_touches_static([x, floor + (BODY_TOP + STEP_CLEAR) / 2.0, z], half) && !physics.fence_near(x, z, FENCE_REACH, floor + STEP_CLEAR) {
+            // A fence or wall is thin enough to pass between two cells' boxes, corner to corner: a cell it
+            // runs near is shut. (The floor's ray goes through a fence, and a wall's top is no floor
+            // since the box below it meets the wall.)
+            let fenced = || physics.objects_near([x, floor + FENCE_REACH, z], FENCE_REACH).iter().any(|object| matches!(object, sim::Obj::Line(_)));
+            if !physics.box_touches_static([x, floor + (BODY_TOP + STEP_CLEAR) / 2.0, z], half) && !fenced() {
                 cells[(row * CHUNK + column) as usize] = floor;
             }
         }

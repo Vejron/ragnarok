@@ -751,6 +751,68 @@ fn a_jeep_is_jolted_by_the_tree_it_fells() {
     assert!(after < before * 0.8, "{before} -> {after}");
 }
 
+/// As `drive_into_a_pine`, with a fence or wall of `line` across the vehicle's way in 3 m pieces
+/// instead of the pine: its speeds one tick before and the tick the first piece broke, and what it
+/// lost the tick before that.
+fn drive_into_a_line(kind: u8, speed: f32, line: u8) -> Option<(f32, f32, f32)> {
+    let points: Vec<[i32; 2]> = (0..=10).map(|i| [i * 300, 100]).collect();
+    let map = WorldFile {
+        version: WORLD_VERSION,
+        half_extent: 30_000,
+        spawns: (0..14).map(|i| [i * 2500 - 15_000, 20_000]).collect(),
+        lines: vec![(2, 3, shared::world::Line { kind: line, base: vec![0; points.len()], points, end: true })],
+        ..Default::default()
+    };
+    let mut game = Game::new(map, 0).unwrap();
+    game.world.clear_pickups();
+    let vid = game.world.entities.all::<Vehicle>().find(|(_, vehicle)| vehicle.kind == kind).unwrap().0;
+    game.world.physics.reset_car(vid, [15.0, 1.0, 5.5], 0.0);
+    for _ in 0..60 {
+        Vehicles.on_tick(&mut game.world, TICK_DT);
+    }
+    game.world.physics.kick_car(vid, [0.0, 0.0, -speed]);
+    let flat = |velocity: [f32; 3]| velocity[0].hypot(velocity[2]);
+    let mut braked = 0.0;
+    for _ in 0..120 {
+        let before = flat(game.world.physics.car_pose(vid)?.velocity);
+        Vehicles.on_tick(&mut game.world, TICK_DT);
+        let after = flat(game.world.physics.car_pose(vid)?.velocity);
+        if !game.world.destroyed.is_empty() {
+            assert!(game.world.destroyed.iter().all(|(object, _)| matches!(object, Obj::Line(id) if (id.col, id.row) == (2, 3))));
+            return Some((before, after, braked));
+        }
+        braked = before - after;
+    }
+    None
+}
+
+#[test]
+fn a_car_breaks_the_fence_it_drives_through_and_barely_slows() {
+    use shared::world::{LINE_FENCE, LINE_FENCE_HIGH};
+    for line in [LINE_FENCE, LINE_FENCE_HIGH] {
+        let (before, after, braked) = drive_into_a_line(KIND_JEEP, 10.0, line).expect("the jeep broke the fence");
+        let lost = before - after - braked;
+        assert!(lost > 0.2 && lost < 1.0, "{before} -> {after}, against {braked} the tick before");
+    }
+    // Slowly too, braking as it comes: a fence is in no vehicle's way.
+    assert!(drive_into_a_line(KIND_JEEP, 6.0, LINE_FENCE).is_some());
+    // A tank does not feel it at all.
+    let (before, after, braked) = drive_into_a_line(KIND_TANK, 8.0, LINE_FENCE).expect("the tank broke the fence");
+    assert!(before - after < braked + 0.05, "{before} -> {after}, against {braked} the tick before");
+}
+
+#[test]
+fn a_fast_car_breaks_a_low_wall_and_a_slow_one_stops_at_it() {
+    use shared::world::{LINE_WALL, LINE_WALL_HIGH};
+    let (before, after, _) = drive_into_a_line(KIND_JEEP, 20.0, LINE_WALL).expect("the jeep broke the wall");
+    assert!(after < before * 0.8 && after > before * 0.4, "{before} -> {after}");
+    assert_eq!(drive_into_a_line(KIND_JEEP, 3.0, LINE_WALL), None, "too slow to break it");
+    assert_eq!(drive_into_a_line(KIND_JEEP, 20.0, LINE_WALL_HIGH), None, "a high wall stands");
+    // A tank goes through either without slowing.
+    let (before, after, braked) = drive_into_a_line(KIND_TANK, 8.0, LINE_WALL_HIGH).expect("the tank broke the wall");
+    assert!(before - after < braked + 0.05, "{before} -> {after}, against {braked} the tick before");
+}
+
 #[test]
 fn a_hen_driver_leaps_on_jump_and_the_snapshot_carries_its_stamina() {
     let mut game = game();

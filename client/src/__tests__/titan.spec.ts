@@ -3,13 +3,14 @@ import { resolve } from 'node:path'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 import { triangleCount } from './helpers'
 import { Quaternion, Vector3 } from '@ragnarok/engine'
-import { bend, parseTitanModel, STEP_AIRBORNE, TitanModel } from '@/render/titan'
+import { bend, headEye, headTurn, parseTitanModel, STEP_AIRBORNE, TitanModel } from '@/render/titan'
+import { gazeOf } from '@/xr/headset'
 import { TitanHands } from '@/titanhands'
 import { fistsFromHands, PILOT_ARM, PILOT_SHOULDER_DOWN, PILOT_SHOULDER_OUT, reversedDepth } from '@/xr/hands'
 import { kindView } from '@/kinds'
 import { seatView } from '@/seats'
-import { HANDS_GRIP_LEFT, HANDS_GRIP_RIGHT, HANDS_REACH_LEFT, HANDS_REACH_RIGHT, KIND_TITAN, THRUST_AIR, THRUST_LIFT } from '@/net/codec'
-import { BUTTON_ALT, BUTTON_FIRE, BUTTON_RUN, TITAN_ELBOW_POLE, TITAN_FIST_REST, TITAN_FOREARM_LENGTH, TITAN_REACH, TITAN_UPPER_ARM_LENGTH, TITAN_RIDE_HEIGHT, TITAN_SHOULDER, TITAN_STEP_LIFT } from '@/sim/consts'
+import { HANDS_GRIP_LEFT, HANDS_GRIP_RIGHT, HANDS_REACH_LEFT, HANDS_REACH_RIGHT, KIND_TITAN, THRUST_AIR, THRUST_LIFT, TITAN_LAMP } from '@/net/codec'
+import { BUTTON_ALT, BUTTON_FIRE, BUTTON_RUN, TITAN_ELBOW_POLE, TITAN_EYE, TITAN_FIST_REST, TITAN_FOREARM_LENGTH, TITAN_HEAD_DOWN, TITAN_HEAD_PIVOT, TITAN_HEAD_TURN, TITAN_REACH, TITAN_UPPER_ARM_LENGTH, TITAN_RIDE_HEIGHT, TITAN_SHOULDER, TITAN_STEP_LIFT } from '@/sim/consts'
 import { aimsReticle, seatHint } from '@/seathints'
 import { vehicleDef } from '@/sim/vehicles'
 import type { Titan } from '@/entities/units'
@@ -17,7 +18,7 @@ import type { Titan } from '@/entities/units'
 const IDENTITY: [number, number, number, number] = [0, 0, 0, 1]
 const STANDING: [number, number, number] = [100, TITAN_RIDE_HEIGHT, -40]
 /** Its limbs as the server sends them at rest: the fists hanging, the feet on the ground under the hips. */
-const AT_REST: Titan = { lx: -TITAN_FIST_REST[0], ly: TITAN_FIST_REST[1], lz: TITAN_FIST_REST[2], rx: TITAN_FIST_REST[0], ry: TITAN_FIST_REST[1], rz: TITAN_FIST_REST[2], flx: -5, fly: -TITAN_RIDE_HEIGHT, flz: 0, frx: 5, fry: -TITAN_RIDE_HEIGHT, frz: 0, flags: 0, step: 0, weight: 0.5 }
+const AT_REST: Titan = { lx: -TITAN_FIST_REST[0], ly: TITAN_FIST_REST[1], lz: TITAN_FIST_REST[2], rx: TITAN_FIST_REST[0], ry: TITAN_FIST_REST[1], rz: TITAN_FIST_REST[2], flx: -5, fly: -TITAN_RIDE_HEIGHT, flz: 0, frx: 5, fry: -TITAN_RIDE_HEIGHT, frz: 0, flags: 0, step: 0, weight: 0.5, head_yaw: 0, head_pitch: 0 }
 
 beforeAll(async () => {
   const bytes = readFileSync(resolve(process.cwd(), 'public/models/titan.glb'))
@@ -45,6 +46,73 @@ describe('TitanModel', () => {
     expect(vehicleDef(KIND_TITAN).fists).toBe(true)
     expect(vehicleDef(KIND_TITAN).board).not.toBeNull()
     titan.dispose()
+  })
+
+  /** The way the visor of `titan` faces in the world: the head's own -Z. */
+  const visor = (titan: TitanModel) => {
+    const head = titan.root.getObjectByName('head')!
+    head.updateWorldMatrix(true, false)
+    return new Vector3(-head.matrixWorld[8]!, -head.matrixWorld[9]!, -head.matrixWorld[10]!).normalize()
+  }
+
+  it('turns its head on its neck to where the server has it looking', () => {
+    const titan = new TitanModel(0)
+    titan.setLimbs({ ...AT_REST, head_yaw: 0.6, head_pitch: 0.3 })
+    titan.update(STANDING, IDENTITY)
+    // + yaw is to the left (-X), + pitch is up.
+    const flat = Math.cos(0.3)
+    expect(visor(titan).distanceTo(new Vector3(-Math.sin(0.6) * flat, Math.sin(0.3), -Math.cos(0.6) * flat))).toBeLessThan(1e-3)
+    expect(where(titan, 'head').distanceTo(new Vector3(...TITAN_HEAD_PIVOT).add(new Vector3(...STANDING)))).toBeLessThan(1e-3)
+    titan.dispose()
+  })
+
+  it('turns its own pilot\'s head to their look at once, as far as the neck allows, with the eye riding it', () => {
+    const titan = new TitanModel(0)
+    titan.setLimbs(AT_REST)
+    // A hull facing 0.7 to the left, and a look 0.4 further left and 0.2 up.
+    const turn = new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), 0.7)
+    const rotation: [number, number, number, number] = [turn.x, turn.y, turn.z, turn.w]
+    const head = headTurn(1.1, 0.2, rotation)
+    expect(head[0]).toBeCloseTo(0.4)
+    expect(head[1]).toBeCloseTo(0.2)
+    titan.lookTo(head, true)
+    titan.update(STANDING, rotation)
+    expect(visor(titan).distanceTo(new Vector3(-Math.sin(1.1) * Math.cos(0.2), Math.sin(0.2), -Math.cos(1.1) * Math.cos(0.2)))).toBeLessThan(1e-3)
+    // Looking behind and at its feet, the head stops where the neck does.
+    expect(headTurn(0.7 + 2.5, -1.5, rotation)).toEqual([TITAN_HEAD_TURN, -TITAN_HEAD_DOWN])
+    // The eye is at the visor when the head is straight, and swings round the neck with it.
+    expect(headEye([0, 0]).distanceTo(new Vector3(...TITAN_EYE))).toBeLessThan(1e-6)
+    const eye = headEye([Math.PI / 2, 0])
+    expect(eye.distanceTo(new Vector3(TITAN_EYE[2], TITAN_EYE[1], 0))).toBeLessThan(1e-6)
+    // With no word from the pilot the next frame, it is the server's again.
+    titan.update(STANDING, rotation)
+    expect(visor(titan).distanceTo(new Vector3(0, 0, -1).applyQuaternion(turn))).toBeLessThan(1e-3)
+    titan.dispose()
+  })
+
+  it('shines its searchlight from its visor the way its head faces, when it is switched on', () => {
+    const titan = new TitanModel(0)
+    titan.setLimbs({ ...AT_REST, head_yaw: 0.6, head_pitch: -0.4 })
+    titan.update(STANDING, IDENTITY)
+    expect(titan.searchlight()).toBeNull()
+    titan.setLimbs({ ...AT_REST, head_yaw: 0.6, head_pitch: -0.4, flags: TITAN_LAMP })
+    titan.update(STANDING, IDENTITY)
+    const beam = titan.searchlight()!
+    expect(beam.direction.distanceTo(visor(titan))).toBeLessThan(1e-6)
+    // It starts within a couple of metres of the pilot's eye, ahead of it.
+    const eye = headEye([0.6, -0.4]).add(new Vector3(...STANDING))
+    const out = beam.at.clone().sub(eye)
+    expect(out.length()).toBeLessThan(2)
+    expect(out.dot(beam.direction)).toBeGreaterThan(0.5)
+    titan.dispose()
+  })
+
+  it('reads which way a headset looks from its orientation', () => {
+    const left = new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), 0.5)
+    const up = new Quaternion().setFromAxisAngle(new Vector3(1, 0, 0), 0.3)
+    const [yaw, pitch] = gazeOf(left.clone().multiply(up))
+    expect(yaw).toBeCloseTo(0.5)
+    expect(pitch).toBeCloseTo(0.3)
   })
 
   it('puts its fists where the server has them, turned and moved with its hull', () => {

@@ -567,7 +567,7 @@ impl Physics {
             }
         }
         // Rays along the middle and out at each wingtip, low and at the top wing.
-        let queries = self.broad_phase.as_query_pipeline(self.narrow_phase.query_dispatcher(), &self.bodies, &self.colliders, QueryFilter::exclude_dynamic());
+        let queries = self.broad_phase.as_query_pipeline(self.narrow_phase.query_dispatcher(), &self.bodies, &self.colliders, QueryFilter::exclude_dynamic().groups(super::past_fences()));
         for offset in [0.0, -PLANE_WING_HALF_EXTENTS[0], PLANE_WING_HALF_EXTENTS[0]] {
             for height in [0.6, 2.4] {
                 let origin = Vector::new(position[0] + right[0] * offset, start + height, position[2] + right[2] * offset);
@@ -1014,7 +1014,7 @@ impl Physics {
             let [_, hy, _] = car.spec.half_extents;
             // Nobody stands on a limb, their own or another giant's.
             let solid = |_: ColliderHandle, collider: &Collider| !limbs::is_limb(collider);
-            let filter = QueryFilter::default().exclude_rigid_body(car.body).predicate(&solid);
+            let filter = QueryFilter::default().exclude_rigid_body(car.body).groups(super::past_fences()).predicate(&solid);
             let queries = self.broad_phase.as_query_pipeline(self.narrow_phase.query_dispatcher(), &self.bodies, &self.colliders, filter);
             let feet = [-1.0, 1.0].map(|side| {
                 let hip = body.translation() + *body.rotation() * Vector::new(side * gait.foot_half, -hy, 0.0);
@@ -1054,11 +1054,9 @@ impl Physics {
             dive(body, car.spec, car.flight, car.condition, water.as_ref(), dt);
         }
         for car in self.cars.values_mut().filter(|car| car.spec.lift.wheeled()) {
-            // Wheel rays must not hit their own chassis, nor a tracked hull's the trees it goes through.
-            let mut filter = QueryFilter::default().exclude_rigid_body(car.body);
-            if tracked(car.spec) {
-                filter = filter.groups(super::plows_trees());
-            }
+            // Wheel rays must not hit their own chassis, nor a fence, which the hull goes through, nor a
+            // tracked hull's the trees and walls it goes through.
+            let filter = QueryFilter::default().exclude_rigid_body(car.body).groups(if tracked(car.spec) { super::plows_trees() } else { super::past_fences() });
             let queries = self.broad_phase.as_query_pipeline_mut(
                 self.narrow_phase.query_dispatcher(),
                 &mut self.bodies,
@@ -1176,7 +1174,8 @@ impl Physics {
         }
     }
 
-    /// Every `(car, tree)` pair in contact after the last step: what a car has driven into.
+    /// Every `(car, tree)` and `(car, piece of wall)` pair in contact after the last step: what a car
+    /// has driven into that can be knocked down.
     pub fn car_tree_contacts(&self) -> Vec<(u32, Obj)> {
         let mut found = Vec::new();
         for (&id, car) in &self.cars {
@@ -1186,7 +1185,7 @@ impl Physics {
                         continue;
                     }
                     let other = if pair.collider1 == handle { pair.collider2 } else { pair.collider1 };
-                    if let Some(object @ Obj::Tree(_)) = self.objects.get(&other).copied() {
+                    if let Some(object @ (Obj::Tree(_) | Obj::Line(_))) = self.objects.get(&other).copied() {
                         found.push((id, object));
                     }
                 }
@@ -1296,7 +1295,7 @@ impl Physics {
     /// A vehicle shot at its hit shapes (the Titan) is met where they are, its limbs bent as they are
     /// drawn, and not at its hull or its other solids.
     pub fn cast_ray_hit(&self, origin: [f32; 3], dir: [f32; 3], max: f32, ignore: u32) -> Option<(f32, Option<u32>)> {
-        let mut filter = QueryFilter::default();
+        let mut filter = QueryFilter::default().groups(super::past_fences());
         // A ship's gun fires over its own ship's side, and its shot never hits it.
         let host = self.cars.get(&ignore).and_then(|car| car.mounted).and_then(|mounted| self.cars.get(&mounted.on)).map(|on| on.body);
         // The hulls whose own colliders rays pass through, for their hit shapes to be met instead.
@@ -1405,9 +1404,9 @@ impl Physics {
     }
 
     /// How far a ray travels before it hits the world, and which building or tree that was, if it
-    /// was one. Vehicles are not ignored.
+    /// was one. Vehicles are not ignored. It goes through a fence, as a round does.
     pub fn cast_ray_object(&self, origin: [f32; 3], dir: [f32; 3], max: f32) -> Option<(f32, Option<super::Obj>)> {
-        let queries = self.broad_phase.as_query_pipeline(self.narrow_phase.query_dispatcher(), &self.bodies, &self.colliders, QueryFilter::default());
+        let queries = self.broad_phase.as_query_pipeline(self.narrow_phase.query_dispatcher(), &self.bodies, &self.colliders, QueryFilter::default().groups(super::past_fences()));
         let ray = Ray::new(Vector::from(origin), Vector::from(dir));
         let (collider, distance) = queries.cast_ray(&ray, max, true)?;
         Some((distance, self.object_of(collider)))
@@ -1415,14 +1414,14 @@ impl Physics {
 
     /// Whether a ray from `origin` along the unit `dir` meets a chunk of placed cubes first, within `max`.
     pub fn ray_meets_construct(&self, origin: [f32; 3], dir: [f32; 3], max: f32) -> bool {
-        let queries = self.broad_phase.as_query_pipeline(self.narrow_phase.query_dispatcher(), &self.bodies, &self.colliders, QueryFilter::default());
+        let queries = self.broad_phase.as_query_pipeline(self.narrow_phase.query_dispatcher(), &self.bodies, &self.colliders, QueryFilter::default().groups(super::past_fences()));
         let ray = Ray::new(Vector::from(origin), Vector::from(dir));
         queries.cast_ray(&ray, max, true).is_some_and(|(collider, _)| self.is_construct(collider))
     }
 
     /// How far a ray travels before it meets the world or a vehicle, and the surface normal there.
     pub fn cast_ray_normal(&self, origin: [f32; 3], dir: [f32; 3], max: f32) -> Option<(f32, [f32; 3])> {
-        let queries = self.broad_phase.as_query_pipeline(self.narrow_phase.query_dispatcher(), &self.bodies, &self.colliders, QueryFilter::default());
+        let queries = self.broad_phase.as_query_pipeline(self.narrow_phase.query_dispatcher(), &self.bodies, &self.colliders, QueryFilter::default().groups(super::past_fences()));
         let ray = Ray::new(Vector::from(origin), Vector::from(dir));
         let (_, hit) = queries.cast_ray_and_get_normal(&ray, max, true)?;
         Some((hit.time_of_impact, hit.normal.into()))

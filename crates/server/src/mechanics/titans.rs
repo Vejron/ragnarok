@@ -12,18 +12,20 @@
 //! - **A slam.** Come down out of the air at `TITAN_SLAM_SPEED` or faster, it lands as a blast would,
 //!   wider and harder the faster it fell: soldiers are thrown and hurt, vehicles thrown and broken,
 //!   buildings bitten down and trees felled.
+//! - **Its head** turns to where its pilot looks, as far as its neck allows (`Head`), and the searchlight
+//!   in its visor goes on and off at its pilot's `BUTTON_LAMP`.
 //!
 //! Its guns (the autocannon in its right fist and the missile tubes on its shoulder) are mounts, worked
 //! by `Gunnery`; the hand that holds the gun never grips.
 
 use super::Mechanic;
 use super::life::{Harm, damage_entity};
-use crate::entities::With;
+use crate::entities::{Component, With};
 use crate::game::{Fist, Player, Seats, Vehicle, World};
 use shared::consts::*;
 use shared::mounts::Muzzle;
 use shared::protocol::{ClientHands, HANDS_GRIP_LEFT, HANDS_GRIP_RIGHT, HANDS_REACH_LEFT, HANDS_REACH_RIGHT, WEAPON_TITAN};
-use shared::quant::from_cm;
+use shared::quant::{from_cm, from_mrad};
 use shared::vec3;
 use shared::vehicles::vehicle_def;
 use sim::{Hand, LimbsPose, Obj};
@@ -69,7 +71,49 @@ struct Hands {
     cooling: [u32; 2],
 }
 
-/// Works every Titan's fists and feet.
+/// How a Titan's head is turned from its hull, radians: a component on its entity. It follows its
+/// pilot's look as far as the neck allows (`TITAN_HEAD_TURN` either side, `TITAN_HEAD_DOWN` and
+/// `TITAN_HEAD_UP`), and faces ahead when nobody pilots it. The searchlight in its visor shines the
+/// way the head faces.
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq)]
+pub struct Head {
+    /// + turns left.
+    pub yaw: f32,
+    /// + looks up.
+    pub pitch: f32,
+    /// The searchlight is on. It goes out when the pilot leaves.
+    pub lamp: bool,
+    /// The pilot's `BUTTON_LAMP` was down last tick: holding it switches the searchlight once.
+    lamp_held: bool,
+}
+
+/// A tick of the head of Titan `vid` turning towards its `pilot`'s look, seen from the hull, so it
+/// keeps its line while the hull leans and turns, and of its pilot switching its searchlight. The press
+/// is taken from the pilot's input: it is not their own headlamp's too (`Movement`, which runs after).
+fn turn_head(world: &mut World, vid: u32, pilot: Option<u32>, dt: f32) {
+    let input = pilot.and_then(|pilot| world.entities.get_mut::<Player>(pilot)).map(|mut player| {
+        let input = player.input;
+        player.input.buttons &= !BUTTON_LAMP;
+        input
+    });
+    let pressed = input.is_some_and(|input| input.buttons() & BUTTON_LAMP != 0);
+    let look = input.map(|input| super::combat::look(from_mrad(input.yaw), from_mrad(input.pitch()).clamp(-super::combat::MAX_PITCH, super::combat::MAX_PITCH)));
+    let (yaw, pitch) = match (look, world.physics.car_pose(vid)) {
+        (Some(look), Some(pose)) => super::gunnery::angles(pose.local_dir(look)),
+        _ => (0.0, 0.0),
+    };
+    if !world.entities.has::<Head>(vid) {
+        world.entities.insert(vid, Head::default());
+    }
+    let mut head = world.entities.of_mut::<Head>(vid);
+    head.lamp = pilot.is_some() && (head.lamp ^ (pressed && !head.lamp_held));
+    head.lamp_held = pressed;
+    let step = TITAN_HEAD_SLEW * dt;
+    head.yaw += (yaw.clamp(-TITAN_HEAD_TURN, TITAN_HEAD_TURN) - head.yaw).clamp(-step, step);
+    head.pitch += (pitch.clamp(-TITAN_HEAD_DOWN, TITAN_HEAD_UP) - head.pitch).clamp(-step, step);
+}
+
+/// Works every Titan's fists, feet and head.
 #[derive(Default)]
 pub struct Titans {
     hands: BTreeMap<u32, Hands>,
@@ -205,7 +249,7 @@ fn strike(world: &mut World, vid: u32, point: [f32; 3], radius: f32, velocity: [
     for object in world.physics.objects_touching_ball(point, radius) {
         match object {
             Obj::Building(id) => super::combat::ram_building(world, id, point, speed, weight),
-            Obj::Tree(_) => {
+            Obj::Tree(_) | Obj::Line(_) => {
                 super::combat::damage_object(world, object, (speed * TREE_DAMAGE_PER_SPEED) as u16, point);
             }
         }
@@ -270,9 +314,10 @@ fn slam(world: &mut World, vid: u32, feet: [[f32; 3]; 2], impact: f32, pilot: Op
 
 impl Titans {
     /// One tick of Titan `vid`, whose limbs are at `limbs`.
-    fn work(&mut self, world: &mut World, vid: u32, limbs: LimbsPose) {
+    fn work(&mut self, world: &mut World, vid: u32, limbs: LimbsPose, dt: f32) {
         let wrecked = world.entities.dead(vid);
         let pilot = world.entities.get::<Seats>(vid).and_then(|seats| seats.rider(0)).filter(|_| !wrecked);
+        turn_head(world, vid, pilot, dt);
         let asked = pilot.and_then(|pilot| world.entities.get::<Player>(pilot)).and_then(|player| player.fists).map_or([Hand::default(); 2], |hands| asked(&hands));
         world.physics.set_hands(vid, asked);
         let state = self.hands.entry(vid).or_default();
@@ -322,7 +367,7 @@ impl Titans {
 }
 
 impl Mechanic for Titans {
-    fn on_tick(&mut self, world: &mut World, _dt: f32) {
+    fn on_tick(&mut self, world: &mut World, dt: f32) {
         // A pilot's hands grow stale when no more come.
         for id in world.entities.ids_where::<Player>(|_, player| player.fists.is_some()) {
             let mut player = world.entities.of_mut::<Player>(id);
@@ -335,7 +380,7 @@ impl Mechanic for Titans {
         self.hands.retain(|vid, _| titans.contains(vid));
         for &vid in &titans {
             if let Some(limbs) = world.physics.limbs(vid) {
-                self.work(world, vid, limbs);
+                self.work(world, vid, limbs, dt);
             }
         }
         // Whoever is held rides on their fist; the dead, and those whose Titan is gone, are let go of.

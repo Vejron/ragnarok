@@ -1,10 +1,10 @@
 import { CRATER_FADE, Group, type Mesh, type Scene, type Vector3 } from '@ragnarok/engine'
-import { OBJ_TREE, type Built, type CarvedBuilding, type CraterEntry, type DamagedBuilding, type DestroyedObject, type DugTile } from './net/codec'
+import { OBJ_LINE, OBJ_TREE, type Built, type CarvedBuilding, type CraterEntry, type DamagedBuilding, type DestroyedObject, type DugTile } from './net/codec'
 import type { Effects } from './render/effects'
 import { FallingTrees, type TreeFx, type TreeNoise } from './render/falling'
 import { BuildingDamage } from './render/damage'
 import { ConstructView } from './render/construct'
-import { disposeTile, rebuildBuildings, remeshTerrain, replaceRibbons, restitchTerrain, shadeTerrain, tileGroup } from './render/world'
+import { disposeTile, rebuildBuildings, rebuildLines, remeshTerrain, replaceRibbons, restitchTerrain, shadeTerrain, tileGroup } from './render/world'
 import { ribbonsOf } from './render/groundmesh'
 import { TileWorker } from './render/tileworker'
 import { prepareTile, tileParts, type PreparedTile, type TileInput, type TileParts } from './render/tileprep'
@@ -25,7 +25,7 @@ import { digCrater, groundOf, type Terrain, type TileGround } from './sim/terrai
 import type { Grass } from './render/grass'
 import type { Stones } from './render/stones'
 import { Smoulders } from './render/smoulder'
-import type { TileData, TileRef, WorldData } from './world'
+import { lineKindDef, type TileData, type TileRef, type WorldData } from './world'
 
 /** Tiles are keyed by `row * 65536 + col`, as the server names the objects in them. */
 export const tileKey = (col: number, row: number) => row * 65536 + col
@@ -116,6 +116,8 @@ export class WorldView {
   private readonly loaded = new Map<number, { tile: TileData; salt: number }>()
   /** Trees that fell, by tile then index, with the way they fell: replayed onto tiles that stream in later. */
   private readonly fellTrees = new Map<number, Map<number, number>>()
+  /** The pieces of fences and walls that are broken (`linePieceIndex`), by tile. Kept like `fellTrees`. */
+  private readonly brokenLines = new Map<number, Set<number>>()
   private readonly fallingTrees = new FallingTrees()
   /** Carved buildings, by tile, whose colliders are to be reshaped at the next `update`: a barrage does it once a frame, not once a hit. */
   private readonly reshape = new Map<number, Set<number>>()
@@ -603,6 +605,12 @@ export class WorldView {
     if (this.damage.carved(key).size > 0) this.reshapeBuildings(key)
     // Trees that fell before this tile streamed in (or while it was away) are already down.
     for (const [index, yaw] of this.fellTrees.get(key) ?? []) this.fellTree(key, index, yaw, false)
+    // So are the pieces of its fences and walls that broke.
+    const broken = this.brokenLines.get(key)
+    if (broken) {
+      for (const index of broken) this.motor?.breakLine(ref.col, ref.row, index)
+      rebuildLines(group, tile, ground, broken)
+    }
     return () => {
       this.loaded.delete(key)
       this.damage.detach(key)
@@ -637,16 +645,36 @@ export class WorldView {
     if (waiting) waiting.relief = relief
   }
 
-  /** The server says these trees are down. `animate` is false for the catch-up on joining. */
+  /**
+   * The server says these trees are down and these pieces of fences and walls broken. `animate` is
+   * false for the catch-up on joining.
+   */
   destroyed(objects: readonly DestroyedObject[], animate: boolean) {
+    // Tiles whose lines lost a piece, each drawn again once.
+    const redraw = new Set<number>()
     for (const object of objects) {
-      if (object.kind !== OBJ_TREE) continue
       const key = tileKey(object.col, object.row)
+      if (object.kind === OBJ_LINE) {
+        const broken = this.brokenLines.get(key) ?? new Set<number>()
+        this.brokenLines.set(key, broken)
+        if (broken.has(object.index)) continue
+        broken.add(object.index)
+        this.motor?.breakLine(object.col, object.row, object.index)
+        if (this.groups.has(key)) redraw.add(key)
+        if (animate) this.shatterLine(key, object.index, object.yaw, object.force)
+        continue
+      }
+      if (object.kind !== OBJ_TREE) continue
       const fell = this.fellTrees.get(key) ?? new Map<number, number>()
       this.fellTrees.set(key, fell)
       if (fell.has(object.index)) continue
       fell.set(object.index, object.yaw)
       this.fellTree(key, object.index, object.yaw, animate, object.force)
+    }
+    for (const key of redraw) {
+      const { col, row } = tileOf(key)
+      const [group, loaded] = [this.groups.get(key), this.loaded.get(key)]
+      if (group && loaded) rebuildLines(group, loaded.tile, this.terrain?.get(col, row) ?? null, this.brokenLines.get(key)!)
     }
   }
 
@@ -726,7 +754,7 @@ export class WorldView {
 
   /** Whether the world is as its files have it: nothing a server said has changed it. */
   get pristine() {
-    return this.fellTrees.size === 0 && this.damage.untouched && this.glazing.untouched && this.dugTiles.size === 0 && this.marked.length === 0 && this.construct.size === 0
+    return this.fellTrees.size === 0 && this.brokenLines.size === 0 && this.damage.untouched && this.glazing.untouched && this.dugTiles.size === 0 && this.marked.length === 0 && this.construct.size === 0
   }
 
   /**
@@ -735,6 +763,7 @@ export class WorldView {
    */
   reset() {
     this.fellTrees.clear()
+    this.brokenLines.clear()
     this.fallingTrees.clear()
     this.damage.reset()
     this.glazing.reset()
@@ -774,6 +803,16 @@ export class WorldView {
     this.fallingTrees.fell(group, tree, index, yaw, animate, force)
     const { col, row } = tileOf(key)
     this.motor?.fellTree(col, row, index)
+  }
+
+  /** Throws the debris of piece `index` (`linePieceIndex`) of tile `key`'s fences and walls, if the tile is loaded. */
+  private shatterLine(key: number, index: number, yaw: number, force: number) {
+    const line = this.loaded.get(key)?.tile.lines?.[index >>> 16]
+    const def = line && lineKindDef(line.kind)
+    const segment = index & 0xffff
+    const [a, b] = [line?.points[segment], line?.points[segment + 1]]
+    if (!line || !def || !a || !b) return
+    this.fallingTrees.shatter([a[0], line.base[segment] ?? 0, a[1]], [b[0], line.base[segment + 1] ?? 0, b[1]], def.height, def.wall, yaw, force)
   }
 
   /** The buildings of tile `key` its own drawing leaves out: those drawn as shards instead. */

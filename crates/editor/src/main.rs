@@ -51,6 +51,10 @@ struct Area {
     /// nothing at all.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     osm_water: Option<bool>,
+    /// Public transport (`buses` in the importer): bus lines along the major roads, with buses the
+    /// server runs. Absent from the page, the file's own is kept; `false` is written as nothing at all.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    buses: Option<bool>,
     /// Hand-placed spawn points, vehicles, items, bots and animal herds (latitude/longitude). The server reads
     /// these from the same file; the importer ignores them.
     #[serde(default)]
@@ -78,6 +82,9 @@ impl Area {
             if self.osm_water.is_none() {
                 self.osm_water = old.osm_water;
             }
+            if self.buses.is_none() {
+                self.buses = old.buses;
+            }
             if self.theme.is_none() {
                 self.theme = old.theme;
                 self.groomed_paths = old.groomed_paths;
@@ -94,6 +101,9 @@ impl Area {
         }
         if self.osm_water == Some(false) {
             self.osm_water = None;
+        }
+        if self.buses == Some(false) {
+            self.buses = None;
         }
     }
 }
@@ -177,7 +187,7 @@ async fn list_worlds(res: &mut Response) {
 async fn get_world(req: &mut Request, res: &mut Response) {
     let Some(name) = name_of(req, res) else { return };
     match read_area(&name) {
-        Some(area) => res.render(Json(serde_json::json!({ "name": name, "region": area.region.name(), "tiles": area.tiles, "cell": area.cell, "theme": area.theme, "groomed_paths": area.groomed_paths, "open_water": area.open_water, "osm_water": area.osm_water.unwrap_or(false), "spawns": area.spawns, "vehicles": area.vehicles, "items": area.items, "bots": area.bots, "animals": area.animals }))),
+        Some(area) => res.render(Json(serde_json::json!({ "name": name, "region": area.region.name(), "tiles": area.tiles, "cell": area.cell, "theme": area.theme, "groomed_paths": area.groomed_paths, "open_water": area.open_water, "osm_water": area.osm_water.unwrap_or(false), "buses": area.buses.unwrap_or(false), "spawns": area.spawns, "vehicles": area.vehicles, "items": area.items, "bots": area.bots, "animals": area.animals }))),
         None => fail(res, StatusCode::NOT_FOUND, "no such world"),
     }
 }
@@ -598,6 +608,20 @@ mod tests {
         assert_eq!(saved["osm_water"], true);
         assert_eq!(saved["minimap_image"], "maps/a.jpg");
         assert_eq!(saved["cell"], 1.0);
+    }
+
+    #[test]
+    fn the_buses_switch_on_the_page_turns_public_transport_on_and_off() {
+        let saved = |sent: &str, old: &str| {
+            let mut sent: Area = serde_json::from_str(sent).unwrap();
+            sent.keep_options(Some(serde_json::from_str(old).unwrap()));
+            serde_json::from_slice::<serde_json::Value>(&serde_json::to_vec(&sent).unwrap()).unwrap()
+        };
+        assert_eq!(saved(r#"{"tiles":[],"buses":true}"#, r#"{"tiles":[]}"#)["buses"], true);
+        // Turned off: no key at all, as a world without buses always was.
+        assert!(saved(r#"{"tiles":[],"buses":false}"#, r#"{"tiles":[],"buses":true}"#).get("buses").is_none());
+        // A save that does not say keeps what the file had.
+        assert_eq!(saved(r#"{"tiles":[]}"#, r#"{"tiles":[],"buses":true}"#)["buses"], true);
     }
 
     #[test]

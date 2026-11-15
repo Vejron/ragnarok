@@ -12,8 +12,9 @@ Conventions
     into Y up, chest along -Z, which is the game's vehicle frame (body axes +X right, +Y up, -Z forward).
   * Origin is the centre of the hull collider, its torso (a 12 x 16 x 8 m box, TITAN_HALF_EXTENTS).
   * Nodes the game looks up by name. None is the child of another limb: the game places each by IK.
-      `torso`               chest, shoulders, head and hips, fixed to the hull, with the missile launcher
+      `torso`               chest, shoulders, collar and hips, fixed to the hull, with the missile launcher
                             on the left pauldron (TITAN_LAUNCHER_*, TITAN_TUBE_AT)
+      `head`                the helmet, origin at the neck it turns on (TITAN_HEAD_PIVOT), the top of the collar
       `upper_L/R`           upper arm, origin at the shoulder (TITAN_SHOULDER), hanging down UPPER metres
       `fore_L/R`            forearm, origin at the elbow, hanging down FORE metres to the fist's middle
       `fist_L/R`            the hand's block, origin at its middle (a ball of TITAN_FIST_RADIUS in the physics)
@@ -54,6 +55,7 @@ PREVIEW = arg("--preview")
 HX, HY, HZ = 6.0, 4.0, 8.0  # half extents of the torso box: sideways, front to back, up
 FOOT_HALF = 5.0
 SHOULDER = Vector((8.5, 0.0, 6.0))  # game [8.5, 6.0, 0.0]
+NECK = Vector((0.0, 0.0, 9.4))  # game TITAN_HEAD_PIVOT [0.0, 9.4, 0.0]
 UPPER, FORE = 12.0, 12.0  # shoulder to elbow, elbow to the fist's middle: TITAN_REACH in all
 FIST = 2.5  # the fist's radius in the physics
 THIGH, SHIN = 13.5, 13.5  # longer than the legs' reach, so that it stands with its knees bent
@@ -114,7 +116,7 @@ class Part(common.Part):
 
 # --------------------------------------------------------------------------------------------------
 # Torso: a broad chest that narrows to the waist, the core glowing in the middle of it, pauldrons over
-# the shoulders, a small armoured head sunk between them and a reactor on the back
+# the shoulders, a collar for the head between them and a reactor on the back
 # --------------------------------------------------------------------------------------------------
 torso = Part("torso")
 torso.taper((0.0, 0.0, 3.0), (2 * HX + 1.0, 2 * HY + 0.6), (2 * HX - 2.0, 2 * HY - 0.6), 10.0, PAINT)  # chest
@@ -131,16 +133,8 @@ for side in (-1, 1):
 torso.cylinder((0.0, HY + 0.3, 3.2), 2.3, 0.9, DARK, axis="Y", segments=12)
 torso.cylinder((0.0, HY + 0.55, 3.2), 1.6, 0.7, LAMP, axis="Y", segments=12)
 torso.cylinder((0.0, HY + 0.75, 3.2), 0.7, 0.6, STEEL, axis="Y", segments=8)
-# Collar and head: a low helmet with a visor slit, its chin behind a guard.
+# Collar: the head (below) turns on its top.
 torso.box((0.0, 0.0, 8.6), (7.0, 6.0, 1.6), DARK)
-torso.taper((0.0, 0.4, 11.3), (3.6, 4.4), (4.6, 5.0), 4.2, PAINT)
-torso.box((0.0, 2.75, 11.6), (3.6, 0.5, 0.9), LAMP)  # visor
-torso.box((0.0, 2.8, 12.5), (4.2, 0.9, 0.7), DARK, rx=0.35)  # brow
-torso.box((0.0, 2.7, 10.2), (3.0, 0.8, 1.6), METAL)  # chin guard
-torso.box((0.0, -0.2, 13.7), (1.2, 3.6, 0.9), METAL)  # crest
-for side in (-1, 1):
-    torso.box((side * 2.5, 0.2, 11.3), (0.7, 3.0, 2.6), DARK)  # ear plates
-    torso.cylinder((side * 2.2, -1.6, 14.6), 0.12, 3.4, METAL, segments=5)  # antennae
 # Pauldrons: great slabs over each shoulder joint.
 for side in (-1, 1):
     torso.cylinder((side * 8.0, 0.0, 6.0), 2.6, 3.6, DARK, axis="X", segments=10)  # the joint's housing
@@ -165,6 +159,20 @@ for side in (-1, 1):
     torso.cylinder((side * FOOT_HALF, 0.0, -HZ), 2.4, 3.4, DARK, axis="X", segments=10)  # hip joints
 torso_obj = torso.build()
 objects = [torso_obj]
+
+# --------------------------------------------------------------------------------------------------
+# Head: a low helmet with a visor slit, its chin behind a guard. Its origin is the neck it turns on
+# --------------------------------------------------------------------------------------------------
+head = Part("head", location=NECK)
+head.taper((0.0, 0.4, 1.9), (3.6, 4.4), (4.6, 5.0), 4.2, PAINT)
+head.box((0.0, 2.75, 2.2), (3.6, 0.5, 0.9), LAMP)  # visor
+head.box((0.0, 2.8, 3.1), (4.2, 0.9, 0.7), DARK, rx=0.35)  # brow
+head.box((0.0, 2.7, 0.8), (3.0, 0.8, 1.6), METAL)  # chin guard
+head.box((0.0, -0.2, 4.3), (1.2, 3.6, 0.9), METAL)  # crest
+for side in (-1, 1):
+    head.box((side * 2.5, 0.2, 1.9), (0.7, 3.0, 2.6), DARK)  # ear plates
+    head.cylinder((side * 2.2, -1.6, 5.2), 0.12, 3.4, METAL, segments=5)  # antennae
+objects.append(head.build())
 
 # --------------------------------------------------------------------------------------------------
 # Arms: an upper arm in a sleeve, a heavier forearm with a guard along its back, and a fist

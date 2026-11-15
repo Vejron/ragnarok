@@ -146,26 +146,27 @@ fn is_cover<T: Lookup + ?Sized>(tags: &T) -> bool {
         || matches!(tag(tags, "leisure"), Some("park" | "garden" | "pitch" | "playground" | "golf_course" | "recreation_ground"))
 }
 
-/// A way of the main query: a building, a highway, a railway, cover, a fence or a power line.
+/// A way of the main query: a building, a highway, a railway, cover, a fence, a wall or a power line.
 pub fn is_main_way<T: Lookup + ?Sized>(tags: &T) -> bool {
     tag(tags, "building").is_some() || tag(tags, "highway").is_some() || tag(tags, "railway").is_some() || is_cover(tags) || line_kind(tags).is_some()
 }
 
-/// How tall a fence must be to be a game fence, metres.
-const FENCE_HIGH: f64 = 1.8;
+/// How tall a fence must be to be a game fence, and a wall to be a high wall, metres.
+const BARRIER_HIGH: f64 = 1.8;
 
-/// The `LINE_*` a way is drawn as, if it is a fence or a power line: `barrier=fence` is a wire fence,
-/// or a game fence when `fence_type=game` or it is at least `FENCE_HIGH` tall; `power=minor_line` is
-/// wooden poles and `power=line` steel pylons.
+/// The `LINE_*` a way is drawn as, if it is a fence, a wall or a power line: `barrier=fence` is a wire
+/// fence, or a game fence when `fence_type=game` or it is at least `BARRIER_HIGH` tall; `barrier=wall`
+/// is a low stone wall, or a high one when it is that tall, as a `barrier=city_wall` always is;
+/// `power=minor_line` is wooden poles and `power=line` steel pylons. A `barrier=retaining_wall` holds
+/// earth back and is no wall standing on its own.
 pub fn line_kind<T: Lookup + ?Sized>(tags: &T) -> Option<u8> {
-    use shared::world::{LINE_FENCE, LINE_FENCE_HIGH, LINE_POWER, LINE_POWER_MAJOR};
+    use shared::world::{LINE_FENCE, LINE_FENCE_HIGH, LINE_POWER, LINE_POWER_MAJOR, LINE_WALL, LINE_WALL_HIGH};
+    // `height` is metres, written "2", "2 m" or "1.8m".
+    let tall = || tag(tags, "height").and_then(|value| value.trim_end_matches(|c: char| c == 'm' || c.is_whitespace()).parse::<f64>().ok()).is_some_and(|height| height >= BARRIER_HIGH);
     match (tag(tags, "barrier"), tag(tags, "power")) {
-        (Some("fence"), _) => {
-            // `height` is metres, written "2", "2 m" or "1.8m".
-            let height = tag(tags, "height").and_then(|value| value.trim_end_matches(|c: char| c == 'm' || c.is_whitespace()).parse::<f64>().ok());
-            let high = tag(tags, "fence_type") == Some("game") || height.is_some_and(|height| height >= FENCE_HIGH);
-            Some(if high { LINE_FENCE_HIGH } else { LINE_FENCE })
-        }
+        (Some("fence"), _) => Some(if tag(tags, "fence_type") == Some("game") || tall() { LINE_FENCE_HIGH } else { LINE_FENCE }),
+        (Some("city_wall"), _) => Some(LINE_WALL_HIGH),
+        (Some("wall"), _) => Some(if tall() { LINE_WALL_HIGH } else { LINE_WALL }),
         (_, Some("minor_line")) => Some(LINE_POWER),
         (_, Some("line")) => Some(LINE_POWER_MAJOR),
         _ => None,
@@ -195,6 +196,11 @@ pub fn is_golf_way<T: Lookup + ?Sized>(tags: &T) -> bool {
 /// A node of the golf query: a pin.
 pub fn is_golf_node<T: Lookup + ?Sized>(tags: &T) -> bool {
     tag(tags, "golf") == Some("pin")
+}
+
+/// A node of the bus query: a bus stop.
+pub fn is_bus_stop<T: Lookup + ?Sized>(tags: &T) -> bool {
+    tag(tags, "highway") == Some("bus_stop")
 }
 
 /// The `aerialway` values that are lifts a skier rides: not stations, pylons, goods lines or zip lines.
@@ -227,7 +233,7 @@ pub fn wants_relation<T: Lookup + ?Sized>(tags: &T) -> bool {
 
 /// Whether any pass wants this node.
 pub fn wants_node<T: Lookup + ?Sized>(tags: &T) -> bool {
-    is_golf_node(tags)
+    is_golf_node(tags) || is_bus_stop(tags)
 }
 
 /// Reads everything any pass wants in each of `pieces` (`[south, west, north, east]`): from a local
@@ -268,8 +274,8 @@ mod tests {
     }
 
     #[test]
-    fn fences_and_power_lines_are_read_from_their_tags() {
-        use shared::world::{LINE_FENCE, LINE_FENCE_HIGH, LINE_POWER, LINE_POWER_MAJOR};
+    fn fences_walls_and_power_lines_are_read_from_their_tags() {
+        use shared::world::{LINE_FENCE, LINE_FENCE_HIGH, LINE_POWER, LINE_POWER_MAJOR, LINE_WALL, LINE_WALL_HIGH};
         let kind = |pairs: &[(&str, &str)]| line_kind(&tags(pairs));
         assert_eq!(kind(&[("barrier", "fence")]), Some(LINE_FENCE));
         assert_eq!(kind(&[("barrier", "fence"), ("height", "1.2 m")]), Some(LINE_FENCE));
@@ -277,7 +283,10 @@ mod tests {
         assert_eq!(kind(&[("barrier", "fence"), ("fence_type", "game")]), Some(LINE_FENCE_HIGH));
         assert_eq!(kind(&[("power", "minor_line")]), Some(LINE_POWER));
         assert_eq!(kind(&[("power", "line")]), Some(LINE_POWER_MAJOR));
-        assert_eq!(kind(&[("barrier", "wall")]), None);
+        assert_eq!(kind(&[("barrier", "wall")]), Some(LINE_WALL));
+        assert_eq!(kind(&[("barrier", "wall"), ("height", "2")]), Some(LINE_WALL_HIGH));
+        assert_eq!(kind(&[("barrier", "city_wall")]), Some(LINE_WALL_HIGH));
+        assert_eq!(kind(&[("barrier", "retaining_wall")]), None, "it holds earth back");
         assert_eq!(kind(&[("power", "cable")]), None, "a buried cable");
         assert!(is_main_way(&tags(&[("barrier", "fence")])), "the main view keeps fences");
     }

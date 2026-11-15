@@ -50,6 +50,8 @@ export const groomedPaths = ref(false)
 export const openWater = ref(false)
 /** Water from OpenStreetMap (`"osm_water": true` in area.json), which has the sea; Hydrografi does not. */
 export const osmWater = ref(false)
+/** Public transport (`"buses": true` in area.json): bus lines along the major roads, and buses on them. */
+export const buses = ref(false)
 export const dirty = ref(false)
 export const job = ref<Job>()
 export const message = ref('')
@@ -289,6 +291,7 @@ export async function openWorld(world: string) {
   groomedPaths.value = !!loaded.groomed_paths
   openWater.value = !!loaded.open_water
   osmWater.value = !!loaded.osm_water
+  buses.value = !!loaded.buses
   placements.value = { spawns: loaded.spawns ?? [], vehicles: loaded.vehicles ?? [], items: loaded.items ?? [], bots: loaded.bots ?? [], animals: loaded.animals ?? [] }
   setTiles(new Map(tiles.map((t) => [tileKey(t.gx, t.gy), t])))
   dirty.value = false
@@ -329,7 +332,7 @@ export async function save(): Promise<boolean> {
   }
   name.value = world
   try {
-    await api.save(world, region.value, [...painted.value.values()], cell.value, winter.value, groomedPaths.value, openWater.value, osmWater.value, placements.value)
+    await api.save(world, region.value, [...painted.value.values()], cell.value, winter.value, groomedPaths.value, openWater.value, osmWater.value, buses.value, placements.value)
     dirty.value = false
     message.value = `Saved ${world}.`
     await loadWorlds()
@@ -363,6 +366,7 @@ export function newWorld() {
   groomedPaths.value = false
   openWater.value = false
   osmWater.value = false
+  buses.value = false
   placements.value = emptyPlacements()
   setTiles(new Map())
   dirty.value = false

@@ -29,6 +29,16 @@ It is piloted with mouse and keyboard, or from a VR headset with the pilot's own
 - **Crouching.** Holding C bends its legs: the torso comes down 16 m and leans forward, which is what brings its fists to the ground. Standing up again takes about two seconds.
 - **The camera** sits 60 m behind and above its shoulders and looks where the mouse looks, free of where the legs face. The fists go to what the middle of the screen is on: the ground there, or a point out along the look when it meets none within reach.
 - **B looks out from its head** instead, and B again goes back behind. From there the look turns with the Titan and can swing 57° to either side of the way it faces; the eye leans and crouches with the torso, and the fists and forearms are in view when they are up.
+- **Its head turns to where its pilot looks**, from either view and in a headset, for everyone to see:
+  - It turns on its neck (`TITAN_HEAD_PIVOT`, the top of the collar) up to 57° to either side of the way the torso faces, 69° down and 40° up (`TITAN_HEAD_TURN`, `TITAN_HEAD_DOWN`, `TITAN_HEAD_UP`), at 4 rad/s (`TITAN_HEAD_SLEW`). A look further round than that leaves it at the end of its travel.
+  - The server turns it from the pilot's input (`titans::turn_head`, the `Head` component) and sends it in `titan` as `head_yaw` and `head_pitch`. Empty, it faces ahead. It turns while the Titan punches and while it lies fallen.
+  - The model's `head` node is turned by `TitanModel`. The pilot's own client turns it from their look without waiting for the server (`TitanModel.lookTo`, from the `titan` camera rig).
+  - The eye in the head rides round the neck with it (`headEye`), so the visor's edges stay behind the view.
+  - Rounds still meet the head where it is when it faces ahead: its `Role::Hit` solids do not turn.
+- **L switches the searchlight in its visor**, which shines the way the head faces, so it lights what the pilot looks at:
+  - It is a narrow cold-white beam that reaches 320 m, at full strength in the dark and 15% of it by day (`Headlights`, `TitanModel.searchlight`).
+  - The server keeps it (`Head::lamp`) and sends it as `TITAN_LAMP` in `titan`'s flags. The press is the Titan's alone: the pilot's own headlamp does not switch with it. It goes out when the pilot leaves or the Titan is wrecked.
+  - In a headset it is the left hand's X button.
 - **The fists**, under mouse and keyboard (`client/src/titanhands.ts`):
   - With nothing held, both are kept up in a guard towards the point, open.
   - **Left click** throws the left fist at the point, closed: a punch. It comes back when the button is let go.

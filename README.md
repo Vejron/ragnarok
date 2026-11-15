@@ -51,8 +51,12 @@ The docs are in [docs/](docs/).
 - [VEHICLES-XII.md](docs/VEHICLES-XII.md): the Strf 90, a CV90-style infantry fighting vehicle with a 40 mm autocannon firing armour-piercing or high explosive, and two troops who leave by the rear ramp
 - [VEHICLES-XIII.md](docs/VEHICLES-XIII.md): the snowracer, a steerable sled for two that slides down ski slopes about as fast as a snowmobile drives, with a small motor to creep back up
 - [VEHICLES-XIV.md](docs/VEHICLES-XIV.md): the Titan, a robot fifty metres high whose pilot moves its fists: it punches, picks up soldiers and vehicles and throws them, crushes what it steps on, fires a 40 mm autocannon from its right fist and guided missiles from tubes on its left shoulder, and flies a while on the thrusters in its feet to come down as a blast
+- [VEHICLES-XV.md](docs/VEHICLES-XV.md): the bus, a twelve-metre city bus with a driver and twelve passengers, heavy and slow
 - [VR.md](docs/VR.md): the game in a VR headset through WebXR on WebGPU, to pilot a Titan with your own hands; built but not yet run on a headset
+- [CHURCHES.md](docs/CHURCHES.md): churches get a roof fit, windows, a door and colours of their own: one steep gable down the nave with the sacristy roofed lower, tall round-headed windows, and one open hall inside
+- [BARRIERS.md](docs/BARRIERS.md): fences and walls from OpenStreetMap and orienteering maps, solid piece by piece and breakable: a car drives through a fence and breaks it, a wall stops it unless it is going fast, and tanks, blasts and Titans go through both
 - [LIFTS.md](docs/LIFTS.md): ski lifts from OpenStreetMap, every one built as a chair lift whose chairs run on the server's clock, boarded with E at a station and ridden round until you jump off
+- [BUSES.md](docs/BUSES.md): public transport, a world option like winter: bus lines found along the major roads, with stops, and buses the server drives along them that anyone can ride, or take once the driver is gone
 
 ## Requirements
 

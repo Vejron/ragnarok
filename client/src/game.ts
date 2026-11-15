@@ -6,7 +6,7 @@ import { Backoff } from './net/backoff'
 import { RttEstimator, ServerClock } from './net/clock'
 import { Transport } from './net/transport'
 import {
-  BUTTON_ALT, BUTTON_CHUTE, BUTTON_CROUCH, BUTTON_FIRE, BUTTON_JUMP, BUTTON_RELOAD, BUTTON_RUN, CROUCH_EYE_DROP, PRONE_EYE_HEIGHT, SLIDE_MIN_SPEED, EYE_HEIGHT, INPUT_REDUNDANCY, PLAYER_MAX_HP, PROTOCOL_VERSION,
+  BUTTON_ALT, BUTTON_CHUTE, BUTTON_CROUCH, BUTTON_FIRE, BUTTON_JUMP, BUTTON_LAMP, BUTTON_RELOAD, BUTTON_RUN, CROUCH_EYE_DROP, PRONE_EYE_HEIGHT, SLIDE_MIN_SPEED, EYE_HEIGHT, INPUT_REDUNDANCY, PLAYER_MAX_HP, PROTOCOL_VERSION,
   SHELL_COOLDOWN_TICKS, STANDING_Y, STANCE_CHUTE, STANCE_DIVE, STANCE_DOWN, STANCE_PRONE, STANCE_SWIM,
   TICK_MS, TICK_RATE, TITAN_FIST_RADIUS, TITAN_REACH, LIFT_RIDER_CENTRE, BLOOM_RECOVER, STAMINA_FULL, ONE_ARM_SWAY, BACKPACK_SPEED, CARRY_SKIS, SUB_LAUNCH_DEPTH } from './sim/consts'
 import { easeSway, sway, swayAmplitude } from './sway'
@@ -101,6 +101,7 @@ import { LyingBackpacks } from './render/backpack'
 import { Soldiers } from './entities/presenters/people'
 import { Riders, seatFrame } from './entities/presenters/riders'
 import { LiftRiders } from './entities/presenters/liftriders'
+import { BusStops } from './render/busstops'
 import { LiftView } from './render/lifts'
 import { Seating } from './entities/presenters/seating'
 import { poseOf, Vehicles, type Placed, type VehicleWorld } from './entities/presenters/vehicles'
@@ -397,8 +398,12 @@ export class Game {
   private jumping = false
   /** The headset's left and right index triggers were pulled last frame, for a Titan's pilot. */
   private triggered: [boolean, boolean] = [false, false]
+  /** The headset's searchlight button was down a frame ago. */
+  private lamped = false
   /** The world's ski lifts, drawn, once the world is known. */
   private liftView: LiftView | null = null
+  /** The signs at the world's bus stops, once the world is known. */
+  private busStops: BusStops | null = null
   /** Where the camera goes while seated, by the seat's rig. */
   private readonly cameras: Cameras
   private predictor: Predictor | null = null
@@ -560,6 +565,8 @@ export class Game {
     // The lifts' pylons and stations come from the sim's own shapes, so the WASM must be up first.
     this.liftView = new LiftView(world.lifts)
     this.scene.scene.add(this.liftView.root)
+    this.busStops = new BusStops(world.busLines)
+    this.scene.scene.add(this.busStops.root)
     this.motor = this.view.motor = motor
     this.ragdolls = new Ragdolls(motor)
     this.driver = new VehicleDriver(motor)
@@ -960,6 +967,7 @@ export class Game {
     if (!this.headset) return
     this.headset = null
     this.worn = null
+    this.cameras.gaze = null
     this.ducked = false
     if (this.jumping) this.input.hold(BUTTON_JUMP, false)
     this.jumping = false
@@ -973,13 +981,14 @@ export class Game {
   /**
    * Takes what the headset says for this frame: its eyes to draw for, the left thumbstick to walk and
    * turn with (the right one turns too), a ducked head to crouch, and the right hand's A button to jump.
-   * Piloting a Titan, the right index trigger fires the gun in its right fist and a pull of the left
-   * launches a missile from its shoulder.
+   * Piloting a Titan, the right index trigger fires the gun in its right fist, a pull of the left
+   * launches a missile from its shoulder and the left hand's X button switches its searchlight.
    */
   private readHeadset() {
     if (!this.headset) return
     this.worn = this.headset.read()
     this.scene.see(this.worn?.eyes ?? [])
+    this.cameras.gaze = this.worn?.gaze ?? null
     if (!this.worn) return
     const [left, right] = this.worn.sticks
     this.input.setStick(Math.max(-1, Math.min(1, left[0] + right[0])), left[1], false)
@@ -994,6 +1003,9 @@ export class Game {
     if (fire !== this.triggered[1]) this.input.hold(BUTTON_ALT, fire)
     if (launch && !this.triggered[0]) this.input.tap(BUTTON_CHUTE)
     this.triggered = [launch, fire]
+    // The left controller's lower face button (X) switches the Titan's searchlight.
+    if (titan && this.worn.lamp && !this.lamped) this.input.tap(BUTTON_LAMP)
+    this.lamped = this.worn.lamp
   }
 
   private frame(now: number) {
@@ -1024,6 +1036,7 @@ export class Game {
     const renderTick = this.clock.tickAt(now) - this.clock.interpDelay
     this.followClock(renderTick)
     this.liftView?.update(this.liftTick(now), eye, this.scene.scene.fog?.far ?? Infinity)
+    this.busStops?.update(eye, this.scene.scene.fog?.far ?? Infinity, (x, z) => this.terrain?.sample(x, z) ?? null)
 
     const seat = this.seat
     const view = seat ? seatView(seat.kind, seat.index) : null

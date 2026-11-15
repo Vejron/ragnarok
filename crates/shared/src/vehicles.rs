@@ -13,10 +13,11 @@ use crate::consts::*;
 use crate::mounts::{Aim, Ammo, Eye, Fire, MountDef, Muzzle, Need, Refill, Show};
 use crate::items::*;
 use crate::protocol::{
-    KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MISSILE, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_SEAPLANE, KIND_SHIP, KIND_SHIP_GUN, KIND_SNOWMOBILE, KIND_SNOWRACER, KIND_SPORTS, KIND_STRF, KIND_STRV, KIND_SUBMARINE, KIND_TANK, KIND_TECHNICAL, KIND_TITAN, KIND_TUPP, KIND_WALKER, PROJECTILE_BALL, PROJECTILE_BOMB, PROJECTILE_CANNON, PROJECTILE_CANNON_AP,
+    KIND_BUS, KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MISSILE, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_SEAPLANE, KIND_SHIP, KIND_SHIP_GUN, KIND_SNOWMOBILE, KIND_SNOWRACER, KIND_SPORTS, KIND_STRF, KIND_STRV, KIND_SUBMARINE, KIND_TANK, KIND_TECHNICAL, KIND_TITAN, KIND_TUPP, KIND_WALKER, PROJECTILE_BALL, PROJECTILE_BOMB, PROJECTILE_CANNON, PROJECTILE_CANNON_AP,
     PROJECTILE_EGG, PROJECTILE_HE, PROJECTILE_MORTAR, PROJECTILE_SHELL, WEAPON_AUTOCANNON, WEAPON_DRONE, WEAPON_LASER, WEAPON_LOITER, WEAPON_MG, WEAPON_MISSILE, WEAPON_ROCKET, WEAPON_SHELL,
 };
 
+pub mod bus;
 pub mod drone;
 pub mod golf_cart;
 pub mod heli;
@@ -267,6 +268,7 @@ pub static VEHICLES: &[VehicleDef] = &[
     strf::STRF,
     snowracer::SNOWRACER,
     titan::TITAN,
+    bus::BUS,
 ];
 
 /// Where each kind id's definition is in `VEHICLES`: 0, the jeep's, for ids that are not a vehicle.
@@ -334,7 +336,7 @@ mod tests {
     fn every_kind_has_a_distinct_definition() {
         for (index, def) in VEHICLES.iter().enumerate() {
             assert!(index == 0 || def.kind > VEHICLES[index - 1].kind, "{} is in id order", def.name);
-            assert!(def.seats >= 1 && def.seats <= CAR_SEATS, "{} fits the seat array", def.name);
+            assert!(def.seats >= 1 && def.seats <= MAX_SEATS, "{} fits the seat array", def.name);
             assert!(def.hp > 0, "{} starts alive", def.name);
             assert_eq!(vehicle_def(def.kind).kind, def.kind);
             if def.crew != Exposure::Sealed && def.mount_seat.is_none() {

@@ -159,6 +159,13 @@ export class SimMotor {
     })
   }
 
+  /** Breaks piece `index` of the fences and walls of tile `(col, row)`. */
+  breakLine(col: number, row: number, index: number) {
+    timed(() => {
+      if (this.sim.breakLine(col, row, index)) this.sim.refresh()
+    })
+  }
+
   /**
    * Gives each of the tile's `carved` buildings its shape without the cells listed for it, as the
    * server has them.

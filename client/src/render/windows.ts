@@ -1,10 +1,11 @@
-import type { CollisionMesh } from '@/world'
+import { BUILDING_CHURCH, type CollisionMesh } from '@/world'
 
 /*
  * Windows and a door on a building's walls, worked out from its look (`Tile.look`), so a house reads
  * as a house: rows of windows a storey apart along each flat wall, and a door in the middle of the
  * ground row of its longest wall. Each is a white frame with a dark pane on it, a little proud of the
- * wall. Only drawn; the same for the same building on every client.
+ * wall. A church has one row of tall round-headed windows along its long walls, and its door and a
+ * round window in an end. Only drawn; the same for the same building on every client.
  */
 
 /** A building's triangles in the look: `walls` from `first`, then `roof`. */
@@ -12,6 +13,8 @@ export interface LookRange {
   first: number
   walls: number
   roof: number
+  /** What it is (`BUILDING_*`); a house when left out. */
+  kind?: number
   /** Its footprint (`x, z` pairs, centimetres) and, once worked out, what stands inside it (`insideFor`). */
   footprint?: Int32Array
   inside?: Int32Array
@@ -24,6 +27,8 @@ export interface Opening {
   corners: [P, P, P, P]
   normal: P
   door: boolean
+  /** `HEAD_*`: how its top is drawn. Square when left out. */
+  head?: number
   /** A door standing open, as drawn on a house with rooms (`drawnOpenings`). */
   open?: boolean
 }
@@ -44,11 +49,36 @@ const DOOR_HEIGHT = 2.1
  * Mirrors `RAISED` and the `SMALL_*` constants in `windows.rs`.
  */
 const RAISED = 2.0
+/** Two pieces of wall are one wall when their normals are this much alike and the corners of the one lie within this of the other's plane, metres. Mirror `SAME_WAY` and `SAME_WALL` in `windows.rs`. */
+const SAME_WAY = 0.9998
+const SAME_WALL = 0.06
 const SMALL_SILL = 0.2
 const SMALL_HEIGHT = 0.7
 const SMALL_WIDTH = 0.8
 const SMALL_MARGIN = 0.15
 const SMALL_PITCH = 2.0
+/**
+ * A church's long walls, its door and the round window in each of its ends. Mirror the `CHURCH_*`
+ * and `ROSE*` constants in `windows.rs`, where each is described.
+ */
+const CHURCH_WALL = 8.0
+const CHURCH_WIDTH = 1.6
+const CHURCH_PITCH = 6.0
+const CHURCH_SILL = 2.2
+const CHURCH_TOP = 1.2
+const CHURCH_HEIGHT = 6.0
+const CHURCH_DOOR_WIDTH = 2.0
+const CHURCH_DOOR_HEIGHT = 3.2
+const ROSE = 2.2
+const ROSE_UP = 0.35
+const ROSE_CLEAR = 1.0
+/**
+ * How an opening is drawn at its top: square; with a round arch over its width; or as a circle (its
+ * hole is a square). Mirror `HEAD_*` in `windows.rs`.
+ */
+export const HEAD_SQUARE = 0
+export const HEAD_ARCH = 1
+export const HEAD_ROUND = 2
 /** How far frames and panes stand out from the wall, metres, and how much wider a frame is than its pane. */
 const FRAME_OUT = 0.025
 export const PANE_OUT = 0.04
@@ -72,11 +102,11 @@ interface Plane {
   v1: number
 }
 
-/** The windows and door of building `range` of `look`. */
+/** The windows and door of building `range` of `look`: a house's, or a church's (`range.kind`). */
 export function openingsOf(look: CollisionMesh, range: LookRange): Opening[] {
   const { vertices, triangles } = look
   const corner = (v: number): P => [vertices[v * 3]!, vertices[v * 3 + 1]!, vertices[v * 3 + 2]!]
-  const planes = new Map<string, Plane & { d: number }>()
+  const planes: (Plane & { d: number })[] = []
   for (let t = range.first; t < range.first + range.walls; t++) {
     // Wound outwards: the look is wound inwards.
     const [a, b, c] = [corner(triangles[t * 3]!), corner(triangles[t * 3 + 2]!), corner(triangles[t * 3 + 1]!)]
@@ -90,12 +120,12 @@ export function openingsOf(look: CollisionMesh, range: LookRange): Opening[] {
     if (Math.abs(n[1]) > 0.1) continue
     const h = Math.hypot(n[0], n[2])
     n = [n[0] / h, 0, n[2] / h]
-    const d = n[0] * a[0] + n[2] * a[2]
-    const key = `${Math.round(Math.atan2(n[2], n[0]) * 100)},${Math.round(d * 10)}`
-    let plane = planes.get(key)
+    // The wall it is a piece of: one facing the same way that all its corners lie in. A wall is often
+    // in pieces (a gable end is cut at the ridge) whose corners were rounded apart by a centimetre.
+    let plane = planes.find((plane) => plane.normal[0] * n[0] + plane.normal[2] * n[2] > SAME_WAY && [a, b, c].every((p) => Math.abs(plane.normal[0] * p[0] + plane.normal[2] * p[2] - plane.d) < SAME_WALL))
     if (!plane) {
-      plane = { normal: n, u: [-n[2], 0, n[0]], tris: [], u0: Infinity, u1: -Infinity, v0: Infinity, v1: -Infinity, d }
-      planes.set(key, plane)
+      plane = { normal: n, u: [-n[2], 0, n[0]], tris: [], u0: Infinity, u1: -Infinity, v0: Infinity, v1: -Infinity, d: n[0] * a[0] + n[2] * a[2] }
+      planes.push(plane)
     }
     const flat = [a, b, c].map((p) => [p[0] * plane!.u[0] + p[2] * plane!.u[2], p[1]] as [number, number])
     plane.tris.push(flat)
@@ -120,26 +150,81 @@ export function openingsOf(look: CollisionMesh, range: LookRange): Opening[] {
       [u0 - margin, v1 + margin],
     ].every(([u, v]) => inside(plane, u!, v!))
   let lowest = Infinity
-  for (const plane of planes.values()) lowest = Math.min(lowest, plane.v0)
-  const sorted = [...planes.values()].sort((a, b) => (a.u1 - a.u0 === b.u1 - b.u0 ? a.d - b.d : b.u1 - b.u0 - (a.u1 - a.u0)))
+  for (const plane of planes) lowest = Math.min(lowest, plane.v0)
+  const sorted = [...planes].sort((a, b) => (a.u1 - a.u0 === b.u1 - b.u0 ? a.d - b.d : b.u1 - b.u0 - (a.u1 - a.u0)))
+  type Wall = Plane & { d: number }
+  const isRaised = (plane: Wall) => plane.v0 - lowest >= RAISED
+  // A church's long walls run the way its longest does; the two widest walls across that are its ends.
+  const long: P = sorted[0]?.u ?? [1, 0, 0]
+  const along = (plane: Wall) => Math.abs(plane.u[0] * long[0] + plane.u[2] * long[2]) > 0.7
+  const isLong = (plane: Wall) => along(plane) && plane.u1 - plane.u0 >= CHURCH_WALL
+  let ends: Wall[] = []
+  let doorEnd: Wall | undefined
+  if (range.kind === BUILDING_CHURCH) {
+    ends = sorted.filter((plane) => !isRaised(plane) && !along(plane)).slice(0, 2)
+    // How far an end is from the lesser walls (an annexe's), summed: the front is the end away from them.
+    const far = (e: Wall) => {
+      let sum = 0
+      for (const p of sorted) {
+        if (ends.includes(p) || isRaised(p) || isLong(p)) continue
+        const mid = (p.u0 + p.u1) / 2
+        const [x, z] = [p.u[0] * mid + p.normal[0] * p.d, p.u[2] * mid + p.normal[2] * p.d]
+        sum += Math.abs(e.normal[0] * x + e.normal[2] * z - e.d)
+      }
+      return sum
+    }
+    const fronts = [...ends]
+    if (fronts.length === 2 && far(fronts[1]!) > far(fronts[0]!) + 0.01) fronts.reverse()
+    doorEnd = fronts.find((p) => {
+      const mid = (p.u0 + p.u1) / 2
+      return fits(p, mid - CHURCH_DOOR_WIDTH / 2, mid + CHURCH_DOOR_WIDTH / 2, p.v0 + MARGIN, p.v0 + CHURCH_DOOR_HEIGHT)
+    })
+  }
+  // A church with no end its door fits in (a hut of a chapel) is given windows as a house is.
+  const church = doorEnd !== undefined
   const out: Opening[] = []
   sorted.forEach((plane, rank) => {
-    const raised = plane.v0 - lowest >= RAISED
-    const [sill, height, width, margin, pitch] = raised ? [SMALL_SILL, SMALL_HEIGHT, SMALL_WIDTH, SMALL_MARGIN, SMALL_PITCH] : [SILL, WINDOW_HEIGHT, WINDOW_WIDTH, MARGIN, PITCH]
+    const raised = isRaised(plane)
     const length = plane.u1 - plane.u0
+    const toWorld = (u: number, v: number): P => [plane.u[0] * u + plane.normal[0] * plane.d, v, plane.u[2] * u + plane.normal[2] * plane.d]
+    const push = (u0: number, u1: number, v0: number, v1: number, door: boolean, head = HEAD_SQUARE) =>
+      out.push({ corners: [toWorld(u0, v0), toWorld(u1, v0), toWorld(u1, v1), toWorld(u0, v1)], normal: plane.normal, door, head })
+    // The wall of a church's nave standing over its annexe's roof is left blank.
+    if (church && raised) return
+    if (church && !raised && ends.includes(plane)) {
+      // An end of a church: the door in the front one, and a round window over the middle of each.
+      const mid = (plane.u0 + plane.u1) / 2
+      if (doorEnd === plane) push(mid - CHURCH_DOOR_WIDTH / 2, mid + CHURCH_DOOR_WIDTH / 2, plane.v0 + 0.02, plane.v0 + CHURCH_DOOR_HEIGHT, true)
+      const centre = plane.v0 + Math.max(ROSE_UP * (plane.v1 - plane.v0), CHURCH_DOOR_HEIGHT + ROSE_CLEAR + ROSE / 2)
+      if (fits(plane, mid - ROSE / 2, mid + ROSE / 2, centre - ROSE / 2, centre + ROSE / 2)) push(mid - ROSE / 2, mid + ROSE / 2, centre - ROSE / 2, centre + ROSE / 2, false, HEAD_ROUND)
+      return
+    }
+    if (church && !raised && isLong(plane)) {
+      // A long wall of a church: one row of tall round-headed windows.
+      const tall = plane.v1 - plane.v0
+      const sill = Math.min(CHURCH_SILL, tall * 0.3)
+      const height = Math.min(CHURCH_HEIGHT, tall - sill - Math.min(CHURCH_TOP, tall * 0.15))
+      const count = Math.max(1, Math.round(length / CHURCH_PITCH))
+      const step = length / count
+      for (let i = 0; i < count; i++) {
+        const mid = plane.u0 + (i + 0.5) * step
+        const [u0, u1, v0] = [mid - CHURCH_WIDTH / 2, mid + CHURCH_WIDTH / 2, plane.v0 + sill]
+        if (fits(plane, u0, u1, v0, v0 + height)) push(u0, u1, v0, v0 + height, false, HEAD_ARCH)
+      }
+      return
+    }
+    const [sill, height, width, margin, pitch] = raised ? [SMALL_SILL, SMALL_HEIGHT, SMALL_WIDTH, SMALL_MARGIN, SMALL_PITCH] : [SILL, WINDOW_HEIGHT, WINDOW_WIDTH, MARGIN, PITCH]
     if (length < width + 2 * margin) return
     const count = Math.max(1, Math.round(length / pitch))
     const step = length / count
-    const toWorld = (u: number, v: number): P => [plane.u[0] * u + plane.normal[0] * plane.d, v, plane.u[2] * u + plane.normal[2] * plane.d]
-    const push = (u0: number, u1: number, v0: number, v1: number, door: boolean) =>
-      out.push({ corners: [toWorld(u0, v0), toWorld(u1, v0), toWorld(u1, v1), toWorld(u0, v1)], normal: plane.normal, door })
-    // Rows a storey apart, as high as the wall reaches (`fits` keeps them off a gable's slopes).
-    for (let storey = 0; plane.v0 + sill + storey * STOREY + height + margin <= plane.v1; storey++) {
+    // Rows a storey apart, as high as the wall reaches (`fits` keeps them off a gable's slopes); the
+    // lesser walls of a church (its annexe's) have the one row.
+    for (let storey = 0; plane.v0 + sill + storey * STOREY + height + margin <= plane.v1 && !(church && storey >= 1); storey++) {
       const v0 = plane.v0 + sill + storey * STOREY
       for (let i = 0; i < count; i++) {
         const mid = plane.u0 + (i + 0.5) * step
         // The longest wall's door: the middle of its ground row.
-        if (!raised && rank === 0 && storey === 0 && i === Math.floor(count / 2) && fits(plane, mid - DOOR_WIDTH / 2, mid + DOOR_WIDTH / 2, plane.v0 + MARGIN, plane.v0 + DOOR_HEIGHT)) {
+        if (!church && !raised && rank === 0 && storey === 0 && i === Math.floor(count / 2) && fits(plane, mid - DOOR_WIDTH / 2, mid + DOOR_WIDTH / 2, plane.v0 + MARGIN, plane.v0 + DOOR_HEIGHT)) {
           push(mid - DOOR_WIDTH / 2, mid + DOOR_WIDTH / 2, plane.v0 + 0.02, plane.v0 + DOOR_HEIGHT, true)
           continue
         }
@@ -168,10 +253,25 @@ export function openingsFor(look: CollisionMesh, range: LookRange): readonly Ope
   return openings
 }
 
-/** The triangles `openingQuads` draws for `openings`: a window's frame ring and reveal, a door's frame and leaf (an open door's frame is three strips, and its leaf has two sides). */
+/** How many straight pieces a quarter of a round head is drawn as. */
+const ARC_STEPS = 6
+/** How far the wall filled in round an arched head stands out, metres: in front of the glass (`GLASS_OUT`), and the frame along the curve in front of that. */
+const MASK_OUT = 0.06
+const ARC_FRAME_OUT = 0.07
+
+/**
+ * The triangles `openingQuads` draws for `openings`: a window's frame ring and reveal, a door's frame
+ * and leaf (an open door's frame is three strips, and its leaf has two sides); a window with an
+ * arched or a round head has the reveal, the wall filled in round the curve with its edges, and the frame along it.
+ */
 export function openingTriangles(openings: readonly Opening[]): number {
   let n = 0
-  for (const o of openings) n += o.door ? (o.open ? 10 : 4) : 16
+  for (const o of openings) {
+    if (o.door) n += o.open ? 10 : 4
+    else if (o.head === HEAD_ARCH) n += 2 * (4 + 3 + 3 + 4 * ARC_STEPS)
+    else if (o.head === HEAD_ROUND) n += 2 * (4 + 4 + 8 * ARC_STEPS)
+    else n += 16
+  }
   return n
 }
 
@@ -194,9 +294,13 @@ export function drawnOpenings(openings: readonly Opening[], furnished: boolean):
  * standing a little out from the wall round the hole cut for it, and the reveal going into the wall
  * from the hole's four sides; a door's frame and its leaf, standing out from the wall. The glass is
  * drawn apart (`glass.ts`), and the hole itself is cut out of the wall (`facade.ts`).
+ *
+ * The hole of a window with an arched or a round head is its rectangle all the same: the wall is
+ * filled in over the glass from the curve out to the rectangle (`masonry`, to be drawn as the wall
+ * is), and the frame follows the curve.
  */
-export function openingQuads(openings: readonly Opening[], quad: (corners: [P, P, P, P], rgb: readonly [number, number, number], normal: P) => void) {
-  for (const { corners, normal, door, open } of openings) {
+export function openingQuads(openings: readonly Opening[], quad: (corners: [P, P, P, P], rgb: readonly [number, number, number], normal: P, masonry?: boolean) => void) {
+  for (const { corners, normal, door, open, head } of openings) {
     const [a, , c] = corners
     // Unit along the wall and up, from the corners.
     const along: P = [corners[1][0] - a[0], 0, corners[1][2] - a[2]]
@@ -223,9 +327,42 @@ export function openingQuads(openings: readonly Opening[], quad: (corners: [P, P
       quad(grow(FRAME_OUT + 0.015, 0), DOOR_RGB, normal)
       continue
     }
-    const outer = grow(FRAME_OUT, FRAME)
-    const inner = grow(FRAME_OUT, 0)
-    for (let k = 0; k < 4; k++) quad([outer[k]!, outer[(k + 1) % 4]!, inner[(k + 1) % 4]!, inner[k]!], FRAME_RGB, normal)
+    if (head === HEAD_ARCH || head === HEAD_ROUND) {
+      // In the wall's plane: `u` along it from the first corner, `v` up from the sill, `out` from the wall.
+      const [w, h] = [al, c[1] - a[1]]
+      const at = (u: number, v: number, out: number): P => [a[0] + ux * u + normal[0] * out, a[1] + v, a[2] + uz * u + normal[2] * out]
+      const r = w / 2
+      // The curve's middle: an arch springs from the top of its straight sides, a circle fills its square.
+      const cy = head === HEAD_ARCH ? h - r : h / 2
+      const arc = (from: number, edge: number) => {
+        // Half a circle from the angle `from`, each piece with the wall filled in out to the rectangle's side at `edge`.
+        for (let i = 0; i < 2 * ARC_STEPS; i++) {
+          const [t0, t1] = [from + (i * Math.PI) / (2 * ARC_STEPS), from + ((i + 1) * Math.PI) / (2 * ARC_STEPS)]
+          const on = (t: number, radius: number, out: number) => at(r + Math.cos(t) * radius, cy + Math.sin(t) * radius, out)
+          quad([on(t0, r, MASK_OUT), on(t1, r, MASK_OUT), at(r + Math.cos(t1) * r, edge, MASK_OUT), at(r + Math.cos(t0) * r, edge, MASK_OUT)], FRAME_RGB, normal, true)
+          quad([on(t0, r, ARC_FRAME_OUT), on(t1, r, ARC_FRAME_OUT), on(t1, r + FRAME, ARC_FRAME_OUT), on(t0, r + FRAME, ARC_FRAME_OUT)], FRAME_RGB, normal)
+        }
+      }
+      arc(0, h)
+      // The edges of the filled-in wall, back to the wall behind it: over its top and down its sides.
+      const foot = head === HEAD_ROUND ? 0 : cy
+      quad([at(0, h, 0), at(w, h, 0), at(w, h, MASK_OUT), at(0, h, MASK_OUT)], FRAME_RGB, [0, 1, 0], true)
+      quad([at(0, foot, 0), at(0, h, 0), at(0, h, MASK_OUT), at(0, foot, MASK_OUT)], FRAME_RGB, [-ux, 0, -uz], true)
+      quad([at(w, foot, 0), at(w, h, 0), at(w, h, MASK_OUT), at(w, foot, MASK_OUT)], FRAME_RGB, [ux, 0, uz], true)
+      if (head === HEAD_ROUND) {
+        arc(Math.PI, 0)
+        quad([at(0, 0, 0), at(w, 0, 0), at(w, 0, MASK_OUT), at(0, 0, MASK_OUT)], FRAME_RGB, [0, -1, 0], true)
+      } else {
+        // The straight of the frame: under the sill and up each side to where the arch springs.
+        quad([at(-FRAME, -FRAME, FRAME_OUT), at(w + FRAME, -FRAME, FRAME_OUT), at(w, 0, FRAME_OUT), at(0, 0, FRAME_OUT)], FRAME_RGB, normal)
+        quad([at(-FRAME, -FRAME, FRAME_OUT), at(0, 0, FRAME_OUT), at(0, cy, FRAME_OUT), at(-FRAME, cy, FRAME_OUT)], FRAME_RGB, normal)
+        quad([at(w, 0, FRAME_OUT), at(w + FRAME, -FRAME, FRAME_OUT), at(w + FRAME, cy, FRAME_OUT), at(w, cy, FRAME_OUT)], FRAME_RGB, normal)
+      }
+    } else {
+      const outer = grow(FRAME_OUT, FRAME)
+      const inner = grow(FRAME_OUT, 0)
+      for (let k = 0; k < 4; k++) quad([outer[k]!, outer[(k + 1) % 4]!, inner[(k + 1) % 4]!, inner[k]!], FRAME_RGB, normal)
+    }
     // The reveal: each side of the hole, going into the wall, facing into the opening.
     const back = (p: P): P => [p[0] - normal[0] * REVEAL, p[1], p[2] - normal[2] * REVEAL]
     const faces: P[] = [[0, 1, 0], [-ux, 0, -uz], [0, -1, 0], [ux, 0, uz]]

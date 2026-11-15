@@ -407,7 +407,10 @@ const CAR_PLOW_KEEP: f32 = 0.6;
 const TANK_PLOW_REACH: f32 = 1.9;
 const TANK_PLOW_SPREAD: f32 = 1.8;
 
-/// Fells the trees a car is driving into. Speed is taken from before the step, as the impact
+/// Share of its speed a light vehicle keeps through the fence it breaks: wire and posts barely slow it.
+const FENCE_KEEP: f32 = 0.95;
+
+/// Fells the trees and breaks the walls a car is driving into. Speed is taken from before the step, as the impact
 /// itself has already slowed the car by now; a tree that goes down gives some of it back.
 /// (A tank never touches a tree: see `plow_trees`.)
 fn run_down_trees(world: &mut World, before: &BTreeMap<u32, CarPose>) {
@@ -430,28 +433,55 @@ fn run_down_trees(world: &mut World, before: &BTreeMap<u32, CarPose>) {
     }
 }
 
-/// A heavy vehicle (a tank or a Strv) drives through destructible trunks without being slowed (they are not in what its
-/// hull touches, and the client's prediction leaves them out the same way), and fells every one its
-/// hull overlaps, hard, in proportion to its speed.
+/// A heavy vehicle (a tank or a Strv) drives through destructible trunks and walls without being slowed (they are not in
+/// what its hull touches, and the client's prediction leaves them out the same way), and fells every
+/// one its hull overlaps, hard, in proportion to its speed.
+///
+/// A fence is in nothing's way but a soldier's (`sim::fences`): every vehicle goes through it, and the
+/// pieces its hull overlaps break outright, taking a little off a light one's speed.
 fn plow_trees(world: &mut World, before: &BTreeMap<u32, CarPose>) {
-    let tanks: Vec<u32> = world.entities.all::<Vehicle>().filter(|&(vid, vehicle)| vehicle_def(vehicle.kind).body.heavy && !world.entities.dead(vid)).map(|(vid, _)| vid).collect();
-    for vid in tanks {
+    let moving: Vec<(u32, u8)> = world.entities.all::<Vehicle>().filter(|&(vid, vehicle)| !is_drone(vehicle.kind) && !world.entities.dead(vid)).map(|(vid, vehicle)| (vid, vehicle.kind)).collect();
+    for (vid, kind) in moving {
         let (Some(was), Some(now)) = (before.get(&vid), world.physics.car_pose(vid)) else { continue };
         let speed = was.velocity[0].hypot(was.velocity[2]);
         if speed < TANK_TREE_RAM_MIN_SPEED {
             continue;
         }
-        // The hull is long: look at its middle and a point towards each end.
+        let heavy = vehicle_def(kind).body.heavy;
+        // The hull is long: look at its middle and a point towards each end. A tank reaches a little
+        // past its hull; anything else is taken at its own size.
+        let [hx, _, hz] = sim::half_extents(kind);
+        let (reach, spread) = if heavy { (TANK_PLOW_REACH, TANK_PLOW_SPREAD) } else { ((hz - hx).max(0.0), hx + 0.1) };
         let (fx, fz) = (-now.yaw().sin(), -now.yaw().cos());
-        let mut trees: Vec<Obj> = [-TANK_PLOW_REACH, 0.0, TANK_PLOW_REACH]
-            .into_iter()
-            .flat_map(|along| world.physics.objects_near([now.position[0] + fx * along, now.position[1], now.position[2] + fz * along], TANK_PLOW_SPREAD))
-            .filter(|object| matches!(object, Obj::Tree(_)))
-            .collect();
-        trees.dedup();
+        let mut found: Vec<Obj> = [-reach, 0.0, reach].into_iter().flat_map(|along| world.physics.objects_near([now.position[0] + fx * along, now.position[1], now.position[2] + fz * along], spread)).collect();
+        found.sort_by_key(|object| match *object {
+            Obj::Building(id) => (0, id),
+            Obj::Tree(id) => (1, id),
+            Obj::Line(id) => (2, id),
+        });
+        found.dedup();
         let amount = (speed * TREE_RAM_DAMAGE_PER_SPEED * TANK_TREE_FACTOR) as u16;
-        for object in trees {
-            super::combat::damage_object(world, object, amount, now.position);
+        let mut fences = 0;
+        for object in found {
+            match object {
+                Obj::Building(_) => {}
+                Obj::Tree(_) if heavy => {
+                    super::combat::damage_object(world, object, amount, now.position);
+                }
+                Obj::Tree(_) => {}
+                Obj::Line(id) => {
+                    let Some(def) = world.line_piece(id).map(|piece| piece.def) else { continue };
+                    if def.wall && heavy {
+                        super::combat::damage_object(world, object, amount, now.position);
+                    } else if !def.wall && super::combat::damage_object(world, object, def.hp, now.position) {
+                        fences += 1;
+                    }
+                }
+            }
+        }
+        if fences > 0 && !heavy && !vehicle_def(kind).body.flies {
+            let velocity = world.physics.car_pose(vid).map_or(now.velocity, |pose| pose.velocity);
+            world.physics.set_car_velocity(vid, [velocity[0] * FENCE_KEEP, velocity[1], velocity[2] * FENCE_KEEP]);
         }
     }
 }

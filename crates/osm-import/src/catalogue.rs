@@ -192,7 +192,7 @@ const OFF_STEP: f64 = 0.25;
 /// How far the house the laser saw stands off `wings` (`[x, z]`, metres): the shift of the returns,
 /// within `MOST_OFF` along each side of the main wing, under which a gable fits them best. Nothing
 /// unless it fits clearly better than where it was drawn.
-fn misplaced(returns: &[[f64; 3]], wings: &[Wing]) -> P {
+pub(crate) fn misplaced(returns: &[[f64; 3]], wings: &[Wing]) -> P {
     let main = wings[0];
     let v = [-main.u[1], main.u[0]];
     let cost = |shift: P| {
@@ -223,7 +223,7 @@ fn roof_height(roof: &Roof, p: P) -> f64 {
 /// Mean squared miss of `height` over the `TRIMMED` share of `returns` it misses least, each counted
 /// up to a metre: what is left over is mostly the crowns of trees leaning over the roof, and would
 /// otherwise hide which shape the roof is.
-fn cost_of(returns: &[[f64; 3]], height: &dyn Fn(P) -> f64) -> f64 {
+pub(crate) fn cost_of(returns: &[[f64; 3]], height: &dyn Fn(P) -> f64) -> f64 {
     let mut misses: Vec<f64> = returns.iter().map(|r| (r[2] - height([r[0], r[1]])).powi(2).min(1.0)).collect();
     misses.sort_by(f64::total_cmp);
     let kept = ((misses.len() as f64 * TRIMMED).ceil() as usize).clamp(1, misses.len().max(1));
@@ -244,10 +244,10 @@ pub fn plan(ring: &[P]) -> Option<(Vec<Wing>, bool)> {
     roof::rectangle(ring).map(|wing| (vec![wing], false))
 }
 
-/// `ring`, whose walls all run along `u` or across it, cut into rectangles: the biggest first,
-/// then the biggest of what is left, and so on. Side wings deep enough are turned to run out from
-/// the main one and carried in under its roof to its ridge.
-fn wings(ring: &[P], u: P) -> Option<(Vec<Wing>, bool)> {
+/// `ring`, whose walls all run along `u` or across it, cut into rectangles `[a0, a1, b0, b1]`
+/// (along `u`, and across it): the biggest first, then the biggest of what is left, and so on.
+/// `None` for a plan of more than `most`.
+fn cut_up(ring: &[P], u: P, most: usize) -> Option<Vec<[f64; 4]>> {
     let v = [-u[1], u[0]];
     let local: Vec<P> = ring.iter().map(|p| [p[0] * u[0] + p[1] * u[1], p[0] * v[0] + p[1] * v[1]]).collect();
     let lines = |axis: usize| {
@@ -290,10 +290,41 @@ fn wings(ring: &[P], u: P) -> Option<(Vec<Wing>, bool)> {
             }
         }
         rects.push([xs[i0], xs[i1 + 1], zs[j0], zs[j1 + 1]]);
-        if rects.len() > 3 * MOST_WINGS {
+        if rects.len() > most {
             return None;
         }
     }
+    Some(rects)
+}
+
+/// The rectangles a square `ring` is made of, as they stand (no wing is turned or carried in under
+/// another, as `plan` does for a house): the biggest first, each with its long side as its `u`.
+/// `None` for a ring that is not square, or of too many pieces.
+pub(crate) fn rectangles(ring: &[P]) -> Option<Vec<Wing>> {
+    let u = square::direction(ring);
+    if !square::is_square(ring, u) {
+        return None;
+    }
+    let v = [-u[1], u[0]];
+    let rects = cut_up(ring, u, 3 * MOST_WINGS)?;
+    Some(
+        rects
+            .into_iter()
+            .map(|[a0, a1, b0, b1]| {
+                let (ma, mb, sa, sb) = ((a0 + a1) / 2.0, (b0 + b1) / 2.0, (a1 - a0) / 2.0, (b1 - b0) / 2.0);
+                let centre = [ma * u[0] + mb * v[0], ma * u[1] + mb * v[1]];
+                if sa >= sb { Wing { centre, u, half: [sa, sb] } } else { Wing { centre, u: v, half: [sb, sa] } }
+            })
+            .collect(),
+    )
+}
+
+/// `ring`, whose walls all run along `u` or across it, cut into rectangles: the biggest first,
+/// then the biggest of what is left, and so on. Side wings deep enough are turned to run out from
+/// the main one and carried in under its roof to its ridge.
+fn wings(ring: &[P], u: P) -> Option<(Vec<Wing>, bool)> {
+    let v = [-u[1], u[0]];
+    let rects = cut_up(ring, u, 3 * MOST_WINGS)?;
     let total: f64 = rects.iter().map(|r| (r[1] - r[0]) * (r[3] - r[2])).sum();
     let (big, small): (Vec<[f64; 4]>, Vec<[f64; 4]>) = rects.into_iter().partition(|r| (r[1] - r[0]).min(r[3] - r[2]) >= MIN_WING);
     let porch: f64 = small.iter().map(|r| (r[1] - r[0]) * (r[3] - r[2])).sum();

@@ -2,7 +2,7 @@
 // change the Rust and run `npm run gen:consts`. Client-only constants live in consts.ts.
 
 /** Wire schema version. Bumped on any incompatible protocol or world-format change. */
-export const PROTOCOL_VERSION = 80
+export const PROTOCOL_VERSION = 82
 
 /**
  * Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
@@ -115,6 +115,12 @@ export const KIND_SNOWRACER = 29
  * throws, and crushes what it steps on.
  */
 export const KIND_TITAN = 30
+
+/**
+ * The bus: a twelve-metre city bus with a driver and twelve passengers. On a world with bus lines the
+ * server drives them along the major roads, from stop to stop.
+ */
+export const KIND_BUS = 31
 
 /** Fixed simulation rate, in ticks per second. */
 export const TICK_RATE = 60
@@ -486,9 +492,18 @@ export const KILL_Y = -50.0
 /**
  * Vehicles. Chassis and wheel geometry are shared with the client, which draws the car from them.
  * Body-local axes: +X right, +Y up, -Z forward (yaw 0 faces -Z, like a soldier).
- * Seats in the roomiest car (the jeep); bounds the seat list of any vehicle.
+ * Seats in a jeep.
  */
 export const CAR_SEATS = 4
+
+/**
+ * How far from the middle of the road a bus stop's sign stands, metres: on the verge of a major road,
+ * which is ten metres wide.
+ */
+export const BUS_STOP_SETBACK = 5.6
+
+/** The most seats any vehicle has (the bus); bounds the seat list of any vehicle. */
+export const MAX_SEATS = 13
 
 /**
  * Vehicles in the world; bounds the vehicle list in a snapshot. The map editor's placed vehicles and the
@@ -1212,6 +1227,52 @@ export const LIFT_WHEEL_SEGMENTS = 8
  * and the eye (crouched) is a sitting one's.
  */
 export const LIFT_RIDER_CENTRE = 0.45
+
+/**
+ * The bus (`KIND_BUS`): a twelve-metre city bus on two axles, with a driver at the front and twelve
+ * passengers in six rows of window seats behind. It is heavy, slow to get going and slow flat out,
+ * and it needs most of a road to turn. On a world with bus lines the server drives them
+ * (`Buses`); one whose driver is gone drives like any other car.
+ */
+export const BUS_SEATS = 13
+
+/** Half the frame under the floor, metres: the body above it is a solid of its own (`BUS_BODY_HALF`). */
+export const BUS_HALF_EXTENTS = [1.25, 0.5, 6.0] as const
+
+/**
+ * Half the body over the frame, and its middle in the hull frame, metres: the roof is 2.3 m over the
+ * hull's middle.
+ */
+export const BUS_BODY_HALF = [1.25, 0.9, 6.0] as const
+export const BUS_BODY_CENTRE = [0.0, 1.4, 0.0] as const
+export const BUS_WHEEL_RADIUS = 0.5
+export const BUS_TRACK_HALF = 1.05
+
+/** The axles are six metres apart, with three metres of bus past each. */
+export const BUS_AXLE_Z = 3.0
+export const BUS_HARD_POINT_Y = -0.2
+export const BUS_SUSPENSION_REST = 0.45
+
+/** Measured by `ride_heights_differ_between_cars` in vehicle.rs. */
+export const BUS_RIDE_HEIGHT = 1.057
+
+/** A sharp lock for so long a wheelbase: it turns in a circle of about nine metres' radius. */
+export const BUS_MAX_STEER = 0.6
+
+/** About 58 km/h. */
+export const BUS_MAX_SPEED = 16.0
+
+/**
+ * Where it is boarded from, in the hull frame: its front door, on the right behind the front axle's
+ * overhang.
+ */
+export const BUS_DOOR = [1.25, 0.0, -4.6] as const
+
+/**
+ * Where a rider who gets off stands, in the hull frame (the middle of a standing soldier): on the
+ * kerb outside the front door.
+ */
+export const BUS_DOOR_EXIT = [2.1, -0.1, -4.6] as const
 
 /**
  * The FPV drone: a quadcopter the size of a dinner plate. It is flown by velocity: forward stick asks
@@ -2593,6 +2654,20 @@ export const TITAN_EXIT = [0.0, -32.2, -10.0] as const
 
 /** The pilot's eye, in the hull frame: at the visor, just clear of the head's own plates. */
 export const TITAN_EYE = [0.0, 12.0, -3.2] as const
+
+/** The neck its head turns on, in the hull frame: the middle of the collar's top. */
+export const TITAN_HEAD_PIVOT = [0.0, 9.4, 0.0] as const
+
+/**
+ * How far its head turns to follow its pilot's look, radians: to either side of the way the hull
+ * faces, down and up.
+ */
+export const TITAN_HEAD_TURN = 1.0
+export const TITAN_HEAD_DOWN = 1.2
+export const TITAN_HEAD_UP = 0.7
+
+/** How fast its head turns, rad/s. */
+export const TITAN_HEAD_SLEW = 4.0
 
 /** A fist moving at least this fast, m/s, hits what it meets; slower, it only shoves. */
 export const TITAN_PUNCH_SPEED = 8.0

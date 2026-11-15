@@ -76,14 +76,25 @@ export interface HeadsetFrame {
   eyes: Eye[]
   /** The pilot's eyes, in the headset's space: the origin is where they were when it started. */
   head: readonly [number, number, number]
+  /** Where the pilot looks, `[yaw, pitch]` in radians from straight ahead in the headset's space: + yaw to the left, + pitch up. */
+  gaze: readonly [number, number]
   /** The left and the right controller. */
   hands: [PilotHand, PilotHand]
   /** The left and the right thumbstick, each `[x, y]` with + right and + forward. */
   sticks: [readonly [number, number], readonly [number, number]]
   /** The right controller's lower face button (A) is down. */
   jump: boolean
+  /** The left controller's lower face button (X) is down. */
+  lamp: boolean
   /** The left and the right controller's index trigger is pulled. */
   triggers: [boolean, boolean]
+}
+
+/** The yaw (+ left) and pitch (+ up), radians, of the way a head turned by `q` looks: straight ahead is -Z. */
+export function gazeOf(q: { x: number; y: number; z: number; w: number }): [number, number] {
+  // -Z turned by q.
+  const [x, y, z] = [-2 * (q.x * q.z + q.w * q.y), -2 * (q.y * q.z - q.w * q.x), -(1 - 2 * (q.x * q.x + q.y * q.y))]
+  return [Math.atan2(-x, -z), Math.asin(Math.max(-1, Math.min(1, y)))]
 }
 
 /** The index trigger, the squeeze button and the thumbstick's axes of a controller, in the `xr-standard` layout. */
@@ -178,6 +189,7 @@ export class Headset {
     const hands: [PilotHand, PilotHand] = [{ at: null, closed: false }, { at: null, closed: false }]
     const sticks: [[number, number], [number, number]] = [[0, 0], [0, 0]]
     let jump = false
+    let lamp = false
     const triggers: [boolean, boolean] = [false, false]
     for (const source of this.session.inputSources) {
       if (source.handedness === 'none') continue
@@ -189,10 +201,11 @@ export class Headset {
       // A stick pushed away is a negative y.
       sticks[index] = [pad?.axes[STICK_X] ?? 0, -(pad?.axes[STICK_Y] ?? 0)]
       if (index === 1) jump = pad?.buttons[FACE]?.pressed === true
+      else lamp = pad?.buttons[FACE]?.pressed === true
       triggers[index] = pad?.buttons[TRIGGER]?.pressed === true
     }
     const head = pose.transform.position
-    return { eyes, head: [head.x, head.y, head.z], hands, sticks, jump, triggers }
+    return { eyes, head: [head.x, head.y, head.z], gaze: gazeOf(pose.transform.orientation), hands, sticks, jump, lamp, triggers }
   }
 
   /** Ends the session. */

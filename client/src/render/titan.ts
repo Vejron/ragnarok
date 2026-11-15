@@ -1,9 +1,10 @@
 import { Group, Mesh, type Material, type Node, Matrix4, Quaternion, Vector3 } from '@ragnarok/engine'
 import { parseToonModel, unlitMaterial } from './models'
 import { toonMaterial } from './toon'
-import { HANDS_GRIP_LEFT, HANDS_GRIP_RIGHT, THRUST_LIFT, wrapAngle } from '@/net/codec'
-import { TITAN_ANKLE_HEIGHT, TITAN_ELBOW_POLE, TITAN_FIST_REST, TITAN_FOOT_HALF, TITAN_FOREARM_LENGTH, TITAN_GUN_HAND, TITAN_KNEE_POLE, TITAN_SHIN_LENGTH, TITAN_THIGH_LENGTH, TITAN_UPPER_ARM_LENGTH, TITAN_HALF_EXTENTS, TITAN_RIDE_HEIGHT, TITAN_SHOULDER, TITAN_STEP_LIFT } from '@/sim/consts'
+import { HANDS_GRIP_LEFT, HANDS_GRIP_RIGHT, THRUST_LIFT, TITAN_LAMP, wrapAngle } from '@/net/codec'
+import { TITAN_ANKLE_HEIGHT, TITAN_ELBOW_POLE, TITAN_EYE, TITAN_FIST_REST, TITAN_FOOT_HALF, TITAN_FOREARM_LENGTH, TITAN_GUN_HAND, TITAN_HEAD_DOWN, TITAN_HEAD_PIVOT, TITAN_HEAD_SLEW, TITAN_HEAD_TURN, TITAN_HEAD_UP, TITAN_KNEE_POLE, TITAN_SHIN_LENGTH, TITAN_THIGH_LENGTH, TITAN_UPPER_ARM_LENGTH, TITAN_HALF_EXTENTS, TITAN_RIDE_HEIGHT, TITAN_SHOULDER, TITAN_STEP_LIFT } from '@/sim/consts'
 import type { Titan } from '@/entities/units'
+import { clamp } from '@/math'
 import type { VehicleModel } from './car'
 
 /** Paint colours handed out by vehicle id, so two Titans are told apart. */
@@ -97,8 +98,35 @@ const ARM_KNOCK_MOST = 3
 /** How fast a round leaving the gun kicks its fist back along the forearm, m/s. */
 const GUN_KICK = 4
 
+/** How far ahead of the pilot's eye and below it the searchlight shines from, metres. */
+const LAMP_AHEAD = 0.9
+const LAMP_BELOW = 0.4
+
 /**
- * A Titan: its torso on the hull, and its arms and legs bent by IK to where the server has its fists
+ * How a Titan's head is turned from its hull, `[yaw, pitch]` in radians (+ left, + up), to follow a look
+ * along `yaw` and `pitch` in the world from a hull turned by `rotation`: within what its neck allows.
+ * The server's `titans::turn_head` turns it the same way.
+ */
+export function headTurn(yaw: number, pitch: number, rotation: readonly [number, number, number, number]): [number, number] {
+  const flat = Math.cos(pitch)
+  const look = new Vector3(-Math.sin(yaw) * flat, Math.sin(pitch), -Math.cos(yaw) * flat).applyQuaternion(new Quaternion(...rotation).invert())
+  return [clamp(Math.atan2(-look.x, -look.z), -TITAN_HEAD_TURN, TITAN_HEAD_TURN), clamp(Math.asin(clamp(look.y, -1, 1)), -TITAN_HEAD_DOWN, TITAN_HEAD_UP)]
+}
+
+/** A head turned by `[yaw, pitch]` from the hull, as a rotation in the hull's frame. */
+const headTurned = ([yaw, pitch]: readonly [number, number]) => new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), yaw).multiply(new Quaternion().setFromAxisAngle(new Vector3(1, 0, 0), pitch))
+
+/**
+ * Where the pilot's eye is in the hull's frame when the head is turned by `head` (`headTurn`): `TITAN_EYE`,
+ * and `ahead` metres out of the visor from it, carried round the neck with the head.
+ */
+export function headEye(head: readonly [number, number], ahead = 0): Vector3 {
+  const pivot = new Vector3(...TITAN_HEAD_PIVOT)
+  return new Vector3(TITAN_EYE[0], TITAN_EYE[1], TITAN_EYE[2] - ahead).sub(pivot).applyQuaternion(headTurned(head)).add(pivot)
+}
+
+/**
+ * A Titan: its torso on the hull, its head turned to where its pilot looks, and its arms and legs bent by IK to where the server has its fists
  * and feet (`Titan`). Nothing here decides where a limb is: with no word from the server yet the arms
  * hang and the legs stand straight under the hips. The mesh is `titan.glb`; its nodes are named in
  * `build_titan.py`.
@@ -114,7 +142,13 @@ export class TitanModel implements VehicleModel {
   private readonly thigh: Node[]
   private readonly shin: Node[]
   private readonly foot: Node[]
+  private readonly head: Node
   private limbs: Titan | null = null
+  /** Where its own pilot looks, for the next frame drawn: the head's turn from the hull, and whether it is there at once. */
+  private gaze: { turn: readonly [number, number]; snap: boolean } | null = null
+  private readonly beam = { at: new Vector3(), direction: new Vector3() }
+  /** How the head is turned from the hull as drawn, `[yaw, pitch]` in radians. */
+  private readonly facing: [number, number] = [0, 0]
   /** Each fist's middle in the hull frame, as drawn. */
   private readonly fists = [new Vector3(), new Vector3()]
   /** The elbow of the arm that holds the gun (`TITAN_GUN_HAND`), in the hull frame, as drawn. */
@@ -151,6 +185,7 @@ export class TitanModel implements VehicleModel {
     this.thigh = pair('thigh')
     this.shin = pair('shin')
     this.foot = pair('foot')
+    this.head = model.getObjectByName('head')!
   }
 
   /**
@@ -173,6 +208,29 @@ export class TitanModel implements VehicleModel {
   /** Where the server has its fists and feet, or null before it has said. */
   setLimbs(limbs: Titan | null) {
     this.limbs = limbs
+  }
+
+  /**
+   * Its own pilot looks so that the head is turned by `turn` (`headTurn`) in the next frame drawn, sooner
+   * than the server says so. With `snap` the head is there at once, as it must be for a pilot looking out
+   * of it; without, it turns as fast as the server turns it.
+   */
+  lookTo(turn: readonly [number, number], snap: boolean) {
+    this.gaze = { turn, snap }
+  }
+
+  /**
+   * The searchlight in its visor, when it is on: from just ahead of the visor, the way the head faces, as
+   * of the last `update`. The vectors are reused by the next call.
+   */
+  searchlight(): { at: Vector3; direction: Vector3 } | null {
+    if (!((this.limbs?.flags ?? 0) & TITAN_LAMP)) return null
+    this.root.updateWorldMatrix(true, true)
+    const world = new Matrix4().fromArray(this.head.matrixWorld)
+    this.beam.direction.set(0, 0, -1).transformDirection(world)
+    // The pilot's eye is at the visor: the lamp is a little ahead of it and below, out of their view.
+    this.beam.at.set(TITAN_EYE[0] - TITAN_HEAD_PIVOT[0], TITAN_EYE[1] - TITAN_HEAD_PIVOT[1] - LAMP_BELOW, TITAN_EYE[2] - TITAN_HEAD_PIVOT[2] - LAMP_AHEAD).applyMatrix4(world)
+    return this.beam
   }
 
   /** The middle of fist `hand` (0 left) in the world, as drawn. */
@@ -240,6 +298,13 @@ export class TitanModel implements VehicleModel {
     this.flying = flying
     this.stamp = now
     this.height = position[1]
+    // The head: where the server has turned it, or for its own pilot where they look now.
+    const gaze = this.gaze
+    this.gaze = null
+    const toward = gaze?.turn ?? [limbs?.head_yaw ?? 0, limbs?.head_pitch ?? 0]
+    const most = gaze && !gaze.snap ? TITAN_HEAD_SLEW * Math.min(dt, 0.1) : Infinity
+    for (const axis of [0, 1] as const) this.facing[axis] += clamp(toward[axis]! - this.facing[axis], -most, most)
+    this.head.quaternion.copy(headTurned(this.facing))
     const flags = limbs?.flags ?? 0
     const turn = new Quaternion(...rotation)
     const unturn = turn.clone().invert()

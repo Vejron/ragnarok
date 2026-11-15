@@ -142,7 +142,7 @@ pub fn fit(footprint: &[P], points: &[[f64; 4]]) -> Option<Roof> {
         })
         .collect();
     // A house is one roof; only a big building is fitted in parts.
-    Some(tree(&obs, &frame, if area >= SPLIT_FROM { MAX_DEPTH } else { 0 }).0)
+    Some(tree(&obs, &frame, if area >= SPLIT_FROM { MAX_DEPTH } else { 0 }, PITCH.1).0)
 }
 
 /// Laser returns `[x, z, y]`, local metres.
@@ -174,7 +174,7 @@ pub(crate) fn roof_returns(footprint: &[P], points: &[[f64; 4]]) -> Option<(Retu
     };
     let world = |o: &Obs| [frame.centre[0] + frame.axes[0][0] * o.u + frame.axes[1][0] * o.v, frame.centre[1] + frame.axes[0][1] * o.u + frame.axes[1][1] * o.v];
     // Whatever still stands well above the first fit is a tree, an antenna or a chimney stack.
-    let (first, _) = model(&obs, &frame);
+    let (first, _) = model(&obs, &frame, PITCH.1);
     let keep: Vec<Obs> = obs.iter().copied().filter(|o| o.y - first.height(world(o)) <= CANOPY).collect();
     let all: Vec<[f64; 3]> = obs.iter().map(|o| { let p = world(o); [p[0], p[1], o.y] }).collect();
     // A few stray returns are a tree, an antenna or a chimney. A big share standing above the fit is
@@ -200,6 +200,21 @@ pub fn rectangle(footprint: &[P]) -> Option<Wing> {
     Frame::around(footprint).map(|frame| Wing { centre: frame.centre, u: frame.axes[0], half: frame.half })
 }
 
+/// The roof over the rectangle `wing` alone that fits `returns` (`[x, z, y]`) best, cut into at most
+/// `2^depth` parts, a gable or a hip sloping at most `steepest`, rise per run: for a part of a
+/// building that is fitted on its own (a church's annexe).
+pub(crate) fn fit_over(wing: &Wing, returns: &[[f64; 3]], depth: u32, steepest: f64) -> Roof {
+    let frame = Frame { centre: wing.centre, axes: [wing.u, [-wing.u[1], wing.u[0]]], half: wing.half };
+    let obs: Vec<Obs> = returns
+        .iter()
+        .map(|r| {
+            let (u, v) = frame.to_uv([r[0], r[1]]);
+            Obs { u, v, y: r[2] }
+        })
+        .collect();
+    tree(&obs, &frame, depth, steepest).0
+}
+
 /// Fewest returns in a part of a roof.
 const PART_POINTS: usize = 24;
 /// Narrowest a part may be, metres.
@@ -218,9 +233,9 @@ const MAX_DEPTH: u32 = 3;
 /// Largest miss, metres squared, that `loss` counts.
 const BIG_MISS: f64 = 100.0;
 /// Returns this far over the fitted roof, metres, are not roof.
-const CANOPY: f64 = 1.0;
+pub(crate) const CANOPY: f64 = 1.0;
 /// Most of the returns that may stand over the first fit and still be dropped as strays.
-const MAX_STRAY: f64 = 0.15;
+pub(crate) const MAX_STRAY: f64 = 0.15;
 
 /// Mean squared miss of `shape` over `obs`, each clipped at `BIG_MISS` metres squared. Wide enough
 /// that a step of ten metres between two levels is a large cost and a cut across it pays, where
@@ -232,8 +247,8 @@ fn loss(obs: &[Obs], frame: &Frame, shape: &Shape) -> f64 {
 
 /// The best roof for `obs` in `frame`: one shape, or a straight cut across the frame's rectangle
 /// with a roof on each side, when that fits clearly better. Also returns the mean loss.
-fn tree(obs: &[Obs], frame: &Frame, depth: u32) -> (Roof, f64) {
-    let (shape, cost) = model(obs, frame);
+fn tree(obs: &[Obs], frame: &Frame, depth: u32, steepest: f64) -> (Roof, f64) {
+    let (shape, cost) = model(obs, frame, steepest);
     let wide = loss(obs, frame, &shape);
     let leaf = (Roof::Leaf(shape), wide);
     if depth == 0 || cost < 0.04 || 4.0 * frame.half[0] * frame.half[1] < SPLIT_AREA {
@@ -263,14 +278,14 @@ fn tree(obs: &[Obs], frame: &Frame, depth: u32) -> (Roof, f64) {
     // First by the robust cost, which sees small steps and shrugs off strays. Where that finds
     // nothing and the loss says there are levels metres apart (a tower on a podium), one cut cannot
     // isolate a part, so by the plain loss a cut that merely helps is taken; the next level cuts again.
-    let mut chosen = cut_by(&|part| model(&part.0, &part.1).1, 4, 0.15).filter(|&(total, ..)| total <= cost * SPLIT_SHARE && cost - total >= SPLIT_SAVING);
+    let mut chosen = cut_by(&|part| model(&part.0, &part.1, steepest).1, 4, 0.15).filter(|&(total, ..)| total <= cost * SPLIT_SHARE && cost - total >= SPLIT_SAVING);
     if chosen.is_none() && wide > STEP_LOSS {
-        chosen = cut_by(&|part| loss(&part.0, &part.1, &model(&part.0, &part.1).0), 6, 0.12).filter(|&(total, ..)| total <= wide * STEP_SHARE);
+        chosen = cut_by(&|part| loss(&part.0, &part.1, &model(&part.0, &part.1, steepest).0), 6, 0.12).filter(|&(total, ..)| total <= wide * STEP_SHARE);
     }
     let Some((_, axis, cut)) = chosen else { return leaf };
     let (low, high) = part_of(obs, frame, axis, cut);
-    let (low_roof, low_cost) = tree(&low.0, &low.1, depth - 1);
-    let (high_roof, high_cost) = tree(&high.0, &high.1, depth - 1);
+    let (low_roof, low_cost) = tree(&low.0, &low.1, depth - 1, steepest);
+    let (high_roof, high_cost) = tree(&high.0, &high.1, depth - 1, steepest);
     let total = (low_cost * low.0.len() as f64 + high_cost * high.0.len() as f64) / obs.len() as f64;
     let n = frame.axes[axis];
     let o = [frame.centre[0] + n[0] * cut, frame.centre[1] + n[1] * cut];
@@ -300,7 +315,8 @@ fn part_of(obs: &[Obs], frame: &Frame, axis: usize, cut: f64) -> (Part, Part) {
 }
 
 /// The best roof shape for returns `obs` laid out in `frame` (u along its long side), and its cost.
-fn model(obs: &[Obs], frame: &Frame) -> (Shape, f64) {
+/// A gable or a hip slopes at most `steepest`, rise per run (`PITCH.1` for any building but a church).
+fn model(obs: &[Obs], frame: &Frame, steepest: f64) -> (Shape, f64) {
     let swapped: Vec<Obs> = obs.iter().map(|o| Obs { u: o.v, v: o.u, y: o.y }).collect();
     let (hu, hv) = (frame.half[0], frame.half[1]);
     let (axis_u, axis_v) = (frame.axes[0], frame.axes[1]);
@@ -337,7 +353,7 @@ fn model(obs: &[Obs], frame: &Frame) -> (Shape, f64) {
     for (set, ridge_axis, across_axis) in [(obs, axis_u, axis_v), (&swapped, axis_v, axis_u)] {
         let (c, cost) = solve(set, |o| [1.0, o.v.abs(), 0.0]);
         let pitch = -c[1];
-        if !(PITCH.0..=PITCH.1).contains(&pitch) {
+        if !(PITCH.0..=steepest).contains(&pitch) {
             continue;
         }
         if gable.as_ref().is_none_or(|g| cost < g.1) {
@@ -356,7 +372,7 @@ fn model(obs: &[Obs], frame: &Frame) -> (Shape, f64) {
     let mut hip: Option<(Shape, f64)> = None;
     let (c, cost) = solve(obs, |o| [1.0, o.v.abs().max(o.u.abs() - half), 0.0]);
     let pitch = -c[1];
-    if (PITCH.0..=PITCH.1).contains(&pitch) {
+    if (PITCH.0..=steepest).contains(&pitch) {
         let shape = Shape::Hip { y: c[0], at: at(axis_v, 0.0), ridge: axis_u, pitch, half };
         if plausible(&shape) {
             hip = Some((shape, cost));

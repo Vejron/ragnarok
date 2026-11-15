@@ -166,16 +166,18 @@ and how many objects it has of each symbol.
   map shows; in a JPEG, white paper joined to a corner outside the map is left out. It ships in
   `minimap.webp`, so a deployed world needs the mapmaker's permission for it as well.
 - **What the symbols mean**, and what each becomes in the world: [ORIENTEERING.md](ORIENTEERING.md).
-- **Fences and power lines** go in the tiles' `lines` layer (`Line`, `LINE_*`), which is left out of a
-  tile file that has none, so worlds without them are written as before. A fence is cut at tile borders
-  like a road; a power line is its poles, set at its bends and no more than 55 m apart (260 m for steel
+- **Fences, walls and power lines** go in the tiles' `lines` layer (`Line`, `LINE_*`), which is left
+  out of a tile file that has none. A fence or wall is cut at tile borders like a road and has a point
+  at every post, 3 m apart at most (4 m for a game fence); a power line is its poles, set at its bends and no more than 55 m apart (260 m for steel
   pylons), each span in the tile of its first pole, with the ground height under every point. They are
   drawn by `render/lines.ts`. A pole is a collider like a rock's, stopping soldiers, vehicles and
-  bullets. A fence stops soldiers only (`sim/src/fences.rs`): it is no collider but lines a soldier's
-  step is cut short of, the same on server and client, and the bots' grid shuts the cells it runs
-  through. They come from the orienteering map and from OSM: `barrier=fence` is a wire fence, or a
-  game fence with `fence_type=game` or a `height` of 1.8 m or more; `power=minor_line` is wooden
-  poles and `power=line` steel pylons (`osm::line_kind`). Inside the map's outline OSM's are cut away
+  bullets. Each piece of a fence or wall between two points is a collider that can be broken
+  (`sim/src/fences.rs`): a fence stops soldiers only and breaks under any vehicle, a wall stops
+  everything but a tank ([BARRIERS.md](BARRIERS.md)). They come from the orienteering map and from
+  OSM: `barrier=fence` is a wire fence, or a game fence with `fence_type=game` or a `height` of 1.8 m
+  or more; `barrier=wall` is a low stone wall, or a high one with such a `height` or as
+  `barrier=city_wall`, opened where a road crosses it; `power=minor_line` is wooden poles and
+  `power=line` steel pylons (`osm::line_kind`). Inside the map's outline OSM's are cut away
   and the map's stand alone. OSM's power lines clear no lane in the trees: the laser already sees it.
 - **Looks** (`Tile::look`): every building's own walls and roof, as the importer built them before
   `voxels::bake` cut them into 72 cm cells. Cells stay what is blasted and what holds a building up;
@@ -412,7 +414,30 @@ ground at its two ends, is lifted to the water surface plus a clearance (7 m maj
 the ground if an end is still above it. Piers stand under stretches more than 2 m up, parapets
 where there is a drop. OSM does not say which bridges are cable-stayed, so pylons with stay cables
 come from `LANDMARKS` in `bridge.rs` (a position and radius per bridge): Lundabron has a tower at
-each end, Kolbäcksbron one in the middle. Spans under 12 m are left to the terrain.
+each end, Kolbäcksbron one in the middle. Spans under 12 m are left to the terrain, unless the
+ground under them dips more than a metre.
+
+What OSM has is made drivable before the decks are built (`assemble.rs`; BUSES.md tells how each
+was found):
+
+- **Ways of one bridge are joined.** OSM cuts a long bridge into several ways, and each built on its
+  own came down to the ground where it ended. Bridge ways of a kind that meet end to end, two at a
+  point, are one bridge (`joined_bridges`).
+- **A bridge reaches the top of its bank.** OSM often ends a bridge part of the way down the bank,
+  where the deck would stop metres below the road. A bridge whose road goes on rising more than a
+  metre past its end is lengthened along that road to the top of the rise, up to 40 m
+  (`onto_the_banks`).
+- **A divided road crosses on one deck.** Two bridges of a kind that run beside each other all the
+  way share a deck wide enough for both (`twin_decks`); the two stay roads, with no deck of their
+  own (`Pylons::Carried`). Where decks of separate bridges still overlap, the parapet between them
+  is left out.
+- **A road over a cutting gets a deck.** Where a path goes under a road OSM does not map as a
+  bridge, the terrain has a trench across the road. A drivable road over a dip in the ground
+  narrower than 24 m and more than 1.5 m deep gets a deck flush with the road, with no parapets
+  (`cuttings`, `Pylons::Flush`); the way under it stays open.
+- **No pier stands on a road** or a track that goes under the bridge.
+- **A ramp comes down to the deck's lip** over the ground (0.12 m), not to within 0.4 m of it.
+
 Triangles go into the tile of their position, listed in `Tile.bridges` as `(first, deck, steel)`
 ranges; trees within 4 m of a bridge's edge are dropped (over water they are the laser's reading of
 the pylon and cables). Bridge roads never offer spawns. Deck heights over the Umeälven can be
@@ -500,6 +525,10 @@ A house (under 250 m², `roof::SPLIT_FROM`) gets its roof from a catalogue of co
 
 Bigger buildings are fitted as before (`roof::fit`), with the ridge always down the middle, and may
 be split into parts.
+
+A church is neither: it is fitted as a nave under one steep gable with its annexes roofed lower
+beside it (`church.rs`), and falls back to `roof::fit` when it is not that simple. Its windows, door
+and inside are a church's too. See [CHURCHES.md](CHURCHES.md).
 
 The mesh (`roof::build`) cuts the footprint into pieces each under one plane of the roof. Every line
 of the whole roof cuts every piece (valleys and dormer sides only the pieces of their wings), and
@@ -648,6 +677,10 @@ from them. On the 450-tile Ersboda world that leaves
 the tiles about as big as before (14.2 MB against 14.7 MB). Houses built wall to wall often both
 have a cube in the same place, which would be drawn twice and flicker; after baking, `voxels::share`
 gives each such cube to the first of them, across the whole world (35,626 cubes in Ersboda at 1 m, before the cubes were halved).
+The manifest also carries what is needed whole wherever the player is, not cut into tiles: the ski
+lifts and, on a world with public transport, the bus lines (`Manifest::bus_lines`, BUSES.md), which
+came with `WORLD_VERSION` 22.
+
 Both sides check `WORLD_VERSION` and read only the current layout: there is no reading of older
 worlds. When the layout changes, bump it in `crates/shared/src/world.rs` **and**
 `client/src/world.ts` and re-import every world (`osm-import --area worlds/<name>/area.json --out worlds/<name>/world.msgpack`, or

@@ -101,6 +101,15 @@ pub const TITAN_BOARD: [f32; 3] = [0.0, -32.2, 0.0];
 pub const TITAN_EXIT: [f32; 3] = [0.0, -32.2, -10.0];
 /// The pilot's eye, in the hull frame: at the visor, just clear of the head's own plates.
 pub const TITAN_EYE: [f32; 3] = [0.0, 12.0, -3.2];
+/// The neck its head turns on, in the hull frame: the middle of the collar's top.
+pub const TITAN_HEAD_PIVOT: [f32; 3] = [0.0, 9.4, 0.0];
+/// How far its head turns to follow its pilot's look, radians: to either side of the way the hull
+/// faces, down and up.
+pub const TITAN_HEAD_TURN: f32 = 1.0;
+pub const TITAN_HEAD_DOWN: f32 = 1.2;
+pub const TITAN_HEAD_UP: f32 = 0.7;
+/// How fast its head turns, rad/s.
+pub const TITAN_HEAD_SLEW: f32 = 4.0;
 /// A fist moving at least this fast, m/s, hits what it meets; slower, it only shoves.
 pub const TITAN_PUNCH_SPEED: f32 = 8.0;
 /// What a punch takes off a soldier, per m/s of the fist's speed, and off a vehicle.

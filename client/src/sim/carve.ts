@@ -311,15 +311,15 @@ export function shellOf(
 
 /**
  * The windows and door the server places on the walls `walls` (nine centimetre numbers a triangle,
- * `shared::windows::openings_of`): corners in metres and the wall's normal, as `openingsOf` gives
+ * `shared::windows::openings_of`) of a building of `kind`: corners in metres and the wall's normal, as `openingsOf` gives
  * them, for the two to be checked against each other.
  */
-export function serverOpenings(walls: readonly Tri[]): { corners: [number, number, number][]; normal: [number, number, number]; door: boolean }[] {
-  const flat = windows_of(Int32Array.from(walls.flat()))
-  const out: { corners: [number, number, number][]; normal: [number, number, number]; door: boolean }[] = []
-  for (let i = 0; i + 16 <= flat.length; i += 16) {
+export function serverOpenings(walls: readonly Tri[], kind = 0): { corners: [number, number, number][]; normal: [number, number, number]; door: boolean; head: number }[] {
+  const flat = windows_of(Int32Array.from(walls.flat()), kind)
+  const out: { corners: [number, number, number][]; normal: [number, number, number]; door: boolean; head: number }[] = []
+  for (let i = 0; i + 17 <= flat.length; i += 17) {
     const at = (k: number): [number, number, number] => [flat[i + k]!, flat[i + k + 1]!, flat[i + k + 2]!]
-    out.push({ corners: [at(0), at(3), at(6), at(9)], normal: at(12), door: flat[i + 15] === 1 })
+    out.push({ corners: [at(0), at(3), at(6), at(9)], normal: at(12), door: flat[i + 15] === 1, head: flat[i + 16]! })
   }
   return out
 }

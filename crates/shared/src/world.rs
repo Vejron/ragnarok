@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::terrain::Ground;
 
-pub const WORLD_VERSION: u8 = 19;
+pub const WORLD_VERSION: u8 = 22;
 
 /// `Manifest::theme`: the world as it always was.
 pub const THEME_PLAIN: u8 = 0;
@@ -140,6 +140,9 @@ pub struct Manifest {
     /// Winter: the lakes and the sea stay open rather than freezing, so boats and submarines still
     /// sail. Nothing in any other season.
     pub open_water: bool,
+    /// The bus lines, whole, for the same reason as the lifts: the server runs buses along them and
+    /// the client stands a sign at every stop. Empty on a world with no public transport.
+    pub bus_lines: Vec<BusLine>,
 }
 
 impl Manifest {
@@ -147,6 +150,73 @@ impl Manifest {
     pub fn frozen(&self) -> bool {
         self.theme == THEME_WINTER && !self.open_water
     }
+}
+
+/// A bus line along the major roads: buses run from one end of it to the other and back, keeping to
+/// the right of the road's middle, and halt at every stop.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct BusLine {
+    /// The middle of the road the line follows, centimetres, from one end to the other.
+    pub points: Vec<[i32; 2]>,
+    /// Where each stop is, as a distance along `points` from the first of them, centimetres, in
+    /// order. The first is at the start and the last at the end.
+    pub stops: Vec<u32>,
+}
+
+impl BusLine {
+    /// The length of the line, metres.
+    pub fn length(&self) -> f32 {
+        self.points.windows(2).map(|pair| span(pair[0], pair[1])).sum()
+    }
+
+    /// The point `along` metres from the start of the line (held to its ends), metres, and the unit
+    /// direction `[x, z]` the line runs there.
+    pub fn at(&self, along: f32) -> ([f32; 2], [f32; 2]) {
+        let metres = |p: [i32; 2]| [p[0] as f32 / 100.0, p[1] as f32 / 100.0];
+        let mut left = along.max(0.0);
+        let mut last = ([0.0; 2], [0.0, -1.0]);
+        for pair in self.points.windows(2) {
+            let length = span(pair[0], pair[1]);
+            if length < 1e-3 {
+                continue;
+            }
+            let (a, b) = (metres(pair[0]), metres(pair[1]));
+            let way = [(b[0] - a[0]) / length, (b[1] - a[1]) / length];
+            if left <= length {
+                return ([a[0] + way[0] * left, a[1] + way[1] * left], way);
+            }
+            left -= length;
+            last = (b, way);
+        }
+        match self.points.first() {
+            Some(&first) if self.points.len() == 1 => (metres(first), last.1),
+            _ => last,
+        }
+    }
+
+    /// How far along the line the point of it nearest `p` (metres) is, and how far from the line `p`
+    /// is, both metres.
+    pub fn nearest(&self, p: [f32; 2]) -> (f32, f32) {
+        let metres = |q: [i32; 2]| [q[0] as f32 / 100.0, q[1] as f32 / 100.0];
+        let (mut best, mut gone) = ((0.0, f32::MAX), 0.0);
+        for pair in self.points.windows(2) {
+            let (a, b) = (metres(pair[0]), metres(pair[1]));
+            let length = span(pair[0], pair[1]);
+            let d = [b[0] - a[0], b[1] - a[1]];
+            let t = if length < 1e-3 { 0.0 } else { (((p[0] - a[0]) * d[0] + (p[1] - a[1]) * d[1]) / (length * length)).clamp(0.0, 1.0) };
+            let off = (p[0] - a[0] - d[0] * t).hypot(p[1] - a[1] - d[1] * t);
+            if off < best.1 {
+                best = (gone + length * t, off);
+            }
+            gone += length;
+        }
+        best
+    }
+}
+
+/// The distance between two points given in centimetres, metres.
+fn span(a: [i32; 2], b: [i32; 2]) -> f32 {
+    ((b[0] - a[0]) as f32).hypot((b[1] - a[1]) as f32) / 100.0
 }
 
 /// A ski lift: a cable loop between two stations over a line of pylons. Every lift is built as a
@@ -229,7 +299,8 @@ pub struct Tile {
     pub rails: Vec<Rail>,
     /// Groomed ski tracks, clipped to the tile. Skis run faster on them (`ski::SkiMap`).
     pub ski: Vec<SkiTrail>,
-    /// Fences and power lines (`Line`). Drawn, not simulated.
+    /// Fences, walls and power lines (`Line`). A fence or wall is solid piece by piece (`line_pieces`),
+    /// a power line at its poles.
     pub lines: Vec<Line>,
     /// Stony ground: for each cell of a square grid over the tile (row-major, rows along +Z, `n × n`
     /// with `n = sqrt(len)`), how stony it is in the low bits (`STONES_DENSITY`, 0 none) and whether
@@ -304,19 +375,21 @@ fn bin<S: serde::Serializer>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Er
     serializer.serialize_bytes(bytes)
 }
 
-/// A fence or a power line in a tile. Drawn, not simulated: nothing collides with it.
+/// A fence, a wall or a power line in a tile. Each straight piece of a fence or wall is a collider
+/// that can be broken (`line_pieces`); a power line is solid at its poles only.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Line {
     /// `LINE_*`.
     pub kind: u8,
-    /// A fence's line, cut at the tile's edges. A power line's poles, span after span: each span is in
+    /// A fence's or wall's line, cut at the tile's edges, with a point at every post (`LineKindDef::step`),
+    /// so that each piece between two points breaks on its own. A power line's poles, span after span: each span is in
     /// the tile its first pole stands in, so the last point may be a pole of the next tile.
     pub points: Vec<[i32; 2]>,
     /// Height of the ground under each of `points`, centimetres: a span's far pole can stand on a
     /// tile that is not loaded.
     pub base: Vec<i32>,
     /// Whether a pole stands at the last point: false where the line carries on in another tile, which
-    /// has that pole. Always true for a fence.
+    /// has that pole. Always true for a fence or a wall.
     pub end: bool,
 }
 
@@ -328,6 +401,96 @@ pub const LINE_FENCE_HIGH: u8 = 1;
 pub const LINE_POWER: u8 = 2;
 /// A major power line on steel pylons.
 pub const LINE_POWER_MAJOR: u8 = 3;
+/// A low stone wall, as round a garden or a field.
+pub const LINE_WALL: u8 = 4;
+/// A high stone wall, over head height: a town's wall, or one mapped as tall.
+pub const LINE_WALL_HIGH: u8 = 5;
+
+/// What a kind of fence or wall is: the size of each piece's collider and what breaks it. One table
+/// for the importer, the physics and the server, and the client draws to the same sizes
+/// (`client/src/world.ts` reads the table from `client/src/sim/tables.generated.json`).
+#[derive(Clone, Copy, Debug)]
+pub struct LineKindDef {
+    pub kind: u8,
+    /// Height of its top over the ground, metres.
+    pub height: f32,
+    /// Half its thickness across the line, metres.
+    pub half: f32,
+    /// The longest a piece is, metres: the importer puts a point (a fence's post) this far apart.
+    pub step: f32,
+    /// Damage a piece takes before it breaks.
+    pub hp: u16,
+    /// Whether it is a wall: it stops bullets, sight and light vehicles, where a fence stops only a
+    /// soldier and breaks under anything that drives into it.
+    pub wall: bool,
+}
+
+/// The fences and walls. A kind of line that is not here (a power line) has no pieces.
+pub const LINE_KINDS: [LineKindDef; 4] = [
+    LineKindDef { kind: LINE_FENCE, height: 1.25, half: 0.06, step: 3.0, hp: 5, wall: false },
+    LineKindDef { kind: LINE_FENCE_HIGH, height: 2.05, half: 0.06, step: 4.0, hp: 10, wall: false },
+    LineKindDef { kind: LINE_WALL, height: 1.0, half: 0.25, step: 3.0, hp: 60, wall: true },
+    LineKindDef { kind: LINE_WALL_HIGH, height: 2.4, half: 0.3, step: 3.0, hp: 200, wall: true },
+];
+
+/// The definition of a fence or wall kind; `None` for a power line.
+pub fn line_kind_def(kind: u8) -> Option<&'static LineKindDef> {
+    LINE_KINDS.iter().find(|def| def.kind == kind)
+}
+
+/// One straight piece of a fence or wall, between two points of its line: what breaks on its own.
+#[derive(Clone, Copy, Debug)]
+pub struct LinePiece {
+    /// Its tile, and `line << 16 | segment`: which of the tile's lines, and which piece of it.
+    pub id: ObjId,
+    pub def: &'static LineKindDef,
+    /// Its ends `[x, z]`, metres.
+    pub a: [f32; 2],
+    pub b: [f32; 2],
+    /// The ground under each end, metres.
+    pub base: [f32; 2],
+}
+
+impl LinePiece {
+    /// The middle of the piece, halfway up, metres.
+    pub fn centre(&self) -> [f32; 3] {
+        [(self.a[0] + self.b[0]) / 2.0, (self.base[0] + self.base[1]) / 2.0 + self.def.height / 2.0, (self.a[1] + self.b[1]) / 2.0]
+    }
+
+    /// How far `point` is from the piece's line at mid height, metres.
+    pub fn distance(&self, point: [f32; 3]) -> f32 {
+        let d = [self.b[0] - self.a[0], self.b[1] - self.a[1]];
+        let length2 = (d[0] * d[0] + d[1] * d[1]).max(1e-6);
+        let u = (((point[0] - self.a[0]) * d[0] + (point[2] - self.a[1]) * d[1]) / length2).clamp(0.0, 1.0);
+        let near = [self.a[0] + d[0] * u, self.base[0] + (self.base[1] - self.base[0]) * u + self.def.height / 2.0, self.a[1] + d[1] * u];
+        ((point[0] - near[0]).powi(2) + (point[1] - near[1]).powi(2) + (point[2] - near[2]).powi(2)).sqrt()
+    }
+}
+
+/// The index of a piece in its tile: line `line` of the tile's lines, piece `segment` of it.
+pub fn line_piece_index(line: usize, segment: usize) -> u32 {
+    ((line as u32) << 16) | (segment as u32 & 0xffff)
+}
+
+/// Every piece of the fences and walls of `lines`, which are each tile's lines in the tile's order
+/// with its `(col, row)` (`WorldFile::lines`). Server, physics and client number them alike.
+pub fn line_pieces(lines: &[(u16, u16, Line)]) -> Vec<LinePiece> {
+    let mut seen: std::collections::HashMap<(u16, u16), usize> = std::collections::HashMap::new();
+    let mut out = Vec::new();
+    for (col, row, line) in lines {
+        let count = seen.entry((*col, *row)).or_default();
+        let number = *count;
+        *count += 1;
+        let Some(def) = line_kind_def(line.kind) else { continue };
+        let at = |i: usize| [crate::quant::from_cm(line.points[i][0]), crate::quant::from_cm(line.points[i][1])];
+        let base = |i: usize| line.base.get(i).map_or(0.0, |&base| crate::quant::from_cm(base));
+        for i in 1..line.points.len() {
+            let id = ObjId { col: *col, row: *row, index: line_piece_index(number, i - 1) };
+            out.push(LinePiece { id, def, a: at(i - 1), b: at(i), base: [base(i - 1), base(i)] });
+        }
+    }
+    out
+}
 
 /// Units per unit of slope in `Tile::detail`: a slope of 2 (63°) is 127.
 pub const DETAIL_SLOPE_SCALE: f32 = 63.5;
@@ -396,10 +559,13 @@ pub struct WorldFile {
     /// Winter with the water left open, from the manifest.
     #[serde(skip)]
     pub open_water: bool,
+    /// The bus lines, from the manifest.
+    #[serde(skip)]
+    pub bus_lines: Vec<BusLine>,
     /// Every ski track. Filled by `assemble`.
     #[serde(skip)]
     pub ski: Vec<SkiTrail>,
-    /// Every fence and power line, with the `(col, row)` of the tile it came in. Filled by `assemble`.
+    /// Every fence, wall and power line, in its tile's order, with the `(col, row)` of the tile it came in. Filled by `assemble`.
     #[serde(skip)]
     pub lines: Vec<(u16, u16, Line)>,
     /// Each tile's stony ground (`Tile::stones`), by its `(col, row)`; tiles without any are left out.
@@ -499,6 +665,8 @@ pub struct Building {
     pub roof: u32,
     /// `ROOF_*`: what the roof was fitted as.
     pub roof_kind: u8,
+    /// `BUILDING_*`: what the building is, where that changes its windows, its inside and its colours.
+    pub kind: u8,
     /// The building's 1 m cubes (`carve::Shell`), worked out by the importer from its walls and
     /// roof; the server and clients make the boxes to collide with, and the clients the faces to
     /// draw, from them. Empty
@@ -706,6 +874,12 @@ pub const ROOF_FLAT: u8 = 0;
 pub const ROOF_SHED: u8 = 1;
 pub const ROOF_GABLE: u8 = 2;
 pub const ROOF_HIP: u8 = 3;
+
+/// A building like any other: a house, a block, a barn.
+pub const BUILDING_PLAIN: u8 = 0;
+/// A church or a chapel: a few tall round-headed windows along its long walls, a door and a round
+/// window in a gable end, and one open hall inside (`windows::openings_of`, `interior::rooms`).
+pub const BUILDING_CHURCH: u8 = 1;
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Road {
@@ -980,6 +1154,7 @@ impl WorldFile {
             theme: manifest.theme,
             lifts: manifest.lifts.clone(),
             open_water: manifest.open_water,
+            bus_lines: manifest.bus_lines.clone(),
             ..Default::default()
         };
         let grid = manifest.grid() as usize;
@@ -1038,8 +1213,8 @@ impl WorldFile {
                 let range = tile.look.buildings.get(index).copied().unwrap_or([0; 3]);
                 world.looks.push(if range[1] + range[2] > 0 {
                     let (walls, roof) = tile.look.parts(range);
-                    let windows = crate::windows::openings_of(&tile.look, range);
-                    let inside = crate::interior::rooms(&building.footprint, &walls, &roof, &windows).into_iter().filter(|part| part.collided()).map(|part| part.tri).collect();
+                    let windows = crate::windows::openings_of(&tile.look, range, building.kind);
+                    let inside = crate::interior::rooms(&building.footprint, &walls, &roof, &windows, building.kind).into_iter().filter(|part| part.collided()).map(|part| part.tri).collect();
                     BuildingLook { walls, roof, windows, inside }
                 } else {
                     BuildingLook::default()
@@ -1134,6 +1309,23 @@ mod tests {
     }
 
     #[test]
+    fn a_fence_or_wall_is_numbered_piece_by_piece_within_its_tile_and_a_power_line_has_none() {
+        let line = |kind, points: &[[i32; 2]]| Line { kind, points: points.to_vec(), base: vec![100; points.len()], end: true };
+        let lines = vec![
+            (0, 0, line(LINE_POWER, &[[0, 0], [5000, 0]])),
+            (0, 0, line(LINE_FENCE, &[[0, 0], [300, 0], [600, 0]])),
+            (1, 0, line(LINE_WALL, &[[0, 0], [0, 300]])),
+        ];
+        let pieces = line_pieces(&lines);
+        let ids: Vec<ObjId> = pieces.iter().map(|piece| piece.id).collect();
+        assert_eq!(ids, vec![ObjId { col: 0, row: 0, index: 1 << 16 }, ObjId { col: 0, row: 0, index: (1 << 16) | 1 }, ObjId { col: 1, row: 0, index: 0 }]);
+        assert_eq!((pieces[1].a, pieces[1].b, pieces[1].base), ([3.0, 0.0], [6.0, 0.0], [1.0, 1.0]));
+        assert!(pieces[2].def.wall && !pieces[0].def.wall);
+        // A point beside the middle of the wall, at half its height, is that far from it.
+        assert!((pieces[2].distance([2.0, 1.5, 1.5]) - 2.0).abs() < 1e-4);
+    }
+
+    #[test]
     fn manifest_and_tile_round_trip() {
         let manifest = Manifest {
             version: WORLD_VERSION,
@@ -1146,13 +1338,21 @@ mod tests {
             theme: THEME_WINTER,
             lifts: vec![Lift { kind: LIFT_CHAIR, seats: 4, points: vec![[0, 0], [5_000, 20_000]], base: vec![100, 900], cable: vec![410, 1_210] }],
             open_water: true,
+            bus_lines: vec![BusLine { points: vec![[0, 0], [30_000, 0], [30_000, 40_000]], stops: vec![0, 30_000, 70_000] }],
         };
         assert_eq!(Manifest::decode(&manifest.encode()).unwrap(), manifest);
+        // A bus line knows its length, and where it is and which way it runs any distance along it.
+        let line = &manifest.bus_lines[0];
+        assert_eq!(line.length(), 700.0);
+        assert_eq!(line.at(100.0), ([100.0, 0.0], [1.0, 0.0]));
+        assert_eq!(line.at(500.0), ([300.0, 200.0], [0.0, 1.0]));
+        assert_eq!(line.at(900.0), ([300.0, 400.0], [0.0, 1.0]));
+        assert_eq!(line.nearest([310.0, 100.0]), (400.0, 10.0));
         // A winter world whose water was left open is not frozen; one that was not, is.
         assert!(!manifest.frozen());
         assert!(Manifest { open_water: false, ..manifest.clone() }.frozen());
         let tile = Tile {
-            buildings: vec![Building { height: 800, footprint: vec![[0, 0], [100, 0], [100, 100]], base: 250, first: 0, walls: 6, roof: 2, roof_kind: ROOF_GABLE, cells: Cells { origin: [-100, 0, 200], dims: [2, 1, 5], solid: Bits(vec![0b1011, 3]), roof: Bits(vec![1, 0]) }, paint: Some([0xeee3c8, 0x4f5866]) }, Building { height: 300, ..Default::default() }],
+            buildings: vec![Building { height: 800, footprint: vec![[0, 0], [100, 0], [100, 100]], base: 250, first: 0, walls: 6, roof: 2, roof_kind: ROOF_GABLE, kind: BUILDING_CHURCH, cells: Cells { origin: [-100, 0, 200], dims: [2, 1, 5], solid: Bits(vec![0b1011, 3]), roof: Bits(vec![1, 0]) }, paint: Some([0xeee3c8, 0x4f5866]) }, Building { height: 300, ..Default::default() }],
             roads: vec![Road { width: 600, kind: ROAD_MINOR, points: vec![[0, 0], [500, 500]] }],
             collision: CollisionMesh { vertices: vec![[0, 0, 0]], triangles: vec![[0, 0, 0]] },
             ground: vec![0, 10, 20, 30],
@@ -1164,7 +1364,7 @@ mod tests {
             detail: vec![0, -3, 127, -127],
             rails: vec![Rail { gauge: 144, kind: RAIL_TRAIN, points: vec![[0, 0], [900, 50]] }],
             ski: vec![SkiTrail { width: 400, points: vec![[0, 0], [900, 50]] }],
-            lines: vec![Line { kind: LINE_POWER, points: vec![[0, 0], [5000, 0]], base: vec![120, 150], end: false }],
+            lines: vec![Line { kind: LINE_POWER, points: vec![[0, 0], [5000, 0]], base: vec![120, 150], end: false }, Line { kind: LINE_WALL, points: vec![[0, 0], [300, 0]], base: vec![120, 125], end: true }],
             stones: vec![0, 40, STONES_ANGULAR | 90, 0],
             look: Look { vertices: vec![[0, 0, 0], [100, 0, 0], [0, 300, 0]], triangles: vec![[0, 1, 2]], buildings: vec![[0, 1, 0], [0, 0, 0]] },
         };

@@ -18,7 +18,7 @@ Settle these first, and ask the user about anything the request leaves open:
 
 - **Name.** Use a generic name, not a brand ("Technical", not "Land Cruiser").
 - **Kind id.** The next free `KIND_*` in `crates/shared/src/consts.rs`. Animals share the id space, so check them too.
-- **Seats.** At most `CAR_SEATS` (4). Seat 0 drives. For each other seat, decide whether it is a passenger who fires their own gun (`crew_guns`) or works a mount.
+- **Seats.** At most `MAX_SEATS` (13, the bus's). Seat 0 drives. For each other seat, decide whether it is a passenger who fires their own gun (`crew_guns`) or works a mount.
 - **Exposure.** `Exposure::Open` (the crew can be shot), `Glazed` (behind glass, still hittable) or `Sealed` (inside armour).
 - **Weapons.** One `MountDef` per weapon. See the table in step 2 for what the client can see of each.
 - **Placement.** Most new kinds appear only where the map editor places them. The automatic line-up on worlds without editor placements is in `crates/server/src/mechanics/vehicles.rs`.

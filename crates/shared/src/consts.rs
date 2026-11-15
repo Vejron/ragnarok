@@ -1,6 +1,7 @@
 //! Simulation and network constants. `client/scripts/gen-consts.ts` generates the client's copy from this file: run `npm run gen:consts` in `client` after editing.
 
 pub use crate::vehicles::drone::*;
+pub use crate::vehicles::bus::*;
 pub use crate::vehicles::golf_cart::*;
 pub use crate::vehicles::heli::*;
 pub use crate::vehicles::hen::*;
@@ -27,7 +28,7 @@ pub use crate::vehicles::titan::*;
 pub use crate::vehicles::walker::*;
 
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
-pub const PROTOCOL_VERSION: u8 = 80;
+pub const PROTOCOL_VERSION: u8 = 82;
 
 /// Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
 /// `crate::vehicles`.
@@ -96,6 +97,9 @@ pub const KIND_SNOWRACER: u8 = 29;
 /// The Titan: a giant robot fifty metres high, whose pilot moves its fists: it punches, picks up and
 /// throws, and crushes what it steps on.
 pub const KIND_TITAN: u8 = 30;
+/// The bus: a twelve-metre city bus with a driver and twelve passengers. On a world with bus lines the
+/// server drives them along the major roads, from stop to stop.
+pub const KIND_BUS: u8 = 31;
 
 /// Fixed simulation rate, in ticks per second.
 pub const TICK_RATE: u32 = 60;
@@ -344,8 +348,13 @@ pub const KILL_Y: f32 = -50.0;
 
 /// Vehicles. Chassis and wheel geometry are shared with the client, which draws the car from them.
 /// Body-local axes: +X right, +Y up, -Z forward (yaw 0 faces -Z, like a soldier).
-/// Seats in the roomiest car (the jeep); bounds the seat list of any vehicle.
+/// Seats in a jeep.
 pub const CAR_SEATS: usize = 4;
+/// How far from the middle of the road a bus stop's sign stands, metres: on the verge of a major road,
+/// which is ten metres wide.
+pub const BUS_STOP_SETBACK: f32 = 5.6;
+/// The most seats any vehicle has (the bus); bounds the seat list of any vehicle.
+pub const MAX_SEATS: usize = 13;
 /// Vehicles in the world; bounds the vehicle list in a snapshot. The map editor's placed vehicles and the
 /// drones players launch share it, so it leaves room past the editor's full count for drones to launch into.
 pub const MAX_VEHICLES: usize = 512;

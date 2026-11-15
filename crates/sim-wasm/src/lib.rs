@@ -147,6 +147,13 @@ impl ClientSim {
         self.physics.destroy(Obj::Tree(ObjId { col, row, index }))
     }
 
+    /// Breaks piece `index` of the fences and walls of tile `(col, row)` (`shared::world::line_pieces`);
+    /// takes effect at the next `refresh`.
+    #[wasm_bindgen(js_name = breakLine)]
+    pub fn break_line(&mut self, col: u16, row: u16, index: u32) -> bool {
+        self.physics.destroy(Obj::Line(ObjId { col, row, index }))
+    }
+
     /// Brings building `index` of tile `(col, row)` down; takes effect at the next `refresh`.
     /// Gives building `index` of tile `(col, row)` its shape without the cells `removed`; takes effect
     /// at the next `refresh`.
@@ -461,10 +468,11 @@ pub fn carve_cut(walls: &[i32], roof: &[i32]) -> Option<CarvedCells> {
 }
 
 /// The windows and door on the walls `walls` (nine centimetre numbers a triangle), as the server places
-/// them (`shared::windows::openings_of`): sixteen numbers an opening, its four corners (metres), the
-/// wall's normal and 1 for a door. For the client to check it places the same (`windows.ts`).
+/// them on a building of `kind` (`shared::windows::openings_of`): seventeen numbers an opening, its
+/// four corners (metres), the wall's normal, 1 for a door and its head (`HEAD_*`). For the client to
+/// check it places the same (`windows.ts`).
 #[wasm_bindgen]
-pub fn windows_of(walls: &[i32]) -> Vec<f32> {
+pub fn windows_of(walls: &[i32], kind: u8) -> Vec<f32> {
     let mut look = shared::world::Look::default();
     for t in walls.chunks_exact(9) {
         let base = look.vertices.len() as u32;
@@ -474,20 +482,22 @@ pub fn windows_of(walls: &[i32]) -> Vec<f32> {
     let count = look.triangles.len() as u32;
     look.buildings.push([0, count, 0]);
     let mut out = Vec::new();
-    for window in shared::windows::openings_of(&look, [0, count, 0]) {
+    for window in shared::windows::openings_of(&look, [0, count, 0], kind) {
         out.extend(window.corners.iter().flatten());
         out.extend(window.normal);
         out.push(if window.door { 1.0 } else { 0.0 });
+        out.push(f32::from(window.head));
     }
     out
 }
 
 /// What stands inside the house on `footprint` (`x, z` pairs, centimetres) whose look is `walls` and
-/// `roof` (nine centimetre numbers a triangle), as the server works it out (`shared::interior::rooms`):
+/// `roof` (nine centimetre numbers a triangle) and which is a `kind` (`BUILDING_*`), as the server
+/// works it out (`shared::interior::rooms`):
 /// ten numbers a triangle, its corners in centimetres and what it is (`PART_*`). Empty for a house
 /// without rooms.
 #[wasm_bindgen]
-pub fn interior_of(footprint: &[i32], walls: &[i32], roof: &[i32]) -> Vec<i32> {
+pub fn interior_of(footprint: &[i32], walls: &[i32], roof: &[i32], kind: u8) -> Vec<i32> {
     let tris = |flat: &[i32]| flat.chunks_exact(9).map(|t| std::array::from_fn(|k| t[k])).collect::<Vec<shared::carve::Tri>>();
     let (walls, roof) = (tris(walls), tris(roof));
     let mut look = shared::world::Look::default();
@@ -496,10 +506,10 @@ pub fn interior_of(footprint: &[i32], walls: &[i32], roof: &[i32]) -> Vec<i32> {
         look.vertices.extend([[t[0], t[1], t[2]], [t[3], t[4], t[5]], [t[6], t[7], t[8]]]);
         look.triangles.push([base, base + 1, base + 2]);
     }
-    let windows = shared::windows::openings_of(&look, [0, walls.len() as u32, 0]);
+    let windows = shared::windows::openings_of(&look, [0, walls.len() as u32, 0], kind);
     let ring: Vec<[i32; 2]> = footprint.chunks_exact(2).map(|p| [p[0], p[1]]).collect();
     let mut out = Vec::new();
-    for part in shared::interior::rooms(&ring, &walls, &roof, &windows) {
+    for part in shared::interior::rooms(&ring, &walls, &roof, &windows, kind) {
         out.extend(part.tri);
         out.push(part.kind as i32);
     }

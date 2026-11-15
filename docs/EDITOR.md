@@ -99,6 +99,8 @@ they survive the world being re-centred when tiles are added or removed:
 }
 ```
 
+`"buses": true` gives the world public transport: bus lines along its major roads, with stops, and buses the server runs along them ([BUSES.md](BUSES.md)). It is the **Public transport (buses)** box in the World panel, applied the next time the world is generated. Turned off, the key is not written at all.
+
 `cell` is the ground's resolution, metres between height samples: 1, 2 or 4, picked in the World panel (new worlds take 1 m) and applied the next time the world is generated. Each makes a tile `2^k + 1` samples a side, which the client simplifies best; 1 m shows every ditch and bank, and a tile's heights weigh about 130 KB. Without it the importer uses 4 m. `spawns`, `vehicles`, `items`, `bots` and `animals` are optional; older files without them still load. An animal herd's `count` is optional (4). A
 bot's `team`, `skill` and `route` are optional as well (1, 0.5 and none); the editor always
 writes all three. `yaw` is in

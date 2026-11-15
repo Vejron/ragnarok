@@ -30,11 +30,13 @@ mod vehicle;
 pub use ragdoll::{PARTS as RAGDOLL_PARTS, POSE_FLOATS as RAGDOLL_POSE_FLOATS, Ragdolls, SEGMENT_FLOATS as RAGDOLL_SEGMENT_FLOATS};
 pub use vehicle::{CarCondition, CarControls, CarImpact, CarMotion, CarPose, Hand, LIMB_GROUP, LimbsPose, Strike, half_extents};
 
-/// A destructible piece of the static world: a building or a tree, by tile and index.
+/// A destructible piece of the static world: a building, a tree or a piece of a fence or wall
+/// (`shared::world::line_pieces`), by tile and index.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Obj {
     Building(ObjId),
     Tree(ObjId),
+    Line(ObjId),
 }
 
 /// Authoritative state of one soldier. Positions are the capsule centre, in metres.
@@ -133,8 +135,6 @@ pub struct Physics {
     /// Vehicles as solid stand-ins at their snapshot pose (`set_obstacle`), by id: what the client's
     /// prediction walks into. Empty on the server, which simulates the vehicles themselves.
     obstacles: std::collections::BTreeMap<u32, stream::Obstacle>,
-    /// What a soldier cannot walk through but everything else goes through (`fences`).
-    fences: fences::Fences,
     /// Stony ground, which slows a soldier on foot (`stones`).
     stones: stones::Stones,
     /// Open water, which a light car planes over at speed and everything wheeled wades through (`waters`).
@@ -155,6 +155,20 @@ pub const TREE_GROUP: Group = Group::GROUP_2;
 /// What a vehicle too heavy to be stopped by a tree touches: everything but felled-able trunks.
 pub fn plows_trees() -> InteractionGroups {
     InteractionGroups::new(Group::ALL, Group::ALL.difference(TREE_GROUP), InteractionTestMode::And)
+}
+
+/// The collision group of a fence's pieces (`fences`).
+pub const FENCE_GROUP: Group = Group::GROUP_3;
+
+/// A fence's groups: it is in `FENCE_GROUP` and touches nothing, so no body meets it, nor any query
+/// that names groups (`past_fences`). A query that names none does: a soldier's step, the bots' grid.
+pub fn fence_groups() -> InteractionGroups {
+    InteractionGroups::new(FENCE_GROUP, Group::NONE, InteractionTestMode::And)
+}
+
+/// The groups of a query that goes through fences, as rounds, sight and wheels do.
+pub fn past_fences() -> InteractionGroups {
+    InteractionGroups::new(Group::ALL, Group::ALL, InteractionTestMode::And)
 }
 
 /// How far below the lowest dry ground the slab under a terrain sits, metres: the importer's
@@ -239,8 +253,8 @@ pub(crate) fn lift_colliders(lifts: &[shared::world::Lift]) -> Vec<Collider> {
         .collect()
 }
 
-/// The buildings, the rest of the collision mesh (bridges) and the tree trunks of `world`, each
-/// building or tree with the [`Obj`] it is.
+/// The buildings, the rest of the collision mesh (bridges), the tree trunks, the fences and walls and
+/// the power poles of `world`, each building, tree or piece of a fence or wall with the [`Obj`] it is.
 fn object_colliders(world: &WorldFile) -> Result<Vec<(Collider, Option<Obj>)>> {
     let mut colliders = Vec::new();
     let mesh = &world.collision;
@@ -307,6 +321,8 @@ fn object_colliders(world: &WorldFile) -> Result<Vec<(Collider, Option<Obj>)>> {
     // Power poles stand like rocks: nothing fells them.
     let lines: Vec<shared::world::Line> = world.lines.iter().map(|(_, _, line)| line.clone()).collect();
     colliders.extend(fences::pole_colliders(&lines).into_iter().map(|pole| (pole, None)));
+    // A fence or wall is a row of pieces, each broken on its own.
+    colliders.extend(fences::piece_colliders(&world.lines).into_iter().map(|(piece, object)| (piece, Some(object))));
     Ok(colliders)
 }
 
@@ -512,13 +528,6 @@ impl Physics {
     pub fn new(world: &WorldFile) -> Result<Self> {
         let mut physics = Self::built(world)?;
         physics.add_ski_trails(&world.ski);
-        let mut by_tile: std::collections::BTreeMap<(u16, u16), Vec<shared::world::Line>> = Default::default();
-        for (col, row, line) in &world.lines {
-            by_tile.entry((*col, *row)).or_default().push(line.clone());
-        }
-        for (tile, lines) in by_tile {
-            physics.fences.set(tile, fences::fences_of(&lines));
-        }
         physics.stones = stones::Stones::new(world.half_extent, world.tile_size);
         for (col, row, stones) in &world.stones {
             physics.stones.set((*col, *row), stones.clone());
@@ -585,7 +594,6 @@ impl Physics {
             bound,
             tiles: HashMap::new(),
             obstacles: std::collections::BTreeMap::new(),
-            fences: fences::Fences::default(),
             stones: stones::Stones::default(),
             waters: waters::Waters::default(),
             tick: 0,
@@ -616,7 +624,7 @@ impl Physics {
         self.waters.calm();
     }
 
-    /// Adds a static collider, noting the building or tree it is.
+    /// Adds a static collider, noting the building, tree or piece of a fence or wall it is.
     fn insert_static(&mut self, collider: Collider, object: Option<Obj>) -> ColliderHandle {
         let handle = self.colliders.insert(collider);
         if let Some(object) = object {
@@ -719,7 +727,7 @@ impl Physics {
         self.objects_near(point, radius).iter().any(|object| matches!(object, Obj::Building(_)))
     }
 
-    /// Every building and tree whose collider reaches within `radius` of `point`.
+    /// Every building, tree and piece of a fence or wall whose collider reaches within `radius` of `point`.
     pub fn objects_near(&self, point: [f32; 3], radius: f32) -> Vec<Obj> {
         let queries = self.broad_phase.as_query_pipeline(self.narrow_phase.query_dispatcher(), &self.bodies, &self.colliders, QueryFilter::exclude_dynamic());
         let ball = Ball::new(radius);
@@ -730,14 +738,10 @@ impl Physics {
         found.sort_by_key(|object| match *object {
             Obj::Building(id) => (0, id),
             Obj::Tree(id) => (1, id),
+            Obj::Line(id) => (2, id),
         });
         found.dedup();
         found
-    }
-
-    /// Whether a fence that stands over `floor` passes within `reach` of `(x, z)` (`fences::Fences::near`).
-    pub fn fence_near(&self, x: f32, z: f32, reach: f32, floor: f32) -> bool {
-        self.fences.near([x, z], reach, floor)
     }
 
     /// Which building or tree a collider is, if it is one.
@@ -746,9 +750,9 @@ impl Physics {
     }
 
     /// How far a ray from `origin` along the unit `dir` goes before it meets the static world, within
-    /// `max`. Vehicles are ignored.
+    /// `max`. Vehicles are ignored, and it goes through a fence.
     pub fn cast_ray_static(&self, origin: [f32; 3], dir: [f32; 3], max: f32) -> Option<f32> {
-        let queries = self.broad_phase.as_query_pipeline(self.narrow_phase.query_dispatcher(), &self.bodies, &self.colliders, QueryFilter::exclude_dynamic());
+        let queries = self.broad_phase.as_query_pipeline(self.narrow_phase.query_dispatcher(), &self.bodies, &self.colliders, QueryFilter::exclude_dynamic().groups(past_fences()));
         queries.cast_ray(&Ray::new(Vector::from(origin), Vector::from(dir)), max, true).map(|(_, distance)| distance)
     }
 
@@ -897,12 +901,7 @@ impl Physics {
             (false, false) => &self.controller,
         };
         let horizontal = walker.move_shape(dt, &queries, shape, &Pose::from_translation(start), Vector::new(desired[0], 0.0, desired[2]), |_| {});
-        let mut middle = start + horizontal.translation;
-        // Fences, which only soldiers meet, cut the step short.
-        let (radius, centre) = if character.prone { (PRONE_RADIUS, PRONE_RADIUS) } else { (CAPSULE_RADIUS, STAND_CENTRE) };
-        let [x, z] = self.fences.stop([start.x, start.z], [middle.x, middle.z], middle.y - centre, radius);
-        middle.x = x;
-        middle.z = z;
+        let middle = start + horizontal.translation;
         let vertical = self.controller.move_shape(dt, &queries, shape, &Pose::from_translation(middle), Vector::new(0.0, desired[1], 0.0), |_| {});
         let end = middle + vertical.translation;
         character.position = end.into();
@@ -970,11 +969,7 @@ impl Physics {
         let shape = self.shape(character.prone).shape();
         let start = Vector::from(character.position);
         let horizontal = self.swimmer.move_shape(dt, &queries, shape, &Pose::from_translation(start), Vector::new(desired[0], 0.0, desired[2]), |_| {});
-        let mut middle = start + horizontal.translation;
-        let (radius, centre) = if character.prone { (PRONE_RADIUS, PRONE_CENTRE) } else { (CAPSULE_RADIUS, STAND_CENTRE) };
-        let [x, z] = self.fences.stop([start.x, start.z], [middle.x, middle.z], middle.y - centre, radius);
-        middle.x = x;
-        middle.z = z;
+        let middle = start + horizontal.translation;
         let vertical = self.controller.move_shape(dt, &queries, shape, &Pose::from_translation(middle), Vector::new(0.0, desired[1], 0.0), |_| {});
         let end = middle + vertical.translation;
         character.position = end.into();

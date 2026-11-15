@@ -175,7 +175,29 @@ impl Game {
                     flags |= full;
                 }
             }
-            wire::Titan { lx, ly, lz, rx, ry, rz, flx, fly, flz, frx, fry, frz, flags, step: limbs.step.to_byte(), weight: (limbs.weight.clamp(0.0, 1.0) * 255.0).round() as u8 }
+            let head = entities.get::<crate::mechanics::TitanHead>(id).copied().unwrap_or_default();
+            if head.lamp {
+                flags |= TITAN_LAMP;
+            }
+            wire::Titan {
+                lx,
+                ly,
+                lz,
+                rx,
+                ry,
+                rz,
+                flx,
+                fly,
+                flz,
+                frx,
+                fry,
+                frz,
+                flags,
+                step: limbs.step.to_byte(),
+                weight: (limbs.weight.clamp(0.0, 1.0) * 255.0).round() as u8,
+                head_yaw: to_mrad(head.yaw),
+                head_pitch: to_mrad(head.pitch),
+            }
         });
         Some(Replicated {
             kind: Some(wire::Kind { kind: vehicle.kind }),

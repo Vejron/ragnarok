@@ -3,7 +3,7 @@ import tables from './sim/tables.generated.json'
 
 /** Mirrors `crates/shared/src/world.rs`. Coordinates are metres: +X east, +Z south, +Y up. */
 
-export const WORLD_VERSION = 19
+export const WORLD_VERSION = 22
 
 /** `Manifest::theme`, mirrors `crates/shared/src/world.rs`. */
 export const THEME_WINTER = 1
@@ -61,6 +61,37 @@ export const LINE_FENCE_HIGH = 1
 export const LINE_POWER = 2
 /** A major power line on steel pylons. */
 export const LINE_POWER_MAJOR = 3
+/** A low stone wall, as round a garden or a field. */
+export const LINE_WALL = 4
+/** A high stone wall, over head height. */
+export const LINE_WALL_HIGH = 5
+
+/**
+ * What a kind of fence or wall is: `LINE_KINDS` in `crates/shared/src/world.rs`, through
+ * `sim/tables.generated.json`. A power line is not in it.
+ */
+export interface LineKindDef {
+  kind: number
+  /** Height of its top over the ground, metres. */
+  height: number
+  /** Half its thickness across the line, metres. */
+  half: number
+  /** The longest a piece is, metres. */
+  step: number
+  /** Whether it is a wall, solid to everything, and not a fence. */
+  wall: boolean
+}
+
+export const LINE_KINDS: readonly LineKindDef[] = tables.lineKinds
+
+/** The definition of a fence or wall kind; undefined for a power line. */
+export const lineKindDef = (kind: number): LineKindDef | undefined => LINE_KINDS.find((def) => def.kind === kind)
+
+/**
+ * The index of a piece of a fence or wall in its tile, as the server names it (`line_piece_index` in
+ * `crates/shared/src/world.rs`): line `line` of the tile's lines, the piece after its point `segment`.
+ */
+export const linePieceIndex = (line: number, segment: number): number => ((line << 16) | (segment & 0xffff)) >>> 0
 
 export const COVER_WATER = 0
 export const COVER_WOOD = 1
@@ -152,6 +183,8 @@ export interface Building {
   roof: number
   /** `ROOF_*`: what the laser data fitted the roof as. */
   roofKind: number
+  /** `BUILDING_*`: what the building is, where that changes its windows, its inside and its colours. */
+  kind: number
   /** Its 1 m cubes as the importer baked them, or null for a building with none (it keeps its triangles). */
   cells: Cells | null
   /** `[wall, roof]` as `0xRRGGBB` where the importer knows them (France: the roof from the aerial photo), else null. */
@@ -160,7 +193,7 @@ export interface Building {
    * Its own walls and roof in the tile's `look`, to be drawn: `walls` triangles from `first`, then
    * `roof`. Null when it has none (a world made before looks): it is then drawn as its cubes.
    */
-  look?: { first: number; walls: number; roof: number; footprint?: Int32Array; inside?: Int32Array } | null
+  look?: { first: number; walls: number; roof: number; kind?: number; footprint?: Int32Array; inside?: Int32Array } | null
 }
 
 /**
@@ -204,6 +237,10 @@ export const ROOF_SHED = 1
 export const ROOF_GABLE = 2
 export const ROOF_HIP = 3
 
+/** `Building.kind`, mirrors `BUILDING_*` in `crates/shared/src/world.rs`: a building like any other, and a church. */
+export const BUILDING_PLAIN = 0
+export const BUILDING_CHURCH = 1
+
 export interface Road {
   width: number
   kind: number
@@ -219,9 +256,10 @@ export interface Rail {
 }
 
 /**
- * A fence or a power line (`Line` in `crates/shared/src/world.rs`). A fence is cut at the tile's edges;
- * a power line is its poles, span after span, and its last point is a pole of the next tile unless
- * `end`. Drawn, not simulated.
+ * A fence, a wall or a power line (`Line` in `crates/shared/src/world.rs`). A fence or wall is cut at
+ * the tile's edges and has a point at every post: each piece between two points is solid and breaks on
+ * its own (`linePieceIndex`). A power line is its poles, span after span, and its last point is a pole
+ * of the next tile unless `end`.
  */
 export interface Line {
   kind: number
@@ -289,6 +327,31 @@ export interface Lift {
   cable: number[]
 }
 
+/**
+ * A bus line (`BusLine` in `crates/shared/src/world.rs`), metres: the middle of the road it follows
+ * from one end to the other, and how far along that each of its stops is.
+ */
+export interface BusLine {
+  points: Point2[]
+  stops: number[]
+}
+
+/** The point `along` metres from the start of `line` (held to its ends) and the unit direction the line runs there. */
+export function busLineAt(line: BusLine, along: number): { at: Point2; way: Point2 } {
+  let left = Math.max(along, 0)
+  let last: { at: Point2; way: Point2 } = { at: line.points[0] ?? [0, 0], way: [0, -1] }
+  for (let i = 1; i < line.points.length; i++) {
+    const [a, b] = [line.points[i - 1]!, line.points[i]!]
+    const length = Math.hypot(b[0] - a[0], b[1] - a[1])
+    if (length < 1e-3) continue
+    const way: Point2 = [(b[0] - a[0]) / length, (b[1] - a[1]) / length]
+    if (left <= length) return { at: [a[0] + way[0] * left, a[1] + way[1] * left], way }
+    left -= length
+    last = { at: b, way }
+  }
+  return last
+}
+
 export interface WorldData {
   /**
    * How local metres lie on the Earth (`Frame` in `crates/shared/src/world.rs`): `[0, lat, lon]` for
@@ -308,6 +371,8 @@ export interface WorldData {
   lifts: Lift[]
   /** Winter with the lakes and the sea left open (`Manifest::open_water`), so boats still sail. */
   openWater?: boolean
+  /** The bus lines, whole (`Manifest::bus_lines`): a sign stands at every stop. None on a world with no public transport. */
+  busLines: BusLine[]
   /**
    * Which tiles of the square grid are part of the world, `grid × grid` row-major, or `null` when
    * every one is. Tiles outside it have no ground and are walled off.
@@ -383,7 +448,7 @@ export function trunkRadiusCm(kind: number, heightCm: number, crownCm: number): 
 const noCollision = (): CollisionMesh => ({ vertices: new Float32Array(), triangles: new Uint32Array() })
 
 export function decodeManifest(bytes: Uint8Array): WorldData {
-  const [version, frame, halfExtent, tileSize, spawns, tiles, groundCell, theme, lifts, openWater] = decode(bytes) as [number, [number, number, number], number, number, number[][], number[][], number, number, [number, number, number[][], number[], number[]][], boolean]
+  const [version, frame, halfExtent, tileSize, spawns, tiles, groundCell, theme, lifts, openWater, busLines] = decode(bytes) as [number, [number, number, number], number, number, number[][], number[][], number, number, [number, number, number[][], number[], number[]][], boolean, [number[][], number[]][]]
   if (version !== WORLD_VERSION) throw new Error(`world version ${version}, expected ${WORLD_VERSION}`)
   const refs = tiles.map(([col, row, hash]) => ({ col: col!, row: row!, hash: hash! }))
   const grid = Math.max(1, Math.ceil((2 * halfExtent) / Math.max(tileSize, 1)))
@@ -402,6 +467,7 @@ export function decodeManifest(bytes: Uint8Array): WorldData {
     theme,
     lifts: lifts.map(([kind, seats, points, base, cable]) => ({ kind, seats, points: points.map(point), base: base.map(metres), cable: cable.map(metres) })),
     openWater,
+    busLines: busLines.map(([points, stops]) => ({ points: points.map(point), stops: stops.map(metres) })),
     inside,
     collision: noCollision(),
     bytes,
@@ -475,7 +541,7 @@ function flatIndices(triangles: readonly number[][]): Uint32Array {
 
 export function decodeTile(bytes: Uint8Array): TileData {
   const [buildings, roads, [vertices, triangles], ground, cover, trees, water, streams, bridges, detail, rails, ski, lines, stones, look] = decode(bytes) as [
-    [number, number[][], number, number, number, number, number, [number[], number[], Uint8Array, Uint8Array], [number, number] | null][],
+    [number, number[][], number, number, number, number, number, number, [number[], number[], Uint8Array, Uint8Array], [number, number] | null][],
     [number, number, number[][]][],
     [number[][], number[][]],
     [number, Uint8Array],
@@ -493,7 +559,7 @@ export function decodeTile(bytes: Uint8Array): TileData {
   ]
   const looks = look[2]
   return {
-    buildings: buildings.map(([height, footprint, base, first, walls, roof, roofKind, cells, paint], index) => ({
+    buildings: buildings.map(([height, footprint, base, first, walls, roof, roofKind, kind, cells, paint], index) => ({
       height: metres(height),
       footprint: footprint.map(point),
       base: metres(base),
@@ -501,12 +567,13 @@ export function decodeTile(bytes: Uint8Array): TileData {
       walls,
       roof,
       roofKind,
+      kind,
       cells:
         cells[1][0]! * cells[1][1]! * cells[1][2]! > 0
           ? { origin: cells[0] as [number, number, number], dims: cells[1] as [number, number, number], solid: cells[2], roof: cells[3] }
           : null,
       paint,
-      look: looks[index] && looks[index]![1]! + looks[index]![2]! > 0 ? { first: looks[index]![0]!, walls: looks[index]![1]!, roof: looks[index]![2]!, footprint: Int32Array.from(footprint.flat()) } : null,
+      look: looks[index] && looks[index]![1]! + looks[index]![2]! > 0 ? { first: looks[index]![0]!, walls: looks[index]![1]!, roof: looks[index]![2]!, kind, footprint: Int32Array.from(footprint.flat()) } : null,
     })),
     roads: roads.map(([width, kind, points]) => ({ width: metres(width), kind, points: points.map(point) })),
     cover: cover.map(([kind, rings]) => ({ kind, rings: rings.map((ring) => ring.map(point)) })),

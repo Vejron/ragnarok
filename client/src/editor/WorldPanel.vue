@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { activate, cell, chooseRegion, clearAll, dirty, grid, groomedPaths, name, newWorld, openWater, openWorld, osmWater, painted, region, remove, save, winter, worlds } from './state'
+import { activate, buses, cell, chooseRegion, clearAll, dirty, grid, groomedPaths, name, newWorld, openWater, openWorld, osmWater, painted, region, remove, save, winter, worlds } from './state'
 import type { Region } from './grid'
 
 const tile = computed(() => grid.value?.tile ?? 256)
@@ -65,6 +65,12 @@ const regions: { label: string; value: Region }[] = [
       label="Sea (water from OpenStreetMap)"
       title="For a world on the coast: Lantmäteriet's water has lakes and rivers but no sea. Slower to generate. Generate the world again to apply."
       @update:model-value="(v: boolean | 'indeterminate') => { osmWater = checked(v); dirty = true }"
+    />
+    <UCheckbox
+      :model-value="buses"
+      label="Public transport (buses)"
+      title="Bus lines along the major roads, with stops, and buses that run them. Generate the world again to apply."
+      @update:model-value="(v: boolean | 'indeterminate') => { buses = checked(v); dirty = true }"
     />
     <p class="text-sm text-muted">{{ painted.size }} tiles, {{ ((painted.size * tile * tile) / 1e6).toFixed(2) }} km²</p>
 

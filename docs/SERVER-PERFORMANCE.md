@@ -250,3 +250,20 @@ out. Two numbers were changed:
 | Biggest, 16 m block | 61% → 83% | 46% → 69% | 10 → 7 |
 | 30th biggest | 15% → 55% | 9% → 40% | 1 → 2 |
 | 150th biggest | 17% → 37% | 9% → 15% | 3 → 2 |
+
+## Buses
+
+A world with public transport runs up to twelve buses (`BUS_MAX`), each a vehicle the physics steps
+every tick whether anyone is near it or not, with a driver whose input `Buses` writes (BUSES.md).
+`buses_on_a_real_world` runs a real world's buses with nobody connected:
+
+```sh
+WORLD=$PWD/worlds/home/world.msgpack MINUTES=20 cargo test --release -p server -- --ignored --nocapture buses_on_a_real_world
+NO_BUSES=1 WORLD=$PWD/worlds/home/world.msgpack MINUTES=20 cargo test --release -p server -- --ignored --nocapture buses_on_a_real_world
+```
+
+On `worlds/home` (three lines, twelve buses, thirteen placed vehicles standing still) a tick of the
+whole room is 0.05 ms with no buses and 0.35 ms with them: about 0.025 ms a bus, or 1.8 % of the
+16.7 ms tick for all twelve. Nearly all of it is the physics of twelve vehicles on the move; finding
+its place on the line and steering costs a bus nothing that shows. Not measured: the same with a
+full room of players, where each bus is also replicated to whoever is within 300 m of it.

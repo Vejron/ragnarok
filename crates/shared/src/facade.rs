@@ -362,7 +362,7 @@ mod tests {
     fn the_windows_are_holes_in_the_walls_and_the_rest_stands() {
         let (walls, roof) = house();
         let look = look_of(&walls, &roof);
-        let windows = openings_of(&look, look.buildings[0]);
+        let windows = openings_of(&look, look.buildings[0], 0);
         let tris = standing(&walls, &roof, &windows, &[], None);
         let pane = windows.iter().find(|o| !o.door && o.normal[2] < -0.9).unwrap();
         let [a, b, _, d] = pane.corners;
@@ -444,7 +444,7 @@ mod tests {
         let walls: Vec<Tri> = [quad([0, 0, 0], [w, 0, 0], [w, h, 0], [0, h, 0]), quad([w, 0, 0], [w, 0, d], [w, h, d], [w, h, 0]), quad([w, 0, d], [0, 0, d], [0, h, d], [w, h, d]), quad([0, 0, d], [0, 0, 0], [0, h, 0], [0, h, d])].concat();
         let roof = quad([0, h, 0], [w, h, 0], [w, h, d], [0, h, d]).to_vec();
         let look = look_of(&walls, &roof);
-        let windows = openings_of(&look, look.buildings[0]);
+        let windows = openings_of(&look, look.buildings[0], 0);
         let shell = Shell::new(&walls, &roof).unwrap();
         let mut removed = shell.untouched();
         let polys: Vec<Poly> = cut_windows(walls.iter().map(poly_of).collect(), &windows, false).into_iter().chain(roof.iter().map(poly_of)).collect();

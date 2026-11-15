@@ -173,3 +173,27 @@ fn it_goes_round_the_end_of_a_fence() {
     let walked = length(from, &path);
     assert!(walked > 64.0, "walked {walked} m, through the fence: {path:?}");
 }
+
+#[test]
+fn it_goes_through_a_wall_where_a_piece_has_been_broken() {
+    use shared::world::{LINE_WALL_HIGH, Line, ObjId};
+    // A slanting wall in 3 m pieces, from far to one side to far to the other.
+    let points: Vec<[i32; 2]> = (-10..=10).map(|i| [1150 + i * 15, i * 300]).collect();
+    let wall = Line { kind: LINE_WALL_HIGH, base: vec![0; points.len()], points, end: true };
+    let map = WorldFile { version: WORLD_VERSION, half_extent: 10_000, lines: vec![(0, 0, wall)], ..Default::default() };
+    let mut physics = Physics::new(&map).unwrap();
+    let mut grid = NavGrid::default();
+    let (from, to) = ([0.0, 0.0], [25.0, 0.0]);
+    let round = length(from, &grid.find_path(&physics, &map, feet(from), feet(to), &mut plenty()).expect("a way round"));
+    assert!(round > 64.0, "walked {round} m, through the wall");
+    // The two pieces either side of z = 0 go.
+    for segment in [9, 10] {
+        assert!(physics.destroy(sim::Obj::Line(ObjId { col: 0, row: 0, index: segment })));
+    }
+    physics.refresh();
+    for area in physics.take_changed() {
+        grid.forget(area);
+    }
+    let through = length(from, &grid.find_path(&physics, &map, feet(from), feet(to), &mut plenty()).expect("a way through"));
+    assert!(through < 30.0, "walked {through} m, not through the gap");
+}

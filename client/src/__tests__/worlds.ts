@@ -10,7 +10,7 @@ const cm = (metres: number) => Math.round(metres * 100)
  * `groundCell` apart (0 for flat), made of the `tiles` `[col, row]` (none listed is every one).
  */
 export function manifestBytes(half: number, tileSize: number, groundCell = 0, tiles: [number, number][] = []): Uint8Array {
-  return encode([WORLD_VERSION, [0, 0, 0], cm(half), cm(tileSize), [], tiles.map(([col, row]) => [col, row, 0]), cm(groundCell), 0, [], false])
+  return encode([WORLD_VERSION, [0, 0, 0], cm(half), cm(tileSize), [], tiles.map(([col, row]) => [col, row, 0]), cm(groundCell), 0, [], false, []])
 }
 
 /** A building's cubes when none were baked: `dims` all 0. */
@@ -33,7 +33,7 @@ export interface TestBuilding {
  */
 export function tileBytes({ vertices = [], triangles = [], ground = [], buildings = [] }: { vertices?: number[][]; triangles?: number[][]; ground?: ArrayLike<number>; buildings?: TestBuilding[] }): Uint8Array {
   const mesh = [vertices.map((v) => v.map(cm)), triangles]
-  const houses = buildings.map((b) => [cm(b.height), b.footprint.map((p) => p.map(cm)), cm(b.base), b.first, b.walls, b.roof, b.roofKind, NO_CELLS, null])
+  const houses = buildings.map((b) => [cm(b.height), b.footprint.map((p) => p.map(cm)), cm(b.base), b.first, b.walls, b.roof, b.roofKind, 0, NO_CELLS, null])
   return encode([houses, [], mesh, packGround(Int32Array.from(ground, cm)), [], [], new Uint8Array(), [], [], new Uint8Array(), [], [], [], new Uint8Array(), [[], [], []]])
 }
 

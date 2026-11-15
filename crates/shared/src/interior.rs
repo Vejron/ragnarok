@@ -277,10 +277,11 @@ fn without(polys: Vec<Poly>, frame: &Frame, [a0, a1, b0, b1]: Rect) -> Vec<Poly>
 
 /// The inside of the house on `footprint` (`[x, z]`, centimetres) whose look is `walls` and `roof`
 /// and whose openings are `windows` (`windows::openings_of`): a ground floor on a plinth, and a
-/// floor `SLAB` thick for every storey that fits under the eaves, with stairs up to it. Empty for a
+/// floor `SLAB` thick for every storey that fits under the eaves, with stairs up to it. A church
+/// (`kind`, `BUILDING_*`) has the ground floor only: one hall, open to its roof. Empty for a
 /// house too small, or with no door to come in by. The outer door of a house with an inside is an
 /// open doorway (`facade`).
-pub fn rooms(footprint: &[[i32; 2]], walls: &[Tri], roof: &[Tri], windows: &[Window]) -> Vec<Part> {
+pub fn rooms(footprint: &[[i32; 2]], walls: &[Tri], roof: &[Tri], windows: &[Window], kind: u8) -> Vec<Part> {
     let mut ring: Vec<[i32; 2]> = Vec::with_capacity(footprint.len());
     for &p in footprint {
         if ring.last() != Some(&p) {
@@ -332,7 +333,8 @@ pub fn rooms(footprint: &[[i32; 2]], walls: &[Tri], roof: &[Tri], windows: &[Win
 
     // The floors: the ground floor on its plinth, then one a storey while there is room under the roof.
     let mut levels = vec![off_lattice(base + PLINTH)];
-    for k in 1..=MAX_STOREYS as i32 {
+    let storeys = if kind == crate::world::BUILDING_CHURCH { 0 } else { MAX_STOREYS as i32 };
+    for k in 1..=storeys {
         let y = off_lattice(base + k * STOREY);
         if y > eave - EAVE_CLEAR || ridge - y < HEADROOM {
             break;
@@ -443,7 +445,7 @@ mod tests {
             look.vertices.extend([[t[0], t[1], t[2]], [t[3], t[4], t[5]], [t[6], t[7], t[8]]]);
             look.triangles.push([at, at + 1, at + 2]);
         }
-        let windows = openings_of(&look, [0, walls.len() as u32, roof.len() as u32]);
+        let windows = openings_of(&look, [0, walls.len() as u32, roof.len() as u32], 0);
         (walls, roof, windows)
     }
 
@@ -465,10 +467,20 @@ mod tests {
     }
 
     #[test]
+    fn a_church_is_one_hall_open_to_its_roof() {
+        let footprint = rect(3000, 1200);
+        let (walls, roof, windows) = house(&footprint, 900, 1700);
+        assert!(floors(&rooms(&footprint, &walls, &roof, &windows, 0)).len() > 1, "as a house it has upper floors");
+        let hall = rooms(&footprint, &walls, &roof, &windows, crate::world::BUILDING_CHURCH);
+        assert_eq!(floors(&hall).len(), 1);
+        assert!(hall.iter().all(|part| part.kind == PART_FLOOR));
+    }
+
+    #[test]
     fn a_shed_gets_no_rooms() {
         let footprint = rect(500, 400);
         let (walls, roof, windows) = house(&footprint, 300, 300);
-        assert!(rooms(&footprint, &walls, &roof, &windows).is_empty());
+        assert!(rooms(&footprint, &walls, &roof, &windows, 0).is_empty());
     }
 
     #[test]
@@ -476,7 +488,7 @@ mod tests {
         let footprint = rect(1200, 800);
         let (walls, roof, windows) = house(&footprint, 300, 300);
         let panes: Vec<Window> = windows.into_iter().filter(|w| !w.door).collect();
-        assert!(rooms(&footprint, &walls, &roof, &panes).is_empty());
+        assert!(rooms(&footprint, &walls, &roof, &panes, 0).is_empty());
     }
 
     #[test]
@@ -484,7 +496,7 @@ mod tests {
         for (w, d) in [(1200, 800), (900, 700), (2000, 1100)] {
             let footprint = rect(w, d);
             let (walls, roof, windows) = house(&footprint, 300, 300);
-            let parts = rooms(&footprint, &walls, &roof, &windows);
+            let parts = rooms(&footprint, &walls, &roof, &windows, 0);
             assert_eq!(floors(&parts).len(), 1, "one storey under a 3 m roof");
             assert!(parts.iter().all(|p| p.kind == PART_FLOOR), "{w} × {d}: a floor on the plinth, with no underside");
         }
@@ -494,7 +506,7 @@ mod tests {
     fn floors_stay_inside_an_l_shaped_footprint() {
         let footprint = vec![[0, 0], [1600, 0], [1600, 700], [800, 700], [800, 1400], [0, 1400]];
         let (walls, roof, windows) = house(&footprint, 600, 600);
-        let parts = rooms(&footprint, &walls, &roof, &windows);
+        let parts = rooms(&footprint, &walls, &roof, &windows, 0);
         assert_eq!(floors(&parts).len(), 2, "two storeys under a 6 m roof");
         for part in &parts {
             for k in 0..3 {
@@ -510,7 +522,7 @@ mod tests {
     fn a_tall_house_gets_a_floor_a_storey_and_stairs_between_them() {
         let footprint = rect(1200, 800);
         let (walls, roof, windows) = house(&footprint, 900, 900);
-        let parts = rooms(&footprint, &walls, &roof, &windows);
+        let parts = rooms(&footprint, &walls, &roof, &windows, 0);
         // 9 m of wall: floors at the plinth, 2.8 and 5.6 m; one at 8.4 m would have no headroom.
         assert_eq!(floors(&parts).len(), 3, "{:?}", floors(&parts));
         let levels = floors(&parts);
@@ -547,7 +559,7 @@ mod tests {
         let footprint = vec![[150, 0], [450, 0], [600, 150], [600, 350], [450, 500], [150, 500], [0, 350], [0, 150]];
         let (walls, roof, windows) = house(&footprint, 600, 600);
         if windows.iter().any(|w| w.door) {
-            let parts = rooms(&footprint, &walls, &roof, &windows);
+            let parts = rooms(&footprint, &walls, &roof, &windows, 0);
             assert!(floors(&parts).len() <= 1 && !parts.iter().any(|p| p.kind == PART_RAMP));
         }
     }
@@ -557,7 +569,7 @@ mod tests {
         // The same 12 × 8 m house turned 30°: its corners rounded to the centimetre.
         let turned: Vec<[i32; 2]> = rect(1200, 800).iter().map(|p| { let (c, s) = (0.866_025_403_784f64, 0.5f64); [((p[0] as f64) * c - (p[1] as f64) * s).round() as i32 + 5000, ((p[0] as f64) * s + (p[1] as f64) * c).round() as i32 + 5000] }).collect();
         let (walls, roof, windows) = house(&turned, 600, 600);
-        let parts = rooms(&turned, &walls, &roof, &windows);
+        let parts = rooms(&turned, &walls, &roof, &windows, 0);
         assert_eq!(floors(&parts).len(), 2);
         assert!(parts.iter().any(|p| p.kind == PART_RAMP) && parts.iter().any(|p| p.kind == PART_CEILING));
         for part in parts.iter().filter(|p| p.kind != PART_STEP) {
@@ -576,8 +588,8 @@ mod tests {
     fn the_same_house_gets_the_same_floors() {
         let footprint = rect(1200, 800);
         let (walls, roof, windows) = house(&footprint, 600, 600);
-        let parts = rooms(&footprint, &walls, &roof, &windows);
-        assert_eq!(parts, rooms(&footprint, &walls, &roof, &windows));
+        let parts = rooms(&footprint, &walls, &roof, &windows, 0);
+        assert_eq!(parts, rooms(&footprint, &walls, &roof, &windows, 0));
         // Pinned, for `interior.spec.ts` to find the same through the WebAssembly build.
         let sum = parts.iter().fold(0u64, |h, p| p.tri.iter().fold(h.wrapping_mul(31).wrapping_add(p.kind as u64), |h, &v| h.wrapping_mul(31).wrapping_add(v as u32 as u64)));
         assert_eq!((parts.len(), sum % 1_000_000_007), (112, 490_359_646));

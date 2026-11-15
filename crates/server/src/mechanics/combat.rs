@@ -247,6 +247,12 @@ fn burst(world: &mut World, blast: Blast, direct: Option<Direct>, spare: Option<
                 Some(distance) => (distance, 1.0),
                 None => continue,
             },
+            // A piece of a fence or wall, from the nearest point of its line: wire and posts go as a
+            // tree does, stone as a house's wall.
+            Obj::Line(id) => match world.line_piece(id) {
+                Some(piece) => (piece.distance(blast.point), if piece.def.wall { 1.0 } else { BLAST_TREE_SCALE }),
+                None => continue,
+            },
         };
         let falloff = (1.0 - distance / blast.radius).max(0.0);
         damage_object(world, object, (blast.damage * falloff * scale).round().min(u16::MAX as f32) as u16, blast.point);
@@ -329,8 +335,9 @@ const BULLET_BUILDING_DIVISOR: u16 = 3;
 /// `Destroyed` force of a killing blow that is exactly the object's health.
 const FORCE_PER_HEALTH: f32 = 64.0;
 
-/// Takes `amount` health off a building or tree. A tree at zero is destroyed: its collider goes, and
-/// everyone is told, with the way it falls (away from `from`, where the damage came from). A
+/// Takes `amount` health off a building, a tree or a piece of a fence or wall. A tree or a piece at
+/// zero is destroyed: its collider goes, and everyone is told, with the way it falls (away from
+/// `from`, where the damage came from). A
 /// building never comes down: its health stops at 1, the worst damage stage, which it shows by colour.
 /// Returns whether this destroyed it.
 pub fn damage_object(world: &mut World, object: Obj, amount: u16, from: [f32; 3]) -> bool {
@@ -347,6 +354,13 @@ pub fn damage_object(world: &mut World, object: Obj, amount: u16, from: [f32; 3]
             Some(building) => {
                 let [x, z] = building.centre();
                 (building.hp(), [x as f32 / 100.0, z as f32 / 100.0])
+            }
+            None => return false,
+        },
+        Obj::Line(id) => match world.line_piece(id) {
+            Some(piece) => {
+                let [x, _, z] = piece.centre();
+                (piece.def.hp, [x, z])
             }
             None => return false,
         },
@@ -585,14 +599,15 @@ fn one_armed(world: &World, id: u32) -> bool {
     super::limbs::lost(world, id) & LIMB_ARMS != 0
 }
 
-/// A round that ended in the world: damages the building, tree or placed cube it struck, if it was one.
+/// A round that ended in the world: damages the building, tree, wall or placed cube it struck, if it was one.
 pub(super) fn hit_object(world: &mut World, origin: [f32; 3], dir: [f32; 3], reach: f32, damage: u8) {
     // The ray stops at the surface; look a hair past it to be inside the collider.
     if let Some((_, Some(object))) = world.physics.cast_ray_object(origin, dir, reach + 0.05) {
         // Bullets only chip a wall: a third of what they do to a tree, and never nothing.
         let amount = match object {
             Obj::Tree(_) => damage as u16,
-            Obj::Building(_) => (damage as u16 / BULLET_BUILDING_DIVISOR).max(1),
+            // A wall is chipped as a house's is. (A round never meets a fence: it goes through.)
+            Obj::Building(_) | Obj::Line(_) => (damage as u16 / BULLET_BUILDING_DIVISOR).max(1),
         };
         damage_object(world, object, amount, origin);
         if let Obj::Building(id) = object {

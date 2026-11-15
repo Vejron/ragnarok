@@ -21,10 +21,12 @@ export const NOTICE_LOST = 3
 /** `Destroyed` entry kinds: what part of the static world fell. */
 export const OBJ_TREE = 0
 export const OBJ_BUILDING = 1
+/** A piece of a fence or wall (`linePieceIndex` in `world.ts`). */
+export const OBJ_LINE = 2
 
 /** Entity kinds, generated from `consts.rs`. A vehicle kind's definition is `vehicleDef`. */
 export {
-  KIND_BACKPACK, KIND_DEER, KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MISSILE, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_ROOSTER, KIND_SEAPLANE, KIND_SHIP, KIND_SHIP_GUN, KIND_SNOWMOBILE, KIND_SNOWRACER, KIND_SPORTS, KIND_SOLDIER, KIND_STAG, KIND_STRF, KIND_STRV, KIND_SUBMARINE, KIND_TANK, KIND_TECHNICAL, KIND_TITAN, KIND_TUPP, KIND_WALKER, KIND_ZOMBIE,
+  KIND_BACKPACK, KIND_BUS, KIND_DEER, KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MISSILE, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_ROOSTER, KIND_SEAPLANE, KIND_SHIP, KIND_SHIP_GUN, KIND_SNOWMOBILE, KIND_SNOWRACER, KIND_SPORTS, KIND_SOLDIER, KIND_STAG, KIND_STRF, KIND_STRV, KIND_SUBMARINE, KIND_TANK, KIND_TECHNICAL, KIND_TITAN, KIND_TUPP, KIND_WALKER, KIND_ZOMBIE,
 } from '@/sim/consts'
 export { isDrone } from '@/sim/vehicles'
 
@@ -206,6 +208,8 @@ export const HANDS_REACH_LEFT = 1 << 2
 export const HANDS_REACH_RIGHT = 1 << 3
 export const HANDS_FULL_LEFT = 1 << 4
 export const HANDS_FULL_RIGHT = 1 << 5
+/** `Titan.flags` only: the searchlight in its visor is on. Mirrors `TITAN_LAMP`. */
+export const TITAN_LAMP = 1 << 6
 
 /** `Pintle.flags`: the gun is jammed. Mirrors `PINTLE_JAMMED`. */
 export const PINTLE_JAMMED = 1 << 0

@@ -15,8 +15,10 @@ type V3 = [f64; 3];
 
 /// Distance between deck cross sections, metres.
 const STEP: f64 = 3.0;
-/// Shorter spans (culverts tagged as bridges) are left to the terrain.
+/// Shorter spans (culverts tagged as bridges) are left to the terrain, unless the ground under them
+/// dips more than `SHORT_DIP` metres below the line between their ends.
 const MIN_LENGTH: f64 = 12.0;
+const SHORT_DIP: f64 = 1.0;
 /// Steepest slope of a deck, rise over run.
 const MAX_GRADE: f64 = 0.06;
 /// Slope of the ramp that brings a deck still above ground at its end down to the ground.
@@ -39,6 +41,12 @@ const CABLE_SPACING: f64 = 12.0;
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Pylons {
     None,
+    /// No pylons, and no parapets either: a deck over a cutting, flush with the road either side of
+    /// it and with whatever deck lies beside it.
+    Flush,
+    /// No deck of its own at all: one carriageway of a divided road, carried on the deck it shares
+    /// with the other (`assemble::twin_decks`).
+    Carried,
     /// One tower at each end of the crossing, cables running in over the water.
     Ends,
     /// One tower in the middle of the crossing.
@@ -55,6 +63,12 @@ pub struct Piece {
     pub at: P,
     /// Steel (pylon, cables) rather than concrete (deck, piers, parapets).
     pub steel: bool,
+    /// A stretch of parapet along the deck's edge, which is left out where another bridge's deck
+    /// lies beside this one (`assemble`): the carriageways of a divided road are one roadway.
+    pub parapet: bool,
+    /// A pier under the deck, which is left out where it would stand on a road or a track that goes
+    /// under the bridge (`assemble`): OSM does not say where a bridge's piers are.
+    pub pier: bool,
     pub tris: Vec<[V3; 3]>,
 }
 
@@ -118,7 +132,7 @@ pub(crate) fn water_at(ground: &Ground, levels: &[i32], p: P) -> Option<f64> {
 }
 
 /// `points` at about `step` metres, ends included.
-fn resample(points: &[P], step: f64) -> Vec<P> {
+pub(crate) fn resample(points: &[P], step: f64) -> Vec<P> {
     let lengths: Vec<f64> = points.windows(2).map(|w| (w[1][0] - w[0][0]).hypot(w[1][1] - w[0][1])).collect();
     let total: f64 = lengths.iter().sum();
     if total <= 0.0 {
@@ -168,7 +182,7 @@ impl Mesh {
             let l = (k + 1) % 4;
             quad([a[k], a[l], b[l], b[k]]);
         }
-        self.pieces.push(Piece { at, steel, tris });
+        self.pieces.push(Piece { at, steel, parapet: false, pier: false, tris });
     }
 
     /// A box from `from` to `to` with the cross section spanned by unit axes `u` and `v`.
@@ -265,7 +279,7 @@ fn clearance(kind: u8) -> f64 {
 #[allow(clippy::too_many_arguments)]
 pub fn build(points: &[P], width: f64, kind: u8, pylons: Pylons, measured: &[[f64; 3]], ground: &Ground, levels: &[i32], limit: f64) -> Vec<Piece> {
     let samples = resample(points, STEP);
-    if samples.len() < 2 {
+    if samples.len() < 2 || pylons == Pylons::Carried {
         return Vec::new();
     }
     let node = |p: P, arc: f64| Node {
@@ -283,7 +297,10 @@ pub fn build(points: &[P], width: f64, kind: u8, pylons: Pylons, measured: &[[f6
         }
         nodes.push(node(p, arc));
     }
-    if arc < MIN_LENGTH {
+    // A short span over level ground is a culvert; one over a cutting (a path under a road, which the
+    // terrain has as a trench across it) needs its deck, or the road has a ditch in it.
+    let dip = nodes.iter().map(|n| nodes[0].g + (nodes[nodes.len() - 1].g - nodes[0].g) * n.arc / arc.max(1e-9) - n.g).fold(0.0, f64::max);
+    if arc < MIN_LENGTH && dip < SHORT_DIP {
         return Vec::new();
     }
     let lift = clearance(kind);
@@ -318,7 +335,8 @@ pub fn build(points: &[P], width: f64, kind: u8, pylons: Pylons, measured: &[[f6
         let mut out = Vec::new();
         let (mut y, mut g) = (last.y, last.g);
         let mut distance = 0.0;
-        while y - g > LIFT + 0.3 && distance < MAX_RAMP {
+        // Down to the lip every deck has over the ground: a step any higher stops a wheel.
+        while y - g > LIFT + 0.05 && distance < MAX_RAMP {
             distance += STEP;
             let p = [last.p[0] + dx * distance, last.p[1] + dz * distance];
             if !reach(p) {
@@ -381,7 +399,7 @@ pub fn build(points: &[P], width: f64, kind: u8, pylons: Pylons, measured: &[[f6
         let mid = [(nodes[i].p[0] + nodes[i + 1].p[0]) / 2.0, (nodes[i].p[1] + nodes[i + 1].p[1]) / 2.0];
         mesh.hexa(mid, false, rings[i], rings[i + 1], i == 0, i + 1 == last);
         // Parapets where there is a drop beside the deck.
-        if nodes[i].y - nodes[i].g > 1.0 && nodes[i + 1].y - nodes[i + 1].g > 1.0 {
+        if pylons != Pylons::Flush && nodes[i].y - nodes[i].g > 1.0 && nodes[i + 1].y - nodes[i + 1].g > 1.0 {
             for sign in [1.0, -1.0] {
                 let edge = |k: usize| {
                     let t = tangent(k);
@@ -390,7 +408,10 @@ pub fn build(points: &[P], width: f64, kind: u8, pylons: Pylons, measured: &[[f6
                 };
                 let (a, b) = (edge(i), edge(i + 1));
                 let across = unit(side(unit([b[0] - a[0], 0.0, b[2] - a[2]])));
-                mesh.prism(mid, false, a, b, [0.0, 1.0, 0.0], across, PARAPET / 2.0, 0.12);
+                mesh.prism([(a[0] + b[0]) / 2.0, (a[2] + b[2]) / 2.0], false, a, b, [0.0, 1.0, 0.0], across, PARAPET / 2.0, 0.12);
+                if let Some(piece) = mesh.pieces.last_mut() {
+                    piece.parapet = true;
+                }
             }
         }
     }
@@ -405,11 +426,14 @@ pub fn build(points: &[P], width: f64, kind: u8, pylons: Pylons, measured: &[[f6
             let top = [n.p[0], n.y - THICKNESS, n.p[1]];
             let foot = [n.p[0], n.g - 0.5, n.p[1]];
             mesh.prism(n.p, false, top, foot, t, side(t), 0.9, hw * 0.55);
+            if let Some(piece) = mesh.pieces.last_mut() {
+                piece.pier = true;
+            }
         }
     }
 
     // Pylons with stay cables over the longest crossing of open water.
-    if pylons != Pylons::None {
+    if matches!(pylons, Pylons::Ends | Pylons::Middle) {
         let (mut best, mut run_start) = ((0usize, 0usize), None::<usize>);
         for i in 0..=nodes.len() {
             let wet = i < nodes.len() && nodes[i].level.is_some();

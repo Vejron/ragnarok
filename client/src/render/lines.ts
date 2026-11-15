@@ -1,21 +1,21 @@
 import { Color, Geometry, Mesh, ShaderMaterial, boxGeometry, cylinderGeometry } from '@ragnarok/engine'
 import { heightIn, type TileGround } from '@/sim/terrain'
-import { LINE_FENCE, LINE_FENCE_HIGH, LINE_POWER, LINE_POWER_MAJOR, type Line, type Point2 } from '@/world'
+import { LINE_FENCE_HIGH, LINE_POWER, LINE_POWER_MAJOR, lineKindDef, linePieceIndex, type Line, type Point2 } from '@/world'
 import { winter } from './season'
 import { toonMaterial } from './toon'
 
 /*
- * Fences and power lines (`TileData.lines`): posts and poles as one solid mesh a tile, the wires as
- * ribbons that turn to face the eye, and a game fence's netting as panels drawn by the shader. A wire
- * is never drawn thinner than about a pixel: where it would be, it is drawn that wide and as much
- * fainter, so it fades with distance instead of breaking into dashes.
+ * Fences, walls and power lines (`TileData.lines`): posts, poles and walls as one solid mesh a tile,
+ * the wires as ribbons that turn to face the eye, and a game fence's netting as panels drawn by the
+ * shader. A wire is never drawn thinner than about a pixel: where it would be, it is drawn that wide
+ * and as much fainter, so it fades with distance instead of breaking into dashes.
+ *
+ * A fence has a post at each point of its line and a wall a block between each two: the piece between
+ * two points is what breaks (`linePieceIndex`), and a broken one is left out.
  */
 
 type V3 = [number, number, number]
 
-/** Metres between a wire fence's posts, and a game fence's. */
-const FENCE_STEP = 3
-const GAME_FENCE_STEP = 4
 /** Heights of a wire fence's strands. */
 const STRANDS = [0.4, 0.75, 1.1]
 /** Top of a game fence's netting, and its foot. */
@@ -38,26 +38,19 @@ const STEEL = 0x8c9294
 const PORCELAIN = 0xd8dcd6
 const WIRE = 0x6e7376
 const CABLE = 0x55595b
+const STONE = 0x8d8a82
+const CAPSTONE = 0x9c9a93
 
-/** Points along a line every `step` metres, its ends included. */
-export function along(points: readonly Point2[], step: number): Point2[] {
-  const out: Point2[] = [points[0]!]
-  let carried = 0
-  for (let i = 1; i < points.length; i++) {
-    const [ax, az] = points[i - 1]!
-    const [bx, bz] = points[i]!
-    const length = Math.hypot(bx - ax, bz - az)
-    let at = step - carried
-    for (; at < length; at += step) out.push([ax + ((bx - ax) * at) / length, az + ((bz - az) * at) / length])
-    carried = length - (at - step)
-  }
-  const last = points[points.length - 1]!
-  const before = out[out.length - 1]!
-  // The end gets a post, unless one stands just short of it.
-  if (Math.hypot(last[0] - before[0], last[1] - before[1]) < step * 0.4 && out.length > 1) out.pop()
-  out.push(last)
-  return out
-}
+/** How far a wall goes into the ground, metres, as its collider does (`SUNK` in `crates/sim/src/fences.rs`). */
+const WALL_SUNK = 0.4
+/** How far a wall's block reaches past each end, metres, so a corner is closed (`WALL_LAP` there). */
+const WALL_LAP = 0.1
+/** Height of the course of capping stones along a wall's top, and how far it stands out each side, metres. */
+const CAP_HEIGHT = 0.12
+const CAP_OUT = 0.05
+
+/** No piece is broken. */
+const WHOLE: ReadonlySet<number> = new Set()
 
 /** A part in `color`, without uvs, so the parts merge. */
 export function painted(geometry: Geometry, color: number): Geometry {
@@ -78,6 +71,23 @@ function post(x: number, y: number, z: number, height: number, radius: number, c
 /** A box `width` across the line at `yaw`, centred at `(x, y, z)`. */
 export function beam(x: number, y: number, z: number, yaw: number, width: number, height: number, depth: number, color: number): Geometry {
   return painted(boxGeometry(depth, height, width).rotateY(yaw).translate(x, y, z), color)
+}
+
+/**
+ * A block of a wall from `a` to `b` (each on the ground): `height` tall and `half` to each side,
+ * tilted to the slope, with a course of capping stones along its top.
+ */
+function wallBlock(a: V3, b: V3, height: number, half: number): Geometry[] {
+  const flat = Math.hypot(b[0] - a[0], b[2] - a[2])
+  const length = Math.hypot(flat, b[1] - a[1])
+  // The box's X runs along the piece: tilted about Z to the slope, then turned about Y to its heading.
+  const yaw = Math.atan2(-(b[2] - a[2]), b[0] - a[0])
+  const pitch = Math.atan2(b[1] - a[1], flat)
+  const mid: V3 = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2]
+  const body = height - CAP_HEIGHT
+  const course = (y0: number, y1: number, width: number, color: number) =>
+    painted(boxGeometry(length + WALL_LAP * 2, y1 - y0, width).translate(0, (y0 + y1) / 2, 0).rotateZ(pitch).rotateY(yaw).translate(...mid), color)
+  return [course(-WALL_SUNK, body, half * 2, STONE), course(body, height, (half + CAP_OUT) * 2, CAPSTONE)]
 }
 
 /** Wire ribbons: each vertex on the wire's centre line, pushed out to the side in the shader. */
@@ -303,36 +313,44 @@ function groundAt(ground: TileGround | null, x: number, z: number, fallback: num
 }
 
 /**
- * The meshes of a tile's fences and power lines: one of posts and poles, one of wires and one of
- * netting, each only if there is any. The materials are shared by every tile.
+ * The meshes of a tile's fences, walls and power lines: one of posts, poles and walls, one of wires
+ * and one of netting, each only if there is any. The materials are shared by every tile. The pieces
+ * in `gone` (`linePieceIndex`) are broken and not drawn.
  */
-export function buildLines(lines: readonly Line[] | undefined, ground: TileGround | null): Mesh[] {
+export function buildLines(lines: readonly Line[] | undefined, ground: TileGround | null, gone: ReadonlySet<number> = WHOLE): Mesh[] {
   if (!lines || lines.length === 0) return []
   const parts: Geometry[] = []
   const wires = new Wires()
   const net = new Netting()
-  for (const line of lines) {
+  lines.forEach((line, number) => {
     const { kind, points, base } = line
-    if (points.length < 2) continue
-    if (kind === LINE_FENCE || kind === LINE_FENCE_HIGH) {
+    if (points.length < 2) return
+    const def = lineKindDef(kind)
+    if (def) {
+      // Whether the piece after point `i` stands.
+      const stands = (i: number) => i >= 0 && i < points.length - 1 && !gone.has(linePieceIndex(number, i))
+      const posts = points.map(([x, z], i): V3 => [x, groundAt(ground, x, z, base[i] ?? 0), z])
       const high = kind === LINE_FENCE_HIGH
-      const posts = along(points, high ? GAME_FENCE_STEP : FENCE_STEP).map(([x, z]): V3 => [x, groundAt(ground, x, z, base[0] ?? 0), z])
       net.run = 0
-      posts.forEach(([x, y, z], i) => {
-        parts.push(post(x, y, z, high ? 2.2 : 1.25, high ? 0.07 : 0.05, WOOD))
+      posts.forEach((at, i) => {
+        const [x, y, z] = at
+        // A post stands while a piece on either side of it does.
+        if (!def.wall && (stands(i - 1) || stands(i))) parts.push(post(x, y, z, high ? 2.2 : 1.25, high ? 0.07 : 0.05, WOOD))
         const next = posts[i + 1]
-        if (!next) return
-        if (high) {
-          net.add([x, y, z], next)
+        if (!next || !stands(i)) return
+        if (def.wall) {
+          parts.push(...wallBlock(at, next, def.height, def.half))
+        } else if (high) {
+          net.add(at, next)
           wires.add([x, y + NET_TOP + 0.05, z], [next[0], next[1] + NET_TOP + 0.05, next[2]], 0, 0.002, WIRE, 1)
         } else {
           for (const h of STRANDS) wires.add([x, y + h, z], [next[0], next[1] + h, next[2]], 0, 0.0018, WIRE, 1)
         }
       })
-      continue
+      return
     }
     const hangs = POWER_WIRES[kind]
-    if (!hangs) continue
+    if (!hangs) return
     const yaws = points.map((_, i) => crossing(points, i))
     const at = (i: number, across: number, up: number): V3 => [points[i]![0] + Math.sin(yaws[i]!) * across, base[i]! + up, points[i]![1] + Math.cos(yaws[i]!) * across]
     for (let i = 0; i < points.length; i++) {
@@ -343,7 +361,7 @@ export function buildLines(lines: readonly Line[] | undefined, ground: TileGroun
         for (const [across, up] of hang) wires.add(at(i - 1, across, up), at(i, across, up), span * SAG, radius, CABLE, WIRE_SECTIONS)
       }
     }
-  }
+  })
   const { solid, wire, net: netting } = lineMaterials()
   const meshes: Mesh[] = []
   if (parts.length > 0) {
@@ -356,5 +374,7 @@ export function buildLines(lines: readonly Line[] | undefined, ground: TileGroun
   if (wireGeometry) meshes.push(new Mesh(wireGeometry, wire))
   const netGeometry = net.geometry()
   if (netGeometry) meshes.push(new Mesh(netGeometry, netting))
+  // So that the tile's lines can be drawn again without the pieces that break (`rebuildLines`).
+  for (const mesh of meshes) mesh.userData.lines = true
   return meshes
 }

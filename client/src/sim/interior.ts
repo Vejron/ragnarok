@@ -17,6 +17,8 @@ export interface Furnishable {
   first: number
   walls: number
   roof: number
+  /** What it is (`BUILDING_*`); a house when left out. */
+  kind?: number
   /** Its footprint, `x, z` pairs in centimetres, as the world file has it. */
   footprint?: Int32Array
   /** Its inside once worked out (`interior_of`): ten numbers a triangle, its corners in centimetres and its `Part`. */
@@ -56,7 +58,7 @@ export function insideFor(look: { vertices: Float32Array; triangles: Uint32Array
       }
       return out
     }
-    range.inside = interior_of(range.footprint, flat(range.first, range.walls), flat(range.first + range.walls, range.roof))
+    range.inside = interior_of(range.footprint, flat(range.first, range.walls), flat(range.first + range.walls, range.roof), range.kind ?? 0)
   }
   const raw = range.inside
   if (raw.length === 0) return NONE

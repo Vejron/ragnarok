@@ -27,6 +27,7 @@ The game can be shown in a VR headset, and a Titan ([VEHICLES-XIV.md](VEHICLES-X
 | Right thumbstick | Left and right turn too |
 | Duck your head 25 cm | It crouches, which brings its fists to the ground |
 | A button, right hand | It leaps; held in the air, its foot thrusters fire while the fuel lasts |
+| X button, left hand | The searchlight in its visor goes on or off; it shines where you look |
 | Right index trigger | The autocannon in its right fist fires, along its forearm |
 | Left index trigger | A missile goes up from its left shoulder, and you fly it as the submarine's officer does; the Titan stands meanwhile |
 
@@ -43,7 +44,10 @@ The game can be shown in a VR headset, and a Titan ([VEHICLES-XIV.md](VEHICLES-X
   - The second eye keeps the first's shadow map and the first's exposure, so both eyes are lit alike.
   - A headset's lens is not symmetric about the eye. `PerspectiveCamera.lens` takes its projection, turned to the engine's reversed depth (`reversedDepth`): a session on WebGPU gives depth 0 at the near plane and 1 at the far.
   - The last pass reads its pixels from the start of the eye's part of the texture (`Output.clip.zw`).
-- **The cockpit** is the Titan's head: the camera is put at `TITAN_EYE`, facing the way the Titan does, and the headset's space is laid over it turned to that heading and nothing else. The Titan leans as it walks and when it crouches; the cockpit stays level, for the pilot's stomach.
+- **The cockpit** is the Titan's head: the camera is put at `TITAN_EYE`, facing the way the Titan does, and the headset's space is laid over it turned to that heading and nothing else.
+  - The way the headset faces (`HeadsetFrame.gaze`, from the viewer pose's orientation) is the pilot's look: it goes to the server as the input's yaw and pitch, and the Titan's head turns to it as far as its neck allows ([VEHICLES-XIV.md](VEHICLES-XIV.md)).
+  - The eye rides round the neck with the head (`headEye`), so the cockpit swings a few metres as the pilot looks about.
+  - The Titan leans as it walks and when it crouches; the cockpit stays level, for the pilot's stomach.
 - **The hands** (`client/src/xr/hands.ts`): each controller is measured from where the pilot's shoulder is taken to be (19 cm out from the eyes and 22 cm down), and that reach, 40 times over (the Titan's arm of 24 m against a pilot's of 0.6 m), is asked of the fist from the Titan's shoulder, in its hull's frame. It goes to the server as the same `hands` message the mouse and keyboard send, so the server knows nothing of VR.
 - **The cost.** Everything is drawn twice. Measured on the screen's path, the frame is the same as before this was added (forest 3.5 ms and water 3.0 ms at 2268×1258 on the M-series laptop, old and new alternated three times with `gpu-bench.mjs`). What two eyes at a headset's size cost on the PC is not known yet: start with Graphics on Low.
 

@@ -1,6 +1,6 @@
 import { Color } from '@ragnarok/engine'
 import type { Sphere } from '@ragnarok/engine'
-import { ROOF_FLAT, type Bridge, type Building, type TileData } from '@/world'
+import { BUILDING_CHURCH, ROOF_FLAT, type Bridge, type Building, type TileData } from '@/world'
 import { shellOf } from '@/sim/carve'
 import { drawnOpenings, facing, openingQuads, openingTriangles, openingsFor, type Opening } from './windows'
 import { eaveQuads, eaveTriangles, eavesFor, type EaveStrip } from './eaves'
@@ -25,10 +25,12 @@ const BUILDING_COLORS = [0xa8432f, 0xd9b45a, 0xeee9dc, 0xc9c4b8, 0xb5bda4, 0xd8c
 /** Roofs: slate, tile and timber for pitched ones, concrete grey for flat ones. */
 const ROOF_COLORS = [0xb5543f, 0x6d7a8c, 0x8d6e63, 0x4f5d6b, 0x9c4a3c]
 const FLAT_ROOF_COLORS = [0xb0b4ba, 0x9aa0a6, 0xc4c7cc]
+/** A church: whitewashed render under a copper roof gone dark green. */
+const CHURCH_COLORS = { wall: 0xf4f0e6, roof: 0x4a5a55 }
 
 /** What of a tile its buildings are drawn from: small enough to send to the worker. */
 export interface BuildingTile {
-  buildings: readonly Pick<Building, 'first' | 'walls' | 'roof' | 'roofKind' | 'cells' | 'paint' | 'look'>[]
+  buildings: readonly (Pick<Building, 'first' | 'walls' | 'roof' | 'roofKind' | 'cells' | 'paint' | 'look'> & { kind?: number })[]
   bridges: readonly Bridge[]
   collision: TileData['collision']
   look?: TileData['look']
@@ -61,12 +63,13 @@ export function buildingTransferables(buffers: BuildingBuffers): ArrayBuffer[] {
 }
 
 /**
- * The wall and roof colours of building `index`: the ones the importer gave it, or else picked from
- * the palettes, stable between reloads and varied across tiles by `salt`.
+ * The wall and roof colours of building `index`: the ones the importer gave it, or a church's, or
+ * else picked from the palettes, stable between reloads and varied across tiles by `salt`.
  */
 export function buildingColors(tile: Pick<BuildingTile, 'buildings'>, index: number, salt: number): { wall: number; roof: number } {
   const building = tile.buildings[index]!
   if (building?.paint) return { wall: building.paint[0], roof: building.paint[1] }
+  if (building?.kind === BUILDING_CHURCH) return CHURCH_COLORS
   const palette = building?.roofKind === ROOF_FLAT ? FLAT_ROOF_COLORS : ROOF_COLORS
   return { wall: BUILDING_COLORS[(index + salt) % BUILDING_COLORS.length]!, roof: palette[(index + salt) % palette.length]! }
 }
@@ -319,7 +322,12 @@ export function buildingBuffers(tile: BuildingTile, salt: number, destroyed: Rea
         soup.quad(corners, rgb)
       })
       soup.surface = Surface.Plain
-      openingQuads(openings[index] ?? [], (corners, rgb, normal) => soup.quad(facing(corners, normal), rgb))
+      openingQuads(openings[index] ?? [], (corners, rgb, normal, masonry) => {
+        // The wall filled in round an arched head is wall, in its colour and pattern.
+        soup.surface = masonry ? surfaces.wall : Surface.Plain
+        soup.quad(facing(corners, normal), masonry ? [wall.r, wall.g, wall.b] : rgb)
+      })
+      soup.surface = Surface.Plain
     } else if (own) soup.faces(own, wall, roof)
     else {
       soup.surface = surfaces.wall

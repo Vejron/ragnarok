@@ -647,7 +647,7 @@ export function lookFracture(look: CollisionMesh, range: LookRange, shell: Shell
   }
   // Windows and doors, but only those with wall still standing round them: a frame does not hang in the air.
   const framed = drawnOpenings(removed.size === 0 ? openings : openings.filter((o) => openingStands(shell, removed, o)), facade.inside.length > 0)
-  openingQuads(framed, (corners, rgb) => out.poly(corners, rgb, shade, true))
+  openingQuads(framed, (corners, rgb, _normal, masonry) => out.poly(corners, masonry ? wall : rgb, shade, true))
   return out.soup()
 }
 

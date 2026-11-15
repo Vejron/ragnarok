@@ -1,137 +1,44 @@
-//! Fences and power poles (`Tile::lines`) as something to walk into.
+//! Fences, walls and power poles (`Tile::lines`) as something to run into.
 //!
-//! A pole is a collider like a rock's: it stops soldiers, vehicles and bullets alike. A fence stops a
-//! soldier only. Vehicles go through it, and so do bullets, through wire, and rays. So it is not a
-//! collider, which every query would meet, but lines on the ground that a soldier's step is cut short
-//! of (`Fences::stop`) after the character controller has moved them. Server and client do the same
-//! arithmetic over the same lines in the same order, so a step against a fence is predicted.
+//! A pole is a collider like a rock's: it stops soldiers, vehicles and bullets alike, and nothing
+//! fells it. A fence or a wall is a row of pieces, one between each two points of its line
+//! (`shared::world::line_pieces`), each a thin box that can be broken on its own ([`Obj::Line`]).
+//!
+//! A wall is solid to everything, in the trees' group: a light vehicle stops on it, a heavy one goes
+//! through and the server breaks what it ploughs. A fence is very weak: it is in a group no body
+//! touches (`fence_groups`), so only what asks without naming groups meets it. That is a soldier's
+//! step and the bots' grid. Vehicles, rounds and sight go through, and the server breaks the pieces a
+//! vehicle drives over. Server and client build the same pieces under the same ids, so a soldier's
+//! step against one is predicted.
 
+use crate::{Obj, TREE_GROUP, fence_groups};
 use rapier3d::prelude::*;
 use shared::quant::from_cm;
-use shared::world::{LINE_FENCE, LINE_FENCE_HIGH, LINE_POWER, LINE_POWER_MAJOR, Line};
-use std::collections::BTreeMap;
+use shared::world::{LINE_POWER, LINE_POWER_MAJOR, Line, LinePiece, line_pieces};
 
-/// Height of a wire fence and of a game fence, metres, as the client draws them (`render/lines.ts`).
-pub const FENCE_HEIGHT: f32 = 1.25;
-pub const GAME_FENCE_HEIGHT: f32 = 2.05;
-/// How far from a fence's line its posts and wire reach, metres: a soldier keeps their radius past it.
-const FENCE_HALF: f32 = 0.06;
-/// Feet this little under a fence's top still clear it, metres.
-const CLEAR: f32 = 0.02;
+/// How far a wall's piece reaches past each of its ends, metres, so that a corner is closed.
+const WALL_LAP: f32 = 0.1;
 
-/// One straight piece of a fence: its ends `[x, z]` and the height of its top over each, metres.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Fence {
-    a: [f32; 2],
-    b: [f32; 2],
-    top: [f32; 2],
+/// The collider of one piece of a fence or wall: a box from under the ground (`SUNK`) to its top,
+/// turned to the piece's line and tilted to the slope it stands on.
+fn piece_collider(piece: &LinePiece) -> Collider {
+    let def = piece.def;
+    let across = [piece.b[0] - piece.a[0], piece.base[1] - piece.base[0], piece.b[1] - piece.a[1]];
+    let flat = across[0].hypot(across[2]);
+    let length = flat.hypot(across[1]);
+    // The box's X runs along the piece: turned about Y to its heading, then about its own Z to the slope.
+    let turn = Rotation::from_rotation_y((-across[2]).atan2(across[0])) * Rotation::from_rotation_z(across[1].atan2(flat));
+    let half_height = (def.height + SUNK) / 2.0;
+    let centre = Vector::new((piece.a[0] + piece.b[0]) / 2.0, (piece.base[0] + piece.base[1]) / 2.0 - SUNK + half_height, (piece.a[1] + piece.b[1]) / 2.0);
+    let lap = if def.wall { WALL_LAP } else { 0.0 };
+    let groups = if def.wall { InteractionGroups::new(TREE_GROUP, Group::ALL, InteractionTestMode::And) } else { fence_groups() };
+    ColliderBuilder::cuboid(length / 2.0 + lap, half_height, def.half).position(Pose::from_parts(centre, turn)).collision_groups(groups).build()
 }
 
-/// The fences of `lines`, piece by piece.
-pub fn fences_of(lines: &[Line]) -> Vec<Fence> {
-    let mut out = Vec::new();
-    for line in lines {
-        let height = match line.kind {
-            LINE_FENCE => FENCE_HEIGHT,
-            LINE_FENCE_HIGH => GAME_FENCE_HEIGHT,
-            _ => continue,
-        };
-        let at = |i: usize| [from_cm(line.points[i][0]), from_cm(line.points[i][1])];
-        let top = |i: usize| line.base.get(i).map_or(0.0, |&base| from_cm(base)) + height;
-        for i in 1..line.points.len() {
-            out.push(Fence { a: at(i - 1), b: at(i), top: [top(i - 1), top(i)] });
-        }
-    }
-    out
-}
-
-/// Every fence in the world, by the tile it came in, so a streamed world holds them in the order the
-/// server's whole world does.
-#[derive(Clone, Debug, Default)]
-pub struct Fences {
-    by_tile: BTreeMap<(u16, u16), Vec<Fence>>,
-}
-
-impl Fences {
-    pub fn set(&mut self, tile: (u16, u16), fences: Vec<Fence>) {
-        if fences.is_empty() {
-            self.by_tile.remove(&tile);
-        } else {
-            self.by_tile.insert(tile, fences);
-        }
-    }
-
-    pub fn remove(&mut self, tile: (u16, u16)) {
-        self.by_tile.remove(&tile);
-    }
-
-    fn all(&self) -> impl Iterator<Item = &Fence> {
-        self.by_tile.values().flatten()
-    }
-
-    /// Where a body of `radius` stepping from `from` to `to` (`[x, z]`), its feet at `feet`, ends up:
-    /// on the side of every fence it started on, no nearer to it than its radius, sliding along it.
-    /// A fence whose top is under its feet is no obstacle.
-    pub fn stop(&self, from: [f32; 2], mut to: [f32; 2], feet: f32, radius: f32) -> [f32; 2] {
-        let reach = radius + FENCE_HALF;
-        // Twice round, for a corner, where pushing off one piece can push into the next.
-        for _ in 0..2 {
-            for fence in self.all() {
-                let (a, b) = (fence.a, fence.b);
-                let lo = [a[0].min(b[0]) - reach, a[1].min(b[1]) - reach];
-                let hi = [a[0].max(b[0]) + reach, a[1].max(b[1]) + reach];
-                if from[0].max(to[0]) < lo[0] || from[1].max(to[1]) < lo[1] || from[0].min(to[0]) > hi[0] || from[1].min(to[1]) > hi[1] {
-                    continue;
-                }
-                let d = [b[0] - a[0], b[1] - a[1]];
-                let length2 = d[0] * d[0] + d[1] * d[1];
-                if length2 < 1e-6 {
-                    continue;
-                }
-                let along = |p: [f32; 2]| (((p[0] - a[0]) * d[0] + (p[1] - a[1]) * d[1]) / length2).clamp(0.0, 1.0);
-                let u = along(to);
-                if feet >= fence.top[0] + (fence.top[1] - fence.top[0]) * u - CLEAR {
-                    continue;
-                }
-                let length = length2.sqrt();
-                let n = [-d[1] / length, d[0] / length];
-                let side = |p: [f32; 2]| (p[0] - a[0]) * n[0] + (p[1] - a[1]) * n[1];
-                let (s0, s1) = (side(from), side(to));
-                let back = if s0 < 0.0 { -1.0 } else { 1.0 };
-                // Through the line within the piece: back to the side it came from.
-                if s0 * s1 < 0.0 {
-                    let k = s0 / (s0 - s1);
-                    let hit = [from[0] + (to[0] - from[0]) * k, from[1] + (to[1] - from[1]) * k];
-                    let w = ((hit[0] - a[0]) * d[0] + (hit[1] - a[1]) * d[1]) / length2;
-                    if (0.0..=1.0).contains(&w) {
-                        to = [to[0] + n[0] * (back * reach - s1), to[1] + n[1] * (back * reach - s1)];
-                    }
-                }
-                // Too near: out from the nearest point of the piece.
-                let u = along(to);
-                let near = [a[0] + d[0] * u, a[1] + d[1] * u];
-                let e = [to[0] - near[0], to[1] - near[1]];
-                let distance = e[0].hypot(e[1]);
-                if distance < reach {
-                    let away = if distance > 1e-4 { [e[0] / distance, e[1] / distance] } else { [n[0] * back, n[1] * back] };
-                    to = [near[0] + away[0] * reach, near[1] + away[1] * reach];
-                }
-            }
-        }
-        to
-    }
-
-    /// Whether a fence higher than `floor` passes within `reach` of `at` (`[x, z]`): for the bots' grid.
-    pub fn near(&self, at: [f32; 2], reach: f32, floor: f32) -> bool {
-        self.all().any(|fence| {
-            let (a, b) = (fence.a, fence.b);
-            let d = [b[0] - a[0], b[1] - a[1]];
-            let length2 = (d[0] * d[0] + d[1] * d[1]).max(1e-6);
-            let u = (((at[0] - a[0]) * d[0] + (at[1] - a[1]) * d[1]) / length2).clamp(0.0, 1.0);
-            let near = [a[0] + d[0] * u, a[1] + d[1] * u];
-            (at[0] - near[0]).hypot(at[1] - near[1]) < reach && fence.top[0] + (fence.top[1] - fence.top[0]) * u > floor
-        })
-    }
+/// The colliders of the fences and walls of `lines` (each tile's, with its `(col, row)`), piece by
+/// piece, each with the object it is.
+pub fn piece_colliders(lines: &[(u16, u16, Line)]) -> Vec<(Collider, Obj)> {
+    line_pieces(lines).iter().map(|piece| (piece_collider(piece), Obj::Line(piece.id))).collect()
 }
 
 /// Wooden power poles: radius and height, metres (`render/lines.ts`).
@@ -183,51 +90,33 @@ pub fn pole_colliders(lines: &[Line]) -> Vec<Collider> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use shared::world::{LINE_FENCE, LINE_WALL, ObjId};
 
-    fn fence(points: &[[i32; 2]], kind: u8) -> Fences {
-        let line = Line { kind, points: points.to_vec(), base: vec![0; points.len()], end: true };
-        let mut fences = Fences::default();
-        fences.set((0, 0), fences_of(&[line]));
-        fences
+    #[test]
+    fn a_piece_is_a_box_along_its_line_from_under_the_ground_to_its_top() {
+        // A wall up a slope: 3 m along +Z, rising 1 m.
+        let line = Line { kind: LINE_WALL, points: vec![[0, 0], [0, 300]], base: vec![0, 100], end: true };
+        let pieces = piece_colliders(&[(2, 3, line)]);
+        assert_eq!(pieces.len(), 1);
+        let (collider, object) = &pieces[0];
+        assert_eq!(*object, Obj::Line(ObjId { col: 2, row: 3, index: 0 }));
+        let aabb = collider.compute_aabb();
+        // Over both ends' tops (1 m wall), under both ends' ground, and thin across.
+        assert!(aabb.maxs.y > 1.9 && aabb.mins.y < -0.2, "{aabb:?}");
+        assert!(aabb.mins.z < 0.0 && aabb.maxs.z > 3.0 && aabb.maxs.x < 0.6 && aabb.mins.x > -0.6, "{aabb:?}");
+        // Halfway along, its middle is halfway up the slope.
+        assert!((collider.translation().y - (0.5 - SUNK + (1.0 + SUNK) / 2.0)).abs() < 1e-4);
     }
 
     #[test]
-    fn a_step_through_a_fence_stops_short_of_it_and_slides_along() {
-        // Along z = 0 from x = -10 m to 10 m.
-        let fences = fence(&[[-1000, 0], [1000, 0]], LINE_FENCE);
-        let [x, z] = fences.stop([0.0, -1.0], [0.3, 1.0], 0.0, 0.35);
-        assert!((z + 0.41).abs() < 1e-4, "kept its radius and the posts' on its own side: {z}");
-        assert!((x - 0.3).abs() < 1e-4, "slid along: {x}");
-        // Walking along it is no trouble, nor is walking away.
-        assert_eq!(fences.stop([0.0, -1.0], [2.0, -1.0], 0.0, 0.35), [2.0, -1.0]);
-        // Round its end is open.
-        assert_eq!(fences.stop([11.0, -1.0], [11.0, 1.0], 0.0, 0.35), [11.0, 1.0]);
-        // From the other side, back the other way.
-        assert!(fences.stop([0.0, 1.0], [0.0, -1.0], 0.0, 0.35)[1] > 0.4);
-    }
-
-    #[test]
-    fn feet_over_the_top_clear_it_and_a_game_fence_is_higher() {
-        let wire = fence(&[[-1000, 0], [1000, 0]], LINE_FENCE);
-        assert_eq!(wire.stop([0.0, -1.0], [0.0, 1.0], 1.3, 0.35), [0.0, 1.0]);
-        let game = fence(&[[-1000, 0], [1000, 0]], LINE_FENCE_HIGH);
-        assert!(game.stop([0.0, -1.0], [0.0, 1.0], 1.3, 0.35)[1] < 0.0);
-    }
-
-    #[test]
-    fn a_corner_holds_from_inside() {
-        // An L: along z = 0, then up x = 0.
-        let fences = fence(&[[-1000, 0], [0, 0], [0, 1000]], LINE_FENCE);
-        let [x, z] = fences.stop([-1.0, 1.0], [0.5, -0.5], 0.0, 0.35);
-        assert!(x <= -0.4 && z >= 0.4, "{x} {z}");
-    }
-
-    #[test]
-    fn the_grid_sees_a_fence_where_it_stands() {
-        let fences = fence(&[[-1000, 0], [1000, 0]], LINE_FENCE);
-        assert!(fences.near([0.0, 0.5], 0.75, 0.0));
-        assert!(!fences.near([0.0, 1.0], 0.75, 0.0));
-        assert!(!fences.near([0.0, 0.5], 0.75, 2.0), "a floor over its top");
+    fn a_wall_is_in_the_trees_group_and_a_fence_in_one_no_body_touches() {
+        let line = |kind| Line { kind, points: vec![[0, 0], [300, 0]], base: vec![0, 0], end: true };
+        let pieces = piece_colliders(&[(0, 0, line(LINE_FENCE)), (0, 0, line(LINE_WALL))]);
+        let car = InteractionGroups::all();
+        assert!(!pieces[0].0.collision_groups().test(car), "a vehicle goes through a fence");
+        assert!(pieces[1].0.collision_groups().test(car), "and stops on a wall");
+        assert!(!pieces[1].0.collision_groups().test(crate::plows_trees()), "which a tank goes through");
+        assert_eq!(pieces[1].1, Obj::Line(ObjId { col: 0, row: 0, index: 1 << 16 }));
     }
 
     #[test]

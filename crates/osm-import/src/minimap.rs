@@ -29,6 +29,11 @@ const ROAD_FAINT_COLOR: Rgb = [0xcf, 0xbd, 0x9c];
 const RAIL_COLOR: Rgb = [0x6b, 0x6b, 0x6b];
 const SNOW: Rgb = [0xf1, 0xf5, 0xfa];
 const SKI_COLOR: Rgb = [0x1f, 0x6f, 0xd6];
+/// A bus line and its stops, and how wide the line and a stop's dot are drawn, pixels.
+const BUS_LINE_COLOR: Rgb = [0xd0, 0x30, 0x30];
+const BUS_STOP_COLOR: Rgb = [0x90, 0x10, 0x10];
+const BUS_LINE_WIDTH: f64 = 2.0;
+const BUS_STOP_DOT: f64 = 6.0;
 /// How much of a winter map is snow laid over the summer's colours.
 const SNOW_COVER: f64 = 0.7;
 
@@ -259,6 +264,17 @@ pub fn render(manifest: &Manifest, tiles: &BTreeMap<(u16, u16), Tile>, overlay: 
 
     if let Some(overlay) = overlay {
         overlay.paint(&mut canvas);
+    }
+
+    // The bus lines over everything, each with a dot at every stop.
+    for line in &manifest.bus_lines {
+        canvas.stroke(&ring(&canvas, &line.points), BUS_LINE_WIDTH, BUS_LINE_COLOR);
+        for &stop in &line.stops {
+            let ([x, z], _) = line.at(stop as f32 / 100.0);
+            let [px, pz] = canvas.px([(x * 100.0) as i32, (z * 100.0) as i32]);
+            let r = BUS_STOP_DOT / 2.0;
+            canvas.fill(&[vec![[px - r, pz - r], [px + r, pz - r], [px + r, pz + r], [px - r, pz + r]]], BUS_STOP_COLOR);
+        }
     }
     canvas
 }

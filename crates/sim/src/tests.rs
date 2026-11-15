@@ -156,7 +156,7 @@ fn jumps_and_comes_back_down() {
 fn a_fence_stops_a_soldier_and_a_power_pole_stops_them_and_a_ray() {
     use shared::world::{LINE_FENCE, LINE_POWER, Line};
     // A fence across x = 5 m, and a pole at (0, -5) m with a line going on past the world's edge.
-    let fence = Line { kind: LINE_FENCE, points: vec![[500, -1000], [500, 1000]], base: vec![0, 0], end: true };
+    let fence = Line { kind: LINE_FENCE, points: vec![[500, -1000], [500, 0], [500, 1000]], base: vec![0, 0, 0], end: true };
     let power = Line { kind: LINE_POWER, points: vec![[0, -500], [0, -9000]], base: vec![0, 0], end: false };
     let world = WorldFile { lines: vec![(0, 0, fence), (0, 0, power)], ..flat_world() };
     let physics = Physics::new(&world).unwrap();
@@ -167,7 +167,7 @@ fn a_fence_stops_a_soldier_and_a_power_pole_stops_them_and_a_ray() {
     }
     let x = character.position[0];
     assert!(x < 5.0 - CAPSULE_RADIUS && x > 4.0, "x = {x}");
-    // Along it is open: the stop slides.
+    // Along it is open: the soldier slides.
     let mut along = Character { position: [4.0, STANDING_Y, 0.0], ..standing() };
     for _ in 0..TICK_RATE {
         physics.move_character(&mut along, &toward(0), TICK_DT);
@@ -182,6 +182,39 @@ fn a_fence_stops_a_soldier_and_a_power_pole_stops_them_and_a_ray() {
     }
     // A thin pole is walked round, not through: the capsule slides off it.
     assert!(walker.position[0].abs() > CAPSULE_RADIUS, "{:?}", walker.position);
+}
+
+#[test]
+fn a_wall_stops_a_soldier_and_a_ray_until_its_piece_is_broken() {
+    use shared::world::{LINE_FENCE, LINE_WALL, Line, ObjId};
+    // A wall across x = 5 m in two pieces, and a fence across x = -5 m.
+    let wall = Line { kind: LINE_WALL, points: vec![[500, -300], [500, 0], [500, 300]], base: vec![0, 0, 0], end: true };
+    let fence = Line { kind: LINE_FENCE, points: vec![[-500, -300], [-500, 300]], base: vec![0, 0], end: true };
+    let world = WorldFile { lines: vec![(0, 0, wall), (0, 0, fence)], ..flat_world() };
+    let mut physics = Physics::new(&world).unwrap();
+    let east = InputFrame { seq: 1, strafe: 0, forward: 127, yaw: -1571, buttons: BUTTON_RUN, pitch: 0, view: 0, slot: 0 };
+    let walk = |physics: &Physics, z: f32| {
+        let mut character = Character { position: [0.0, STANDING_Y, z], ..standing() };
+        for _ in 0..TICK_RATE * 2 {
+            physics.move_character(&mut character, &east, TICK_DT);
+        }
+        character.position[0]
+    };
+    assert!(walk(&physics, -1.5) < 5.0 - CAPSULE_RADIUS);
+    // A round stops on the wall, half a metre up, and goes through the fence.
+    assert!(physics.cast_ray_static([0.0, 0.5, -1.5], [1.0, 0.0, 0.0], 10.0).is_some_and(|d| (d - 4.75).abs() < 0.02));
+    assert_eq!(physics.cast_ray_static([0.0, 0.5, -1.5], [-1.0, 0.0, 0.0], 10.0), None);
+    // Both are found by what looks for things to break.
+    let piece = |line: u32, segment: u32| Obj::Line(ObjId { col: 0, row: 0, index: (line << 16) | segment });
+    assert_eq!(physics.objects_near([5.0, 0.5, -1.5], 0.5), vec![piece(0, 0)]);
+    assert_eq!(physics.objects_near([-5.0, 0.5, 0.0], 0.5), vec![piece(1, 0)]);
+    // The first piece of the wall broken, the way is open there, and shut beside it.
+    assert!(physics.destroy(piece(0, 0)));
+    physics.refresh();
+    assert!(walk(&physics, -1.5) > 6.0);
+    assert!(walk(&physics, 1.5) < 5.0 - CAPSULE_RADIUS);
+    assert_eq!(physics.cast_ray_static([0.0, 0.5, -1.5], [1.0, 0.0, 0.0], 10.0), None);
+    assert!(!physics.take_changed().is_empty(), "the bots' grid is told");
 }
 
 #[test]
@@ -832,12 +865,12 @@ fn looked_house() -> (WorldFile, Shell, Vec<Tri>) {
         mesh.vertices.extend([[t[0], t[1], t[2]], [t[3], t[4], t[5]], [t[6], t[7], t[8]]]);
         mesh.triangles.push([base, base + 1, base + 2]);
     }
-    let building = Building { height: r, footprint: vec![[0, 0], [w, 0], [w, d], [0, d]], base: 0, first: 0, walls: 0, roof: 0, roof_kind: 2, cells: shell.cells(), paint: None };
+    let building = Building { height: r, footprint: vec![[0, 0], [w, 0], [w, d], [0, d]], base: 0, first: 0, walls: 0, roof: 0, roof_kind: 2, kind: 0, cells: shell.cells(), paint: None };
     let world = WorldFile {
         buildings: vec![building],
         building_ids: vec![ObjId { col: 0, row: 0, index: 0 }],
         building_triangles: vec![[0, floor.len() as u32]],
-        looks: vec![BuildingLook { walls: walls.clone(), roof: roof.clone(), windows: shared::windows::openings_of(&look, range), inside: Vec::new() }],
+        looks: vec![BuildingLook { walls: walls.clone(), roof: roof.clone(), windows: shared::windows::openings_of(&look, range, 0), inside: Vec::new() }],
         collision: mesh,
         ..flat_world()
     };
@@ -890,16 +923,16 @@ fn furnished_house() -> (WorldFile, Vec<shared::interior::Part>) {
         look.vertices.extend([[t[0], t[1], t[2]], [t[3], t[4], t[5]], [t[6], t[7], t[8]]]);
         look.triangles.push([base, base + 1, base + 2]);
     }
-    let windows = shared::windows::openings_of(&look, [0, walls.len() as u32, roof.len() as u32]);
+    let windows = shared::windows::openings_of(&look, [0, walls.len() as u32, roof.len() as u32], 0);
     let footprint = vec![[0, 0], [w, 0], [w, d], [0, d]];
-    let parts = shared::interior::rooms(&footprint, &walls, &roof, &windows);
+    let parts = shared::interior::rooms(&footprint, &walls, &roof, &windows, 0);
     let mut mesh = CollisionMesh::default();
     for t in &floor {
         let base = mesh.vertices.len() as u32;
         mesh.vertices.extend([[t[0], t[1], t[2]], [t[3], t[4], t[5]], [t[6], t[7], t[8]]]);
         mesh.triangles.push([base, base + 1, base + 2]);
     }
-    let building = Building { height: h, footprint, base: 0, first: 0, walls: 0, roof: 0, roof_kind: 0, cells: Shell::new(&walls, &roof).unwrap().cells(), paint: None };
+    let building = Building { height: h, footprint, base: 0, first: 0, walls: 0, roof: 0, roof_kind: 0, kind: 0, cells: Shell::new(&walls, &roof).unwrap().cells(), paint: None };
     let inside = parts.iter().filter(|p| p.collided()).map(|p| p.tri).collect();
     let world = WorldFile {
         buildings: vec![building],
