@@ -5,7 +5,7 @@ A world can have public transport. With `"buses": true` in its `area.json` the i
 ## In play
 
 - **A line** runs along major road (motorway down to secondary) from one end to the other. Buses drive it out and back, keeping to the right of the road's middle, at up to 13 m/s.
-- **A stop** has a blue sign on a pole on each side of the road. A bus halts at every stop for 8 seconds. The lines and their stops are drawn in red on the minimap.
+- **A stop** has one blue sign on a pole, on the verge. It is never on a bridge, and on a divided road it is on the outside, not between the carriageways. A bus halts at every stop for 8 seconds. The lines and their stops are drawn in red on the minimap.
 - **Boarding** is E at the front door, as for any vehicle. The driver has seat 0, so you get the first free passenger seat. E again gets you off, wherever the bus is.
 - **At the end of a line** everyone is set down. The bus waits out its halt and is then turned to face back along the line on the other side of the road. A twelve-metre bus cannot turn round on a ten-metre road, so this is a snap, not a manoeuvre.
 - **The driver can be killed.** The driver is a civilian with empty hands and no team, who does not come back. A bus with no driver is anyone's: its driver's seat is free and it drives like any car. Sixty seconds later a fresh bus with a new driver starts from an end of the line. The old bus is taken away once it has stood empty for a minute, and a wrecked one after 8 seconds.
@@ -20,7 +20,7 @@ A bus does not brake for people on the road: like every vehicle it runs them ove
 | `worlds/<name>/area.json` | `"buses": true` |
 | Map editor | **Public transport (buses)** in the world panel. Generate the world again to apply. |
 | `osm-import` | Reads the option, finds the lines once the tiles are built (`buslines.rs`) and puts them in the manifest. It prints each line's length and stops. |
-| `Manifest::bus_lines` | The lines, whole, like the ski lifts: `BusLine { points, stops }`, centimetres. Empty when the option is off. |
+| `Manifest::bus_lines` | The lines, whole, like the ski lifts: `BusLine { points, stops, signs }`, centimetres. Empty when the option is off. |
 | Server | `WorldFile::bus_lines`, copied from the manifest. The `Buses` mechanic does nothing when it is empty. |
 | Client | `WorldData.busLines`. `render/busstops.ts` draws the signs. |
 
@@ -39,7 +39,7 @@ The lines are found on the finished world, from the `ROAD_MAJOR` pieces in its t
 
 On `worlds/home` (Umeå, 13.8 km²) this gives three lines of 4.1 km, 2.3 km and 1.2 km with 11, 7 and 4 stops, from 46 mapped bus stops. The major roads there are the motorways round the town, so the lines run round it rather than through it: the streets through the town are minor roads.
 
-A stop that lands on a bridge has its signs on the ground under the bridge.
+7. **Where a stop can be.** Not within 10 m of a road a bridge's deck carries (so not on a bridge, and not under one), and only where its sign has somewhere to stand (`sign`): 0.6 m outside the road's edge, or up to 3 m further to get past a cycle path, at least 0.5 m clear of every road and path, on a side with no carriageway within 8 m beyond the edge. The right of the way out is tried first. A mapped stop that fails this is left out, a generated one is moved along the line in 10 m steps to the nearest place that passes, and a line is cut back at each end to a point that passes.
 
 ## Running them (`crates/server/src/mechanics/buses.rs`)
 
@@ -69,3 +69,5 @@ Driving real roads for the first time without a player's eyes found places no ve
 - **Banks.** OpenStreetMap often ends a bridge part of the way down the bank. A bridge whose road goes on rising past its end is lengthened along that road to the top of the rise, up to 40 m (`onto_the_banks`).
 - **Ramps** now come all the way down to the lip every deck has over the ground, where they stopped up to 0.4 m short.
 - **Piers** are left out where they would stand on a road or a track under the bridge.
+- **A road's end at a bridge** dips down the bank and reads as a cutting. A deck over a cutting that a lengthened bridge now covers is left out (`clear_of_bridges`), where it stood as a small second deck under the bridge's end.
+- **The road on a deck** is no longer painted on the ground under it (`Road::carried`, [WORLD.md](WORLD.md)).

@@ -11,7 +11,7 @@ describe('grass', () => {
       { kind: COVER_URBAN, rings: [square(0, 80, 40, 100)] },
       { kind: COVER_PARK, rings: [square(0, 0, 40, 40)] },
     ],
-    roads: [{ kind: ROAD_MINOR, width: 6, points: [[0, 50], [100, 50]] as Point2[] }],
+    roads: [{ kind: ROAD_MINOR, width: 6, carried: false, points: [[0, 50], [100, 50]] as Point2[] }],
     water: new Float32Array(),
     buildings: [{ footprint: square(10, 10, 20, 20) } as Building],
     streams: [{ width: 2, points: [[90, 0], [90, 40]] as Point2[] }],

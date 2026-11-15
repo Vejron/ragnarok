@@ -8,12 +8,12 @@ use tokio::sync::{mpsc, oneshot};
 /// A line from (-200, -20) east to (200, -20), then south to (200, 100), with a stop at each end and
 /// one 200 m along: 520 m, which two buses run.
 fn line() -> BusLine {
-    BusLine { points: vec![[-20_000, -2_000], [-10_000, -2_000], [0, -2_000], [10_000, -2_000], [20_000, -2_000], [20_000, 10_000]], stops: vec![0, 20_000, 52_000] }
+    BusLine { points: vec![[-20_000, -2_000], [-10_000, -2_000], [0, -2_000], [10_000, -2_000], [20_000, -2_000], [20_000, 10_000]], stops: vec![0, 20_000, 52_000], signs: Vec::new() }
 }
 
 /// A flat 600 m square with the road of `lines` and those lines on it.
 fn game(lines: Vec<BusLine>) -> Game {
-    let roads = lines.iter().map(|line| Road { width: 1000, kind: 0, points: line.points.clone() }).collect();
+    let roads = lines.iter().map(|line| Road { width: 1000, kind: 0, carried: false, points: line.points.clone() }).collect();
     let map = WorldFile { version: WORLD_VERSION, half_extent: 30_000, spawns: vec![[-25_000, -25_000]], roads, bus_lines: lines, ..Default::default() };
     let mut game = Game::new(map, 0).unwrap();
     game.world.clear_pickups();
@@ -105,7 +105,7 @@ fn each_line_gets_its_buses_with_a_driver_in_each() {
 #[test]
 fn a_long_world_of_lines_never_runs_more_than_the_most_buses() {
     // Five lines with a stop every 58 m want three buses each, fifteen between them.
-    let long = |z: i32| BusLine { points: vec![[-29_000, z], [29_000, z]], stops: (0..=10).map(|n| n * 5_800).collect() };
+    let long = |z: i32| BusLine { points: vec![[-29_000, z], [29_000, z]], stops: (0..=10).map(|n| n * 5_800).collect(), signs: Vec::new() };
     let mut game = game((-2..=2).map(|n| long(n * 10_000)).collect());
     run(&mut game, 1.0);
     assert_eq!(game.world.entities.count::<Bus>(), BUS_MAX);

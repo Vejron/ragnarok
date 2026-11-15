@@ -350,9 +350,6 @@ pub const KILL_Y: f32 = -50.0;
 /// Body-local axes: +X right, +Y up, -Z forward (yaw 0 faces -Z, like a soldier).
 /// Seats in a jeep.
 pub const CAR_SEATS: usize = 4;
-/// How far from the middle of the road a bus stop's sign stands, metres: on the verge of a major road,
-/// which is ten metres wide.
-pub const BUS_STOP_SETBACK: f32 = 5.6;
 /// The most seats any vehicle has (the bus); bounds the seat list of any vehicle.
 pub const MAX_SEATS: usize = 13;
 /// Vehicles in the world; bounds the vehicle list in a snapshot. The map editor's placed vehicles and the

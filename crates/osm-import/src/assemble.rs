@@ -398,13 +398,16 @@ fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collecti
     }
     let mut candidates = Vec::new();
     let side = tile_size;
-    // Bridge roads are drawn like any road (and on the minimap) but never offer a spawn: the
-    // ground under them is a river bed.
-    for ((points, width, kind), spawnable) in roads.iter().map(|(points, width, kind)| ((points, width, kind), true)).chain(bridges.iter().map(|(points, width, kind, ..)| ((points, width, kind), false))) {
-        let (width, kind) = (*width, *kind);
-        for run in clip_polyline(points, half) {
+    // A road on a deck is a road like any other to drive and on the minimap, but it is not drawn on
+    // the ground under the deck and never offers a spawn: the ground there is a river bed, or the
+    // way under the bridge. That is every bridge's road, and the stretch of a ground road a deck
+    // lies over (a deck over a cutting, a bridge lengthened onto its bank).
+    let decks: Vec<(&[P], f64)> = bridges.iter().chain(&rail_bridges).filter(|bridge| bridge.3 != Pylons::Carried).map(|(points, width, ..)| (points.as_slice(), *width)).collect();
+    let laid = roads.iter().flat_map(|(points, width, kind)| carried_runs(points, &decks).into_iter().map(move |(run, carried)| (run, *width, *kind, carried)));
+    for (points, width, kind, carried) in laid.chain(bridges.iter().map(|(points, width, kind, ..)| (points.clone(), *width, *kind, true))) {
+        for run in clip_polyline(&points, half) {
             // Sample along each run, not just at vertices, so long straight roads still offer spawns.
-            for pair in run.windows(2).filter(|_| spawnable) {
+            for pair in run.windows(2).filter(|_| !carried) {
                 let ([ax, az], [bx, bz]) = (pair[0], pair[1]);
                 let steps = ((bx - ax).hypot(bz - az) / 8.0).ceil().max(1.0) as usize;
                 candidates.extend((0..=steps).map(|s| {
@@ -412,7 +415,7 @@ fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collecti
                     [ax + (bx - ax) * t, az + (bz - az) * t]
                 }));
             }
-            per_tile(&manifest, half, side, &run, |key, points| tiles.entry(key).or_default().roads.push(Road { width: cm(width), kind, points }));
+            per_tile(&manifest, half, side, &run, |key, points| tiles.entry(key).or_default().roads.push(Road { width: cm(width), kind, carried, points }));
         }
     }
     // Tracks are cut at tile borders like roads, but offer no spawns: nobody starts on a railway.
@@ -864,7 +867,7 @@ pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::B
     eprintln!("bridges: {} decks over cuttings the roads cross", cuts.len());
     bridges.extend(cuts.into_iter().map(|(points, width, kind)| (points, width, kind, Pylons::Flush, Deck::new())));
     let before = bridges.len();
-    let bridges = onto_the_banks(joined_bridges(bridges), &roads, &ground);
+    let bridges = clear_of_bridges(onto_the_banks(joined_bridges(bridges), &roads, &ground));
     let (bridges, shared) = twin_decks(bridges);
     eprintln!("bridges: {before} ways built as {} bridges, {} of them one deck under two carriageways", bridges.len() - shared.len(), shared.len());
     // A shared deck draws no road of its own, as a railway's does not: its carriageways are the roads.
@@ -1103,6 +1106,77 @@ fn onto_the_banks(mut bridges: Vec<BridgeWay>, roads: &[(Vec<P>, f64, u8)], grou
         }
     }
     bridges
+}
+
+/// A road's end at a bridge often dips down the bank, which reads as a cutting, and the bridge is
+/// then lengthened over it (`onto_the_banks`): a deck over a cutting with half its length or more
+/// on a bridge's line is left out, where it would be a second small deck under the bridge.
+fn clear_of_bridges(mut bridges: Vec<BridgeWay>) -> Vec<BridgeWay> {
+    let covered = |cut: &BridgeWay, bridges: &[BridgeWay]| {
+        let on = |p: P| bridges.iter().filter(|bridge| bridge.3 != Pylons::Flush).any(|(line, width, ..)| line.windows(2).any(|pair| distance_to_segment(p, pair[0], pair[1]) < width / 2.0));
+        2 * cut.0.iter().filter(|&&p| on(p)).count() >= cut.0.len()
+    };
+    let keep: Vec<bool> = bridges.iter().map(|bridge| bridge.3 != Pylons::Flush || !covered(bridge, &bridges)).collect();
+    let mut keep = keep.into_iter();
+    bridges.retain(|_| keep.next().unwrap_or(true));
+    bridges
+}
+
+/// How far apart a road near a deck is tested for lying on it, metres.
+const CARRY_STEP: f64 = 2.0;
+/// A road lies on a deck where it runs along it, within this of the deck's line in direction (the
+/// cosine of the angle between them): a road that crosses under a bridge is on the ground.
+const CARRY_ALONG: f64 = 0.8;
+
+/// Cuts a ground road into runs on the ground (`false`) and runs a deck carries (`true`): where it
+/// runs along a deck's line within half the deck's width. `decks` are `(centre line, width)`. Runs
+/// meet at a shared point, and a road near no deck comes back whole and unchanged.
+fn carried_runs(points: &[P], decks: &[(&[P], f64)]) -> Vec<(Vec<P>, bool)> {
+    let near: Vec<&(&[P], f64)> = decks
+        .iter()
+        .filter(|(line, width)| {
+            let grow = width / 2.0 + CARRY_STEP;
+            let (x0, z0) = line.iter().fold((f64::MAX, f64::MAX), |(x, z), p| (x.min(p[0] - grow), z.min(p[1] - grow)));
+            let (x1, z1) = line.iter().fold((f64::MIN, f64::MIN), |(x, z), p| (x.max(p[0] + grow), z.max(p[1] + grow)));
+            points.iter().any(|p| p[0] >= x0 && p[0] <= x1 && p[1] >= z0 && p[1] <= z1) || points.windows(2).any(|pair| clip_segment(pair[0], pair[1], [x0, z0, x1, z1]).is_some())
+        })
+        .collect();
+    if near.is_empty() || points.len() < 2 {
+        return vec![(points.to_vec(), false)];
+    }
+    let on_deck = |a: P, b: P| {
+        let (mid, d) = ([(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0], [b[0] - a[0], b[1] - a[1]]);
+        near.iter().any(|(line, width)| {
+            line.windows(2).any(|pair| {
+                let e = [pair[1][0] - pair[0][0], pair[1][1] - pair[0][1]];
+                let span = e[0].hypot(e[1]).max(1e-9);
+                let along = (d[0] * e[0] + d[1] * e[1]).abs() / (d[0].hypot(d[1]) * span).max(1e-9);
+                // Beside the segment, not past its ends (but for a metre, which closes the outside of a bend).
+                let run = ((mid[0] - pair[0][0]) * e[0] + (mid[1] - pair[0][1]) * e[1]) / span;
+                along > CARRY_ALONG && run > -1.0 && run < span + 1.0 && distance_to_segment(mid, pair[0], pair[1]) < width / 2.0
+            })
+        })
+    };
+    // Each segment in steps of `CARRY_STEP`: a run ends where the next step is on the other side.
+    let mut runs: Vec<(Vec<P>, bool)> = Vec::new();
+    for pair in points.windows(2) {
+        let (a, b) = (pair[0], pair[1]);
+        let steps = ((b[0] - a[0]).hypot(b[1] - a[1]) / CARRY_STEP).ceil().max(1.0) as usize;
+        let at = |k: usize| [a[0] + (b[0] - a[0]) * k as f64 / steps as f64, a[1] + (b[1] - a[1]) * k as f64 / steps as f64];
+        let mut from = 0;
+        for k in 0..steps {
+            let carried = on_deck(at(k), at(k + 1));
+            // The steps of this segment so far are one straight piece, ended where the side changes.
+            if k + 1 == steps || on_deck(at(k + 1), at(k + 2)) != carried {
+                match runs.last_mut() {
+                    Some((run, side)) if *side == carried => run.push(at(k + 1)),
+                    _ => runs.push((vec![at(from), at(k + 1)], carried)),
+                }
+                from = k + 1;
+            }
+        }
+    }
+    runs
 }
 
 /// The two carriageways of a divided road cross on bridges of their own, side by side, and their
@@ -2264,6 +2338,32 @@ mod tests {
         let ground = Ground { origin: -15_000, cell: 500, side: 61, heights: vec![0; 61 * 61] };
         assert!(bridge::build(&roads[0].0, 10.0, ROAD_MAJOR, Pylons::Carried, &[], &ground, &[], 150.0).is_empty(), "a carried road builds nothing");
     }
+    #[test]
+    fn a_deck_over_a_cutting_that_a_bridge_now_covers_is_left_out() {
+        let bridge = (vec![[0.0, 0.0], [200.0, 0.0]], 10.0, ROAD_MAJOR, Pylons::None, Deck::new());
+        let cut = |from: f64, to: f64| ((0..=8).map(|k| [from + (to - from) * f64::from(k) / 8.0, 1.0]).collect::<Vec<P>>(), 10.0, ROAD_MAJOR, Pylons::Flush, Deck::new());
+        // One under the bridge's end, one mostly past its end, one on another road.
+        let (under, past, elsewhere) = (cut(4.0, 20.0), cut(-14.0, 2.0), (vec![[50.0, 80.0], [70.0, 80.0]], 10.0, ROAD_MAJOR, Pylons::Flush, Deck::new()));
+        let kept = clear_of_bridges(vec![bridge.clone(), under, past.clone(), elsewhere.clone()]);
+        assert_eq!(kept.iter().map(|way| way.0.clone()).collect::<Vec<_>>(), [bridge.0, past.0, elsewhere.0]);
+    }
+
+    #[test]
+    fn a_road_is_carried_where_it_runs_along_a_deck_and_not_where_it_crosses_under_one() {
+        let deck: Vec<P> = vec![[40.0, 0.0], [60.0, 0.0]];
+        let decks = [(deck.as_slice(), 10.0)];
+        // A road along the deck's line is on the ground up to the deck, carried over it, and on the ground again.
+        let runs = carried_runs(&[[0.0, 0.0], [30.0, 0.0], [100.0, 0.0]], &decks);
+        assert_eq!(runs.iter().map(|run| run.1).collect::<Vec<_>>(), [false, true, false]);
+        assert_eq!(runs[0].0, vec![[0.0, 0.0], [30.0, 0.0], [40.0, 0.0]]);
+        assert_eq!(runs[1].0, vec![[40.0, 0.0], [60.0, 0.0]]);
+        assert_eq!(runs[2].0, vec![[60.0, 0.0], [100.0, 0.0]]);
+        // One that crosses under it, and one far from it, stay whole on the ground.
+        for road in [vec![[50.0, -40.0], [50.0, 40.0]], vec![[0.0, 90.0], [100.0, 90.0]]] {
+            assert_eq!(carried_runs(&road, &decks), vec![(road.clone(), false)]);
+        }
+    }
+
     #[test]
     fn a_bridge_that_ends_down_the_bank_is_lengthened_to_the_top_of_it() {
         // Ground at 10 m west of x = 0 and falling east of it at one in three, down to a river bed.

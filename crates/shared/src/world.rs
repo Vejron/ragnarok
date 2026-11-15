@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::terrain::Ground;
 
-pub const WORLD_VERSION: u8 = 22;
+pub const WORLD_VERSION: u8 = 24;
 
 /// `Manifest::theme`: the world as it always was.
 pub const THEME_PLAIN: u8 = 0;
@@ -161,6 +161,9 @@ pub struct BusLine {
     /// Where each stop is, as a distance along `points` from the first of them, centimetres, in
     /// order. The first is at the start and the last at the end.
     pub stops: Vec<u32>,
+    /// Where the sign of each stop stands, centimetres: one a stop, on the verge of the road on the
+    /// side clear of other roads, and never on a bridge.
+    pub signs: Vec<[i32; 2]>,
 }
 
 impl BusLine {
@@ -886,6 +889,9 @@ pub struct Road {
     pub width: i32,
     /// `ROAD_*`.
     pub kind: u8,
+    /// Whether a bridge's deck carries this stretch. It is driven, routed along and mapped like any
+    /// road, but it is not drawn on the ground, which is the river bed or the way under the bridge.
+    pub carried: bool,
     pub points: Vec<[i32; 2]>,
 }
 
@@ -1338,7 +1344,7 @@ mod tests {
             theme: THEME_WINTER,
             lifts: vec![Lift { kind: LIFT_CHAIR, seats: 4, points: vec![[0, 0], [5_000, 20_000]], base: vec![100, 900], cable: vec![410, 1_210] }],
             open_water: true,
-            bus_lines: vec![BusLine { points: vec![[0, 0], [30_000, 0], [30_000, 40_000]], stops: vec![0, 30_000, 70_000] }],
+            bus_lines: vec![BusLine { points: vec![[0, 0], [30_000, 0], [30_000, 40_000]], stops: vec![0, 30_000, 70_000], signs: vec![[0, 560], [30_000, 560], [30_560, 40_000]] }],
         };
         assert_eq!(Manifest::decode(&manifest.encode()).unwrap(), manifest);
         // A bus line knows its length, and where it is and which way it runs any distance along it.
@@ -1353,7 +1359,7 @@ mod tests {
         assert!(Manifest { open_water: false, ..manifest.clone() }.frozen());
         let tile = Tile {
             buildings: vec![Building { height: 800, footprint: vec![[0, 0], [100, 0], [100, 100]], base: 250, first: 0, walls: 6, roof: 2, roof_kind: ROOF_GABLE, kind: BUILDING_CHURCH, cells: Cells { origin: [-100, 0, 200], dims: [2, 1, 5], solid: Bits(vec![0b1011, 3]), roof: Bits(vec![1, 0]) }, paint: Some([0xeee3c8, 0x4f5866]) }, Building { height: 300, ..Default::default() }],
-            roads: vec![Road { width: 600, kind: ROAD_MINOR, points: vec![[0, 0], [500, 500]] }],
+            roads: vec![Road { width: 600, kind: ROAD_MINOR, carried: false, points: vec![[0, 0], [500, 500]] }],
             collision: CollisionMesh { vertices: vec![[0, 0, 0]], triangles: vec![[0, 0, 0]] },
             ground: vec![0, 10, 20, 30],
             cover: vec![Cover { kind: COVER_WATER, rings: vec![vec![[0, 0], [100, 0], [100, 100]]] }],

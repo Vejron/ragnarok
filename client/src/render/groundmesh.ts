@@ -35,7 +35,8 @@ export function ribbonsOf(tile: Pick<DrapedTile, 'roads' | 'rails' | 'ski'>, gro
   const size = (ground.side - 1) * ground.cell
   const border = [ground.x0, ground.z0, ground.x0 + size, ground.z0 + size] as const
   const shade = new GroundShade(heightSampler(ground, around), ground.cell, border)
-  return [...roadRibbons(tile.roads, shade, border), ...railRibbons(tile.rails, shade, border), ...skiRibbons(tile.ski, shade)]
+  // A road a bridge's deck carries is not on the ground under it.
+  return [...roadRibbons(tile.roads.filter((road) => !road.carried), shade, border), ...railRibbons(tile.rails, shade, border), ...skiRibbons(tile.ski, shade)]
 }
 
 /** The lake and river surface and the streams of `tile`. */

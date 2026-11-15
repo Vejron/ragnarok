@@ -18,7 +18,7 @@ fn game() -> Game {
         // Eleven spots in the middle for the cars, tanks, walker and helicopter, and one far out at each end
         // for the planes. Players start on the first six.
         spawns: [[-25_000, 0], [25_000, 0]].into_iter().chain((0..11).map(|i| [i * 3000 - 12_000, 0])).collect(),
-        roads: vec![Road { width: 800, kind: 0, points: vec![[-30_000, 0], [30_000, 0]] }],
+        roads: vec![Road { width: 800, kind: 0, carried: false, points: vec![[-30_000, 0], [30_000, 0]] }],
         ..Default::default()
     };
     // Loose items would take a test's use button.

@@ -290,7 +290,7 @@ mod tests {
         let mut tile = Tile::default();
         // A 100 m building in the north-east quadrant, and a road along X = 0.
         tile.buildings.push(Building { footprint: vec![[20_000, -30_000], [30_000, -30_000], [30_000, -20_000], [20_000, -20_000]], ..Default::default() });
-        tile.roads.push(Road { width: 800, kind: ROAD_MAJOR, points: vec![[0, -90_000], [0, 90_000]] });
+        tile.roads.push(Road { width: 800, kind: ROAD_MAJOR, carried: false, points: vec![[0, -90_000], [0, 90_000]] });
         // A track along Z = 500 m, crossing the road.
         tile.rails.push(Rail { gauge: 144, kind: RAIL_TRAIN, points: vec![[-90_000, 50_000], [90_000, 50_000]] });
         let tiles = BTreeMap::from([((0, 0), tile)]);

@@ -3,7 +3,7 @@ import tables from './sim/tables.generated.json'
 
 /** Mirrors `crates/shared/src/world.rs`. Coordinates are metres: +X east, +Z south, +Y up. */
 
-export const WORLD_VERSION = 22
+export const WORLD_VERSION = 24
 
 /** `Manifest::theme`, mirrors `crates/shared/src/world.rs`. */
 export const THEME_WINTER = 1
@@ -244,6 +244,8 @@ export const BUILDING_CHURCH = 1
 export interface Road {
   width: number
   kind: number
+  /** Whether a bridge's deck carries this stretch: driven and mapped like any road, not drawn on the ground under it. */
+  carried: boolean
   points: Point2[]
 }
 
@@ -329,11 +331,13 @@ export interface Lift {
 
 /**
  * A bus line (`BusLine` in `crates/shared/src/world.rs`), metres: the middle of the road it follows
- * from one end to the other, and how far along that each of its stops is.
+ * from one end to the other, how far along that each of its stops is, and where each stop's one
+ * sign stands.
  */
 export interface BusLine {
   points: Point2[]
   stops: number[]
+  signs: Point2[]
 }
 
 /** The point `along` metres from the start of `line` (held to its ends) and the unit direction the line runs there. */
@@ -448,7 +452,7 @@ export function trunkRadiusCm(kind: number, heightCm: number, crownCm: number): 
 const noCollision = (): CollisionMesh => ({ vertices: new Float32Array(), triangles: new Uint32Array() })
 
 export function decodeManifest(bytes: Uint8Array): WorldData {
-  const [version, frame, halfExtent, tileSize, spawns, tiles, groundCell, theme, lifts, openWater, busLines] = decode(bytes) as [number, [number, number, number], number, number, number[][], number[][], number, number, [number, number, number[][], number[], number[]][], boolean, [number[][], number[]][]]
+  const [version, frame, halfExtent, tileSize, spawns, tiles, groundCell, theme, lifts, openWater, busLines] = decode(bytes) as [number, [number, number, number], number, number, number[][], number[][], number, number, [number, number, number[][], number[], number[]][], boolean, [number[][], number[], number[][]][]]
   if (version !== WORLD_VERSION) throw new Error(`world version ${version}, expected ${WORLD_VERSION}`)
   const refs = tiles.map(([col, row, hash]) => ({ col: col!, row: row!, hash: hash! }))
   const grid = Math.max(1, Math.ceil((2 * halfExtent) / Math.max(tileSize, 1)))
@@ -467,7 +471,7 @@ export function decodeManifest(bytes: Uint8Array): WorldData {
     theme,
     lifts: lifts.map(([kind, seats, points, base, cable]) => ({ kind, seats, points: points.map(point), base: base.map(metres), cable: cable.map(metres) })),
     openWater,
-    busLines: busLines.map(([points, stops]) => ({ points: points.map(point), stops: stops.map(metres) })),
+    busLines: busLines.map(([points, stops, signs]) => ({ points: points.map(point), stops: stops.map(metres), signs: signs.map(point) })),
     inside,
     collision: noCollision(),
     bytes,
@@ -542,7 +546,7 @@ function flatIndices(triangles: readonly number[][]): Uint32Array {
 export function decodeTile(bytes: Uint8Array): TileData {
   const [buildings, roads, [vertices, triangles], ground, cover, trees, water, streams, bridges, detail, rails, ski, lines, stones, look] = decode(bytes) as [
     [number, number[][], number, number, number, number, number, number, [number[], number[], Uint8Array, Uint8Array], [number, number] | null][],
-    [number, number, number[][]][],
+    [number, number, boolean, number[][]][],
     [number[][], number[][]],
     [number, Uint8Array],
     [number, number[][][]][],
@@ -575,7 +579,7 @@ export function decodeTile(bytes: Uint8Array): TileData {
       paint,
       look: looks[index] && looks[index]![1]! + looks[index]![2]! > 0 ? { first: looks[index]![0]!, walls: looks[index]![1]!, roof: looks[index]![2]!, kind, footprint: Int32Array.from(footprint.flat()) } : null,
     })),
-    roads: roads.map(([width, kind, points]) => ({ width: metres(width), kind, points: points.map(point) })),
+    roads: roads.map(([width, kind, carried, points]) => ({ width: metres(width), kind, carried, points: points.map(point) })),
     cover: cover.map(([kind, rings]) => ({ kind, rings: rings.map((ring) => ring.map(point)) })),
     trees: trees.map(([x, z, base, height, crown, kind, solid]) => ({
       x: metres(x),

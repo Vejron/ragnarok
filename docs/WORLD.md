@@ -681,6 +681,13 @@ The manifest also carries what is needed whole wherever the player is, not cut i
 lifts and, on a world with public transport, the bus lines (`Manifest::bus_lines`, BUSES.md), which
 came with `WORLD_VERSION` 22.
 
+A road in a tile has `carried` set where a bridge's deck carries it (`WORLD_VERSION` 23): every
+bridge's own road, and the stretch of a ground road that runs along under a deck over a cutting or
+a bridge lengthened onto its bank (`carried_runs` in `assemble.rs`). Such a stretch is driven,
+routed along and drawn on the minimap like any road, but the client does not paint it on the ground
+under the deck, and nobody spawns on it. A road that crosses under a bridge is not carried.
+`WORLD_VERSION` 24 added each bus stop's sign to its line (`BusLine::signs`).
+
 Both sides check `WORLD_VERSION` and read only the current layout: there is no reading of older
 worlds. When the layout changes, bump it in `crates/shared/src/world.rs` **and**
 `client/src/world.ts` and re-import every world (`osm-import --area worlds/<name>/area.json --out worlds/<name>/world.msgpack`, or

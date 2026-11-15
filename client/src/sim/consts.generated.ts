@@ -496,12 +496,6 @@ export const KILL_Y = -50.0
  */
 export const CAR_SEATS = 4
 
-/**
- * How far from the middle of the road a bus stop's sign stands, metres: on the verge of a major road,
- * which is ten metres wide.
- */
-export const BUS_STOP_SETBACK = 5.6
-
 /** The most seats any vehicle has (the bus); bounds the seat list of any vehicle. */
 export const MAX_SEATS = 13
 

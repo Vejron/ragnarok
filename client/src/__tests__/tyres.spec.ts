@@ -51,8 +51,8 @@ describe('surfaces', () => {
       { kind: COVER_WATER, rings: [[[60, 60], [80, 60], [80, 80], [60, 80]] as [number, number][]] },
     ],
     roads: [
-      { kind: ROAD_MINOR, width: 6, points: [[0, 50], [100, 50]] as [number, number][] },
-      { kind: ROAD_PATH, width: 3, points: [[90, 0], [90, 30]] as [number, number][] },
+      { kind: ROAD_MINOR, width: 6, carried: false, points: [[0, 50], [100, 50]] as [number, number][] },
+      { kind: ROAD_PATH, width: 3, carried: false, points: [[90, 0], [90, 30]] as [number, number][] },
     ],
     water: new Float32Array(),
   }
@@ -74,7 +74,7 @@ describe('surfaces', () => {
       { kind: RAIL_TRAIN, gauge: 1.435, points: [[20, 0], [20, 100]] as [number, number][] },
       { kind: RAIL_TRAM, gauge: 1.435, points: [[60, 0], [60, 40]] as [number, number][] },
     ]
-    const surface = rasterSurface({ cover: [], roads: [{ kind: ROAD_MINOR, width: 6, points: [[0, 50], [100, 50]] }], water: new Float32Array(), rails }, 0, 0, 100)
+    const surface = rasterSurface({ cover: [], roads: [{ kind: ROAD_MINOR, width: 6, carried: false, points: [[0, 50], [100, 50]] }], water: new Float32Array(), rails }, 0, 0, 100)
     const at = (x: number, z: number) => surface.cells[Math.floor(z / 2) * surface.side + Math.floor(x / 2)]
     expect(at(20, 20)).toBe(SURFACE_DIRT)
     expect(at(26, 20)).toBe(SURFACE_GRASS)
