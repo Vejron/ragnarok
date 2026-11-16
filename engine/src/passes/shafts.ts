@@ -5,12 +5,15 @@
  * edges become shafts. The output pass adds the result.
  */
 
+import { FINITE_WGSL } from './finite.wgsl'
+
 const FORMAT: GPUTextureFormat = 'rgba16float'
 /** Samples along each line toward the light. */
 const STEPS = 32
 
 function shaftsWgsl(multisampled: boolean) {
   return /* wgsl */ `
+${FINITE_WGSL}
 struct Shafts {
   // The light's place on screen (uv), the screen's aspect (width / height), the shafts' strength (0 when off).
   light: vec4f,
@@ -41,7 +44,7 @@ fn maskSky(@builtin(position) pos: vec4f) -> @location(0) vec4f {
   for (var i = 0; i < 4; i++) {
     let p = min(base + vec2i(1 + (i & 1) * 2, 1 + (i >> 1) * 2), full - 1);
     if (textureLoad(depth, p, 0) == 0.0) {
-      light += min(textureLoad(hdr, p, 0).rgb, vec3f(3.0)) * 0.25;
+      light += min(finite(textureLoad(hdr, p, 0).rgb, 3.0), vec3f(3.0)) * 0.25;
     }
   }
   let uv = (vec2f(base) + 2.0) / vec2f(full);

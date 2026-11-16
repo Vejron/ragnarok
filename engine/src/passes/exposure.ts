@@ -1,4 +1,5 @@
 import type { Adaptation } from '../scene/scene'
+import { FINITE_WGSL } from './finite.wgsl'
 
 /** Samples a side the metering takes of the image: 32 × 32, a 16 × 16 workgroup taking four each. */
 const GRID = 32
@@ -10,6 +11,7 @@ const GRID = 32
  * numbers back now and then for the stats.
  */
 const WGSL = /* wgsl */ `
+${FINITE_WGSL}
 struct Params {
   // the key, the strength, the least and the most exposure.
   curve: vec4f,
@@ -33,7 +35,9 @@ fn main(@builtin(local_invocation_id) id: vec3u, @builtin(local_invocation_index
   for (var i = 0u; i < 4u; i++) {
     let cell = vec2f(id.xy * 2u + vec2u(i & 1u, i >> 1u)) + 0.5;
     let uv = cell / ${GRID}.0;
-    let c = textureLoad(hdr, vec2i(uv * size), 0).rgb;
+    // A pixel that is not a number would make the adapted value NaN, which then never eases back.
+    // An infinite one counts as the brightest half precision holds.
+    let c = finite(textureLoad(hdr, vec2i(uv * size), 0).rgb, 65504.0);
     let luminance = dot(c, vec3f(0.2126, 0.7152, 0.0722));
     // The middle of the screen counts about three times as much as its corners.
     let w = 1.0 - 0.65 * min(length(uv - 0.5) * 1.41, 1.0);

@@ -528,6 +528,14 @@ Its own README gives the benchmark against three's two renderers, from when a co
   against a connected one. The server only accepts the dev origins `localhost:5173` and
   `127.0.0.1:5173`.
 - Headless Chrome with software rendering is about 100× too slow for timings. Use a real GPU.
+- A pass that averages the HDR image must make each read safe first. One pixel that is not a number,
+  or is infinite (a division by zero, an overflow of half precision), became a white blob through bloom,
+  and a negative infinity a black rectangle a third of the screen wide: the prefilter averaged 13 taps
+  before it clamped, `-inf × 0` is NaN, and the halving mips carry it everywhere. Bloom clamps each tap
+  to 0..64 with NaN as 0 (`tap` in `passes/bloom.ts`); the exposure meter and the shafts' mask read
+  through `finite` (`passes/finite.wgsl.ts`), NaN and −∞ as black and +∞ as their brightest. The bad
+  pixel itself is still drawn (black); the odd stray one turns up now and then, most after switching from
+  high to low quality mid-game, and is not worth hunting.
 - Memory is measured by `client/scripts/mem-bench.mjs` ([MEMORY.md](MEMORY.md)). A mesh or texture made
   with `uploadOnce` lets its arrays go once the GPU has them: it cannot be changed after (but for
   `Geometry.collapseRange`), and it is not uploaded to a new device. Whoever makes one must make it
