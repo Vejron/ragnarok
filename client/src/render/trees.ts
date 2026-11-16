@@ -374,7 +374,10 @@ fn picture(cell: vec2f, weight: f32, q: vec3f, sight: vec3f, fit: vec4f, lod: f3
     return out;
   }
   let inside = clamp(vec2f(local.x, -local.y) * 0.5 + 0.5, vec2f(0.5 / FRAME_PX), vec2f(1.0 - 0.5 / FRAME_PX));
-  let tileAt = vec2f(fit.y % TILES, floor(fit.y / TILES)) * FRAMES;
+  // The kind's tile reaches here interpolated, and some GPUs (NVIDIA's) bring a constant through a
+  // hair off: 3 as 2.9999998, whose row and column are another kind's. Rounded, it is exact.
+  let tile = round(fit.y);
+  let tileAt = vec2f(tile % TILES, floor(tile / TILES)) * FRAMES;
   let uv = (tileAt + cell + inside) * (FRAME_PX / ATLAS_PX);
   let albedo = textureSampleLevel(impostorAlbedo, materialSampler, uv, lod);
   // Well off the tree: nothing more to read. Most of the quad is.

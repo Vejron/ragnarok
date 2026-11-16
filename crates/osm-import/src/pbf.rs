@@ -140,7 +140,6 @@ impl Index {
 
     /// Everything in the index that reaches into any of `pieces`, sorted by id within each type.
     pub fn read(&self, pieces: &[[f64; 4]]) -> Result<Data> {
-        use std::os::unix::fs::FileExt;
         let mut wanted = BTreeSet::new();
         for piece in pieces {
             wanted.extend(around(*piece));
@@ -152,7 +151,7 @@ impl Index {
             .filter_map(|cell| self.cells.get(&cell).copied())
             .map(|(offset, len)| -> Result<Data> {
                 let mut bytes = vec![0; usize::try_from(len)?];
-                file.read_exact_at(&mut bytes, offset)?;
+                read_exact_at(&file, &mut bytes, offset)?;
                 let mut data = Data::default();
                 let mut reader = std::io::Cursor::new(&bytes[..]);
                 while (reader.position() as usize) < bytes.len() {
@@ -174,6 +173,33 @@ impl Index {
 }
 
 /// `degrees` in 1e-7 degrees.
+/// Fills `bytes` from `file` starting `offset` bytes in, without moving a shared cursor, so the
+/// index's cells can be read from many threads at once.
+#[cfg(unix)]
+fn read_exact_at(file: &std::fs::File, bytes: &mut [u8], offset: u64) -> std::io::Result<()> {
+    use std::os::unix::fs::FileExt;
+    file.read_exact_at(bytes, offset)
+}
+
+/// Fills `bytes` from `file` starting `offset` bytes in. Windows has no `read_exact_at`, so this
+/// repeats `seek_read` until the buffer is full.
+#[cfg(windows)]
+fn read_exact_at(file: &std::fs::File, mut bytes: &mut [u8], mut offset: u64) -> std::io::Result<()> {
+    use std::os::windows::fs::FileExt;
+    while !bytes.is_empty() {
+        match file.seek_read(bytes, offset) {
+            Ok(0) => return Err(std::io::ErrorKind::UnexpectedEof.into()),
+            Ok(n) => {
+                bytes = &mut bytes[n..];
+                offset += n as u64;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
+}
+
 fn fixed(degrees: f64) -> i32 {
     (degrees * SCALE).round() as i32
 }

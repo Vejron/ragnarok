@@ -15,8 +15,14 @@ fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
   return vec4f(uv * 2.0 - 1.0, 0.0, 1.0);
 }
 
+// One read, made safe to blur: a NaN (all exponent bits set and a mantissa) counts as black, and
+// anything brighter than 64 (an infinity among them) as 64, so one broken or blinding pixel cannot
+// smear across the screen. The bits are tested, not \`x != x\`, which a compiler may fold away.
 fn tap(uv: vec2f) -> vec3f {
-  return textureSampleLevel(src, smp, uv, 0.0).rgb;
+  let c = textureSampleLevel(src, smp, uv, 0.0).rgb;
+  let bits = bitcast<vec3u>(c);
+  let nan = ((bits & vec3u(0x7f800000u)) == vec3u(0x7f800000u)) & ((bits & vec3u(0x007fffffu)) != vec3u(0u));
+  return select(clamp(c, vec3f(0.0), vec3f(64.0)), vec3f(0.0), nan);
 }
 
 // The 13-tap downsample from "Next Generation Post Processing in Call of Duty": no shimmer on small bright things.
@@ -41,8 +47,7 @@ fn down(uv: vec2f, t: vec2f) -> vec3f {
 fn prefilter(@builtin(position) pos: vec4f) -> @location(0) vec4f {
   let size = vec2f(textureDimensions(src));
   let uv = pos.xy * 2.0 / size;
-  // Clamp so one blinding pixel cannot smear across the screen.
-  var c = min(down(uv, 1.0 / size), vec3f(64.0));
+  let c = down(uv, 1.0 / size);
   let peak = max(c.r, max(c.g, c.b));
   let knee = max(p.y, 1e-4);
   let soft = clamp(peak - p.x + knee, 0.0, 2.0 * knee);
