@@ -502,6 +502,10 @@ pub struct Vehicle {
     pub parts: [u8; PARTS],
     /// Ticks before it may throw sparks again.
     pub scrape_in: u8,
+    /// Its lamps are on: switched by its driver's `BUTTON_LAMP`, and out once nobody drives it or it is wrecked.
+    pub lamp: bool,
+    /// The driver's `BUTTON_LAMP` was down last tick: holding it switches the lamps once.
+    pub lamp_held: bool,
 }
 
 impl Vehicle {

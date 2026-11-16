@@ -9,7 +9,7 @@ import { TitanHands } from '@/titanhands'
 import { fistsFromHands, PILOT_ARM, PILOT_SHOULDER_DOWN, PILOT_SHOULDER_OUT, reversedDepth } from '@/xr/hands'
 import { kindView } from '@/kinds'
 import { seatView } from '@/seats'
-import { HANDS_GRIP_LEFT, HANDS_GRIP_RIGHT, HANDS_REACH_LEFT, HANDS_REACH_RIGHT, KIND_TITAN, THRUST_AIR, THRUST_LIFT, TITAN_LAMP } from '@/net/codec'
+import { HANDS_GRIP_LEFT, HANDS_GRIP_RIGHT, HANDS_REACH_LEFT, HANDS_REACH_RIGHT, KIND_TITAN, THRUST_AIR, THRUST_LIFT } from '@/net/codec'
 import { BUTTON_ALT, BUTTON_FIRE, BUTTON_RUN, TITAN_ELBOW_POLE, TITAN_EYE, TITAN_FIST_REST, TITAN_FOREARM_LENGTH, TITAN_HEAD_DOWN, TITAN_HEAD_PIVOT, TITAN_HEAD_TURN, TITAN_REACH, TITAN_UPPER_ARM_LENGTH, TITAN_RIDE_HEIGHT, TITAN_SHOULDER, TITAN_STEP_LIFT } from '@/sim/consts'
 import { aimsReticle, seatHint } from '@/seathints'
 import { vehicleDef } from '@/sim/vehicles'
@@ -90,14 +90,11 @@ describe('TitanModel', () => {
     titan.dispose()
   })
 
-  it('shines its searchlight from its visor the way its head faces, when it is switched on', () => {
+  it('shines its searchlight from its visor the way its head faces', () => {
     const titan = new TitanModel(0)
     titan.setLimbs({ ...AT_REST, head_yaw: 0.6, head_pitch: -0.4 })
     titan.update(STANDING, IDENTITY)
-    expect(titan.searchlight()).toBeNull()
-    titan.setLimbs({ ...AT_REST, head_yaw: 0.6, head_pitch: -0.4, flags: TITAN_LAMP })
-    titan.update(STANDING, IDENTITY)
-    const beam = titan.searchlight()!
+    const beam = titan.searchlight()
     expect(beam.direction.distanceTo(visor(titan))).toBeLessThan(1e-6)
     // It starts within a couple of metres of the pilot's eye, ahead of it.
     const eye = headEye([0.6, -0.4]).add(new Vector3(...STANDING))

@@ -95,6 +95,9 @@ pub const FLAG_GRAZING: u8 = FLAG_CROWING;
 /// A zombie is clawing at someone, from its wind-up to the blow. The rooster's crowing bit: a
 /// soldier never sets it.
 pub const FLAG_CLAWING: u8 = FLAG_CROWING;
+/// A vehicle's lamps are on (headlights, or a helicopter's or a Titan's searchlight). The grounded
+/// bit: a vehicle sends nothing else in its flags.
+pub const FLAG_LAMP: u8 = FLAG_GROUNDED;
 
 const _: () = assert!(
     crate::items::ITEM_COUNT as u16 <= (FLAG_HELD_MASK >> FLAG_HELD_SHIFT) as u16 + 1,
@@ -183,8 +186,6 @@ pub const HANDS_REACH_RIGHT: u8 = 1 << 3;
 /// `replicated::Titan::flags` only: the hand holds something (a soldier or a vehicle).
 pub const HANDS_FULL_LEFT: u8 = 1 << 4;
 pub const HANDS_FULL_RIGHT: u8 = 1 << 5;
-/// `replicated::Titan::flags` only: the searchlight in its visor is on.
-pub const TITAN_LAMP: u8 = 1 << 6;
 
 /// `replicated::Limbs::lost` bits: the limbs a soldier has lost. The same bits shifted up by
 /// `LIMB_BLEED_SHIFT` are the stumps still bleeding.

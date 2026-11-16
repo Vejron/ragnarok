@@ -61,6 +61,7 @@ The docs are in [docs/](docs/).
 - [GRAVEYARDS.md](docs/GRAVEYARDS.md): tombstones of three kinds in every cemetery and churchyard from OpenStreetMap, stood in rows along the yard's paths or in rows of their own where it has none, solid and unbreakable like rocks
 - [LIFTS.md](docs/LIFTS.md): ski lifts from OpenStreetMap, every one built as a chair lift whose chairs run on the server's clock, boarded with E at a station and ridden round until you jump off
 - [BUSES.md](docs/BUSES.md): public transport, a world option like winter: bus lines found along the major roads, with stops, and buses the server drives along them that anyone can ride, or take once the driver is gone
+- [HEADLIGHTS.md](docs/HEADLIGHTS.md): every vehicle's lamps, which its driver switches with L: headlights along the nose, a helicopter's searchlight under its gun and a Titan's in its visor
 
 ## Requirements
 

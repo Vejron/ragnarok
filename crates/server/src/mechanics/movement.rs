@@ -23,8 +23,10 @@ impl Mechanic for Movement {
             let carrying = super::backpack::carries(world, id);
             let mut player = world.entities.of_mut::<Player>(id);
             let player = &mut *player;
+            // A driver's lamp button is the vehicle's (`Vehicles`), not their own headlamp's.
             let lamp = player.input.buttons() & BUTTON_LAMP != 0;
-            player.lamp ^= lamp && !player.lamp_held;
+            let driving = player.seat.is_some_and(|seat| seat.index == 0);
+            player.lamp ^= lamp && !player.lamp_held && !driving;
             player.lamp_held = lamp;
             let skis = player.input.buttons() & BUTTON_SKIS != 0;
             let switch_skis = skis && !player.ski_held;

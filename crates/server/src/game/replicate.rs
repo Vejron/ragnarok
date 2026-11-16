@@ -176,9 +176,6 @@ impl Game {
                 }
             }
             let head = entities.get::<crate::mechanics::TitanHead>(id).copied().unwrap_or_default();
-            if head.lamp {
-                flags |= TITAN_LAMP;
-            }
             wire::Titan {
                 lx,
                 ly,
@@ -210,6 +207,7 @@ impl Game {
             pintle,
             thrust,
             arms,
+            flags: vehicle.lamp.then_some(wire::Flags { flags: FLAG_LAMP, stance: STANCE_STANDING }),
             health: Some(wire::Health { hp: entities.get::<Health>(id).map_or(0, |health| health.hp) }),
             damage: (vehicle.damage != [0; shared::protocol::DAMAGE_SLOTS]).then_some(wire::Damage { parts: vehicle.damage }),
             // A gun fixed to a ship goes where the ship takes it: its gunner has nothing to predict.

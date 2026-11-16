@@ -3,7 +3,7 @@ use super::*;
 use crate::entities::{Health, HurtBy};
 use crate::game::{Command, Game, Outgoing};
 use sim::STANDING_Y;
-use shared::protocol::{InputFrame, KIND_DRONE, THRUST_AIR, THRUST_BOOST, THRUST_LIFT};
+use shared::protocol::{FLAG_LAMP, InputFrame, KIND_DRONE, THRUST_AIR, THRUST_BOOST, THRUST_LIFT};
 use shared::world::{Road, WORLD_VERSION};
 use tokio::sync::{mpsc, oneshot};
 
@@ -161,6 +161,41 @@ fn the_driver_steers_and_passengers_ride_along() {
     let speed_cm = (drive.vx as f32).hypot(drive.vz as f32);
     assert!(speed_cm > 500.0, "driving at over 5 m/s: {drive:?}");
     assert_eq!(game.told(rider, vid).expect("the rider sees the car").drive, None);
+}
+
+#[test]
+fn the_drivers_lamp_button_switches_the_lamps_for_everyone_and_leaving_puts_them_out() {
+    let mut game = game();
+    let (driver, _a) = join(&mut game);
+    let (rider, _b) = join(&mut game);
+    let (mut seq_a, mut seq_b) = (0, 0);
+    idle(&mut game, driver, &mut seq_a, 3);
+    idle(&mut game, rider, &mut seq_b, 3);
+    let vid = move_player_next_to_a_car(&mut game, driver);
+    move_player_next_to_a_car(&mut game, rider);
+    press(&mut game, driver, &mut seq_a, (0, 0), BUTTON_USE, 1);
+    idle(&mut game, driver, &mut seq_a, 3);
+    press(&mut game, rider, &mut seq_b, (0, 0), BUTTON_USE, 1);
+    idle(&mut game, rider, &mut seq_b, 3);
+    let lit = |game: &Game| game.told(rider, vid).and_then(|car| car.flags).is_some_and(|flags| flags.flags & FLAG_LAMP != 0);
+    assert!(!lit(&game), "the lamps start off");
+
+    press(&mut game, driver, &mut seq_a, (0, 0), BUTTON_LAMP, 10);
+    assert!(lit(&game), "held for ten ticks, the driver's press switched them on once");
+    assert!(!game.world.entities.of::<Player>(driver).lamp, "and not the driver's own headlamp");
+    press(&mut game, rider, &mut seq_b, (0, 0), BUTTON_LAMP, 2);
+    assert!(lit(&game), "a passenger's press is their own headlamp's");
+    assert!(game.world.entities.of::<Player>(rider).lamp);
+    idle(&mut game, driver, &mut seq_a, 2);
+    press(&mut game, driver, &mut seq_a, (0, 0), BUTTON_LAMP, 2);
+    assert!(!lit(&game), "and off again");
+
+    idle(&mut game, driver, &mut seq_a, 2);
+    press(&mut game, driver, &mut seq_a, (0, 0), BUTTON_LAMP, 2);
+    assert!(lit(&game));
+    press(&mut game, driver, &mut seq_a, (0, 0), BUTTON_USE, 1);
+    idle(&mut game, driver, &mut seq_a, 3);
+    assert!(!lit(&game), "the driver got out and they went out");
 }
 
 #[test]

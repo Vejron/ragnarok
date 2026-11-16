@@ -42,6 +42,8 @@ export const FLAG_CROWING = 1 << 7
 export const FLAG_GRAZING = FLAG_CROWING
 /** A zombie is reaching back to claw: the rooster's crowing bit, as no soldier sets it. */
 export const FLAG_CLAWING = FLAG_CROWING
+/** A vehicle's lamps are on: the grounded bit, as a vehicle sends nothing else in its flags. */
+export const FLAG_LAMP = FLAG_GROUNDED
 
 /** The AK5. */
 export const WEAPON_RIFLE = 0
@@ -212,8 +214,6 @@ export const HANDS_REACH_LEFT = 1 << 2
 export const HANDS_REACH_RIGHT = 1 << 3
 export const HANDS_FULL_LEFT = 1 << 4
 export const HANDS_FULL_RIGHT = 1 << 5
-/** `Titan.flags` only: the searchlight in its visor is on. Mirrors `TITAN_LAMP`. */
-export const TITAN_LAMP = 1 << 6
 
 /** `Pintle.flags`: the gun is jammed. Mirrors `PINTLE_JAMMED`. */
 export const PINTLE_JAMMED = 1 << 0

@@ -329,7 +329,7 @@ replicated! {
     Motion { vy: i16 as cm, knock_x: i16 as cm, knock_z: i16 as cm }
 
     set 3 flags
-    /// `FLAG_*` bits and the `STANCE_*`.
+    /// `FLAG_*` bits and the `STANCE_*`. A vehicle has it only while its lamps are on (`FLAG_LAMP`).
     Flags { flags: u8, stance: u8 }
 
     diff 4 orientation
@@ -456,7 +456,7 @@ replicated! {
 
     set 28 titan
     /// A Titan's limbs, as drawn: its left and right fists in its hull frame, its left and right feet
-    /// from its hull's centre along the world's axes, and `HANDS_*` flags with `TITAN_LAMP`. The arms and legs between are
+    /// from its hull's centre along the world's axes, and `HANDS_*` flags. The arms and legs between are
     /// the client's to draw. A foot is given where it stands, or the ground it is over while it steps:
     /// `step` is where it is in its walk (`Step::to_byte`), and the client lifts the foot that is in the
     /// air. `weight` is the share of the Titan the

@@ -37,7 +37,7 @@ It is piloted with mouse and keyboard, or from a VR headset with the pilot's own
   - Rounds still meet the head where it is when it faces ahead: its `Role::Hit` solids do not turn.
 - **L switches the searchlight in its visor**, which shines the way the head faces, so it lights what the pilot looks at:
   - It is a narrow cold-white beam that reaches 320 m, at full strength in the dark and 15% of it by day (`Headlights`, `TitanModel.searchlight`).
-  - The server keeps it (`Head::lamp`) and sends it as `TITAN_LAMP` in `titan`'s flags. The press is the Titan's alone: the pilot's own headlamp does not switch with it. It goes out when the pilot leaves or the Titan is wrecked.
+  - It is the Titan's lamps, which every driver switches the same way ([HEADLIGHTS.md](HEADLIGHTS.md)): the server keeps it as `Vehicle::lamp` and sends it as `FLAG_LAMP` in the vehicle's `flags`. The pilot's own headlamp does not switch with it. It goes out when the pilot leaves or the Titan is wrecked.
   - In a headset it is the left hand's X button.
 - **The fists**, under mouse and keyboard (`client/src/titanhands.ts`):
   - With nothing held, both are kept up in a guard towards the point, open.

@@ -398,7 +398,7 @@ export class Game {
   private jumping = false
   /** The headset's left and right index triggers were pulled last frame, for a Titan's pilot. */
   private triggered: [boolean, boolean] = [false, false]
-  /** The headset's searchlight button was down a frame ago. */
+  /** The headset's lamp button was down a frame ago. */
   private lamped = false
   /** The world's ski lifts, drawn, once the world is known. */
   private liftView: LiftView | null = null
@@ -982,7 +982,7 @@ export class Game {
    * Takes what the headset says for this frame: its eyes to draw for, the left thumbstick to walk and
    * turn with (the right one turns too), a ducked head to crouch, and the right hand's A button to jump.
    * Piloting a Titan, the right index trigger fires the gun in its right fist, a pull of the left
-   * launches a missile from its shoulder and the left hand's X button switches its searchlight.
+   * launches a missile from its shoulder. Driving anything, the left hand's X button switches its lamps.
    */
   private readHeadset() {
     if (!this.headset) return
@@ -1003,8 +1003,8 @@ export class Game {
     if (fire !== this.triggered[1]) this.input.hold(BUTTON_ALT, fire)
     if (launch && !this.triggered[0]) this.input.tap(BUTTON_CHUTE)
     this.triggered = [launch, fire]
-    // The left controller's lower face button (X) switches the Titan's searchlight.
-    if (titan && this.worn.lamp && !this.lamped) this.input.tap(BUTTON_LAMP)
+    // The left controller's lower face button (X) switches the driven vehicle's lamps.
+    if (this.seat?.index === 0 && this.worn.lamp && !this.lamped) this.input.tap(BUTTON_LAMP)
     this.lamped = this.worn.lamp
   }
 

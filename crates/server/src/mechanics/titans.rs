@@ -12,8 +12,8 @@
 //! - **A slam.** Come down out of the air at `TITAN_SLAM_SPEED` or faster, it lands as a blast would,
 //!   wider and harder the faster it fell: soldiers are thrown and hurt, vehicles thrown and broken,
 //!   buildings bitten down and trees felled.
-//! - **Its head** turns to where its pilot looks, as far as its neck allows (`Head`), and the searchlight
-//!   in its visor goes on and off at its pilot's `BUTTON_LAMP`.
+//! - **Its head** turns to where its pilot looks, as far as its neck allows (`Head`). The searchlight
+//!   in its visor is its lamps (`Vehicle::lamp`), which its pilot switches as any driver does.
 //!
 //! Its guns (the autocannon in its right fist and the missile tubes on its shoulder) are mounts, worked
 //! by `Gunnery`; the hand that holds the gun never grips.
@@ -73,30 +73,20 @@ struct Hands {
 
 /// How a Titan's head is turned from its hull, radians: a component on its entity. It follows its
 /// pilot's look as far as the neck allows (`TITAN_HEAD_TURN` either side, `TITAN_HEAD_DOWN` and
-/// `TITAN_HEAD_UP`), and faces ahead when nobody pilots it. The searchlight in its visor shines the
-/// way the head faces.
+/// `TITAN_HEAD_UP`), and faces ahead when nobody pilots it. The searchlight in its visor (its lamps,
+/// `Vehicle::lamp`) shines the way the head faces.
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq)]
 pub struct Head {
     /// + turns left.
     pub yaw: f32,
     /// + looks up.
     pub pitch: f32,
-    /// The searchlight is on. It goes out when the pilot leaves.
-    pub lamp: bool,
-    /// The pilot's `BUTTON_LAMP` was down last tick: holding it switches the searchlight once.
-    lamp_held: bool,
 }
 
 /// A tick of the head of Titan `vid` turning towards its `pilot`'s look, seen from the hull, so it
-/// keeps its line while the hull leans and turns, and of its pilot switching its searchlight. The press
-/// is taken from the pilot's input: it is not their own headlamp's too (`Movement`, which runs after).
+/// keeps its line while the hull leans and turns.
 fn turn_head(world: &mut World, vid: u32, pilot: Option<u32>, dt: f32) {
-    let input = pilot.and_then(|pilot| world.entities.get_mut::<Player>(pilot)).map(|mut player| {
-        let input = player.input;
-        player.input.buttons &= !BUTTON_LAMP;
-        input
-    });
-    let pressed = input.is_some_and(|input| input.buttons() & BUTTON_LAMP != 0);
+    let input = pilot.and_then(|pilot| world.entities.get::<Player>(pilot)).map(|player| player.input);
     let look = input.map(|input| super::combat::look(from_mrad(input.yaw), from_mrad(input.pitch()).clamp(-super::combat::MAX_PITCH, super::combat::MAX_PITCH)));
     let (yaw, pitch) = match (look, world.physics.car_pose(vid)) {
         (Some(look), Some(pose)) => super::gunnery::angles(pose.local_dir(look)),
@@ -106,8 +96,6 @@ fn turn_head(world: &mut World, vid: u32, pilot: Option<u32>, dt: f32) {
         world.entities.insert(vid, Head::default());
     }
     let mut head = world.entities.of_mut::<Head>(vid);
-    head.lamp = pilot.is_some() && (head.lamp ^ (pressed && !head.lamp_held));
-    head.lamp_held = pressed;
     let step = TITAN_HEAD_SLEW * dt;
     head.yaw += (yaw.clamp(-TITAN_HEAD_TURN, TITAN_HEAD_TURN) - head.yaw).clamp(-step, step);
     head.pitch += (pitch.clamp(-TITAN_HEAD_DOWN, TITAN_HEAD_UP) - head.pitch).clamp(-step, step);

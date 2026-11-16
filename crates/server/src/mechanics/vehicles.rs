@@ -178,6 +178,8 @@ pub(super) fn add_vehicle(world: &mut World, kind: u8, position: [f32; 3], yaw: 
             damage: [0; shared::protocol::DAMAGE_SLOTS],
             parts: Vehicle::fresh_parts(kind),
             scrape_in: 0,
+            lamp: false,
+            lamp_held: false,
         },
         Health::full(vehicle_hp(kind)),
         Seats::empty(vehicle_def(kind).seats),
@@ -844,7 +846,12 @@ impl Mechanic for Vehicles {
         for vid in world.entities.ids::<With<Vehicle>>() {
             let hp = world.entities.of::<Health>(vid).hp;
             let driver = world.entities.of::<Seats>(vid).rider(0).and_then(|driver| world.entities.get::<Player>(driver)).filter(|driver| driver.seat.is_none_or(|seat| seat.vehicle == vid)).map(|driver| driver.input);
+            let occupied = world.entities.of::<Seats>(vid).rider(0).is_some();
             let mut vehicle = world.entities.of_mut::<Vehicle>(vid);
+            // The driver switches the lamps; they go out when the seat is left or the vehicle is wrecked.
+            let pressed = driver.is_some_and(|input| input.buttons() & BUTTON_LAMP != 0);
+            vehicle.lamp = occupied && hp > 0 && (vehicle.lamp ^ (pressed && !vehicle.lamp_held));
+            vehicle.lamp_held = pressed;
             let towed = world.physics.towed_by(vid).is_some();
             vehicle.controls = if vehicle_def(vehicle.kind).body.towed {
                 // Nothing drives a mortar: it rolls when towed, and holds its brake when it is not.

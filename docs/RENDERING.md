@@ -313,13 +313,12 @@ bindings 7 and 8 (`gpu/lights.ts`); with no light listed nothing is uploaded and
 stresses it.
 
 Headlights are spot lights: the `Headlights` presenter (`entities/presenters/headlights.ts`) holds one
-per jeep, sports car or Roadster with someone in the driver's seat, from the middle of its front `lamp`
-meshes (`CarModel.headlight`), along the nose and dipped a little. They come on with the dusk
-(`nightAt` in `render/daynight.ts`, 0 by day and 1 once the sun is down), fade over a quarter second,
-and go out when the front lamps are smashed (`LIGHTS_BREAK`) or the car is wrecked.
-A helicopter gets a searchlight from the same presenter while anyone is aboard: it hangs under the
-nose gun and turns and nods with it (`HeliModel.searchlight`), reaching 80 m, twice the headlights,
-in a narrower beam.
+per vehicle whose driver has switched its lamps on (L, `FLAG_LAMP`): a car's from the middle of its front
+`lamp` meshes (`CarModel.headlight`), a helicopter's searchlight under its nose gun
+(`HeliModel.searchlight`), a Titan's from its visor, and anything else's from the front of its hull, along
+the nose and dipped a little. They are at full strength after dusk (`nightAt` in `render/daynight.ts`, 0
+by day and 1 once the sun is down) and 15% of it by day, fade over a quarter second, and go out when a
+car's front lamps are smashed (`LIGHTS_BREAK`) or the vehicle is wrecked ([HEADLIGHTS.md](HEADLIGHTS.md)).
 
 ### Day and night
 

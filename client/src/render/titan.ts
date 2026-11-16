@@ -1,7 +1,7 @@
 import { Group, Mesh, type Material, type Node, Matrix4, Quaternion, Vector3 } from '@ragnarok/engine'
 import { parseToonModel, unlitMaterial } from './models'
 import { toonMaterial } from './toon'
-import { HANDS_GRIP_LEFT, HANDS_GRIP_RIGHT, THRUST_LIFT, TITAN_LAMP, wrapAngle } from '@/net/codec'
+import { HANDS_GRIP_LEFT, HANDS_GRIP_RIGHT, THRUST_LIFT, wrapAngle } from '@/net/codec'
 import { TITAN_ANKLE_HEIGHT, TITAN_ELBOW_POLE, TITAN_EYE, TITAN_FIST_REST, TITAN_FOOT_HALF, TITAN_FOREARM_LENGTH, TITAN_GUN_BARRELS, TITAN_GUN_HAND, TITAN_HEAD_DOWN, TITAN_HEAD_PIVOT, TITAN_HEAD_SLEW, TITAN_HEAD_TURN, TITAN_HEAD_UP, TITAN_KNEE_POLE, TITAN_SHIN_LENGTH, TITAN_THIGH_LENGTH, TITAN_UPPER_ARM_LENGTH, TITAN_HALF_EXTENTS, TITAN_RIDE_HEIGHT, TITAN_SHOULDER, TITAN_STEP_LIFT } from '@/sim/consts'
 import type { Titan } from '@/entities/units'
 import { clamp } from '@/math'
@@ -237,11 +237,10 @@ export class TitanModel implements VehicleModel {
   }
 
   /**
-   * The searchlight in its visor, when it is on: from just ahead of the visor, the way the head faces, as
-   * of the last `update`. The vectors are reused by the next call.
+   * The searchlight in its visor: from just ahead of the visor, the way the head faces, as of the last
+   * `update`. The vectors are reused by the next call.
    */
-  searchlight(): { at: Vector3; direction: Vector3 } | null {
-    if (!((this.limbs?.flags ?? 0) & TITAN_LAMP)) return null
+  searchlight(): { at: Vector3; direction: Vector3 } {
     this.root.updateWorldMatrix(true, true)
     const world = new Matrix4().fromArray(this.head.matrixWorld)
     this.beam.direction.set(0, 0, -1).transformDirection(world)
