@@ -1,5 +1,6 @@
 import { compileCustom, type CustomShader } from '../materials/custom'
 import type { Material, ShaderMaterial } from '../scene/material'
+import type { Texture } from '../scene/texture'
 import type { TextureStore } from './textures'
 
 /** A compiled ShaderMaterial program: shared by every material with the same code and resource layout. */
@@ -13,6 +14,19 @@ interface TextureGroup {
   id: number
   group: GPUBindGroup
   used: number
+  /** Cleared when `sweep` drops it, so a material that remembers it asks again. */
+  live: boolean
+}
+
+/** The group a standard material was last given, and the textures (with their versions) it was given for. */
+interface Remembered {
+  map: Texture | null
+  mapVersion: number
+  normal: Texture | null
+  normalVersion: number
+  stones: Texture | null
+  stonesVersion: number
+  entry: TextureGroup
 }
 
 interface CustomState {
@@ -20,7 +34,8 @@ interface CustomState {
   buffer: GPUBuffer
   data: Float32Array<ArrayBuffer>
   version: number
-  texturesKey: string
+  /** The id and version of each texture the group was made with, two numbers a texture. */
+  bound: number[]
   id: number
   group: GPUBindGroup | null
 }
@@ -37,6 +52,8 @@ export class MaterialResources {
   readonly texturesLayout: GPUBindGroupLayout
   private readonly groups = new Map<number, GPUBindGroup>()
   private readonly textureGroups = new Map<string, TextureGroup>()
+  /** Each standard material's last answer, so a frame asks with a few compares and builds no key. */
+  private readonly remembered = new WeakMap<Material, Remembered>()
   private readonly customs = new Map<ShaderMaterial, CustomState>()
   private readonly programs = new Map<string, CustomProgram>()
   private readonly compiled = new WeakMap<ShaderMaterial, CustomShader>()
@@ -67,15 +84,25 @@ export class MaterialResources {
     const normal = material.normalMap
     const stones = material.stones
     if (!map && !normal && !stones) return 0
+    const last = this.remembered.get(material)
+    if (
+      last && last.entry.live &&
+      last.map === map && last.normal === normal && last.stones === stones &&
+      last.mapVersion === (map ? map.version : 0) && last.normalVersion === (normal ? normal.version : 0) && last.stonesVersion === (stones ? stones.version : 0)
+    ) {
+      last.entry.used = this.frame
+      return last.entry.id
+    }
     const key = [map, normal, stones].map((t) => (t ? `${t.id}:${t.version}` : '-')).join('|')
     let entry = this.textureGroups.get(key)
     if (!entry) {
       const id = this.nextId++
-      entry = { id, group: this.makeTextureGroup(map, normal, stones), used: this.frame }
+      entry = { id, group: this.makeTextureGroup(map, normal, stones), used: this.frame, live: true }
       this.textureGroups.set(key, entry)
       this.groups.set(id, entry.group)
     }
     entry.used = this.frame
+    this.remembered.set(material, { map, mapVersion: map ? map.version : 0, normal, normalVersion: normal ? normal.version : 0, stones, stonesVersion: stones ? stones.version : 0, entry })
     return entry.id
   }
 
@@ -118,7 +145,7 @@ export class MaterialResources {
         buffer: this.device.createBuffer({ label: 'shader material params', size: program.shader.uniformBytes, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }),
         data: new Float32Array(program.shader.uniformBytes / 4),
         version: -1,
-        texturesKey: '',
+        bound: [],
         id: this.nextId++,
         group: null,
       }
@@ -136,12 +163,20 @@ export class MaterialResources {
       this.device.queue.writeBuffer(state.buffer, 0, state.data)
     }
     const names = state.program.shader.textureNames
-    const texturesKey = names.map((name) => {
-      const t = material.textures[name]
-      return t ? `${t.id}:${t.version}` : '-'
-    }).join('|')
-    if (!state.group || texturesKey !== state.texturesKey) {
-      state.texturesKey = texturesKey
+    // Asked every frame for every material in sight: the textures are compared by number, with no key built.
+    const bound = state.bound
+    let changed = state.group === null
+    for (let i = 0; i < names.length; i++) {
+      const t = material.textures[names[i]!]
+      const id = t ? t.id : 0
+      const version = t ? t.version : 0
+      if (bound[i * 2] !== id || bound[i * 2 + 1] !== version) {
+        bound[i * 2] = id
+        bound[i * 2 + 1] = version
+        changed = true
+      }
+    }
+    if (changed) {
       const first = names.length ? material.textures[names[0]!] ?? null : null
       state.group = this.device.createBindGroup({
         label: 'shader material',
@@ -168,6 +203,7 @@ export class MaterialResources {
       if (this.frame - entry.used < RETAIN_FRAMES) continue
       this.textureGroups.delete(key)
       this.groups.delete(entry.id)
+      entry.live = false
     }
   }
 

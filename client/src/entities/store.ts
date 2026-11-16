@@ -36,9 +36,15 @@ interface Track {
   samples: { tick: number; entity: Entity }[]
   /** The tick of the first newest scene without it, once there is one. */
   ends: number | null
+  /** The track's answer to a sample, and the velocity in it, written over by the next one. */
+  sampled: Sampled
+  moving: [number, number]
 }
 
-/** An entity drawn at a render tick: its state there, and how it moves across the ground. */
+/**
+ * An entity drawn at a render tick: its state there, and how it moves across the ground. It is the
+ * track's own, written over the next time that entity is sampled (every frame): read it, do not keep it.
+ */
 export interface Sampled {
   entity: Entity
   /** Horizontal velocity `[x, z]`, m/s, between the snapshots either side; zero outside them. */
@@ -60,7 +66,7 @@ export class EntityStore {
     this.newestTick = Math.max(this.newestTick, tick)
     for (const [id, wire] of scene) {
       let track = this.tracks.get(id)
-      if (!track) this.tracks.set(id, (track = { samples: [], ends: null }))
+      if (!track) this.tracks.set(id, (track = { samples: [], ends: null, sampled: { entity: inGameUnits(wire), velocity: STILL }, moving: [0, 0] }))
       const samples = track.samples
       let index = samples.length
       while (index > 0 && samples[index - 1]!.tick > tick) index--
@@ -138,15 +144,26 @@ function velocity(a: Entity, b: Entity, seconds: number): [number, number] {
   return [(b.place.x - a.place.x) / seconds, (b.place.z - a.place.z) / seconds]
 }
 
-function sampleTrack({ samples }: Track, tick: number): Sampled | null {
+function sampleTrack(track: Track, tick: number): Sampled | null {
+  const { samples, sampled, moving } = track
   if (samples.length === 0) return null
   const first = samples[0]!
   const last = samples[samples.length - 1]!
-  if (tick <= first.tick) return { entity: first.entity, velocity: STILL }
-  if (tick >= last.tick) return { entity: last.entity, velocity: STILL }
-  let i = samples.length - 1
-  while (samples[i - 1]!.tick > tick) i--
-  const a = samples[i - 1]!
-  const b = samples[i]!
-  return { entity: blend(a.entity, b.entity, (tick - a.tick) / (b.tick - a.tick)), velocity: velocity(a.entity, b.entity, (b.tick - a.tick) / TICK_RATE) }
+  sampled.velocity = STILL
+  if (tick <= first.tick) sampled.entity = first.entity
+  else if (tick >= last.tick) sampled.entity = last.entity
+  else {
+    let i = samples.length - 1
+    while (samples[i - 1]!.tick > tick) i--
+    const a = samples[i - 1]!
+    const b = samples[i]!
+    sampled.entity = blend(a.entity, b.entity, (tick - a.tick) / (b.tick - a.tick))
+    const seconds = (b.tick - a.tick) / TICK_RATE
+    if (a.entity.place && b.entity.place && seconds > 0) {
+      moving[0] = (b.entity.place.x - a.entity.place.x) / seconds
+      moving[1] = (b.entity.place.z - a.entity.place.z) / seconds
+      sampled.velocity = moving
+    }
+  }
+  return sampled
 }

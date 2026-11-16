@@ -138,13 +138,15 @@ describe('building triangle ranges', () => {
 })
 
 describe('redrawing a tile without a building', () => {
-  /** Vertices of the merged meshes' triangles that are drawn: a building taken out in place leaves its own collapsed to a point. */
+  /** Corners of the merged meshes' triangles that are drawn: a building taken out in place leaves its own collapsed to a point. */
   const vertexCount = (group: Group) =>
     group.children.reduce((n, c) => {
       if (!(c instanceof Mesh) || !c.userData.merged) return n
       const p = c.geometry.positions
-      for (let i = 0; i < p.length; i += 9) {
-        const [ax, ay, az, bx, by, bz, cx, cy, cz] = p.subarray(i, i + 9)
+      const indices = c.geometry.indices!
+      for (let i = 0; i < indices.length; i += 3) {
+        const [a, b, d] = [indices[i]! * 3, indices[i + 1]! * 3, indices[i + 2]! * 3]
+        const [ax, ay, az, bx, by, bz, cx, cy, cz] = [p[a], p[a + 1], p[a + 2], p[b], p[b + 1], p[b + 2], p[d], p[d + 1], p[d + 2]]
         const [ux, uy, uz, vx, vy, vz] = [bx! - ax!, by! - ay!, bz! - az!, cx! - ax!, cy! - ay!, cz! - az!]
         if (Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx) > 0) n += 3
       }
@@ -173,9 +175,9 @@ describe('redrawing a tile without a building', () => {
     const mesh = group.children.find((c): c is Mesh => c instanceof Mesh && c.userData.merged === true)!
     const geometry = mesh.geometry
     rebuildBuildings(group, tile, 0, new Set([0]))
-    // The same geometry, with only the first house's vertices sent again.
+    // The same geometry, with only the first house's vertices collapsed.
     expect(group.children.find((c) => c instanceof Mesh && c.userData.merged)).toBe(mesh)
-    expect(geometry.dirtyRanges).toHaveLength(2)
+    expect(geometry.collapsedRanges).toHaveLength(2)
     const fresh = buildTile(tile, 0, null, undefined, new Set([0]))
     expect(vertexCount(group)).toBe(vertexCount(fresh))
     // Bringing a house back takes a new mesh.

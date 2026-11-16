@@ -138,7 +138,7 @@ None of these modules import the engine or touch the DOM. `render/world.ts` turn
 | `remesh` / `meshed` | both ways | a level / terrain buffers | — / transfer |
 | `drop` | main → worker | the tile to forget | — |
 
-The only copies are the input on its way in, which the main thread keeps using, and, in the worker, the relief maps it keeps for seams.
+The only copies are the input on its way in, which the main thread keeps using, and, in the worker, the ground and relief maps it keeps for seams and the tile's roads and rails, to drape them again on dented ground.
 
 ## Damage
 
@@ -179,7 +179,7 @@ The 1 m dev world (`client/public/dev`, 121 tiles of 256 m). Times are in ms per
 
 `prepareTile` takes about 26 ms of the worker's time per tile, so one worker keeps up with about 35 tiles a second. Tiles are fetched from 450 m away and arrive a few a second at driving speed, so that is plenty.
 
-**Garbage.** Decoding a tile allocates about 0.5 MB on the main thread's heap and keeps about 150 KB of it. The rest is msgpack's temporary arrays for the cover, roads and trees, which die young. That was 1.1 MB before the ground and water became raw bytes. The worker allocates more (about 1.3 MB of shading cache per tile), but its collections never touch the frame.
+**Garbage.** Decoding a tile allocates about 0.5 MB on the main thread's heap and keeps about 150 KB of it. The rest is msgpack's temporary arrays for the cover, roads and trees, which die young. That was 1.1 MB before the ground and water became raw bytes. The worker allocates more (about 1.3 MB of shading cache per tile), but its collections never touch the frame. Off the heap the tile also keeps its ground and water heights (264 KB each) and its collision mesh; the file itself is let go once the physics has read it. [MEMORY.md](MEMORY.md) has what a tile holds in all, and how to measure it.
 
 To measure, from `client/`:
 
@@ -210,7 +210,7 @@ BENCH=1 npx vitest run tiles.bench --silent=false
 
 ## Open
 
-- **Play-test.** Check roads at tile seams, in ditches and on distant tiles (beyond 320 m the terrain is drawn up to 50 cm off the true ground), and water. Record a Chrome trace while driving across the dev world: are any frames over 20 ms, and what are they spent on? Per-frame garbage in the game loop is not measured yet; the trace would show it.
+- **Play-test.** Check roads at tile seams, in ditches and on distant tiles (beyond 320 m the terrain is drawn up to 50 cm off the true ground), and water. Record a Chrome trace while driving across the dev world: are any frames over 20 ms, and what are they spent on? Per-frame garbage in the game loop is measured by `mem-bench.mjs` ([MEMORY.md](MEMORY.md)).
 - **Ribbon seams.** Re-drape the ribbons along a shared edge when a neighbour arrives, as the relief is, if roads show a step there.
 - **Carve-only WASM for the worker.** The worker loads the whole simulation module (Rapier included) for the carve functions. Its first tile with buildings waits about 46 ms for it, and the module holds memory of its own. Split out a small `carve-wasm` crate only if that shows up in a trace or a memory profile.
 

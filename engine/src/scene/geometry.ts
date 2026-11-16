@@ -23,12 +23,20 @@ export interface GeometryData {
   indices?: Uint16Array | Uint32Array
   /** The bounding sphere, when the caller already knows it; worked out from `positions` otherwise. */
   bounds?: Sphere
+  /** Lets the arrays go once the renderer holds a copy (`Geometry.uploadOnce`). */
+  uploadOnce?: boolean
 }
+
+const NO_FLOATS = new Float32Array(0)
 
 /**
  * Vertex data on the CPU. The renderer uploads it into its shared vertex arena the first time it is
  * drawn, and again after `needsUpdate()`. Geometry can be shared by any number of meshes, and meshes that
  * share geometry and pipeline are drawn as one instanced call.
+ *
+ * The arrays stay here after the upload, which doubles what a mesh costs in memory, so that they can
+ * be read, changed in place and sent again (and sent to a new device when the old one is lost). A big
+ * mesh nobody reads again sets `uploadOnce` to keep the GPU's copy only.
  */
 export class Geometry {
   readonly id = nextId++
@@ -48,6 +56,17 @@ export class Geometry {
   /** @internal the renderer's handle to the uploaded copy. */
   gpu: unknown = undefined
   disposed = false
+  /**
+   * Drops the arrays once the renderer has uploaded them: they are then empty, the geometry cannot be
+   * changed but for `collapseRange`, and it is not drawn on another device (after a lost one) until
+   * whoever made it makes it again. Its counts and bounds stay.
+   */
+  uploadOnce: boolean
+  /** @internal vertex ranges (first, count pairs) collapsed since the last upload. */
+  collapsedRanges: number[] = []
+  /** The vertices and indices it had when its arrays were let go; -1 while it holds them. */
+  private releasedVertices = -1
+  private releasedIndices = -1
 
   constructor(data: GeometryData) {
     this.positions = data.positions
@@ -58,16 +77,41 @@ export class Geometry {
     this.joints = data.joints
     this.weights = data.weights
     this.indices = data.indices
+    this.uploadOnce = data.uploadOnce ?? false
     if (data.bounds) this.bounds = { ...data.bounds }
     else this.computeBounds()
   }
 
   get vertexCount() {
-    return this.positions.length / 3
+    return this.releasedVertices >= 0 ? this.releasedVertices : this.positions.length / 3
   }
 
   get indexCount() {
-    return this.indices ? this.indices.length : this.vertexCount
+    return this.releasedIndices >= 0 ? this.releasedIndices : this.indices ? this.indices.length : this.vertexCount
+  }
+
+  /** Whether its arrays were let go after the upload (`uploadOnce`). */
+  get released() {
+    return this.releasedVertices >= 0
+  }
+
+  /** @internal lets the arrays go, keeping the counts: the renderer calls it once it holds a copy. */
+  release() {
+    if (this.released) return
+    this.releasedIndices = this.indexCount
+    this.releasedVertices = this.vertexCount
+    this.positions = NO_FLOATS
+    this.normals = this.uvs = this.colors = this.custom = this.joints = this.weights = this.indices = undefined
+  }
+
+  /**
+   * Draws nothing of vertices `first` to `first + count - 1` from now on: every one is put on the same
+   * point, so the triangles between them have no area. For triangles that use no vertex outside the
+   * range. Works on a geometry whose arrays were let go, which `needsUpdateRange` cannot.
+   */
+  collapseRange(first: number, count: number) {
+    if (!this.released) this.positions.fill(0, first * 3, (first + count) * 3)
+    this.collapsedRanges.push(first, count)
   }
 
   /**
@@ -75,17 +119,26 @@ export class Geometry {
    * and array sizes must not have changed (use `needsUpdate` for that). Bounds are not recomputed.
    */
   needsUpdateRange(first: number, count: number) {
+    this.mustHold()
     this.dirtyRanges.push(first, count)
   }
 
   /** Call after changing any of the arrays (in place or by replacing them). */
   needsUpdate() {
+    this.mustHold()
     this.dirtyRanges.length = 0
+    this.collapsedRanges.length = 0
     this.version++
     this.computeBounds()
   }
 
+  /** A geometry that let its arrays go has nothing to send again: changing it is a mistake, said at once. */
+  private mustHold() {
+    if (this.released) throw new Error('This geometry let its arrays go after the upload (uploadOnce), so it cannot be changed')
+  }
+
   computeBounds() {
+    if (this.released) return
     const p = this.positions
     let minX = Infinity, minY = Infinity, minZ = Infinity
     let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity
@@ -113,6 +166,7 @@ export class Geometry {
 
   /** Flat-ish smooth normals from the triangles, area weighted. */
   computeNormals() {
+    this.mustHold()
     const p = this.positions
     const n = new Float32Array(p.length)
     const tri = this.indexCount / 3

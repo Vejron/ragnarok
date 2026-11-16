@@ -598,7 +598,7 @@ interface Shapes {
   levels: DetailLevel[]
 }
 
-let shared: { geometries: Map<number, Shapes>; material: ShaderMaterial; standalone: ShaderMaterial } | undefined
+let shared: { geometries: Map<number, Shapes>; frames: Map<number, ImpostorFrame>; atlas: { albedo: Texture; normalDepth: Texture }; material: ShaderMaterial; standalone: ShaderMaterial } | undefined
 /** The quality's `treeDetail`, for the fade's distances. */
 let treeDetail = 1
 
@@ -620,9 +620,11 @@ function foliage(atlas: { albedo: Texture; normalDepth: Texture }, fadeFrom: num
 function prototypes() {
   if (!shared) {
     const geometries = new Map<number, Shapes>()
+    const frames = new Map<number, ImpostorFrame>()
     const pixels = emptyAtlas()
     for (const kind of KIND_TILES) {
       const { full, impostor, coarse, shadow, frame } = treeGeometries(kind)
+      frames.set(kind, frame)
       bakeImpostor(full, frame, KIND_TILES.indexOf(kind), pixels)
       // The impostor is turned in the vertex shader, which the shadow pass does not run: it casts from solids.
       const levels: DetailLevel[] = [
@@ -631,11 +633,14 @@ function prototypes() {
       ]
       geometries.set(kind, { full, levels })
     }
+    // Nine megabytes each, baked once: only the GPU keeps them (`rebakeTreeImpostors` bakes them again for a new one).
     const texture = (data: Uint8Array, srgb: boolean) =>
-      new Texture({ data, width: IMPOSTOR_ATLAS_PX, height: IMPOSTOR_ATLAS_PX }, { srgb, wrap: 'clamp', mipmaps: true })
+      new Texture({ data, width: IMPOSTOR_ATLAS_PX, height: IMPOSTOR_ATLAS_PX }, { srgb, wrap: 'clamp', mipmaps: true, uploadOnce: true })
     const atlas = { albedo: texture(pixels.albedo, true), normalDepth: texture(pixels.normalDepth, false) }
     shared = {
       geometries,
+      frames,
+      atlas,
       material: foliage(atlas, TREE_LEVELS_FROM[0]! * treeDetail, TREE_FADE * treeDetail),
       // A felled tree is a mesh of its own, drawn as a solid however far off.
       standalone: foliage(atlas, 1e9, 1),
@@ -645,6 +650,20 @@ function prototypes() {
 }
 
 /** Moves the fade with the quality's `treeDetail`, which the renderer scales the levels by. */
+/**
+ * Bakes the trees' impostors again, for a new graphics device: the atlas's pixels were let go once
+ * the old one had them.
+ */
+export function rebakeTreeImpostors() {
+  if (!shared) return
+  const pixels = emptyAtlas()
+  for (const kind of KIND_TILES) bakeImpostor(shared.geometries.get(kind)!.full, shared.frames.get(kind)!, KIND_TILES.indexOf(kind), pixels)
+  for (const [texture, data] of [[shared.atlas.albedo, pixels.albedo], [shared.atlas.normalDepth, pixels.normalDepth]] as const) {
+    texture.source = { data, width: IMPOSTOR_ATLAS_PX, height: IMPOSTOR_ATLAS_PX }
+    texture.needsUpdate()
+  }
+}
+
 export function setTreeDetail(detail: number) {
   treeDetail = detail
   if (!shared) return

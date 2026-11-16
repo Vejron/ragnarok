@@ -106,6 +106,32 @@ const SPEED_OF: Record<string, number> = {
 }
 const LOCOMOTION = Object.keys(SPEED_OF)
 
+/*
+ * Clip names are put together from a stance's prefix, a gait and a direction. A soldier asks for some
+ * thirty of them every frame, so each is made once and looked up after: no string is built in a frame.
+ */
+
+/** Each direction's stepping clips, before the stance's prefix. */
+const STEPS: Record<Direction, { walk: string; run: string; crouch: string; crawl: string }> = {
+  fwd: { walk: 'walk_fwd', run: 'run_fwd', crouch: 'crouch_fwd', crawl: 'crawl_fwd' },
+  back: { walk: 'walk_back', run: 'run_back', crouch: 'crouch_back', crawl: 'crawl_back' },
+  left: { walk: 'walk_left', run: 'run_left', crouch: 'crouch_left', crawl: 'crawl_left' },
+  right: { walk: 'walk_right', run: 'run_right', crouch: 'crouch_right', crawl: 'crawl_right' },
+}
+/** Every stance's stepping clips: the clip's name, and the name before the prefix that `SPEED_OF` knows it by. */
+const STRIDES: { name: string; base: string }[] = Object.values(PREFIX).flatMap((prefix) => LOCOMOTION.map((base) => ({ name: prefix + base, base })))
+/** Each stance's name for a clip, by the name before the prefix. */
+const CLIP_OF: Record<Stance, Map<string, string>> = { rifle: new Map(), pistol: new Map(), hold: new Map(), shoulder: new Map() }
+/** A clip's name with the stance's prefix taken off. */
+const BASE_OF = new Map<string, string>()
+
+/** `name` without its stance's prefix: the clip every stance has its own of. */
+function baseOf(name: string): string {
+  let base = BASE_OF.get(name)
+  if (base === undefined) BASE_OF.set(name, (base = name.replace(/^(pistol_|hold_|shoulder_)/, '')))
+  return base
+}
+
 /** Speed the arms go from the diagonal stride to double poling, m/s. */
 const SKI_POLE_FROM = 5.5
 /** Slowing that begins to look like a snowplow, and that is one, m/s². */
@@ -434,6 +460,8 @@ export class Character {
   private readonly animator: Animator
   private readonly actions: Animator['actions']
   private readonly weights = new Map<string, number>()
+  /** The weight each clip is pulled towards this frame; kept from frame to frame, and zeroed at the start of each. */
+  private readonly targets = new Map<string, number>()
   private readonly outfit: Material
   private readonly chest: Node | null
   private readonly spine: Node | null
@@ -780,8 +808,9 @@ export class Character {
     // How much of the standing weight is locomotion, and how much of that is a run.
     const moving = this.onSkis ? 0 : smoothstep(STILL_SPEED, FULL_STEP, speed)
     const running = smoothstep(WALK_SPEED + 0.4, RUN_SPEED - 0.6, speed)
-    const targets = new Map<string, number>()
+    const targets = this.targets
     // Every clip is pulled to zero unless this stance's blend asks for it, so a stance change crossfades.
+    for (const name of targets.keys()) targets.set(name, 0)
     for (const name of this.actions.keys()) targets.set(name, 0)
     const along: Record<Direction, number> = {
       fwd: Math.max(0, forward),
@@ -793,10 +822,11 @@ export class Character {
     const set = (name: string, weight: number) => targets.set(this.clip(name), weight)
     for (const dir of DIRECTIONS) {
       const share = along[dir] / total
-      set(`walk_${dir}`, standing * moving * (1 - running) * share)
-      set(`run_${dir}`, standing * moving * running * share)
-      set(`crouch_${dir}`, low * moving * share)
-      set(`crawl_${dir}`, crawl * moving * share)
+      const step = STEPS[dir]
+      set(step.walk, standing * moving * (1 - running) * share)
+      set(step.run, standing * moving * running * share)
+      set(step.crouch, low * moving * share)
+      set(step.crawl, crawl * moving * share)
     }
     // With a club, standing still is standing over the ball; a swing is played out wherever it goes.
     this.swingOn(dt)
@@ -851,15 +881,12 @@ export class Character {
     // The cycle advances by distance covered, so feet keep up with the ground at any speed.
     let stride = 0
     let weightSum = 0
-    for (const prefix of Object.values(PREFIX)) {
-      for (const base of LOCOMOTION) {
-        const name = prefix + base
-        const w = this.weights.get(name) ?? 0
-        const action = this.actions.get(name)
-        if (!action || w <= 0) continue
-        stride += w * SPEED_OF[base]! * action.clip.duration
-        weightSum += w
-      }
+    for (const { name, base } of STRIDES) {
+      const w = this.weights.get(name) ?? 0
+      const action = this.actions.get(name)
+      if (!action || w <= 0) continue
+      stride += w * SPEED_OF[base]! * action.clip.duration
+      weightSum += w
     }
     // Poling hard, the arms go flat out from the first stride, however little it has got going yet.
     const paced = Math.max(this.poling > 0 ? speed + (Math.max(speed, HARD_PACE) - speed) * this.poling : speed, HERRING_PACE * this.herring)
@@ -870,7 +897,7 @@ export class Character {
     const current = this.clip('idle')
     for (const [name, action] of this.actions) {
       const w = this.weights.get(name)!
-      const base = name.replace(/^(pistol_|hold_|shoulder_)/, '')
+      const base = baseOf(name)
       action.enabled = w > 0.0005 || name === current
       action.weight = w
       if (base === 'idle' || base === 'crouch_idle' || base === 'crawl_idle' || base === 'slide' || base === 'ski_glide' || base === 'ski_tuck' || base === 'ski_plow' || base === 'armed_glide' || base === 'armed_tuck' || base === 'armed_plow') action.time = this.idleTime % action.clip.duration
@@ -1570,7 +1597,10 @@ export class Character {
 
   /** The clip for `base` in the stance being held. */
   private clip(base: string) {
-    return PREFIX[this.stance] + base
+    const known = CLIP_OF[this.stance]
+    let name = known.get(base)
+    if (name === undefined) known.set(base, (name = PREFIX[this.stance] + base))
+    return name
   }
 
   /** Shows the weapon in hand and hides the rest. */

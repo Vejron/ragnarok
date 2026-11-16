@@ -83,6 +83,10 @@ has the numbers.
   the biggest lever. `rgba16float` was faster than `rg11b10ufloat`.
 - **Work that repeats across the screen goes in a texture made once a frame**, by compute where it can
   (the sky panorama the water mirrors), not in every pixel's shader.
+- **Memory is measured with `node client/scripts/mem-bench.mjs`** ([docs/MEMORY.md](docs/MEMORY.md)):
+  what the page, the workers and the GPU hold, and the garbage a frame makes. A big mesh or texture
+  that nothing reads again is made with `uploadOnce`, so only the GPU keeps it; it must then be made
+  again when the renderer is replaced (`Scene.onRendererReplaced`).
 - [RENDERING.md](docs/RENDERING.md)'s "Measuring, and traps" lists the headless and WGSL traps.
 
 ## Deploying

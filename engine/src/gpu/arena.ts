@@ -33,10 +33,23 @@ export interface GeometrySlot {
 
 const INITIAL_VERTICES = 1 << 18
 const INITIAL_INDICES = 1 << 20
+/**
+ * The most a buffer grows by at once, bytes, unless one geometry needs more. A buffer that doubled
+ * would stand half empty after its last growth: 512 MB held for a town's 295 MB of vertices.
+ */
+const GROWTH_BYTES = 64 << 20
+/**
+ * The most bytes of an upload that are put together in the arena's own staging buffer, kept from one
+ * upload to the next: the small and steady ones (a grass chunk, a few changed quads) then make no
+ * garbage. A bigger upload, a tile's buildings say, is rare and gets a buffer of its own, so that the
+ * arena does not hold the biggest mesh's size for good.
+ */
+const STAGING_BYTES = 1 << 20
 
 /**
  * All mesh geometry lives in one vertex buffer and one index buffer, so the renderer binds them once per
- * pass and a draw is just offsets into them. Buffers grow by doubling, copying the old contents on the GPU.
+ * pass and a draw is just offsets into them. Buffers grow by half, and by `GROWTH_BYTES` at most once
+ * they are big, copying the old contents on the GPU; they never shrink.
  */
 export class GeometryArena {
   vertexBuffer: GPUBuffer
@@ -47,6 +60,7 @@ export class GeometryArena {
   private readonly indices = new RangeAllocator(INITIAL_INDICES)
   /** Geometries holding a slot here, so disposed ones are freed even when nothing draws them again. */
   private readonly live = new Set<Geometry>()
+  private readonly staging = new ArrayBuffer(STAGING_BYTES)
 
   constructor(private readonly device: GPUDevice) {
     this.vertexBuffer = this.makeVertexBuffer(INITIAL_VERTICES)
@@ -61,15 +75,21 @@ export class GeometryArena {
       const ranges = geometry.dirtyRanges
       for (let i = 0; i < ranges.length; i += 2) this.writeVertices(geometry, slot, ranges[i]!, ranges[i + 1]!)
       ranges.length = 0
+      const collapsed = geometry.collapsedRanges
+      for (let i = 0; i < collapsed.length; i += 2) this.collapse(slot, collapsed[i]!, collapsed[i + 1]!)
+      collapsed.length = 0
       return slot
     }
     geometry.dirtyRanges.length = 0
+    geometry.collapsedRanges.length = 0
     if (geometry.disposed) {
       if (slot) this.release(slot)
       geometry.gpu = undefined
       this.live.delete(geometry)
       return null
     }
+    // Its arrays are gone and the copy was another device's: nothing to draw until it is made again.
+    if (geometry.released) return null
     const vertexCount = geometry.vertexCount
     const indexCount = geometry.indexCount
     if (slot && (slot.vertexCount !== vertexCount || slot.indexCount !== indexCount)) {
@@ -90,6 +110,7 @@ export class GeometryArena {
     }
     slot.version = geometry.version
     this.write(geometry, slot)
+    if (geometry.uploadOnce) geometry.release()
     return slot
   }
 
@@ -119,10 +140,33 @@ export class GeometryArena {
   private write(geometry: Geometry, slot: GeometrySlot) {
     this.writeVertices(geometry, slot, 0, slot.vertexCount)
     // Indices are stored relative to the geometry; draws add baseVertex.
-    const indices = new Uint32Array(slot.indexCount)
-    if (geometry.indices) indices.set(geometry.indices)
+    const given = geometry.indices
+    if (given instanceof Uint32Array) {
+      this.device.queue.writeBuffer(this.indexBuffer, slot.firstIndex * 4, given as Uint32Array<ArrayBuffer>)
+      return
+    }
+    const indices = new Uint32Array(this.stage(slot.indexCount * 4), 0, slot.indexCount)
+    if (given) indices.set(given)
     else for (let i = 0; i < indices.length; i++) indices[i] = i
     this.device.queue.writeBuffer(this.indexBuffer, slot.firstIndex * 4, indices)
+  }
+
+  /**
+   * A buffer of at least `bytes` to put an upload together in: the arena's own, zeroed, when it is big
+   * enough, and a new one otherwise. `writeBuffer` copies at the call, so the next upload can use it again.
+   */
+  private stage(bytes: number): ArrayBuffer {
+    if (bytes > STAGING_BYTES) return new ArrayBuffer(bytes)
+    new Uint8Array(this.staging, 0, bytes).fill(0)
+    return this.staging
+  }
+
+  /** Puts vertices `first` to `first + count - 1` on one point (`Geometry.collapseRange`). */
+  private collapse(slot: GeometrySlot, first: number, count: number) {
+    first = Math.max(0, first)
+    count = Math.min(count, slot.vertexCount - first)
+    if (count <= 0) return
+    this.device.queue.writeBuffer(this.vertexBuffer, (slot.baseVertex + first) * VERTEX_STRIDE, this.stage(count * VERTEX_STRIDE), 0, count * VERTEX_STRIDE)
   }
 
   /** Interleaves and uploads vertices `first` to `first + count - 1`. */
@@ -130,7 +174,7 @@ export class GeometryArena {
     first = Math.max(0, first)
     count = Math.min(count, slot.vertexCount - first)
     if (count <= 0) return
-    const data = new ArrayBuffer(count * VERTEX_STRIDE)
+    const data = this.stage(count * VERTEX_STRIDE)
     const f32 = new Float32Array(data)
     const u16 = new Uint16Array(data)
     const u8 = new Uint8Array(data)
@@ -176,13 +220,13 @@ export class GeometryArena {
         u16[c] = u16[c + 1] = u16[c + 2] = u16[c + 3] = 65535
       }
     }
-    this.device.queue.writeBuffer(this.vertexBuffer, (slot.baseVertex + first) * VERTEX_STRIDE, data)
+    this.device.queue.writeBuffer(this.vertexBuffer, (slot.baseVertex + first) * VERTEX_STRIDE, data, 0, count * VERTEX_STRIDE)
   }
 
   private allocVertices(count: number): number {
     let offset = this.vertices.alloc(count)
     while (offset < 0) {
-      const capacity = Math.max(this.vertices.capacity * 2, this.vertices.capacity + count)
+      const capacity = grown(this.vertices.capacity, count, GROWTH_BYTES / VERTEX_STRIDE)
       this.vertexBuffer = this.grow(this.vertexBuffer, this.makeVertexBuffer(capacity), this.vertices.capacity * VERTEX_STRIDE)
       this.vertices.grow(capacity)
       offset = this.vertices.alloc(count)
@@ -193,7 +237,7 @@ export class GeometryArena {
   private allocIndices(count: number): number {
     let offset = this.indices.alloc(count)
     while (offset < 0) {
-      const capacity = Math.max(this.indices.capacity * 2, this.indices.capacity + count)
+      const capacity = grown(this.indices.capacity, count, GROWTH_BYTES / 4)
       this.indexBuffer = this.grow(this.indexBuffer, this.makeIndexBuffer(capacity), this.indices.capacity * 4)
       this.indices.grow(capacity)
       offset = this.indices.alloc(count)
@@ -234,4 +278,9 @@ export class GeometryArena {
 
 function unorm16(v: number) {
   return Math.round(Math.min(1, Math.max(0, v)) * 65535)
+}
+
+/** The capacity a buffer of `capacity` grows to, to take `count` more: half as much again, `most` more at most, and `count` more at least. */
+function grown(capacity: number, count: number, most: number): number {
+  return capacity + Math.max(count, Math.min(capacity >> 1, most))
 }

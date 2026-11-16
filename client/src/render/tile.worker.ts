@@ -24,8 +24,12 @@ let terrain: Terrain | null = null
 /** Each prepared tile's relief map and slope map, by `col * 65536 + row`, to shade its seams again. */
 const reliefs = new Map<number, { relief: Pixels; detail: Int8Array | undefined }>()
 
-/** What each prepared tile was made from, by `col * 65536 + row`: its roads and rails, to drape on dented ground. */
-const parts = new Map<number, TileParts>()
+/**
+ * Each prepared tile's roads, rails and ski tracks, by `col * 65536 + row`, to drape on dented ground.
+ * Only they are kept of what the tile was made from: its buildings, its collision mesh and what is
+ * worked out from them (their faces and openings) are a few megabytes a tile, and done with here.
+ */
+const parts = new Map<number, Pick<TileParts, 'roads' | 'rails' | 'ski'>>()
 
 const NEIGHBOURS = [[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]] as const
 
@@ -98,7 +102,7 @@ self.onmessage = async (event: MessageEvent<TileRequest>) => {
     try {
       if (input.tile.buildings.length > 0) await ready
       if (input.ground) terrain.set({ col, row, hash: 0 }, input.ground)
-      parts.set(key(col, row), input.tile)
+      parts.set(key(col, row), { roads: input.tile.roads, rails: input.tile.rails, ski: input.tile.ski })
       const prepared = prepareTile(input, terrain, paint)
       if (prepared.terrain) {
         reliefs.set(key(col, row), { relief: prepared.terrain.relief, detail: input.tile.detail })

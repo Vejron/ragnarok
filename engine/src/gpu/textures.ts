@@ -66,6 +66,8 @@ export class TextureStore {
       this.live.delete(texture)
       return this.white
     }
+    // Its source is gone: drawn from the copy held here, or white when that was another device's.
+    if (texture.released) return slot ? slot.view : this.white
     const format: GPUTextureFormat = texture.srgb ? 'rgba8unorm-srgb' : 'rgba8unorm'
     const width = texture.width
     const height = texture.height
@@ -92,6 +94,7 @@ export class TextureStore {
       this.device.queue.copyExternalImageToTexture({ source: source as GPUCopyExternalImageSource }, { texture: slot.texture }, [width, height])
     }
     if (mipLevelCount > 1) this.generateMips(slot.texture)
+    if (texture.uploadOnce) texture.release()
     return slot.view
   }
 

@@ -42,7 +42,8 @@ function ribbonMeshes(ribbons: readonly Ribbon[], ground: Texture | null): Mesh[
       material = toonMaterial({ color, ramp: TERRAIN_RAMP, vertexColors: true, depthBias: offset, depthBiasSlope: 2, craters: true, worn: look === 'worn', asphalt: look === 'asphalt', ...(blends ? { map: ground, ground: true } : {}) })
       materials.set(key, material)
     }
-    const mesh = new Mesh(new Geometry(buffers), material)
+    // Nothing reads a ribbon's arrays again (a new ground makes new ribbons), so only the GPU keeps them.
+    const mesh = new Mesh(new Geometry({ ...buffers, uploadOnce: true }), material)
     mesh.receiveShadow = true
     mesh.userData.ribbon = true
     // The tile's own: freed with it, but not the cover map, which is the terrain's.
@@ -105,7 +106,7 @@ function buildTerrain(tile: Pick<TileData, 'cover' | 'detail' | 'stones'>, groun
   const wet = terrain.wet === undefined ? wetnessPixels(tile, x0, z0, size, terrain.relief.width) : terrain.wet
   const normalMap = reliefTexture(wet ? packMarsh(terrain.relief, wet) : terrain.relief)
   const stones = stonesTexture(tile.stones, shore, ground)
-  const mesh = new Mesh(new Geometry(terrain.buffers), toonMaterial({ ...(map ? { map } : { color: GRASS_COLOR }), normalMap, normalMapTone: true, ramp: TERRAIN_RAMP, craters: true, snow: winter, marsh: wet !== null, stones }))
+  const mesh = new Mesh(new Geometry({ ...terrain.buffers, uploadOnce: true }), toonMaterial({ ...(map ? { map } : { color: GRASS_COLOR }), normalMap, normalMapTone: true, ramp: TERRAIN_RAMP, craters: true, snow: winter, marsh: wet !== null, stones }))
   mesh.userData.ownsMaterial = true
   mesh.userData.ground = ground
   mesh.userData.detail = tile.detail
@@ -145,7 +146,7 @@ export function remeshTerrain(group: Group, buffers: TerrainBuffers) {
   const mesh = terrainMesh(group)
   if (!mesh) return
   mesh.geometry.dispose()
-  mesh.geometry = new Geometry(buffers)
+  mesh.geometry = new Geometry({ ...buffers, uploadOnce: true })
 }
 
 /**
@@ -186,8 +187,10 @@ function mergedMesh(buffers: BuildingBuffers | null, destroyed: ReadonlySet<numb
   if (!buffers) return []
   const out: Mesh[] = []
   if (buffers.positions.length > 0) {
-    const { positions, normals, colors, custom, bounds } = buffers
-    const mesh = new Mesh(new Geometry({ positions, normals, colors, custom, bounds }), buildingMaterial)
+    const { positions, normals, colors, custom, indices, bounds } = buffers
+    // The biggest mesh of a tile by far, and never read again: a building that goes is collapsed in
+    // the GPU's copy (`rebuildBuildings`), so the arrays are let go once they are uploaded.
+    const mesh = new Mesh(new Geometry({ positions, normals, colors, custom, indices, bounds, uploadOnce: true }), buildingMaterial)
     mesh.castShadow = true
     mesh.receiveShadow = true
     mesh.userData.merged = true
@@ -224,23 +227,18 @@ interface Merged {
 /**
  * Redraws a tile's buildings without those in `destroyed` (indices into `tile.buildings`). When
  * that only leaves out more of them, as when one falls or starts to be drawn as shards, their
- * vertices are collapsed to a point in place and only they are sent again; otherwise the mesh is
- * built anew.
+ * vertices are collapsed to a point in the GPU's copy; otherwise the mesh is built anew.
  */
 export function rebuildBuildings(group: Group, tile: TileData, salt: number, destroyed: ReadonlySet<number>) {
   const drawn = group.children.find((child): child is Mesh => child.userData.merged === true && child instanceof Mesh)
   const merged = drawn?.userData.buildings as Merged | undefined
   if (drawn && merged?.ranges && [...merged.left].every((index) => destroyed.has(index))) {
-    const { positions } = drawn.geometry
     for (const index of destroyed) {
       if (merged.left.has(index)) continue
       merged.left.add(index)
       const [first, count] = [merged.ranges[index * 2]!, merged.ranges[index * 2 + 1]!]
-      if (count === 0) continue
-      // Every corner on the first: no triangle left to draw, and no shadow.
-      const at = first * 3
-      for (let k = at + 3; k < (first + count) * 3; k += 3) positions.copyWithin(k, at, at + 3)
-      drawn.geometry.needsUpdateRange(first, count)
+      // Every corner on one point: no triangle left to draw, and no shadow.
+      if (count > 0) drawn.geometry.collapseRange(first, count)
     }
     return
   }

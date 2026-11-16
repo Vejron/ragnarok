@@ -4,7 +4,7 @@ import { GunSightView } from './gunsight'
 import { HeldMapView } from './heldmap'
 import { ContactShadows } from './contact'
 import { setWaterLight, setWaterPlane, setWaterReflection } from './water'
-import { setTreeDetail } from './trees'
+import { rebakeTreeImpostors, setTreeDetail } from './trees'
 import { CLASSIC, SOFT, loadLook, wintry, type Look, type Palette } from './look'
 import { winter } from './season'
 import { loadQuality, PRESETS, resolveQuality, type Preset } from './quality'
@@ -186,8 +186,9 @@ export class Scene {
 
   /**
    * The GPU can drop the device at any time (sleep and wake, a driver reset, a switch between GPUs), after
-   * which nothing draws and the canvas stays black. Ask for a new one; everything the scene holds is
-   * uploaded again on the next frame, since the engine's GPU copies belong to the device that made them.
+   * which nothing draws and the canvas stays black. Ask for a new one; what the scene holds is
+   * uploaded again on the next frame, since the engine's GPU copies belong to the device that made
+   * them, and the rest is made again (`restore`).
    */
   private async deviceLost(info: GPUDeviceLostInfo) {
     if (info.reason === 'destroyed' || this.disposed) return
@@ -202,6 +203,7 @@ export class Scene {
         }
         this.renderer = renderer
         this.resize()
+        this.restore()
         return
       } catch (error) {
         console.error('Could not get the graphics device back:', error)
@@ -250,9 +252,26 @@ export class Scene {
       if (this.disposed || generation !== this.renderers) return renderer.destroy()
       this.renderer = renderer
       this.resize()
+      this.restore()
     } catch (error) {
       console.error('Could not make a new renderer:', error)
     }
+  }
+
+  /**
+   * Called when a new renderer has taken the place of one that drew (the device was lost, or the
+   * multisampling changed), for the game to make again what only the old one's GPU held.
+   */
+  onRendererReplaced: (() => void) | null = null
+
+  /**
+   * What is drawn was the old device's. Most of it is uploaded again from the arrays and images the
+   * scene holds; the meshes and textures that let theirs go (`uploadOnce`: a tile's ground, roads and
+   * buildings, the trees' impostors) are made again.
+   */
+  private restore() {
+    rebakeTreeImpostors()
+    this.onRendererReplaced?.()
   }
 
   /** The time of day (`dayPhase`): 0 midnight, 0.5 noon. */

@@ -486,7 +486,11 @@ export interface TileData {
    * wound as `collision` is. Absent when the world has none.
    */
   look?: CollisionMesh
-  /** The tile file this was decoded from, which the soldier's physics reads for itself. */
+  /**
+   * The tile file this was decoded from, which the soldier's physics reads for itself when the tile
+   * is attached. Gone after that (`WorldView.attachTile`): nothing else here is a view into it, so
+   * the file is then held nowhere.
+   */
   bytes?: Uint8Array
 }
 
@@ -635,7 +639,8 @@ export function decodeTile(bytes: Uint8Array): TileData {
       front,
       cells:
         cells[1][0]! * cells[1][1]! * cells[1][2]! > 0
-          ? { origin: cells[0] as [number, number, number], dims: cells[1] as [number, number, number], solid: cells[2], roof: cells[3] }
+          ? // Copies of their own, as `detail` is: views would keep the whole file alive.
+            { origin: cells[0] as [number, number, number], dims: cells[1] as [number, number, number], solid: cells[2].slice(), roof: cells[3].slice() }
           : null,
       paint,
       look: looks[index] && looks[index]![1]! + looks[index]![2]! > 0 ? { first: looks[index]![0]!, walls: looks[index]![1]!, roof: looks[index]![2]!, kind, front, footprint: Int32Array.from(footprint.flat()) } : null,

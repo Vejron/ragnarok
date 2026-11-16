@@ -596,7 +596,11 @@ export class WorldView {
         if (next) restitchTerrain(next, this.terrain)
       }
     }
-    if (tile.bytes) this.motor?.addTile(ref, tile.bytes)
+    if (tile.bytes) {
+      this.motor?.addTile(ref, tile.bytes)
+      // The physics has decoded the file for itself: let it go, a few hundred kilobytes a tile.
+      delete tile.bytes
+    }
     this.loaded.set(key, { tile, salt })
     // The file's ground is flat of craters: the physics is given the dug one, and so is the worker's copy if the ground changed after it prepared.
     if (ground && (this.dugTiles.has(key) || this.craters.some((crater) => reaches(ground, crater)))) {

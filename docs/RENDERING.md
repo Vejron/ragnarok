@@ -528,6 +528,11 @@ Its own README gives the benchmark against three's two renderers, from when a co
   against a connected one. The server only accepts the dev origins `localhost:5173` and
   `127.0.0.1:5173`.
 - Headless Chrome with software rendering is about 100× too slow for timings. Use a real GPU.
+- Memory is measured by `client/scripts/mem-bench.mjs` ([MEMORY.md](MEMORY.md)). A mesh or texture made
+  with `uploadOnce` lets its arrays go once the GPU has them: it cannot be changed after (but for
+  `Geometry.collapseRange`), and it is not uploaded to a new device. Whoever makes one must make it
+  again when the renderer is replaced (`Scene.onRendererReplaced`), as the tiles and the trees'
+  impostors are.
 - Two dev servers sharing one `node_modules` share Vite's dependency cache; give the second its own
   `cacheDir`, or the two builds' dependency bundles clash.
 - GPU timings come from `client/scripts/gpu-bench.mjs`

@@ -440,6 +440,7 @@ export class Game {
 
   constructor(container: HTMLElement, private readonly onStats: (stats: HudStats) => void) {
     this.scene = new Scene(container)
+    this.scene.onRendererReplaced = () => void this.redrawWorld()
     this.hullMarks = new HullMarks(this.scene.scene.scars)
     this.bodies = new Bodies(this.avatars, this.gore, this.callouts, this.chase)
     this.perf = new PerfReadout(() => this.scene.renderer, () => `quality ${resolveQuality(this.qualitySetting)}${this.qualitySetting === 'auto' ? ' (auto)' : ''}   msaa ${this.scene.quality.msaa}x   scale ${this.scene.renderScale.toFixed(2)}`)
@@ -1011,9 +1012,32 @@ export class Game {
     this.lamped = this.worn.lamp
   }
 
+  /** Set while the tiles are made again for a new renderer (`redrawWorld`). */
+  private redrawing = false
+
+  /**
+   * Makes the tiles round the player again, for a new renderer (the graphics device was lost, or the
+   * quality's multisampling changed): a tile's big meshes and its painted ground were only on the
+   * old one's GPU. They go through the streamer as when they first arrived, so for the moment that
+   * takes there is no ground under anything, and the game holds still.
+   */
+  private async redrawWorld() {
+    if (!this.tiles || !this.predictor || this.redrawing || this.disposed) return
+    this.redrawing = true
+    try {
+      const [x, , z] = this.predictor.state.position
+      this.tiles.reload()
+      await this.tiles.prime(x, z)
+    } finally {
+      this.redrawing = false
+      this.lastFrame = performance.now()
+    }
+  }
+
   private frame(now: number) {
     if (this.disposed) return
     this.frameHandle = this.nextFrame()
+    if (this.redrawing) return
     this.perf.begin(now)
     this.readHeadset()
     const dt = Math.min(0.25, (now - this.lastFrame) / 1000)

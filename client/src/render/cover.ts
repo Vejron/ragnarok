@@ -20,9 +20,12 @@ export function bakeTerrainTexture(tile: Pick<TileData, 'cover'>, x0: number, z0
   return coverTexture(canvas)
 }
 
-/** The texture of a painted cover canvas or bitmap. */
+/**
+ * The texture of a painted cover canvas or bitmap. The painting is let go once the GPU has it: four
+ * megabytes a tile, which nothing reads again.
+ */
 export function coverTexture(source: HTMLCanvasElement | ImageBitmap): Texture {
-  return new Texture(source, { srgb: true, wrap: 'clamp', anisotropy: 4 })
+  return new Texture(source, { srgb: true, wrap: 'clamp', anisotropy: 4, uploadOnce: true })
 }
 
 /** The texture of a tile's relief map (`reliefPixels`). Data, not colour: sampled as is, with mipmaps. */

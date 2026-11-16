@@ -6,7 +6,7 @@ import { ScarBuffers } from './gpu/scars'
 import { LightBuffers } from './gpu/lights'
 import { MaterialTable } from './gpu/materials'
 import { ObjectTable } from './gpu/objects'
-import { MaterialResources } from './gpu/resources'
+import { MaterialResources, type CustomProgram } from './gpu/resources'
 import { TextureStore, type TextureSlot } from './gpu/textures'
 import { GpuTimer } from './gpu/timer'
 import { SHADOW_WGSL } from './materials/shadow.wgsl'
@@ -51,6 +51,14 @@ const SUN_RADIUS = 0.0095
 const MOON_SHAFTS = 0.3
 const HDR_FORMAT: GPUTextureFormat = 'rgba16float'
 const DEPTH_FORMAT: GPUTextureFormat = 'depth32float'
+
+/**
+ * The usage of an attachment that is cleared when its pass begins and discarded when it ends, and
+ * used for nothing else: the multisampled colour, which only its resolve outlives. Where the browser
+ * knows `TRANSIENT_ATTACHMENT`, a tiled GPU then gives it no memory at all (it lives in the tile);
+ * elsewhere it is an attachment like any other.
+ */
+const passOnly = () => GPUTextureUsage.RENDER_ATTACHMENT | ((GPUTextureUsage as { TRANSIENT_ATTACHMENT?: number }).TRANSIENT_ATTACHMENT ?? 0)
 /** The reflection holds nothing smaller than this share of the view's distance. */
 const REFLECT_MIN_SIZE = 0.01
 
@@ -141,6 +149,20 @@ interface DrawItem {
   listFirst: number
 }
 
+/** The pipeline a material was last given, and everything of the material and its place that picks one. */
+interface PickedPipeline {
+  version: number
+  layer: Layer
+  pipeline: number
+  program: CustomProgram | null
+  blend: Material['blend']
+  side: Material['side']
+  depthTest: boolean
+  depthWrite: boolean
+  depthBias: number
+  depthBiasSlope: number
+}
+
 /** A run of consecutive draw-list entries drawn with one call. */
 interface Batch {
   pipeline: number
@@ -228,7 +250,11 @@ export class Renderer {
   /** Per pipeline: 'standard', a ShaderMaterial's ('custom', whose group 1 is the material's own), or one that also takes the lighting group at 2 ('shadowed'). */
   private readonly pipelineKind: ('standard' | 'custom' | 'shadowed')[] = []
   private readonly pipelineKeys = new Map<string, number>()
-  private readonly materialPipelines = new Map<number, { version: number; layer: Layer; pipeline: number }>()
+  /**
+   * Each material's pipelines (its own, its depth pre-pass and its draw after that), with what of the
+   * material each was picked by. Weak, so a material that is gone takes its entry with it.
+   */
+  private readonly materialPipelines = new WeakMap<Material, (PickedPipeline | undefined)[]>()
   private readonly shadowPipelines: GPURenderPipeline[]
   private readonly outputPipeline: GPURenderPipeline
   private readonly outputUniform: GPUBuffer
@@ -260,6 +286,9 @@ export class Renderer {
   private readonly stack: Node[] = []
   private readonly pool: DrawItem[] = []
   private poolUsed = 0
+  /** The frame's batches, kept from frame to frame as the draw items are. */
+  private readonly batchPool: Batch[] = []
+  private batchesUsed = 0
   /** This frame's lists of instances (`DrawItem.list`), handed out from the front. */
   private scratch = new Uint32Array(16384)
   private scratchUsed = 0
@@ -470,7 +499,7 @@ export class Renderer {
     this.hdrTarget?.destroy()
     const size = [w, h]
     this.colorTarget = this.sampleCount > 1
-      ? this.device.createTexture({ label: 'msaa colour', size, format: HDR_FORMAT, sampleCount: this.sampleCount, usage: GPUTextureUsage.RENDER_ATTACHMENT })
+      ? this.device.createTexture({ label: 'msaa colour', size, format: HDR_FORMAT, sampleCount: this.sampleCount, usage: passOnly() })
       : null
     this.depthTarget = this.device.createTexture({
       label: 'depth',
@@ -545,6 +574,7 @@ export class Renderer {
     this.setupReflection(camera)
 
     this.poolUsed = 0
+    this.batchesUsed = 0
     this.scratchUsed = 0
     this.reflected.length = 0
     this.opaque.length = 0
@@ -917,7 +947,15 @@ export class Renderer {
       if (merge && last && last.pipeline === item.pipeline && last.group === item.group && last.slot === item.slot && last.first + last.count === first) {
         last.count += count
       } else {
-        batches.push({ pipeline: item.pipeline, group: item.group, slot: item.slot, first, count })
+        let batch = this.batchPool[this.batchesUsed]
+        if (!batch) this.batchPool.push((batch = { pipeline: 0, group: 0, slot: item.slot, first: 0, count: 0 }))
+        this.batchesUsed++
+        batch.pipeline = item.pipeline
+        batch.group = item.group
+        batch.slot = item.slot
+        batch.first = first
+        batch.count = count
+        batches.push(batch)
       }
     }
   }
@@ -926,9 +964,20 @@ export class Renderer {
 
   /** The pipeline for `material` in `layer`; `prepass` 1 is its depth-only draw, 2 its draw after that (`depthPrepass`). */
   private pipelineFor(material: Material, layer: Layer, prepass: 0 | 1 | 2 = 0): number {
-    const cached = this.materialPipelines.get(material.id * 3 + prepass)
+    let picked = this.materialPipelines.get(material)
+    if (!picked) this.materialPipelines.set(material, (picked = []))
+    const cached = picked[prepass]
     if (cached && cached.version === material.version && cached.layer === layer) return cached.pipeline
     const program = material instanceof ShaderMaterial ? this.resources.program(material) : null
+    // A material whose uniforms move every frame has a new version every frame, but the same pipeline
+    // while none of this changed: found by comparing, with no key built.
+    if (
+      cached && cached.layer === layer && cached.program === program && cached.blend === material.blend && cached.side === material.side &&
+      cached.depthTest === material.depthTest && cached.depthWrite === material.depthWrite && cached.depthBias === material.depthBias && cached.depthBiasSlope === material.depthBiasSlope
+    ) {
+      cached.version = material.version
+      return cached.pipeline
+    }
     // An overlay ignores depth: it neither tests nor writes, which also lets it draw against a read-only depth.
     // A held mesh does not test either, but writes: what comes after is behind it, and the ink outlines it.
     const state = layer !== 'world'
@@ -945,7 +994,7 @@ export class Renderer {
       this.pipelineKind.push(program === null ? 'standard' : (material as ShaderMaterial).shadows ? 'shadowed' : 'custom')
       this.pipelineKeys.set(key, pipeline)
     }
-    this.materialPipelines.set(material.id * 3 + prepass, { version: material.version, layer, pipeline })
+    picked[prepass] = { version: material.version, layer, pipeline, program, blend: material.blend, side: material.side, depthTest: material.depthTest, depthWrite: material.depthWrite, depthBias: material.depthBias, depthBiasSlope: material.depthBiasSlope }
     return pipeline
   }
 
@@ -1283,8 +1332,8 @@ export class Renderer {
     this.reflectionTarget = {
       width,
       height,
-      color: msaa ? this.device.createTexture({ label: 'reflection msaa', size, format: HDR_FORMAT, sampleCount: this.sampleCount, usage: GPUTextureUsage.RENDER_ATTACHMENT }) : null,
-      depth: this.device.createTexture({ label: 'reflection depth', size, format: DEPTH_FORMAT, sampleCount: this.sampleCount, usage: GPUTextureUsage.RENDER_ATTACHMENT }),
+      color: msaa ? this.device.createTexture({ label: 'reflection msaa', size, format: HDR_FORMAT, sampleCount: this.sampleCount, usage: passOnly() }) : null,
+      depth: this.device.createTexture({ label: 'reflection depth', size, format: DEPTH_FORMAT, sampleCount: this.sampleCount, usage: passOnly() }),
       resolve,
     }
     // Hand the texture to whatever material samples `reflection`: its bind group is rebuilt when the version moves.

@@ -190,6 +190,8 @@ export class HullMarks {
       for (const slot of entry.slots.values()) this.scars.setGrime(slot, grime)
     }
     for (const [id, { hp }] of placed) this.lastHp.set(id, hp)
+    // A vehicle that is gone is forgotten, or the map would hold every one the session ever saw.
+    for (const id of this.lastHp.keys()) if (!placed.has(id)) this.lastHp.delete(id)
   }
 
   /**

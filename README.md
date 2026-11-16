@@ -14,6 +14,7 @@ The docs are in [docs/](docs/).
 - [engine/README.md](engine/README.md): the WebGPU render engine the client draws with, a package of its own
 - [SERVER-PERFORMANCE.md](docs/SERVER-PERFORMANCE.md): what a full room costs per tick, how it is measured, what is and is not worth optimising, and what shelling a big house costs server and client
 - [TILE-STREAMING.md](docs/TILE-STREAMING.md): how the map reaches the browser
+- [MEMORY.md](docs/MEMORY.md): what the client holds in memory and how to measure it: a tile's buildings welded and kept on the GPU only, the multisampled image given no memory, and the per-frame garbage
 
 **Making worlds**
 

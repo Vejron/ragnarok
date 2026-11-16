@@ -188,7 +188,8 @@ await evaluate(`(() => { const s = document.createElement('style'); s.textConten
 await evaluate(`(() => {
   const g = window.__game
   const sleep = (ms) => new Promise((f) => setTimeout(f, ms))
-  const state = g.predictor.state
+  // The predictor's state is a new object every tick: it is read afresh, not kept.
+  const state = { get position() { return g.predictor.state.position } }
   const start = [state.position[0], state.position[2]]
   const place = (x, z, above = 1) => { for (const q of [state.position, g.predictor.previous?.position].filter(Boolean)) { q[0] = x; q[1] = g.terrain.heightAt(x, z) + above; q[2] = z } }
   window.__bench = {

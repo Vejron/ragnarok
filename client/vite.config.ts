@@ -67,7 +67,7 @@ const pwa = VitePWA({
       },
       // Must match the server's world, so always asked for; the cache is for a flaky connection.
       {
-        urlPattern: /\/(world\.msgpack|minimap\.png|worlds\/active\.json)$/,
+        urlPattern: /\/(world\.msgpack|minimap\.webp|worlds\/active\.json)$/,
         handler: 'NetworkFirst',
         options: { cacheName: 'world', networkTimeoutSeconds: 5 },
       },

@@ -51,6 +51,7 @@ export class SkiTracks {
 
   /** Skier `key` left the ground, or is gone: their next groove starts afresh. */
   lift(key: number) {
+    this.spray.delete(key)
     this.marks.lift(`${key}L`)
     this.marks.lift(`${key}R`)
   }

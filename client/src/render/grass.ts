@@ -36,6 +36,8 @@ const BLASTS = 4
 const BLAST_LIFE = 3
 /** Chunks built a frame, at most, so walking into a meadow does not hitch. */
 const BUILDS_PER_FRAME = 3
+/** The camera moves this far, metres, before the chunks round it are looked over again. */
+const RESCAN_DISTANCE = 0.5
 /** Metres ahead of need a chunk is given more blades, so they are there before they show. */
 const LOOKAHEAD = 6
 /** Chunks holding at most this share of the blades are far enough off to draw each as one triangle. */
@@ -424,6 +426,10 @@ export class Grass {
   /** Each tile's stony ground (`TileData.stones`), where the grass thins out between the stones. */
   private readonly stones = new Map<number, Uint8Array>()
   private readonly chunks = new Map<number, Chunk>()
+  /** Where the camera was when the chunks were last looked over, and whether something since calls for another look. */
+  private scannedX = Infinity
+  private scannedZ = Infinity
+  private rescan = true
   private density: GrassDensity = GRASS_FULL
   private enabled = true
   /** Ring of the latest blasts: x, z, start (seconds on the shader's clock), radius. */
@@ -455,6 +461,7 @@ export class Grass {
   addTile(ref: TileRef, tile: TileData, ground: TileGround | null, mask?: GrassMask | null) {
     const x0 = -this.halfExtent + ref.col * this.tileSize
     const z0 = -this.halfExtent + ref.row * this.tileSize
+    this.rescan = true
     this.masks.set(this.tileKey(ref.col, ref.row), mask ?? grassMask(tile, x0, z0, this.tileSize, ground))
     const tileKey = this.tileKey(ref.col, ref.row)
     if (tile.stones) this.stones.set(tileKey, tile.stones)
@@ -489,6 +496,7 @@ export class Grass {
   }
 
   removeTile(ref: Pick<TileRef, 'col' | 'row'>) {
+    this.rescan = true
     this.masks.delete(this.tileKey(ref.col, ref.row))
     this.dropRocks(this.tileKey(ref.col, ref.row))
     this.stones.delete(this.tileKey(ref.col, ref.row))
@@ -497,6 +505,7 @@ export class Grass {
 
   /** Marks the chunks touching the tile at `(x0, z0)` for `update` to build again. */
   private dropOver(x0: number, z0: number) {
+    this.rescan = true
     const x1 = x0 + this.tileSize, z1 = z0 + this.tileSize
     for (const [key, chunk] of this.chunks) {
       const cx = (key % 65536) - 32768, cz = Math.floor(key / 65536) - 32768
@@ -560,6 +569,7 @@ export class Grass {
   dent(x: number, z: number, radius: number) {
     const key = `${x},${z},${radius}`
     if (this.craters.has(key)) return
+    this.rescan = true
     this.craters.set(key, { x, z, radius: radius * CRATER_BARE })
     for (const [chunkAt, chunk] of this.chunks) {
       const cx = (chunkAt % 65536) - 32768, cz = Math.floor(chunkAt / 65536) - 32768
@@ -569,6 +579,7 @@ export class Grass {
   }
 
   setEnabled(on: boolean) {
+    this.rescan = true
     this.enabled = on
     this.root.visible = on
     if (!on) for (const [key, chunk] of this.chunks) this.drop(key, chunk)
@@ -576,6 +587,7 @@ export class Grass {
 
   setDensity(density: GrassDensity) {
     if (density === this.density) return
+    this.rescan = true
     this.density = density
     for (const [key, chunk] of this.chunks) this.drop(key, chunk)
     this.applyDensity()
@@ -607,6 +619,20 @@ export class Grass {
       const dz = Math.max(cz * GRASS_CHUNK - z, 0, z - (cz + 1) * GRASS_CHUNK)
       return Math.hypot(dx, dz)
     }
+    // Which chunks to build is the same answer until the camera has moved or the ground changed
+    // under one: most frames skip the few hundred chunks' worth of looking.
+    const moved = Math.abs(x - this.scannedX) > RESCAN_DISTANCE || Math.abs(z - this.scannedZ) > RESCAN_DISTANCE
+    if (moved || this.rescan) {
+      this.scannedX = x
+      this.scannedZ = z
+      this.rescan = this.build(x, z, far, reach, ccx, ccz, distance)
+    }
+    this.bend(x, z, far, benders)
+  }
+
+  /** Drops the chunks out of reach and builds the nearest of those wanted. True when more are wanted than a frame builds. */
+  private build(x: number, z: number, far: number, reach: number, ccx: number, ccz: number, distance: (cx: number, cz: number) => number): boolean {
+    const density = this.density
     // A chunk is kept a little past where it would be built, so standing on the line does not churn it.
     for (const [key, chunk] of this.chunks) {
       const cx = (key % 65536) - 32768, cz = Math.floor(key / 65536) - 32768
@@ -629,7 +655,10 @@ export class Grass {
     for (const { cx, cz, share } of wanted.slice(0, BUILDS_PER_FRAME)) {
       const key = chunkKey(cx, cz)
       const blades = chunkBlades(cx, cz, density.perMetre, share, (bx, bz) => this.growsAt(bx, bz), this.heightAt)
-      const mesh = new Mesh(bladeGeometry(blades, share <= SIMPLE_SHARE), this.material)
+      const geometry = bladeGeometry(blades, share <= SIMPLE_SHARE)
+      // A megabyte a chunk that nothing reads again: a chunk that changes is built anew.
+      geometry.uploadOnce = true
+      const mesh = new Mesh(geometry, this.material)
       // An empty chunk is kept too, so it is not tried again every frame.
       mesh.visible = blades.length > 0
       // The old blades stay until the new ones are in: the same blades, so the swap does not show.
@@ -638,7 +667,11 @@ export class Grass {
       this.root.add(mesh)
       this.chunks.set(key, { mesh, share, stale: false })
     }
+    return wanted.length > BUILDS_PER_FRAME
+  }
 
+  /** Hands the shader this frame's benders and blasts. */
+  private bend(x: number, z: number, far: number, benders: readonly Bender[]) {
     // The movers nearest the camera, where the bending shows.
     this.picked.length = 0
     for (const b of benders) if (Math.hypot(b.x - x, b.z - z) < Math.min(far, 60)) this.picked.push(b)
