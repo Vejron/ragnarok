@@ -471,11 +471,26 @@ depth or width**, so:
 - `Tile.water` holds the surface height at every ground sample (`NO_WATER` where none; samples
   next to water sit just under the bank so the drawn shoreline falls between samples). The depth
   at a sample is `water − ground`; islands are simply ground above the surface;
+- `Tile.reach` holds how wide the open water is at each sample, in 4 m steps (`REACH_STEP`, so a
+  byte reaches 1020 m): a lake's whole width (`2R`, the same over all of it), a river's width where
+  you are (twice its local inscribed radius), and the most a byte holds on the sea. A bank sample
+  takes the widest water beside it. The waves grow with it (see "Waves" below);
 - streams are drawn 2.5 m wide as ribbons on the terrain (`Tile.streams`), and the stretches that
   run through a lake or river polygon are dropped.
 
 OSM water (`natural=water`, `waterway=riverbank`, `landuse=basin|reservoir`) is no longer
 imported. Without credentials, with `--cell 0` or with `--no-water` the world has no water.
+
+#### Waves
+`shared::waves` is five swells crossing (90, 60, 25, 13 and 7.5 m long), the same function of place
+and server tick on the server, in the client's prediction and in the water shader. The swells grow
+with the open water they have to rise over (fetch). A swell `L` metres long has none of its height on
+water narrower than `L` and all of it on water wider than `4L` (`FETCH`, a smoothstep between), read
+from `Tile.reach`. So a 20 m pond only ripples (crests about 2 cm), a 200 m lake has a chop of about
+half a metre, and water 360 m across or more, and the sea, carries the whole swell (crests about
+1.8 m). The waves also die away towards the shore, from 2.5 m deep to none at 0.3 m (`SHORE_DEPTHS`).
+The client mirrors the numbers in `client/src/sim/waves.ts`, and `waves.spec.ts` holds the two
+together.
 
 ### Terrain (DTM)
 STAC finds the GeoTIFFs over the box; the importer reads only the 512 KiB blocks under the world

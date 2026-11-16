@@ -15,7 +15,7 @@ export type { Ribbon, WaterBuffers }
  */
 
 /** What of a tile is draped on its ground. */
-export type DrapedTile = Pick<TileData, 'roads' | 'rails' | 'ski' | 'water' | 'streams'>
+export type DrapedTile = Pick<TileData, 'roads' | 'rails' | 'ski' | 'water' | 'reach' | 'streams'>
 
 /** A tile's draped meshes: ribbons drawn in the tile's group, water drawn apart (`buildWater`). */
 export interface Draped {
@@ -40,8 +40,8 @@ export function ribbonsOf(tile: Pick<DrapedTile, 'roads' | 'rails' | 'ski'>, gro
 }
 
 /** The lake and river surface and the streams of `tile`. */
-export function waterBuffers(tile: Pick<DrapedTile, 'water' | 'streams'>, ground: TileGround, around?: HeightSource, height = heightSampler(ground, around)): WaterBuffers[] {
-  const surface = tile.water.length > 0 ? surfaceBuffers(tile.water, ground) : null
+export function waterBuffers(tile: Pick<DrapedTile, 'water' | 'reach' | 'streams'>, ground: TileGround, around?: HeightSource, height = heightSampler(ground, around)): WaterBuffers[] {
+  const surface = tile.water.length > 0 ? surfaceBuffers(tile.water, ground, tile.reach) : null
   const streams = tile.streams.length > 0 ? streamBuffers(tile.streams, height) : null
   return [surface, streams].filter((buffers): buffers is WaterBuffers => buffers !== null)
 }

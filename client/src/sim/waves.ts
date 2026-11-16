@@ -26,6 +26,12 @@ export const SWELLS: readonly Swell[] = [
 export const PEAK = 8
 const PEAK_MEAN = 12870 / 65536
 export const SHORE_DEPTHS = [0.3, 2.5] as const
+/** How wide open water must be for a swell to rise on it, in its wavelengths: none below the first, all of it above the second. */
+export const FETCH = [1.0, 4.0] as const
+/** Open water this wide, metres, carries every swell (the sea). */
+export const OPEN_SEA = 1020
+/** The step `TileData.reach` counts in, metres (`REACH_STEP` in `crates/shared`). */
+export const REACH_STEP = 4
 export const LOOP_SECONDS = 64
 export const LOOP_TICKS = LOOP_SECONDS * TICK_RATE
 
@@ -48,6 +54,12 @@ export function shore(depth: number): number {
   return t * t * (3 - 2 * t)
 }
 
+/** How much of a swell `length` metres long rises on open water `reach` metres across. */
+export function fetch(reach: number, length: number): number {
+  const t = Math.min(1, Math.max(0, (reach - FETCH[0] * length) / ((FETCH[1] - FETCH[0]) * length)))
+  return t * t * (3 - 2 * t)
+}
+
 const swellTerms = SWELLS.map((swell) => ({
   ...swell,
   k: (Math.PI * 2) / swell.length,
@@ -56,15 +68,21 @@ const swellTerms = SWELLS.map((swell) => ({
   dz: Math.sin(swell.heading),
 }))
 
-/** The waves at `(x, z)`, `time` seconds into the loop, at full height (scale by `shore`). */
-export function wave(x: number, z: number, time: number): Wave {
+/**
+ * The waves at `(x, z)`, `time` seconds into the loop, on open water `reach` metres across (each swell
+ * as much as `fetch` lets rise), at full height for the depth (scale by `shore`).
+ */
+export function wave(x: number, z: number, time: number, reach: number): Wave {
   const out = { height: 0, slopeX: 0, slopeZ: 0, rise: 0 }
   for (const s of swellTerms) {
+    const share = fetch(reach, s.length)
+    if (share <= 0) continue
+    const height = s.height * share
     const theta = s.k * (s.dx * x + s.dz * z) - s.omega * time + s.phase
     const lift = Math.max(0, 0.5 * (1 + Math.cos(theta)))
     const liftLess = lift ** (PEAK - 1)
-    out.height += 2 * s.height * (liftLess * lift - PEAK_MEAN)
-    const turn = -s.height * PEAK * liftLess * Math.sin(theta)
+    out.height += 2 * height * (liftLess * lift - PEAK_MEAN)
+    const turn = -height * PEAK * liftLess * Math.sin(theta)
     out.slopeX += turn * s.k * s.dx
     out.slopeZ += turn * s.k * s.dz
     out.rise -= turn * s.omega
@@ -75,21 +93,23 @@ export function wave(x: number, z: number, time: number): Wave {
 const f = (value: number) => value.toFixed(6)
 
 /**
- * The same waves in WGSL: `fn waves(p: vec2f, t: f32) -> vec3f` gives the height and the slope `(dh/dx, dh/dz)`
- * at full height, and `fn waveShore(depth: f32) -> f32` the share of them water that deep has.
+ * The same waves in WGSL: `fn waves(p: vec2f, t: f32, reach: f32) -> vec3f` gives the height and the slope
+ * `(dh/dx, dh/dz)` on open water `reach` metres across at full height for the depth, and
+ * `fn waveShore(depth: f32) -> f32` the share of them water that deep has.
  */
 export const WAVES_WGSL = /* wgsl */ `
-fn waves(p: vec2f, t: f32) -> vec3f {
+fn waves(p: vec2f, t: f32, reach: f32) -> vec3f {
   var out = vec3f(0.0);
 ${swellTerms
   .map(
     (s) => `  {
+    let share = smoothstep(${f(FETCH[0] * s.length)}, ${f(FETCH[1] * s.length)}, reach);
     let d = vec2f(${f(s.dx)}, ${f(s.dz)});
     let theta = ${f(s.k)} * dot(d, p) - ${f(s.omega)} * t + ${f(s.phase)};
     let lift = max(0.0, 0.5 * (1.0 + cos(theta)));
     let liftLess = pow(lift, ${f(PEAK - 1)});
-    out.x += ${f(2 * s.height)} * (liftLess * lift - ${f(PEAK_MEAN)});
-    let turn = -${f(s.height * PEAK)} * liftLess * sin(theta);
+    out.x += ${f(2 * s.height)} * share * (liftLess * lift - ${f(PEAK_MEAN)});
+    let turn = -${f(s.height * PEAK)} * share * liftLess * sin(theta);
     out.y += turn * ${f(s.k)} * d.x;
     out.z += turn * ${f(s.k)} * d.y;
   }`,

@@ -3,7 +3,7 @@ import tables from './sim/tables.generated.json'
 
 /** Mirrors `crates/shared/src/world.rs`. Coordinates are metres: +X east, +Z south, +Y up. */
 
-export const WORLD_VERSION = 26
+export const WORLD_VERSION = 27
 
 /** `Manifest::theme`, mirrors `crates/shared/src/world.rs`. */
 export const THEME_WINTER = 1
@@ -461,6 +461,11 @@ export interface TileData {
    */
   water: Float32Array
   /**
+   * How wide the open water is around each ground sample (same layout as `water`), in steps of
+   * `REACH_STEP` metres: the waves grow with it. Absent when the tile has no water, or in a tile made up in a test.
+   */
+  reach?: Uint8Array
+  /**
    * Slopes `(dh/dx, dh/dz)` of the ground on a finer grid than `ground`, `n × n` with
    * `n = sqrt(length / 2)`, in units of `1 / DETAIL_SLOPE_SCALE`; for lighting only. Absent or empty
    * when the tile has none.
@@ -607,13 +612,14 @@ function flatIndices(triangles: readonly number[][]): Uint32Array {
 }
 
 export function decodeTile(bytes: Uint8Array): TileData {
-  const [buildings, roads, [vertices, triangles], ground, cover, trees, water, streams, bridges, detail, rails, ski, lines, stones, look, graves] = decode(bytes) as [
+  const [buildings, roads, [vertices, triangles], ground, cover, trees, water, reach, streams, bridges, detail, rails, ski, lines, stones, look, graves] = decode(bytes) as [
     [number, number[][], number, number, number, number, number, number, [number, number], [number[], number[], Uint8Array, Uint8Array], [number, number] | null][],
     [number, number, boolean, number[][]][],
     [number[][], number[][]],
     [number, Uint8Array],
     [number, number[][][]][],
     [number, number, number, number, number, number, boolean][],
+    Uint8Array,
     Uint8Array,
     [number, number[][]][],
     [number, number, number][],
@@ -661,6 +667,7 @@ export function decodeTile(bytes: Uint8Array): TileData {
     collision: { vertices: flatMetres(vertices), triangles: flatIndices(triangles) },
     ground: groundMetres(ground),
     water: inMetres(int32s(water), true),
+    ...(reach.length > 0 ? { reach: reach.slice() } : {}),
     streams: streams.map(([width, points]) => ({ width: metres(width), points: points.map(point) })),
     bridges: bridges.map(([first, deck, steel]) => ({ first, deck, steel })),
     // A copy of its own: a view would keep the whole file alive, and be cloned whole to the worker.

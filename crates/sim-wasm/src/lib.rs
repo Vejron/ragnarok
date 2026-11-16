@@ -300,11 +300,12 @@ impl ClientSim {
         self.physics.set_tick(tick);
     }
 
-    /// The waves at full height at `(x, z)`, `time` seconds into their loop: height, slope x, slope z
-    /// and rise (`shared::waves::wave`), for checking the client's copy against.
+    /// The waves at `(x, z)`, `time` seconds into their loop, on open water `reach` metres across, at
+    /// full height for the depth: height, slope x, slope z and rise (`shared::waves::wave`), for checking
+    /// the client's copy against.
     #[wasm_bindgen(js_name = waveAt)]
-    pub fn wave_at(x: f32, z: f32, time: f32) -> Vec<f32> {
-        let wave = shared::waves::wave(x, z, time);
+    pub fn wave_at(x: f32, z: f32, time: f32, reach: f32) -> Vec<f32> {
+        let wave = shared::waves::wave(x, z, time, reach);
         vec![wave.height, wave.slope[0], wave.slope[1], wave.rise]
     }
 

@@ -3,7 +3,7 @@
 //! same levels, so a crossing is predicted. Frozen water is left out: winter drives on the bed as before.
 
 use shared::quant::from_cm;
-use shared::world::{NO_WATER, WorldFile};
+use shared::world::{NO_WATER, REACH_STEP, WorldFile};
 use std::collections::BTreeMap;
 
 /// Water surface heights over a square of ground samples.
@@ -17,6 +17,8 @@ struct Grid {
     levels: Vec<f32>,
     /// How deep the water is at each sample, metres; 0 where it is dry.
     depths: Vec<f32>,
+    /// How wide the open water is around each sample, metres (`Tile::reach`).
+    reaches: Vec<f32>,
 }
 
 /// The water's surface at a point, waves and all: its height (metres), its slope `[dh/dx, dh/dz]` and
@@ -60,36 +62,40 @@ impl Waters {
             return waters;
         }
         if !tiled {
-            waters.put((0, 0), from_cm(ground.origin), from_cm(ground.origin), &ground.heights, &world.water);
+            waters.put((0, 0), from_cm(ground.origin), from_cm(ground.origin), &ground.heights, &world.water, &world.reach);
             return waters;
         }
         let n = per_tile + 1;
         for row in 0..cells / per_tile {
             for col in 0..cells / per_tile {
                 let (i0, j0) = (col * per_tile, row * per_tile);
-                let block = |of: &[i32]| -> Vec<i32> { (0..n).flat_map(|j| (0..n).map(move |i| ((j0 + j) * ground.side + i0 + i) as usize)).map(|at| of[at]).collect() };
-                waters.set((col as u16, row as u16), &block(&ground.heights), &block(&world.water));
+                let at = || (0..n).flat_map(|j| (0..n).map(move |i| ((j0 + j) * ground.side + i0 + i) as usize));
+                let block = |of: &[i32]| -> Vec<i32> { at().map(|at| of[at]).collect() };
+                let reach: Vec<u8> = if world.reach.len() == world.water.len() { at().map(|at| world.reach[at]).collect() } else { Vec::new() };
+                waters.set((col as u16, row as u16), &block(&ground.heights), &block(&world.water), &reach);
             }
         }
         waters
     }
 
-    /// Tile `tile`'s water over its `ground`, both centimetres a sample. A sample whose water is not
-    /// above its ground is dry.
-    pub fn set(&mut self, tile: (u16, u16), ground: &[i32], water: &[i32]) {
+    /// Tile `tile`'s water over its `ground`, both centimetres a sample, with how wide the open water
+    /// is around each (`Tile::reach`; empty is none, a calm pond). A sample whose water is not above
+    /// its ground is dry.
+    pub fn set(&mut self, tile: (u16, u16), ground: &[i32], water: &[i32], reach: &[u8]) {
         let (x0, z0) = (f32::from(tile.0) * self.tile - self.half, f32::from(tile.1) * self.tile - self.half);
-        self.put(tile, x0, z0, ground, water);
+        self.put(tile, x0, z0, ground, water, reach);
     }
 
-    fn put(&mut self, tile: (u16, u16), x0: f32, z0: f32, ground: &[i32], water: &[i32]) {
+    fn put(&mut self, tile: (u16, u16), x0: f32, z0: f32, ground: &[i32], water: &[i32], reach: &[u8]) {
         if self.frozen || water.is_empty() || water.len() != ground.len() || !water.iter().zip(ground).any(|(&w, &g)| w != NO_WATER && w > g) {
             self.by_tile.remove(&tile);
             return;
         }
         let levels: Vec<f32> = water.iter().zip(ground).map(|(&w, &g)| if w != NO_WATER && w > g { from_cm(w) } else { f32::NEG_INFINITY }).collect();
         let depths = water.iter().zip(ground).map(|(&w, &g)| if w != NO_WATER && w > g { from_cm(w - g) } else { 0.0 }).collect();
+        let reaches = if reach.len() == water.len() { reach.iter().map(|&steps| f32::from(steps) * REACH_STEP).collect() } else { vec![0.0; water.len()] };
         let side = (levels.len() as f32).sqrt().round() as usize;
-        self.by_tile.insert(tile, Grid { x0, z0, side, levels, depths });
+        self.by_tile.insert(tile, Grid { x0, z0, side, levels, depths, reaches });
     }
 
     /// Stills the waves everywhere.
@@ -109,19 +115,24 @@ impl Waters {
         level.is_finite().then_some(level)
     }
 
+    /// How wide the open water is at `(x, z)`, metres, from the nearest ground sample; 0 off the grid.
+    fn reach_at(&self, x: f32, z: f32) -> f32 {
+        self.sample(x, z).map_or(0.0, |(grid, i, j)| grid.reaches[j * grid.side + i])
+    }
+
     /// The highest still water surface at `(x, z)` or `reach` metres either way along x or z, metres:
     /// water near enough to be standing in at the edge of the grid's samples.
     pub fn level_near(&self, x: f32, z: f32, reach: f32) -> Option<f32> {
         [(0.0, 0.0), (reach, 0.0), (-reach, 0.0), (0.0, reach), (0.0, -reach)].into_iter().filter_map(|(dx, dz)| self.level_at(x + dx, z + dz)).reduce(f32::max)
     }
 
-    /// The surface at `(x, z)` with its waves (`shared::waves`), `time` seconds into their loop: the
-    /// waves die away towards the shore, as deep as the water is between the samples around it. `None`
-    /// where it is dry or the tile is not here.
+    /// The surface at `(x, z)` with its waves (`shared::waves`), `time` seconds into their loop: they
+    /// are as big as the water is wide, and die away towards the shore, as deep as the water is
+    /// between the samples around it. `None` where it is dry or the tile is not here.
     pub fn surface(&self, x: f32, z: f32, time: f32) -> Option<Surface> {
         let level = self.level_at(x, z)?;
         let share = if self.calm { 0.0 } else { shared::waves::shore(self.depth_at(x, z)) };
-        let wave = shared::waves::wave(x, z, time);
+        let wave = shared::waves::wave(x, z, time, self.reach_at(x, z));
         Some(Surface { height: level + wave.height * share, slope: wave.slope.map(|slope| slope * share), rise: wave.rise * share })
     }
 
@@ -172,7 +183,7 @@ mod tests {
         // Tiles of 4 m, the world 8 m across, in 2 m cells: tile (1, 0) is x 0..4, z -4..0, 3 × 3 samples.
         let mut waters = Waters::new(400, 400, 200, false);
         let ground = vec![0; 9];
-        waters.set((1, 0), &ground, &[NO_WATER, NO_WATER, NO_WATER, NO_WATER, 150, 150, NO_WATER, 150, -10]);
+        waters.set((1, 0), &ground, &[NO_WATER, NO_WATER, NO_WATER, NO_WATER, 150, 150, NO_WATER, 150, -10], &[]);
         assert_eq!(waters.level_at(2.1, -1.9), Some(1.5), "the middle sample");
         assert_eq!(waters.level_at(3.9, -2.1), Some(1.5));
         assert_eq!(waters.level_at(0.2, -3.8), None, "a dry sample");
@@ -206,18 +217,37 @@ mod tests {
         let ground: Vec<i32> = (0..25).map(|k| [-300, -300, -150, -20, 10][k % 5]).collect();
         world.ground = shared::terrain::Ground { origin: 0, cell: 200, side: 5, heights: ground };
         world.water = vec![0; 25];
+        world.reach = vec![u8::MAX; 25];
         let waters = Waters::of_world(&world);
         let time = 7.3;
         let deep = waters.surface(0.0, 4.0, time).unwrap();
-        assert_eq!(deep.height, shared::waves::wave(0.0, 4.0, time).height, "deep water has the whole wave");
+        assert_eq!(deep.height, shared::waves::wave(0.0, 4.0, time, shared::waves::OPEN_SEA).height, "deep water has the whole wave");
         let shallow = waters.surface(6.0, 4.0, time).unwrap();
         assert_eq!((shallow.height, shallow.rise), (0.0, 0.0), "20 cm of water lies flat");
     }
 
     #[test]
+    fn waves_are_smaller_on_small_water() {
+        // The same deep water, once as the sea and once as a pond 20 m across.
+        let mut world = WorldFile { half_extent: 400, ..Default::default() };
+        world.ground = shared::terrain::Ground { origin: 0, cell: 200, side: 5, heights: vec![-400; 25] };
+        world.water = vec![0; 25];
+        let crest = |world: &WorldFile| {
+            let waters = Waters::of_world(world);
+            (0..shared::waves::LOOP_TICKS).step_by(5).map(|tick| waters.surface(4.0, 4.0, shared::waves::time(tick)).unwrap().height).fold(0.0, f32::max)
+        };
+        world.reach = vec![u8::MAX; 25];
+        let sea = crest(&world);
+        world.reach = vec![(20.0 / REACH_STEP) as u8; 25];
+        let pond = crest(&world);
+        assert!(sea > 1.0, "the sea heaves {sea} m");
+        assert!(pond < 0.05, "a pond ripples, not {pond} m");
+    }
+
+    #[test]
     fn frozen_water_is_not_kept() {
         let mut waters = Waters::new(400, 400, 200, true);
-        waters.set((1, 0), &[0; 9], &[150; 9]);
+        waters.set((1, 0), &[0; 9], &[150; 9], &[]);
         assert_eq!(waters.level_at(2.0, -2.0), None);
     }
 }

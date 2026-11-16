@@ -37,6 +37,12 @@ pub const PEAK: i32 = 8;
 const PEAK_MEAN: f32 = 12870.0 / 65536.0;
 /// The waves die away towards the shore: none shallower than the first depth, metres, all of them deeper than the second.
 pub const SHORE_DEPTHS: [f32; 2] = [0.3, 2.5];
+/// How wide open water must be for a swell to rise on it, in its wavelengths: none on water narrower
+/// than the first, the whole swell on water wider than the second. Waves grow with the open water the
+/// wind has to raise them over, so a pond has only the chop and the sea the whole swell.
+pub const FETCH: [f32; 2] = [1.0, 4.0];
+/// Open water this wide, metres, carries every swell: the sea, and what a world stores for it.
+pub const OPEN_SEA: f32 = 1020.0;
 /// The loop, seconds and ticks.
 pub const LOOP_SECONDS: u32 = 64;
 pub const LOOP_TICKS: u32 = LOOP_SECONDS * TICK_RATE;
@@ -61,10 +67,22 @@ pub fn shore(depth: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
-/// The waves at `(x, z)`, metres, `time` seconds into the loop, at full height (scale by [`shore`]).
-pub fn wave(x: f32, z: f32, time: f32) -> Wave {
+/// How much of a swell `length` metres long rises on open water `reach` metres across.
+pub fn fetch(reach: f32, length: f32) -> f32 {
+    let t = ((reach - FETCH[0] * length) / ((FETCH[1] - FETCH[0]) * length)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// The waves at `(x, z)`, metres, `time` seconds into the loop, on open water `reach` metres across
+/// (each swell as much as [`fetch`] lets rise), at full height for the depth (scale by [`shore`]).
+pub fn wave(x: f32, z: f32, time: f32, reach: f32) -> Wave {
     let mut out = Wave::default();
     for swell in &SWELLS {
+        let share = fetch(reach, swell.length);
+        if share <= 0.0 {
+            continue;
+        }
+        let height = swell.height * share;
         let k = std::f32::consts::TAU / swell.length;
         let omega = std::f32::consts::TAU * swell.cycles as f32 / LOOP_SECONDS as f32;
         let (dz, dx) = swell.heading.sin_cos();
@@ -72,9 +90,9 @@ pub fn wave(x: f32, z: f32, time: f32) -> Wave {
         let (sin, cos) = theta.sin_cos();
         let lift = (0.5 * (1.0 + cos)).max(0.0);
         let lift_less = lift.powi(PEAK - 1);
-        out.height += 2.0 * swell.height * (lift_less * lift - PEAK_MEAN);
+        out.height += 2.0 * height * (lift_less * lift - PEAK_MEAN);
         // d/dθ of the shape; θ grows with place by k along the heading and falls with time by ω.
-        let turn = -swell.height * PEAK as f32 * lift_less * sin;
+        let turn = -height * PEAK as f32 * lift_less * sin;
         out.slope[0] += turn * k * dx;
         out.slope[1] += turn * k * dz;
         out.rise -= turn * omega;
@@ -89,26 +107,38 @@ mod tests {
     #[test]
     fn the_slope_and_rise_are_the_heights_derivatives() {
         let (x, z, t, e) = (3.7, -12.2, 21.4, 1e-3);
-        let at = wave(x, z, t);
-        let dx = (wave(x + e, z, t).height - wave(x - e, z, t).height) / (2.0 * e);
-        let dz = (wave(x, z + e, t).height - wave(x, z - e, t).height) / (2.0 * e);
-        let dt = (wave(x, z, t + e).height - wave(x, z, t - e).height) / (2.0 * e);
+        let at = wave(x, z, t, OPEN_SEA);
+        let dx = (wave(x + e, z, t, OPEN_SEA).height - wave(x - e, z, t, OPEN_SEA).height) / (2.0 * e);
+        let dz = (wave(x, z + e, t, OPEN_SEA).height - wave(x, z - e, t, OPEN_SEA).height) / (2.0 * e);
+        let dt = (wave(x, z, t + e, OPEN_SEA).height - wave(x, z, t - e, OPEN_SEA).height) / (2.0 * e);
         assert!((at.slope[0] - dx).abs() < 0.02 && (at.slope[1] - dz).abs() < 0.02 && (at.rise - dt).abs() < 0.02, "{at:?} against {dx} {dz} {dt}");
     }
 
     #[test]
     fn the_waves_loop_and_are_a_swell_with_a_chop() {
-        assert_eq!(wave(5.0, 9.0, time(LOOP_TICKS + 30)), wave(5.0, 9.0, time(30)));
-        let (start, end) = (wave(5.0, 9.0, 0.0), wave(5.0, 9.0, LOOP_SECONDS as f32));
+        assert_eq!(wave(5.0, 9.0, time(LOOP_TICKS + 30), OPEN_SEA), wave(5.0, 9.0, time(30), OPEN_SEA));
+        let (start, end) = (wave(5.0, 9.0, 0.0, OPEN_SEA), wave(5.0, 9.0, LOOP_SECONDS as f32, OPEN_SEA));
         assert!((start.height - end.height).abs() < 1e-3, "every swell runs whole cycles in a loop");
         let crest = SWELLS.iter().map(|swell| swell.height).sum::<f32>() * 2.0 * (1.0 - PEAK_MEAN);
         assert!(crest > 1.4 && crest < 2.1, "crests stand {crest} m over the level");
-        let mean = (0..LOOP_TICKS).map(|tick| wave(5.0, 9.0, time(tick)).height).sum::<f32>() / LOOP_TICKS as f32;
+        let mean = (0..LOOP_TICKS).map(|tick| wave(5.0, 9.0, time(tick), OPEN_SEA).height).sum::<f32>() / LOOP_TICKS as f32;
         assert!(mean.abs() < 1e-3, "the water keeps its level, not {mean}");
         // Choppy but no breakers: nowhere does the surface slope more than about 1 in 3.
-        let steepest = (0..400).map(|k| wave(k as f32 * 1.3, k as f32 * 0.7, k as f32 * 0.37)).map(|w| w.slope[0].hypot(w.slope[1])).fold(0.0, f32::max);
+        let steepest = (0..400).map(|k| wave(k as f32 * 1.3, k as f32 * 0.7, k as f32 * 0.37, OPEN_SEA)).map(|w| w.slope[0].hypot(w.slope[1])).fold(0.0, f32::max);
         assert!(steepest < 0.3, "slopes reach {steepest}");
         assert_eq!(shore(0.1), 0.0);
         assert_eq!(shore(3.0), 1.0);
+    }
+
+    #[test]
+    fn small_water_has_only_the_chop() {
+        let crest = |reach: f32| (0..LOOP_TICKS).step_by(7).map(|tick| wave(5.0, 9.0, time(tick), reach).height).fold(0.0, f32::max);
+        let (pond, lake, big, sea) = (crest(20.0), crest(200.0), crest(1000.0), crest(OPEN_SEA));
+        assert!(pond < 0.05, "a pond has ripples, not {pond} m crests");
+        assert!(pond < lake && lake < big, "crests grow with the water: {pond} {lake} {big}");
+        assert!(lake > 0.2 && lake < 1.2, "a 200 m lake has a chop of {lake} m");
+        assert_eq!(big, sea, "a kilometre of water carries the whole swell");
+        assert_eq!(fetch(5.0, 7.5), 0.0);
+        assert_eq!(fetch(OPEN_SEA, SWELLS[0].length), 1.0);
     }
 }

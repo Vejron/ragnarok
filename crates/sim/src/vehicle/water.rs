@@ -268,7 +268,7 @@ mod tests {
                 water.push(if lake(i, j) { 0 } else { NO_WATER });
             }
         }
-        WorldFile { version: WORLD_VERSION, half_extent: 20_000, ground: shared::terrain::Ground { origin: -10_000, cell: 250, side, heights }, water, ..Default::default() }
+        WorldFile { version: WORLD_VERSION, half_extent: 20_000, ground: shared::terrain::Ground { origin: -10_000, cell: 250, side, heights }, reach: vec![u8::MAX; water.len()], water, ..Default::default() }
     }
 
     fn drive(physics: &mut Physics, controls: CarControls, ticks: u32) -> CarPose {

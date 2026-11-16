@@ -7,7 +7,7 @@
 //! with a depth that grows with the distance from the shore and with the size of the body.
 
 use shared::terrain::Ground;
-use shared::world::NO_WATER;
+use shared::world::{NO_WATER, REACH_STEP};
 
 type P = [f64; 2];
 
@@ -88,14 +88,16 @@ pub struct Map {
 #[derive(Clone, Debug, Default)]
 pub struct Placed {
     pub levels: Vec<i32>,
+    /// How wide the open water is around each sample, in `REACH_STEP`s (`Tile::reach`); empty with `levels`.
+    pub reach: Vec<u8>,
     pub streams: Vec<Vec<P>>,
 }
 
 impl Placed {
     /// The finished water of `map` over `ground`, whose y = 0 is `datum` in the height model.
     pub fn new(map: &Map, surface: &Surface, datum: f64, ground: &Ground) -> Self {
-        let levels = if surface.is_empty() { Vec::new() } else { surface.levels(datum, ground) };
-        Self { levels, streams: surface.trim_streams(&map.streams) }
+        let (levels, reach) = if surface.is_empty() { (Vec::new(), Vec::new()) } else { (surface.levels(datum, ground), surface.reaches()) };
+        Self { levels, reach, streams: surface.trim_streams(&map.streams) }
     }
 }
 
@@ -118,6 +120,9 @@ pub struct Surface {
     level: Vec<f32>,
     /// Bed depth under each sample, metres (0 on dry samples).
     depth: Vec<f32>,
+    /// How wide the open water is around each sample, metres (0 on dry samples): a lake's whole
+    /// width, a river's where you are, and the open sea on the sea. The waves grow with it.
+    reach: Vec<f32>,
 }
 
 impl Surface {
@@ -226,7 +231,17 @@ impl Surface {
                 }) as f32,
             })
             .collect();
-        Self { grid, body, level, depth }
+        let reach = (0..n)
+            .map(|at| match body[at] {
+                NONE => 0.0,
+                b => match map.bodies[b as usize].kind {
+                    Kind::Sea => shared::waves::OPEN_SEA,
+                    Kind::Lake => 2.0 * farthest[b as usize] as f32,
+                    Kind::River => 2.0 * width[at],
+                },
+            })
+            .collect();
+        Self { grid, body, level, depth, reach }
     }
 
     fn index(&self, x: f64, z: f64) -> Option<usize> {
@@ -289,6 +304,29 @@ impl Surface {
                 }
                 if let Some(level) = near {
                     out[at] = level.min(ground.heights[at] - BANK_DROP_CM);
+                }
+            }
+        }
+        out
+    }
+
+    /// How wide the open water is at every ground sample, in `REACH_STEP`s, as `levels` lays out the
+    /// surface: a bank sample beside the water takes the widest water next to it, a dry one 0.
+    pub fn reaches(&self) -> Vec<u8> {
+        let side = self.grid.side as usize;
+        let step = |metres: f32| (metres / REACH_STEP).round().clamp(0.0, f32::from(u8::MAX)) as u8;
+        let mut out: Vec<u8> = self.reach.iter().map(|&metres| step(metres)).collect();
+        for j in 0..side {
+            for i in 0..side {
+                let at = j * side + i;
+                if self.body[at] != NONE {
+                    continue;
+                }
+                for (dj, di) in (-1i32..=1).flat_map(|dj| (-1i32..=1).map(move |di| (dj, di))) {
+                    let (ni, nj) = (i as i32 + di, j as i32 + dj);
+                    if ni >= 0 && nj >= 0 && ni < side as i32 && nj < side as i32 {
+                        out[at] = out[at].max(step(self.reach[nj as usize * side + ni as usize]));
+                    }
                 }
             }
         }
@@ -684,6 +722,21 @@ mod tests {
     fn isotonic_pools_what_rises_out_of_order() {
         assert_eq!(isotonic(&[1.0, 3.0, 2.0, 4.0], &[1.0; 4]), vec![1.0, 2.5, 2.5, 4.0]);
         assert_eq!(isotonic(&[3.0, 1.0], &[1.0, 3.0]), vec![1.5, 1.5]);
+    }
+
+    #[test]
+    fn a_lakes_reach_is_its_whole_width_and_the_sea_is_open() {
+        // The 80 m square lake: every sample of it has the same reach, the width across it.
+        let surface = Surface::new(&lake(), grid(), |_, _| Some(5.0));
+        let reach = surface.reaches();
+        let middle = reach[10 * 21 + 10];
+        assert!((f32::from(middle) * REACH_STEP - 80.0).abs() <= 2.0 * REACH_STEP, "{middle}");
+        assert_eq!(reach[10 * 21 + 6], middle, "near the bank as in the middle");
+        assert_eq!(reach[10 * 21 + 5], middle, "the bank sample beside it too");
+        assert_eq!(reach[10 * 21 + 1], 0, "dry land has none");
+        let ring = vec![[-100.0, -100.0], [100.0, -100.0], [100.0, 100.0], [-100.0, 100.0]];
+        let sea = Map { bodies: vec![Body { kind: Kind::Sea, rings: vec![ring], level: Some(0.0) }], streams: Vec::new() };
+        assert!(Surface::new(&sea, grid(), |_, _| Some(1.0)).reaches().iter().all(|&steps| steps == u8::MAX), "the sea carries every swell");
     }
 
     #[test]

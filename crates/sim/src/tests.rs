@@ -1057,7 +1057,7 @@ fn lake_world() -> WorldFile {
             water.push(if ground < 0.0 { 0 } else { shared::world::NO_WATER });
         }
     }
-    WorldFile { ground: Ground { origin: -10_000, cell: 100, side, heights }, water, ..flat_world() }
+    WorldFile { ground: Ground { origin: -10_000, cell: 100, side, heights }, reach: vec![u8::MAX; water.len()], water, ..flat_world() }
 }
 
 /// The lake with its waves stilled, for exact heights.

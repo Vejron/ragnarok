@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::terrain::Ground;
 
-pub const WORLD_VERSION: u8 = 26;
+pub const WORLD_VERSION: u8 = 27;
 
 /// `Manifest::theme`: the world as it always was.
 pub const THEME_PLAIN: u8 = 0;
@@ -287,6 +287,11 @@ pub struct Tile {
     /// the surface wherever that is positive. Nothing simulates it.
     #[serde(with = "samples32")]
     pub water: Vec<i32>,
+    /// How wide the open water is around each ground sample, in steps of `REACH_STEP` metres (same
+    /// layout as `water`; 0 where it is dry): the whole lake's width, a river's where it is, and the
+    /// most a byte holds on the sea. The waves rise with it (`waves::fetch`). Empty when `water` is.
+    #[serde(with = "bytes")]
+    pub reach: Vec<u8>,
     /// Streams: narrow watercourses drawn as ribbons draped on the ground, clipped to the tile.
     pub streams: Vec<Stream>,
     /// Bridges: ranges of this tile's collision triangles (the importer builds them there, so
@@ -513,6 +518,9 @@ pub struct Bridge {
     pub steel: u32,
 }
 
+/// The step `Tile::reach` counts in, metres: a byte reaches 1020 m, wide enough for every swell.
+pub const REACH_STEP: f32 = 4.0;
+
 /// `Tile::water` entry for a sample with no water.
 pub const NO_WATER: i32 = i32::MIN;
 
@@ -558,6 +566,10 @@ pub struct WorldFile {
     /// `assemble`; empty when no tile has water.
     #[serde(skip)]
     pub water: Vec<i32>,
+    /// How wide the open water is around each `ground` sample, as `Tile::reach`. Filled by
+    /// `assemble` with `water`.
+    #[serde(skip)]
+    pub reach: Vec<u8>,
     /// `THEME_*`, from the manifest.
     #[serde(skip)]
     pub theme: u8,
@@ -836,6 +848,19 @@ mod heights {
             return Err(serde::de::Error::custom("a ground step that is not positive"));
         }
         unpack(&planes, step).ok_or_else(|| serde::de::Error::custom("ground residuals that are not two planes of a square grid"))
+    }
+}
+
+/// A tile's open-water reach written as a msgpack `bin`, one byte a sample.
+mod bytes {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(samples: &[u8], serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_bytes(samples)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<u8>, D::Error> {
+        Ok(super::Bits::deserialize(deserializer)?.0)
     }
 }
 
@@ -1297,9 +1322,16 @@ impl WorldFile {
                     if world.water.is_empty() {
                         world.water = vec![NO_WATER; ground.heights.len()];
                     }
+                    if world.reach.is_empty() {
+                        world.reach = vec![0; ground.heights.len()];
+                    }
+                    let reach = tile.reach.len() == tile.water.len();
                     for j in 0..n {
-                        let at = ((j0 + j) * ground.side + i0) as usize;
-                        world.water[at..at + n as usize].copy_from_slice(&tile.water[(j * n) as usize..((j + 1) * n) as usize]);
+                        let (at, from) = (((j0 + j) * ground.side + i0) as usize, (j * n) as usize);
+                        world.water[at..at + n as usize].copy_from_slice(&tile.water[from..from + n as usize]);
+                        if reach {
+                            world.reach[at..at + n as usize].copy_from_slice(&tile.reach[from..from + n as usize]);
+                        }
                     }
                 }
             }
@@ -1473,6 +1505,7 @@ mod tests {
             cover: vec![Cover { kind: COVER_WATER, rings: vec![vec![[0, 0], [100, 0], [100, 100]]] }],
             trees: vec![Tree { x: 5, z: -7, base: 120, height: 1200, crown: 220, kind: TREE_BIRCH, solid: true }],
             water: vec![NO_WATER, 40, 40, NO_WATER],
+            reach: vec![0, 50, 50, 0],
             streams: vec![Stream { width: 200, points: vec![[0, 0], [300, 100]] }],
             bridges: vec![Bridge { first: 0, deck: 12, steel: 4 }],
             detail: vec![0, -3, 127, -127],
@@ -1484,14 +1517,14 @@ mod tests {
             graves: vec![Grave { x: 40, z: -60, base: 120, yaw: -1571, kind: GRAVE_CROSS }],
         };
         assert_eq!(Tile::decode(&tile.encode()).unwrap(), tile);
-        assert_eq!(tile.encode()[..3], [0xdc, 0, 16], "an array of all 16 fields");
+        assert_eq!(tile.encode()[..3], [0xdc, 0, 17], "an array of all 17 fields");
         // An empty tile is every field still, each empty.
         let empty = Tile::default().encode();
-        assert_eq!(empty[..3], [0xdc, 0, 16]);
+        assert_eq!(empty[..3], [0xdc, 0, 17]);
         assert_eq!(Tile::decode(&empty).unwrap(), Tile::default());
         // A tile without its last field, the tombstones (`[]`, its last byte), is refused.
         assert_eq!(empty[empty.len() - 1], 0x90);
-        let mut short = vec![0x9f];
+        let mut short = vec![0xdc, 0, 16];
         short.extend_from_slice(&empty[3..empty.len() - 1]);
         assert!(Tile::decode(&short).is_err());
         assert_eq!(manifest.tiles[0].path(), "tiles/1_0.msgpack");
@@ -1499,13 +1532,14 @@ mod tests {
 
     #[test]
     fn water_and_detail_are_written_as_little_endian_bytes() {
-        let tile = Tile { water: vec![NO_WATER, 40, 40], detail: vec![-1, 5], ..Default::default() };
+        let tile = Tile { water: vec![NO_WATER, 40, 40], reach: vec![0, 7, 255], detail: vec![-1, 5], ..Default::default() };
         let bytes = tile.encode();
         // msgpack `bin 8` (0xc4), its length, then the samples low byte first: what the client reads
         // as an `Int32Array` or `Int8Array` (`decodeTile`).
         let find = |needle: &[u8]| bytes.windows(needle.len()).any(|w| w == needle);
         assert!(find(&[0xc4, 12, 0, 0, 0, 0x80, 40, 0, 0, 0, 40, 0, 0, 0]));
         assert!(find(&[0xc4, 2, 0xff, 5]));
+        assert!(find(&[0xc4, 3, 0, 7, 255]), "the reach, a byte a sample");
         assert_eq!(Tile::decode(&bytes).unwrap(), tile);
     }
 
@@ -1558,9 +1592,12 @@ mod tests {
         // A pond over the right tile's middle sample, the grid's (3, 1) at x = 1000, z = -1000.
         let mut pond = vec![NO_WATER; 9];
         pond[4] = 50;
-        let wet = Tile { ground: vec![0; 9], water: pond, ..Default::default() };
+        let mut reach = vec![0; 9];
+        reach[4] = 9;
+        let wet = Tile { ground: vec![0; 9], water: pond, reach, ..Default::default() };
         let world = WorldFile::assemble(&manifest, [(0, 0, dry.clone()), (1, 0, wet), (0, 1, dry.clone()), (1, 1, dry)]);
         assert_eq!(world.water.len(), 25);
+        assert_eq!((world.reach.len(), world.reach[5 + 3]), (25, 9), "the reach is joined with the water");
         assert!(world.wet(1_000, -1_000));
         assert!(world.wet(1_300, -800), "the nearest sample decides");
         assert!(!world.wet(-1_000, -1_000));

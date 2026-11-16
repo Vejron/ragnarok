@@ -2,6 +2,7 @@ import { Mesh } from '@ragnarok/engine'
 import { describe, expect, it } from 'vitest'
 import { buildWater, disposeWater } from '@/render/water'
 import type { TileGround } from '@/sim/terrain'
+import { REACH_STEP } from '@/sim/waves'
 import { NO_WATER } from '@/world'
 
 /** 5 × 5 samples 5 m apart, flat at 2 m, with a pond of 3 × 3 samples bedded 1 m down. */
@@ -42,6 +43,16 @@ describe('water', () => {
     const { ground, water } = pond()
     const group = buildWater({ water, streams: [] }, { ...ground, cell: 1 })!
     expect((group.children[0] as Mesh).geometry.indexCount).toBe(16 * 6)
+    disposeWater(group)
+  })
+
+  it('carries the open water’s reach, metres, to the waves in y', () => {
+    const { ground, water } = pond()
+    const reach = new Uint8Array(water.length).fill(10)
+    const group = buildWater({ water, reach, streams: [] }, ground)!
+    const mesh = group.children[0] as Mesh
+    const custom = mesh.geometry.custom!
+    for (let i = 0; i < custom.length / 4; i++) expect(custom[i * 4 + 1]).toBeCloseTo(10 * REACH_STEP)
     disposeWater(group)
   })
 

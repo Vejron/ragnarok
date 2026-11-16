@@ -1,11 +1,13 @@
 import { NO_WATER, type TileRef } from '@/world'
 import type { TileGround } from './terrain'
-import { shore, wave } from './waves'
+import { REACH_STEP, shore, wave } from './waves'
 
 /** One tile's water surface heights, laid out like its ground. */
 interface TileWater {
   ground: TileGround
   levels: Float32Array
+  /** How wide the open water is at each sample, in `REACH_STEP`s (`TileData.reach`); null for none. */
+  reach: Uint8Array | null
 }
 
 /** How far from the camera, metres, and in how many directions `planeNear` looks for water. */
@@ -30,8 +32,8 @@ export class Waters {
     return row * 65536 + col
   }
 
-  set(ref: TileRef, ground: TileGround | null, levels: Float32Array) {
-    if (ground && levels.length === ground.heights.length) this.tiles.set(this.key(ref.col, ref.row), { ground, levels })
+  set(ref: TileRef, ground: TileGround | null, levels: Float32Array, reach?: Uint8Array) {
+    if (ground && levels.length === ground.heights.length) this.tiles.set(this.key(ref.col, ref.row), { ground, levels, reach: reach && reach.length === levels.length ? reach : null })
   }
 
   delete(ref: TileRef) {
@@ -71,12 +73,23 @@ export class Waters {
 
   /**
    * The water surface height at `(x, z)` with its waves, `time` seconds into their loop (`waveTime`), as
-   * the water draws it and the sim has it: they die away towards the shore. `NO_WATER` where there is none.
+   * the water draws it and the sim has it: as big as the water is wide, and dying away towards the shore.
+   * `NO_WATER` where there is none.
    */
   surfaceAt(x: number, z: number, time: number): number {
     const level = this.levelAt(x, z)
     if (level === NO_WATER || this.calm) return level
-    return level + wave(x, z, time).height * shore(this.depthAt(x, z))
+    return level + wave(x, z, time, this.reachAt(x, z)).height * shore(this.depthAt(x, z))
+  }
+
+  /** How wide the open water is at `(x, z)`, metres, from the nearest ground sample, as the sim has it; 0 where it is not known. */
+  private reachAt(x: number, z: number): number {
+    const tile = this.tileAt(x, z)
+    if (!tile?.reach) return 0
+    const { ground, reach } = tile
+    const column = Math.min(Math.max(Math.round((x - ground.x0) / ground.cell), 0), ground.side - 1)
+    const row = Math.min(Math.max(Math.round((z - ground.z0) / ground.cell), 0), ground.side - 1)
+    return reach[row * ground.side + column]! * REACH_STEP
   }
 
   /** How deep the water is at `(x, z)`, metres, between the four samples around it; 0 where it is dry. */

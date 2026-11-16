@@ -140,7 +140,7 @@ mod tests {
                 water.push(if height < 0.0 { 0 } else { NO_WATER });
             }
         }
-        WorldFile { version: WORLD_VERSION, half_extent: 120_000, ground: shared::terrain::Ground { origin: -60_000, cell: 500, side, heights }, water, ..Default::default() }
+        WorldFile { version: WORLD_VERSION, half_extent: 120_000, ground: shared::terrain::Ground { origin: -60_000, cell: 500, side, heights }, reach: vec![u8::MAX; water.len()], water, ..Default::default() }
     }
 
     /// Flat ground at 0 with a lake 5 m deep everywhere within 300 m of the middle.

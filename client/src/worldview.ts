@@ -585,7 +585,7 @@ export class WorldView {
     this.grass?.addTile(ref, tile, ground, prepared.grass)
     this.stones?.addTile(ref, tile, ground)
     if (ground) for (const crater of this.marked) if (reaches(ground, crater)) this.grass?.dent(crater.x / 100, crater.z / 100, crater.radius / 100)
-    this.waters?.set(ref, ground, tile.water)
+    this.waters?.set(ref, ground, tile.water, tile.reach)
     this.groups.set(key, group)
     if (fromWorker?.terrain) this.levels.set(key, prepared.level)
     // Tiles already in place were shaded without this one beside them: close the seams. The worker

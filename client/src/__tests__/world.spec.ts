@@ -96,7 +96,7 @@ describe('world files', () => {
 
   /** A tile file with every field empty, `fields` put in by index (`Tile` in `world.rs`). */
   const tileWith = (fields: Record<number, unknown>) =>
-    encode(Object.assign([[], [], [[], []], [2, new Uint8Array()], [], [], new Uint8Array(), [], [], new Uint8Array(), [], [], [], new Uint8Array(), [[], [], []], []], fields))
+    encode(Object.assign([[], [], [[], []], [2, new Uint8Array()], [], [], new Uint8Array(), new Uint8Array(), [], [], new Uint8Array(), [], [], [], new Uint8Array(), [[], [], []], []], fields))
 
   it('decodes ground written as residuals of a plane', () => {
     // The bytes `world.rs` pins (`ground_is_written_rounded_as_residuals_of_a_plane_through_its_neighbours`):
@@ -110,13 +110,13 @@ describe('world files', () => {
 
   it('decodes tracks', () => {
     expect(decodeTile(tileWith({})).rails).toEqual([])
-    const tile = decodeTile(tileWith({ 10: [[144, RAIL_TRAIN, [[0, 0], [1000, -250]]]] }))
+    const tile = decodeTile(tileWith({ 11: [[144, RAIL_TRAIN, [[0, 0], [1000, -250]]]] }))
     expect(tile.rails).toEqual([{ gauge: 1.44, kind: RAIL_TRAIN, points: [[0, 0], [10, -2.5]] }])
   })
 
   it('decodes tombstones, in metres and radians', () => {
     expect(decodeTile(tileWith({})).graves).toEqual([])
-    const tile = decodeTile(tileWith({ 15: [[1250, -300, 480, -1571, GRAVE_CROSS]] }))
+    const tile = decodeTile(tileWith({ 16: [[1250, -300, 480, -1571, GRAVE_CROSS]] }))
     expect(tile.graves).toEqual([{ x: 12.5, z: -3, base: 4.8, yaw: -1.571, kind: GRAVE_CROSS }])
   })
 

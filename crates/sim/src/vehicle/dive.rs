@@ -163,7 +163,7 @@ mod tests {
                 water.push(if wet(i, j) { 0 } else { NO_WATER });
             }
         }
-        WorldFile { version: WORLD_VERSION, half_extent: 60_000, ground: shared::terrain::Ground { origin: -30_000, cell: 500, side, heights }, water, ..Default::default() }
+        WorldFile { version: WORLD_VERSION, half_extent: 60_000, ground: shared::terrain::Ground { origin: -30_000, cell: 500, side, heights }, reach: vec![u8::MAX; water.len()], water, ..Default::default() }
     }
 
     const SECOND: u32 = (1.0 / TICK_DT + 0.5) as u32;

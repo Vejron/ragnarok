@@ -24,6 +24,7 @@ fn sea() -> Game {
         version: WORLD_VERSION,
         half_extent: 30_000,
         ground: shared::terrain::Ground { origin: -30_000, cell: 500, side, heights },
+        reach: vec![u8::MAX; water.len()],
         water,
         spawns: vec![[-25_000, 0]],
         placed_vehicles: vec![PlacedVehicle { kind: KIND_SHIP, at: [0, 0], yaw: 0.0 }],

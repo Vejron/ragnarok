@@ -40,7 +40,7 @@ fn wakeShare(custom: vec4f) -> f32 {
 }
 
 fn displace(world: vec3f, custom: vec4f, color: vec4f) -> vec3f {
-  let lift = waves(world.xz, params.wave.x).x * waveShare(custom) + wake(world.xz).x * wakeShare(custom);
+  let lift = waves(world.xz, params.wave.x, custom.y).x * waveShare(custom) + wake(world.xz).x * wakeShare(custom);
   return world + vec3f(0.0, lift, 0.0);
 }
 `
@@ -168,7 +168,7 @@ fn surface(s: Surface) -> vec4f {
   let grad = select(chopped.yz * mix(0.35, 1.1, gust), flowRipple, stream);
   // The real waves' slope, with the small swell's ripples over it.
   let share = waveShare(s.custom);
-  let big = waves(world, params.wave.x) * share;
+  let big = waves(world, params.wave.x, s.custom.y) * share;
   // And what has passed through it: the wakes' rings and trenches, and their churn.
   let churn = wake(world) * wakeShare(s.custom);
   var n = normalize(vec3f(-grad.x * 0.45 - big.y - churn.y, 1.0, -grad.y * 0.45 - big.z - churn.z));
@@ -337,7 +337,7 @@ export function setWaterLight(sky: number, sun: number, cloud: Readonly<Color>) 
  * One tile's water, or null if it has none: from `prepared` when `prepareTile` built it already. It
  * is translucent and added apart from the tile's group so the game can place it in the world apart from the tile.
  */
-export function buildWater(tile: Pick<TileData, 'water' | 'streams'>, ground: TileGround, around?: HeightSource, prepared?: WaterBuffers[]): Group | null {
+export function buildWater(tile: Pick<TileData, 'water' | 'reach' | 'streams'>, ground: TileGround, around?: HeightSource, prepared?: WaterBuffers[]): Group | null {
   const meshes = (prepared ?? waterBuffers(tile, ground, around)).map((buffers) => {
     const mesh = new Mesh(new Geometry(buffers), material())
     mesh.renderOrder = 1

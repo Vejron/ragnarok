@@ -662,13 +662,16 @@ fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collecti
             }
         }
         // A tile with no water at all carries no water samples.
-        if water.levels.len() == ground.heights.len() {
+        if water.levels.len() == ground.heights.len() && water.reach.len() == water.levels.len() {
             let all = Ground { origin: ground.origin, cell: ground.cell, side: ground.side, heights: water.levels };
+            let reach = Ground { origin: ground.origin, cell: ground.cell, side: ground.side, heights: water.reach.iter().map(|&steps| i32::from(steps)).collect() };
             for col in 0..manifest.grid() {
                 for row in (0..manifest.grid()).filter(|&row| inside(col, row)) {
                     let block = all.block(col as u32 * per_tile, row as u32 * per_tile, samples);
                     if block.iter().any(|&level| level != NO_WATER) {
-                        tiles.entry((col, row)).or_default().water = block;
+                        let tile = tiles.entry((col, row)).or_default();
+                        tile.water = block;
+                        tile.reach = reach.block(col as u32 * per_tile, row as u32 * per_tile, samples).into_iter().map(|steps| steps as u8).collect();
                     }
                 }
             }
