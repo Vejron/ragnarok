@@ -402,7 +402,7 @@ fn parked_cars_in_the_fixture_world_settle_and_stay_put() {
         let ride = match game.world.entities.of::<Vehicle>(id).kind {
             KIND_PLANE => 1.3,
             // The tracked kinds stand with their bellies half a metre clear.
-            KIND_TANK | KIND_STRV | KIND_STRF => 1.25,
+            KIND_TANK | KIND_STRV | KIND_STRF | KIND_PBV => 1.25,
             KIND_WALKER | KIND_HEN | KIND_TUPP => WALKER_LEG_LENGTH + WALKER_HALF_EXTENTS[1],
             _ => 1.0,
         };
@@ -865,6 +865,29 @@ fn troops_in_a_strf_leave_by_the_rear_ramp() {
     // Behind the tail, in line with the hull: the hull faces -Z, so behind is +Z.
     let (dx, dz) = (at[0] - pose.position[0], at[2] - pose.position[2]);
     assert!(dz > STRF_HALF_EXTENTS[2] && dx.abs() < 0.5, "out of the ramp: {dx} {dz}");
+}
+
+#[test]
+fn troops_in_a_pbv_leave_by_the_rear_doors() {
+    use shared::protocol::KIND_PBV;
+    let mut game = game();
+    let (id, _inbox) = join(&mut game);
+    let mut seq = 0;
+    idle(&mut game, id, &mut seq, 30);
+    let vid = add_vehicle(&mut game.world, KIND_PBV, [0.0, PBV_RIDE_HEIGHT + 0.2, 30.0], 0.0);
+    idle(&mut game, id, &mut seq, 60);
+    game.world.entities.get_mut::<Seats>(vid).unwrap()[3] = Some(id);
+    game.world.entities.get_mut::<Player>(id).unwrap().seat = Some(crate::game::Seat { vehicle: vid, index: 3, remote: false, from: None });
+    idle(&mut game, id, &mut seq, 3);
+
+    press(&mut game, id, &mut seq, (0, 0), BUTTON_USE, 1);
+    idle(&mut game, id, &mut seq, 3);
+    assert!(game.world.entities.of::<Seats>(vid).vacant());
+    let pose = game.world.physics.car_pose(vid).unwrap();
+    let at = game.world.entities.of::<Player>(id).character.position;
+    // Behind the tail, in line with the hull: the hull faces -Z, so behind is +Z.
+    let (dx, dz) = (at[0] - pose.position[0], at[2] - pose.position[2]);
+    assert!(dz > PBV_HALF_EXTENTS[2] && dx.abs() < 0.5, "out of the doors: {dx} {dz}");
 }
 
 #[test]

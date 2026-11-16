@@ -626,6 +626,34 @@ fn a_strf_outruns_the_tank_and_stays_upright_pivoting_flat_out() {
     assert!(yaw(&turned) < -0.8, "turns right: {}", yaw(&turned));
 }
 
+fn with_pbv(world: &WorldFile) -> Physics {
+    let mut physics = Physics::new(world).unwrap();
+    physics.add_car(1, KIND_PBV, [0.0, 1.3, 0.0], 0.0);
+    physics
+}
+
+#[test]
+fn a_pbv_settles_at_its_ride_height() {
+    let mut physics = with_pbv(&flat());
+    let rest = run(&mut physics, COAST, 240);
+    assert!(rest.up_y > 0.99 && (rest.position[1] - PBV_RIDE_HEIGHT).abs() < 0.01, "settles at {PBV_RIDE_HEIGHT}: {rest:?}");
+}
+
+#[test]
+fn a_pbv_outruns_the_tank_but_not_the_strf_and_stays_upright_pivoting_flat_out() {
+    let (mut tank, mut strf, mut pbv) = (with_tank(&flat()), with_strf(&flat()), with_pbv(&flat()));
+    for physics in [&mut tank, &mut strf, &mut pbv] {
+        run(physics, COAST, 120);
+    }
+    let (tank_pose, strf_pose, pbv_pose) = (run(&mut tank, FORWARD, 60 * 6), run(&mut strf, FORWARD, 60 * 6), run(&mut pbv, FORWARD, 60 * 6));
+    assert!(pbv_pose.forward_speed > tank_pose.forward_speed + 3.0 && pbv_pose.forward_speed < strf_pose.forward_speed, "{} between {} and {}", pbv_pose.forward_speed, tank_pose.forward_speed, strf_pose.forward_speed);
+    assert!(pbv_pose.forward_speed <= PBV_MAX_SPEED + 0.5 && pbv_pose.position[0].abs() < 1.0, "{pbv_pose:?}");
+    // Full stick over at speed: it slews round without rolling over.
+    let turned = run(&mut pbv, CarControls { steer: 1.0, ..FORWARD }, 60);
+    assert!(turned.up_y > 0.9, "stays upright: {turned:?}");
+    assert!(yaw(&turned) < -0.8, "turns right: {}", yaw(&turned));
+}
+
 /// How far past the slab's near edge (z = -20) a `kind` driven `FORWARD` from the origin gets in 20 s
 /// over a `height` m step, in metres. Negative while it is still stuck in front of it.
 fn over_the_step(kind: u8, height: f32) -> f32 {
@@ -639,7 +667,7 @@ fn over_the_step(kind: u8, height: f32) -> f32 {
 #[test]
 fn tracked_vehicles_climb_a_step_and_the_strv_and_strf_a_taller_one() {
     // All three take a kerb, and a 0.8 m wall, riding up it on the plate under their nose.
-    for kind in [KIND_TANK, KIND_STRV, KIND_STRF] {
+    for kind in [KIND_TANK, KIND_STRV, KIND_STRF, KIND_PBV] {
         assert!(over_the_step(kind, 0.3) > 100.0, "kind {kind}");
         assert!(over_the_step(kind, 0.8) > 100.0, "kind {kind}: {}", over_the_step(kind, 0.8));
     }
@@ -1888,7 +1916,7 @@ fn humps(amp: f32, wave: f32, cross: f32) -> WorldFile {
 
 #[test]
 fn tracked_vehicles_ride_over_metre_high_humps_without_stopping() {
-    for kind in [KIND_TANK, KIND_STRV, KIND_STRF] {
+    for kind in [KIND_TANK, KIND_STRV, KIND_STRF, KIND_PBV] {
         let mut physics = Physics::new(&humps(1.0, 10.0, 0.0)).unwrap();
         physics.add_car(1, kind, [0.0, 1.4, 0.0], 0.0);
         run(&mut physics, COAST, 60);
@@ -1908,7 +1936,7 @@ fn tracked_vehicles_ride_over_metre_high_humps_without_stopping() {
 #[test]
 fn tracked_vehicles_grind_up_a_35_degree_slope_from_a_standing_start() {
     let deg: f32 = 35.0;
-    for kind in [KIND_TANK, KIND_STRV, KIND_STRF] {
+    for kind in [KIND_TANK, KIND_STRV, KIND_STRF, KIND_PBV] {
         let mut physics = Physics::new(&hill(deg)).unwrap();
         physics.add_car(1, kind, [0.0, 20.0 * deg.to_radians().tan() + 1.6, -20.0], 0.0);
         physics.set_car_dive(1, [0.0, 20.0 * deg.to_radians().tan() + 1.6, -20.0], 0.0, deg.to_radians(), 0.0);
@@ -1920,7 +1948,7 @@ fn tracked_vehicles_grind_up_a_35_degree_slope_from_a_standing_start() {
 
 #[test]
 fn a_tracked_vehicle_holds_its_heading_across_a_side_slope() {
-    for kind in [KIND_TANK, KIND_STRV, KIND_STRF] {
+    for kind in [KIND_TANK, KIND_STRV, KIND_STRF, KIND_PBV] {
         let mut physics = Physics::new(&humps(0.3, 6.0, 15.0)).unwrap();
         physics.add_car(1, kind, [0.0, 1.4, 0.0], 0.0);
         run(&mut physics, COAST, 60);

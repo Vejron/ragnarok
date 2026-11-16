@@ -95,6 +95,7 @@ pub(super) const SNOWRACER: VehicleDef = VehicleDef {
         steer_fade: SNOWRACER_STEER_FADE,
         // Too small and slow to plane: it sinks.
         skim: None,
+        swim: None,
         bow: 0.0,
         profile: Spec::BOX,
         springs: Springs::FIRM,

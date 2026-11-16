@@ -69,6 +69,7 @@ pub(super) const GOLF_CART: VehicleDef = VehicleDef {
         steer_fade: STEER_FADE,
         // Too slow to skim: it sinks and wades along the bed.
         skim: None,
+        swim: None,
         bow: 0.0,
         profile: Spec::BOX,
         springs: Springs::FIRM,

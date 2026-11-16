@@ -102,11 +102,11 @@ fn a_shot_from_above_has_less_glacis_to_get_through_than_a_level_one() {
 
 #[test]
 fn a_shot_into_the_plate_under_a_nose_or_a_tail_is_not_judged_as_belly() {
-    for (kind, under_nose, under_tail) in [(KIND_TANK, 6, 4), (KIND_STRV, 6, 4), (KIND_STRF, 5, 3)] {
+    for (kind, under_nose, under_tail) in [(KIND_TANK, 6, 4), (KIND_STRV, 6, 4), (KIND_STRF, 5, 3), (KIND_PBV, 5, 3)] {
         let nose = judge(kind, &face(kind, under_nose), from_front(0.0), 1.0, 0.0);
         assert!(matches!(nose, Outcome::Blocked { plate: "lower front", .. } | Outcome::Ricochet { .. }), "{kind}: {nose:?}");
         let tail = judge(kind, &face(kind, under_tail), [0.0, 0.0, -1.0], 1.0, 0.0);
-        assert!(matches!(tail, Outcome::Blocked { plate: "hull rear" | "rear ramp", .. }), "{kind}: {tail:?}");
+        assert!(matches!(tail, Outcome::Blocked { plate: "hull rear" | "rear ramp" | "rear doors", .. }), "{kind}: {tail:?}");
     }
 }
 

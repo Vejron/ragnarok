@@ -4,6 +4,7 @@ import { AUTOCANNON, BEAM, BLACK_POWDER, CANNON, MORTAR, ROTARY, type MuzzleProf
 import { LaserEyes } from '@/render/lasereyes'
 import { MortarModel } from '@/render/mortar'
 import { PakModel } from '@/render/pak'
+import { PbvModel } from '@/render/pbv'
 import { ShipGunModel } from '@/render/shipgun'
 import { PlaneModel } from '@/render/plane'
 import { StrfModel } from '@/render/strf'
@@ -14,7 +15,7 @@ import { TitanModel } from '@/render/titan'
 import { TuppModel } from '@/render/tupp'
 import { WalkerModel } from '@/render/walker'
 import { arcTime } from '@/render/rounds'
-import { HELI_GUN_LENGTH, MORTAR_BARREL_LENGTH, PAK_BARREL_LENGTH, SHIP_GUN_BARREL_LENGTH, PLANE_GUN_RANGE, STRF_BARREL_LENGTH, STRV_BARREL_LENGTH, TANK_BARREL_LENGTH, TANK_MG_LENGTH, TANK_MG_RANGE, TECHNICAL_MG_LENGTH, TECHNICAL_MG_RANGE, TECHNICAL_MG_SEAT, TITAN_GUN_LENGTH, WALKER_GUN_LENGTH } from '@/sim/consts'
+import { HELI_GUN_LENGTH, MORTAR_BARREL_LENGTH, PAK_BARREL_LENGTH, PBV_BARREL_LENGTH, PBV_CANNON_RANGE, SHIP_GUN_BARREL_LENGTH, PLANE_GUN_RANGE, STRF_BARREL_LENGTH, STRV_BARREL_LENGTH, TANK_BARREL_LENGTH, TANK_MG_LENGTH, TANK_MG_RANGE, TECHNICAL_MG_LENGTH, TECHNICAL_MG_RANGE, TECHNICAL_MG_SEAT, TITAN_GUN_LENGTH, WALKER_GUN_LENGTH } from '@/sim/consts'
 import type { Frame, Presenter } from '../presenter'
 import type { Entity } from '../units'
 import type { VehicleWorld, Vehicles } from './vehicles'
@@ -28,6 +29,11 @@ interface Cannon {
   profile: MuzzleProfile
   gunner: number
   heavy: boolean
+  /**
+   * How far its rounds fly, metres, for a gun whose rounds are bullets the server does not replicate:
+   * each is drawn from the muzzle out to what it meets. Left out for a gun whose shells are projectiles.
+   */
+  range?: number
 }
 
 type CannonModel = TankModel | HeliModel | WalkerModel | MortarModel | PakModel | ShipGunModel | TitanModel
@@ -39,6 +45,7 @@ function cannonOf(model: unknown): Cannon | null {
   if (model instanceof WalkerModel) return { length: WALKER_GUN_LENGTH, profile: BEAM, gunner: 0, heavy: false }
   if (model instanceof StrvModel) return { length: STRV_BARREL_LENGTH, profile: CANNON, gunner: 0, heavy: true }
   if (model instanceof StrfModel) return { length: STRF_BARREL_LENGTH, profile: AUTOCANNON, gunner: 1, heavy: false }
+  if (model instanceof PbvModel) return { length: PBV_BARREL_LENGTH, profile: AUTOCANNON, gunner: 1, heavy: false, range: PBV_CANNON_RANGE }
   if (model instanceof MortarModel) return { length: MORTAR_BARREL_LENGTH, profile: MORTAR, gunner: 0, heavy: false }
   if (model instanceof PakModel) return { length: PAK_BARREL_LENGTH, profile: CANNON, gunner: 0, heavy: false }
   if (model instanceof ShipGunModel) return { length: SHIP_GUN_BARREL_LENGTH, profile: BLACK_POWDER, gunner: 0, heavy: false }
@@ -116,6 +123,7 @@ export class Turrets implements Presenter<Frame> {
       this.world.lights.flash(muzzle.x, muzzle.y, muzzle.z, profile.light)
       if (gun instanceof WalkerModel) sounds.laser([muzzle.x, muzzle.y, muzzle.z])
       else sounds.cannon([muzzle.x, muzzle.y, muzzle.z], cannon.heavy)
+      if (cannon.range) for (let k = 0; k < Math.min(MAX_ROUNDS, fired); k++) fireRound(this.world, muzzle, direction, cannon.range)
       if (frame.localId !== null && seats[cannon.gunner] === frame.localId) this.world.ownShot()
       heat = Math.min(1, heat + profile.heat * fired)
     }

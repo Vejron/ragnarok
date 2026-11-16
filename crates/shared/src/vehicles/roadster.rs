@@ -95,6 +95,7 @@ pub(super) const ROADSTER: VehicleDef = VehicleDef {
         steer_fade: STEER_FADE,
         // It skips over water flat out, and a turn drops it in.
         skim: Some(Skim { sink_speed: 20.0, plane_speed: 28.0, thrust: 0.15, grip: 0.4, bank_drag: 1.6 }),
+        swim: None,
         bow: 0.0,
         profile: Spec::BOX,
         springs: Springs::FIRM,

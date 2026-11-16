@@ -1458,3 +1458,56 @@ fn a_strf_armour_piercing_round_goes_through_light_plate_but_not_a_tanks_glacis(
     assert!(pen.near > 30.0 && pen.near < 50.0, "through 30 mm, not 50: {pen:?}");
     assert!(pen.near > he.near && pen.near < tank_shell.near);
 }
+
+/// A Pbv 302 off the road with a gunner in its turret, settled and looking where the hull points.
+fn pbv_crewed() -> (Game, u32, u32, u32) {
+    let mut game = game();
+    let (gunner, _inbox) = join(&mut game);
+    let vid = crate::mechanics::vehicles::add_vehicle(&mut game.world, shared::protocol::KIND_PBV, [0.0, PBV_RIDE_HEIGHT + 0.2, 25.0], 0.0);
+    seat(&mut game, gunner, vid, 1);
+    let mut seq = 0;
+    let yaw = game.world.physics.car_pose(vid).unwrap().yaw();
+    aim_and_hold(&mut game, gunner, &mut seq, yaw, 0.0, 0, 90);
+    (game, gunner, vid, seq)
+}
+
+#[test]
+fn a_pbv_gunner_fires_solid_rounds_ten_a_second() {
+    let (mut game, gunner, vid, mut seq) = pbv_crewed();
+    let yaw = game.world.physics.car_pose(vid).unwrap().yaw();
+    aim_and_hold(&mut game, gunner, &mut seq, yaw, 0.0, BUTTON_FIRE, 60);
+    let fired = turret(&game, vid).shots;
+    let expected = (60 / PBV_CANNON_COOLDOWN_TICKS) as u8;
+    assert!(fired.abs_diff(expected) <= 1, "{fired} rounds in a second, expected about {expected}");
+    // They fly as bullets, which the client draws from the gun's counter: no shell is replicated.
+    assert!(game.seen_projectiles().is_empty());
+}
+
+#[test]
+fn a_pbv_cannon_jams_when_hot_shows_it_and_clears() {
+    let (mut game, gunner, vid, mut seq) = pbv_crewed();
+    let yaw = game.world.physics.car_pose(vid).unwrap().yaw();
+    let mut jammed_at = None;
+    for tick in 0..60 * 10 {
+        aim_and_hold(&mut game, gunner, &mut seq, yaw, 0.0, BUTTON_FIRE, 1);
+        if turret(&game, vid).jammed {
+            jammed_at = Some(tick);
+            break;
+        }
+    }
+    let jammed_at = jammed_at.expect("the cannon jams");
+    assert!((60 * 3..60 * 6).contains(&jammed_at), "after about four seconds: {jammed_at} ticks");
+    assert!(game.seen(vid).unwrap().turret.unwrap().flags & shared::protocol::TURRET_JAMMED != 0);
+    aim_and_hold(&mut game, gunner, &mut seq, yaw, 0.0, 0, 60 * 5);
+    assert!(!turret(&game, vid).jammed, "cool again");
+}
+
+#[test]
+fn a_pbv_round_goes_through_another_pbv_and_a_strfs_side_but_no_side_of_a_tank() {
+    use shared::mounts::Fire;
+    use shared::vehicles::vehicle_def;
+    let Fire::Bullet { pen, .. } = vehicle_def(shared::protocol::KIND_PBV).mounts[0].fire else { panic!("the Pbv 302 fires bullets") };
+    let thinnest = |kind: u8| vehicle_def(kind).armor.plates.iter().filter(|plate| !plate.slit && plate.face == Some(shared::armor::Zone::Side)).map(|plate| plate.mm).fold(f32::MAX, f32::min);
+    assert!(pen.near > thinnest(shared::protocol::KIND_PBV) && pen.near > thinnest(shared::protocol::KIND_STRF));
+    assert!(pen.near < thinnest(shared::protocol::KIND_TANK), "{pen:?}");
+}

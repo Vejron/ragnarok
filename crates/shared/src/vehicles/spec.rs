@@ -98,6 +98,9 @@ pub struct Spec {
     /// How it does on open water, for a kind light and quick enough to plane over it. `None` sinks
     /// straight to the bed and wades there, as every other wheeled kind does.
     pub skim: Option<Skim>,
+    /// How it floats, for an amphibious kind: its hull rides on open water and its tracks or wheels
+    /// paddle it along. `None` for every kind that sinks to the bed where it does not skim.
+    pub swim: Option<Swim>,
     /// How far back from the front its hull's sides taper in to the full width, metres, as a ship's
     /// bow does to its stem. 0 for a square front.
     pub bow: f32,
@@ -462,6 +465,22 @@ pub struct Skim {
     pub grip: f32,
     /// How much speed a hard turn costs on the surface: the more, the sooner carving drops it in.
     pub bank_drag: f32,
+}
+
+/// How an amphibious wheeled or tracked kind swims: on water deep enough to lift it off the bed its hull
+/// floats, level with the waves, and its churning tracks push and turn it slowly. Where the water is
+/// shallower its tracks reach the bed and drive it as on land, so it climbs out up a shore by itself.
+/// A wreck fills and sinks as any other kind does.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Swim {
+    /// How deep the hull floats, metres: its underside settles this far below the surface.
+    pub draft: f32,
+    /// Top speed afloat, m/s; astern it makes half of it.
+    pub speed: f32,
+    /// How hard its tracks push it afloat from a stop, m/s².
+    pub thrust: f32,
+    /// Yaw rate afloat at full stick, rad/s.
+    pub turn: f32,
 }
 
 /// What a driver's buttons do, beyond the stick (steer and throttle) every vehicle takes.

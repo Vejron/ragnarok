@@ -13,7 +13,7 @@ use crate::consts::*;
 use crate::mounts::{Aim, Ammo, Eye, Fire, MountDef, Muzzle, Need, Refill, Show};
 use crate::items::*;
 use crate::protocol::{
-    KIND_BUS, KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MISSILE, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_SEAPLANE, KIND_SHIP, KIND_SHIP_GUN, KIND_SNOWMOBILE, KIND_SNOWRACER, KIND_SPORTS, KIND_STRF, KIND_STRV, KIND_SUBMARINE, KIND_TANK, KIND_TECHNICAL, KIND_TITAN, KIND_TUPP, KIND_WALKER, PROJECTILE_BALL, PROJECTILE_BOMB, PROJECTILE_CANNON, PROJECTILE_CANNON_AP,
+    KIND_BUS, KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MISSILE, KIND_MORTAR, KIND_PAK, KIND_PBV, KIND_PLANE, KIND_ROADSTER, KIND_SEAPLANE, KIND_SHIP, KIND_SHIP_GUN, KIND_SNOWMOBILE, KIND_SNOWRACER, KIND_SPORTS, KIND_STRF, KIND_STRV, KIND_SUBMARINE, KIND_TANK, KIND_TECHNICAL, KIND_TITAN, KIND_TUPP, KIND_WALKER, PROJECTILE_BALL, PROJECTILE_BOMB, PROJECTILE_CANNON, PROJECTILE_CANNON_AP,
     PROJECTILE_EGG, PROJECTILE_HE, PROJECTILE_MORTAR, PROJECTILE_ROTARY, PROJECTILE_SHELL, WEAPON_AUTOCANNON, WEAPON_DRONE, WEAPON_LASER, WEAPON_LOITER, WEAPON_MG, WEAPON_MISSILE, WEAPON_ROCKET, WEAPON_SHELL,
 };
 
@@ -27,6 +27,7 @@ pub mod loiter;
 pub mod missile;
 pub mod mortar;
 pub mod pak;
+pub mod pbv;
 pub mod plane;
 pub mod roadster;
 pub mod seaplane;
@@ -45,7 +46,7 @@ pub mod titan;
 pub mod tupp;
 pub mod walker;
 
-pub use spec::{Airframe, Arms, Buttons, Feet, Floats, Gait, Jets, Lift, Role, Runners, Shape, Skim, Solid, Spec, Springs, Step, STEER_FADE};
+pub use spec::{Airframe, Arms, Buttons, Feet, Floats, Gait, Jets, Lift, Role, Runners, Shape, Skim, Solid, Spec, Springs, Step, Swim, STEER_FADE};
 pub use crate::armor::{ALLOY, Armor, Box3, Module, On, Part, Pen, Plate, SHEET, SOFT, Zone};
 
 #[derive(Clone, Copy, Debug)]
@@ -269,6 +270,7 @@ pub static VEHICLES: &[VehicleDef] = &[
     snowracer::SNOWRACER,
     titan::TITAN,
     bus::BUS,
+    pbv::PBV,
 ];
 
 /// Where each kind id's definition is in `VEHICLES`: 0, the jeep's, for ids that are not a vehicle.
@@ -350,7 +352,7 @@ mod tests {
     #[test]
     fn only_armed_kinds_have_a_gun_and_only_the_planes_and_the_hen_have_pilot_arms() {
         assert!(vehicle_def(KIND_PLANE).arms() && vehicle_def(KIND_SEAPLANE).arms() && vehicle_def(KIND_HEN).arms() && !vehicle_def(KIND_TANK).arms());
-        assert!(vehicle_def(KIND_TANK).gun() && vehicle_def(KIND_HELI).gun() && vehicle_def(KIND_PLANE).gun() && vehicle_def(KIND_SEAPLANE).gun() && vehicle_def(KIND_WALKER).gun() && vehicle_def(KIND_STRV).gun() && vehicle_def(KIND_STRF).gun());
+        assert!(vehicle_def(KIND_TANK).gun() && vehicle_def(KIND_HELI).gun() && vehicle_def(KIND_PLANE).gun() && vehicle_def(KIND_SEAPLANE).gun() && vehicle_def(KIND_WALKER).gun() && vehicle_def(KIND_STRV).gun() && vehicle_def(KIND_STRF).gun() && vehicle_def(KIND_PBV).gun());
         assert!(!vehicle_def(KIND_JEEP).gun() && !vehicle_def(KIND_SPORTS).gun() && !vehicle_def(KIND_ROADSTER).gun() && !vehicle_def(KIND_HEN).gun());
         assert!(vehicle_def(KIND_TUPP).gun() && !vehicle_def(KIND_TUPP).arms());
         assert!(vehicle_def(KIND_MORTAR).gun() && vehicle_def(KIND_PAK).gun());
@@ -397,7 +399,7 @@ mod tests {
     fn a_hulls_outline_is_convex_fills_its_box_and_only_tracked_kinds_have_one() {
         for def in VEHICLES {
             let profile = def.spec.profile;
-            assert_eq!(!profile.is_empty(), [KIND_TANK, KIND_STRV, KIND_STRF].contains(&def.kind), "{}", def.name);
+            assert_eq!(!profile.is_empty(), [KIND_TANK, KIND_STRV, KIND_STRF, KIND_PBV].contains(&def.kind), "{}", def.name);
             if profile.is_empty() {
                 continue;
             }
@@ -418,10 +420,11 @@ mod tests {
 
     #[test]
     fn every_face_of_a_tracked_hulls_outline_meets_its_own_plate() {
-        let cases: [(u8, &[&str]); 3] = [
+        let cases: [(u8, &[&str]); 4] = [
             (KIND_TANK, &["glacis", "hull roof", "hull rear", "hull rear", "hull rear", "belly", "lower front"]),
             (KIND_STRV, &["glacis", "hull roof", "engine deck", "hull rear", "hull rear", "belly", "lower front"]),
             (KIND_STRF, &["engine cover", "hull roof", "rear ramp", "rear ramp", "belly", "lower front"]),
+            (KIND_PBV, &["glacis", "hull roof", "rear doors", "rear doors", "belly", "lower front", "lower front"]),
         ];
         for (kind, plates) in cases {
             let def = vehicle_def(kind);
@@ -441,7 +444,7 @@ mod tests {
         assert!((level(KIND_TANK) - 57.0).abs() < 1.0, "the tank's glacis leans back {}", level(KIND_TANK));
         assert!(level(KIND_STRV) > 75.0 && level(KIND_STRF) > 75.0);
         // Each slit is in the face it is struck on, close enough to the outline to be met.
-        for kind in [KIND_TANK, KIND_STRV, KIND_STRF] {
+        for kind in [KIND_TANK, KIND_STRV, KIND_STRF, KIND_PBV] {
             let def = vehicle_def(kind);
             let slit = def.armor.plates.iter().find(|plate| plate.slit && plate.on == crate::armor::On::Hull).unwrap();
             let [x, _, z] = slit.region.unwrap().centre;

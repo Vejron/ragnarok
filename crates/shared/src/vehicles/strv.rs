@@ -107,6 +107,7 @@ pub(super) const STRV: VehicleDef = VehicleDef {
         steer_time: 0.0,
         steer_fade: STEER_FADE,
         skim: None,
+        swim: None,
         bow: 0.0,
         profile: PROFILE,
         springs: Springs::FIRM,

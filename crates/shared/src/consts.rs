@@ -12,6 +12,7 @@ pub use crate::vehicles::loiter::*;
 pub use crate::vehicles::missile::*;
 pub use crate::vehicles::mortar::*;
 pub use crate::vehicles::pak::*;
+pub use crate::vehicles::pbv::*;
 pub use crate::vehicles::plane::*;
 pub use crate::vehicles::roadster::*;
 pub use crate::vehicles::seaplane::*;
@@ -100,6 +101,9 @@ pub const KIND_TITAN: u8 = 30;
 /// The bus: a twelve-metre city bus with a driver and twelve passengers. On a world with bus lines the
 /// server drives them along the major roads, from stop to stop.
 pub const KIND_BUS: u8 = 31;
+/// The Pbv 302: an amphibious tracked troop carrier with a 20 mm automatic cannon in a small turret. It
+/// floats, and its tracks paddle it slowly across open water.
+pub const KIND_PBV: u8 = 32;
 
 /// Fixed simulation rate, in ticks per second.
 pub const TICK_RATE: u32 = 60;

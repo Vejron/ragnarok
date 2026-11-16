@@ -3,7 +3,8 @@
 //! the bed and wades there, where the water holds it to a crawl. Not how water behaves, but fun: keep
 //! the speed up and it skims, carve too hard, brake or let go and it drops in. The surface has waves
 //! (`shared::waves`): a skimming hull rides them, pitching and rolling with the water under it, is
-//! thrown off their crests at speed, and loses speed when it slams back down.
+//! thrown off their crests at speed, and loses speed when it slams back down. An amphibious kind
+//! (`Spec::swim`) does neither: its hull floats, and its tracks paddle it slowly along (`swim`).
 
 use super::*;
 use crate::waters::Waters;
@@ -49,6 +50,27 @@ const SKIM_UPRIGHT: f32 = 0.5;
 const SLAM_SPEED: f32 = 3.0;
 const SLAM: f32 = 6.0;
 const SLAM_NOSE: f32 = 4.0;
+
+/// A swimming hull (`Spec::swim`): the share of its draft from which its tracks are clear of the bed and
+/// paddle it, and from which they wholly do.
+const SWIM_AFLOAT: [f32; 2] = [0.6, 0.9];
+/// The most the water lifts a swimming hull by, as a share of gravity: what brings it back up when it
+/// has driven in off a bank and gone under.
+const SWIM_LIFT_MAX: f32 = 1.6;
+/// How quickly a swimming hull's rise and fall follows the water's, per second.
+const SWIM_HEAVE: f32 = 2.5;
+/// The water's drag on a swimming hull, per second, and on what speed it has over its top speed afloat,
+/// per second: what slows one that drives in fast, or is still pushed along the bed by its tracks.
+const SWIM_DRAG: f32 = 0.2;
+const SWIM_OVER: f32 = 4.0;
+/// How much of its sideways drift the water takes out of a swimming hull each second.
+const SWIM_KEEL: f32 = 1.5;
+/// How quickly a swimming hull's yaw rate follows its tracks, per second.
+const SWIM_STEER: f32 = 2.5;
+/// How hard a swimming hull is brought level with the water under it, per second², and how quickly its
+/// roll and pitch die away, per second.
+const SWIM_LEVEL: f32 = 10.0;
+const SWIM_ROCK: f32 = 2.5;
 
 /// The water under a hull: the surface's height there (metres, averaged along the hull), which way is
 /// up off it, how fast it is rising under the hull's middle (m/s) and its slope there `[dh/dx, dh/dz]`.
@@ -96,6 +118,11 @@ pub(crate) fn wade(body: &mut RigidBody, spec: &Spec, controls: CarControls, ste
     let rotation = *body.rotation();
     let under = (water.height - (body.translation().y - hy)).clamp(0.0, 2.0 * hy);
     if under <= 0.0 {
+        return false;
+    }
+    // A hull that floats does so until it is wrecked, when it fills and goes down as any other.
+    if let Some(afloat) = spec.swim.filter(|_| !condition.wrecked) {
+        swim(body, &afloat, controls, condition, water, under, dt);
         return false;
     }
     let wet = under / (2.0 * hy);
@@ -169,11 +196,60 @@ pub(crate) fn wade(body: &mut RigidBody, spec: &Spec, controls: CarControls, ste
     plane > 0.5
 }
 
+/// One tick of water on an amphibious vehicle (`Spec::swim`) whose body is `body`, its underside `under`
+/// metres below `water`: the water carries as much of it as is in, all of it at its draft, so it rises
+/// off the bed where the water is deep enough and rides the waves there, held level. Afloat, its tracks
+/// push it up to `Swim::speed` and turn it at `Swim::turn`, on the spot too; a broken track pushes
+/// nothing. In the shallows its tracks still reach the bed and drive it as on land, against a little
+/// drag. Like `wade`, a function of the body's state and the controls alone.
+fn swim(body: &mut RigidBody, swim: &shared::vehicles::Swim, controls: CarControls, condition: CarCondition, water: &Water, under: f32, dt: f32) {
+    let rotation = *body.rotation();
+    let up = rotation * Vector::Y;
+    let mut forward = rotation * Vector::new(0.0, 0.0, -1.0);
+    forward.y = 0.0;
+    let forward = forward.normalize_or_zero();
+    let right = Vector::new(-forward.z, 0.0, forward.x);
+    let mut velocity = body.linvel();
+    let speed = velocity.dot(forward);
+    // How much of its draft is in the water, and how far its tracks are clear of the bed.
+    let wet = (under / swim.draft).min(1.0);
+    let afloat = smoothstep(SWIM_AFLOAT[0] * swim.draft, SWIM_AFLOAT[1] * swim.draft, under);
+
+    let surfacing = water.rise + velocity.x * water.slope[0] + velocity.z * water.slope[1];
+    velocity.y += CAR_GRAVITY * (under / swim.draft).min(SWIM_LIFT_MAX) * dt;
+    velocity.y += (surfacing - velocity.y) * (1.0 - (-SWIM_HEAVE * wet * dt).exp());
+
+    let mut flat = Vector::new(velocity.x, 0.0, velocity.z);
+    let throttle = controls.throttle.clamp(-1.0, 1.0);
+    let tracks = (condition.sides[0] + condition.sides[1]) / 2.0;
+    let top = swim.speed * condition.speed * if throttle < 0.0 { 0.5 } else { 1.0 };
+    // Only what pushes it on counts against the top speed: it can always slow down.
+    let headroom = if throttle * speed > 0.0 { pull(speed, top) } else { 1.0 };
+    flat += forward * (throttle * swim.thrust * headroom * condition.power * tracks * afloat * dt);
+    let side = flat.dot(right);
+    flat -= right * side * (1.0 - (-SWIM_KEEL * afloat * dt).exp());
+    let going = flat.length();
+    if going > 0.0 {
+        let slowing = wet * (SWIM_DRAG * going + SWIM_OVER * (going - swim.speed).max(0.0));
+        flat *= (going - slowing * dt).max(0.0) / going;
+    }
+    body.set_linvel(Vector::new(flat.x, velocity.y, flat.z), true);
+
+    let mut spin = body.angvel();
+    let yaw = -controls.steer.clamp(-1.0, 1.0) * swim.turn * condition.turn * tracks;
+    spin.y += (yaw - spin.y) * (1.0 - (-SWIM_STEER * afloat * dt).exp());
+    let steady = (-SWIM_ROCK * wet * dt).exp();
+    let local = rotation.inverse() * spin;
+    spin = rotation * Vector::new(local.x * steady, local.y, local.z * steady);
+    spin += up.cross(water.normal) * (SWIM_LEVEL * wet * dt);
+    body.set_angvel(spin, true);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use shared::consts::TICK_DT;
-    use shared::protocol::{KIND_JEEP, KIND_SNOWMOBILE, KIND_TANK};
+    use shared::protocol::{KIND_JEEP, KIND_PBV, KIND_SNOWMOBILE, KIND_TANK};
     use shared::world::{NO_WATER, THEME_WINTER, WORLD_VERSION, WorldFile};
 
     /// Flat ground at 0 over 200 m in 2.5 m cells, with a lake 3 m deep from x = -40..40 and
@@ -307,6 +383,116 @@ mod tests {
         let dry = WorldFile { water: Vec::new(), ..pond() };
         let (wet, dry) = (on_bed(&pond()), on_bed(&dry));
         assert!(wet > 2.0 && wet < dry * 0.5, "the water holds it back: {wet} m against {dry} m dry");
+    }
+
+    /// A Pbv 302 set down on the middle of the calm lake and left for three seconds to settle.
+    fn pbv_afloat() -> (Physics, CarPose) {
+        let mut physics = calm(&pond());
+        physics.add_car(1, KIND_PBV, [0.0, 0.5, -55.0], 0.0);
+        let pose = drive(&mut physics, CarControls::IDLE, 3 * TICKS_PER_SECOND);
+        (physics, pose)
+    }
+
+    #[test]
+    fn a_pbv_floats_at_its_draft_and_stays_there() {
+        let (mut physics, settled) = pbv_afloat();
+        let underside = settled.position[1] - PBV_HALF_EXTENTS[1];
+        assert!((underside + PBV_DRAFT).abs() < 0.05 && settled.up_y > 0.99, "its underside is {PBV_DRAFT} m down: {settled:?}");
+        let later = drive(&mut physics, CarControls::IDLE, 10 * TICKS_PER_SECOND);
+        assert!((later.position[1] - settled.position[1]).abs() < 0.02 && (later.position[2] - settled.position[2]).abs() < 0.1, "{later:?}");
+    }
+
+    #[test]
+    fn a_pbv_dropped_in_deep_comes_back_up() {
+        let mut physics = calm(&pond());
+        physics.add_car(1, KIND_PBV, [0.0, -2.0, -55.0], 0.0);
+        let pose = drive(&mut physics, CarControls::IDLE, 5 * TICKS_PER_SECOND);
+        assert!((pose.position[1] - PBV_HALF_EXTENTS[1] + PBV_DRAFT).abs() < 0.1, "{pose:?}");
+    }
+
+    #[test]
+    fn a_pbv_paddles_at_its_swimming_speed_astern_at_half_of_it_and_turns_on_the_spot() {
+        let (mut physics, start) = pbv_afloat();
+        let ahead = drive(&mut physics, FORWARD, 6 * TICKS_PER_SECOND);
+        assert!(ahead.forward_speed > 0.8 * PBV_SWIM_SPEED && ahead.forward_speed <= PBV_SWIM_SPEED + 0.05, "{} m/s", ahead.forward_speed);
+        assert!(ahead.position[2] < start.position[2] - 8.0 && ahead.position[0].abs() < 0.5 && ahead.up_y > 0.99, "{ahead:?}");
+
+        let (mut physics, _) = pbv_afloat();
+        let astern = drive(&mut physics, CarControls { throttle: -1.0, ..CarControls::IDLE }, 6 * TICKS_PER_SECOND);
+        assert!(astern.forward_speed < -0.3 * PBV_SWIM_SPEED && astern.forward_speed >= -0.5 * PBV_SWIM_SPEED - 0.05, "{} m/s", astern.forward_speed);
+
+        let (mut physics, start) = pbv_afloat();
+        let turned = drive(&mut physics, CarControls { steer: 1.0, ..CarControls::IDLE }, 2 * TICKS_PER_SECOND);
+        let swung = turned.world_dir([0.0, 0.0, -1.0])[0];
+        assert!(swung > 0.5, "it swings its nose to the right: {swung}");
+        assert!((turned.position[0] - start.position[0]).hypot(turned.position[2] - start.position[2]) < 0.5, "where it floats: {turned:?}");
+    }
+
+    /// The pond with shelving shores: its bed drops 0.3 m a metre from the near bank (z = -20) and the far
+    /// one (z = -90) to 3 m in the middle.
+    fn shelving() -> WorldFile {
+        let mut world = pond();
+        let side = world.ground.side;
+        for j in 0..side {
+            for i in 0..side {
+                let (x, z) = (i as f32 * 2.5 - 100.0, j as f32 * 2.5 - 100.0);
+                let depth = (0.3 * (-20.0 - z).min(z + 90.0)).clamp(0.0, 3.0);
+                let wet = x.abs() <= 40.0 && depth > 0.0;
+                world.ground.heights[(j * side + i) as usize] = if wet { (-depth * 100.0) as i32 } else { 0 };
+                world.water[(j * side + i) as usize] = if wet { 0 } else { NO_WATER };
+            }
+        }
+        world
+    }
+
+    #[test]
+    fn a_pbv_drives_in_off_one_shore_swims_the_lake_and_climbs_out_on_the_other() {
+        let mut physics = calm(&shelving());
+        physics.add_car(1, KIND_PBV, [0.0, PBV_RIDE_HEIGHT + 0.1, 0.0], 0.0);
+        drive(&mut physics, CarControls::IDLE, TICKS_PER_SECOND);
+        let (mut low, mut fastest_afloat, mut pose) = (f32::INFINITY, 0.0f32, physics.car_pose(1).unwrap());
+        for _ in 0..50 * TICKS_PER_SECOND {
+            pose = drive(&mut physics, FORWARD, 1);
+            let z = pose.position[2];
+            if (-85.0..-25.0).contains(&z) {
+                low = low.min(pose.position[1]);
+            }
+            if (-80.0..-40.0).contains(&z) {
+                fastest_afloat = fastest_afloat.max(pose.forward_speed);
+            }
+            if z < -96.0 {
+                break;
+            }
+        }
+        assert!(low - PBV_HALF_EXTENTS[1] > -PBV_DRAFT - 0.6, "its roof stays out of the water: down to {low}");
+        assert!(fastest_afloat <= PBV_SWIM_SPEED + 0.3, "no faster than it swims: {fastest_afloat} m/s");
+        assert!(pose.position[2] < -96.0 && pose.position[1] > 0.8 && pose.up_y > 0.95, "it is out on the far shore: {pose:?}");
+    }
+
+    #[test]
+    fn a_pbv_rides_the_swell_level() {
+        let mut physics = Physics::new(&pond()).unwrap();
+        physics.add_car(1, KIND_PBV, [0.0, 0.5, -55.0], 0.0);
+        drive(&mut physics, CarControls::IDLE, 3 * TICKS_PER_SECOND);
+        let (mut low, mut high, mut tilted, mut off) = (f32::INFINITY, f32::NEG_INFINITY, 1.0f32, 0.0f32);
+        for _ in 0..10 * TICKS_PER_SECOND {
+            let pose = drive(&mut physics, FORWARD, 1);
+            let [x, y, z] = pose.position;
+            (low, high, tilted) = (low.min(y), high.max(y), tilted.min(pose.up_y));
+            let surface = physics.waters.surface(x, z, shared::waves::time(physics.tick)).unwrap();
+            off = off.max((y - PBV_HALF_EXTENTS[1] + PBV_DRAFT - surface.height).abs());
+        }
+        assert!(high - low > 0.05, "it rises and falls with the waves: {} m", high - low);
+        assert!(off < 0.4, "it stays at its draft on them: {off} m off");
+        assert!(tilted > 0.95, "and near level: {tilted}");
+    }
+
+    #[test]
+    fn a_wrecked_pbv_fills_and_sinks_to_the_bed() {
+        let (mut physics, _) = pbv_afloat();
+        physics.set_car_condition(1, CarCondition { wrecked: true, ..CarCondition::NEW });
+        let sunk = drive(&mut physics, CarControls::IDLE, 8 * TICKS_PER_SECOND);
+        assert!(sunk.position[1] < -1.5, "{sunk:?}");
     }
 
     /// A snowmobile driven flat out with the boost from the shore down the lake, slanting over its swell: the

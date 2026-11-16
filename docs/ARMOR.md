@@ -50,6 +50,7 @@ nose is told apart from the belly the same way.
 | tank | glacis 32 leaning back 57 deg (59 along a level shot), lower front 45, hull side 30, rear 20, roof 12, belly 10, engine grille 10; turret front 50, mantlet 60, turret side 30, turret roof 12 | driver's visor (glacis, front left), gunner's sight (beside the mantlet) |
 | Strv S | glacis 40 leaning back 77 deg (180 along a level shot), lower front 40 leaning back 57 deg, side 25, rear 20, roof 12, belly 10, engine deck 8 | gunner's sight (glacis, left of the gun) |
 | Strf 90 | engine cover 8 leaning back 76 deg (33 along a level shot), lower front 30, side 18, rear ramp 10, roof 10, belly 8; turret front 30 at 15 deg, turret side 20, turret roof 10 | driver's periscope (engine cover, front left), gunner's sight (beside the gun) |
+| Pbv 302 | glacis 23 lying 38 deg above level (38 along a level shot), lower front 23, side 14, rear doors 10, roof 8, belly 8; turret 12, turret roof 8 | driver's periscope (glacis, middle), gunner's sight (the turret's face) |
 | Pak 38 | shield 8, sloped 11 deg; carriage 3 | sight gap in the shield |
 | jeep, cars, drones | 1.5 sheet steel | none |
 | helicopter, walker, hen, mortar | 3 light alloy | none |

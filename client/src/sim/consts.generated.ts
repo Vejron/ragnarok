@@ -122,6 +122,12 @@ export const KIND_TITAN = 30
  */
 export const KIND_BUS = 31
 
+/**
+ * The Pbv 302: an amphibious tracked troop carrier with a 20 mm automatic cannon in a small turret. It
+ * floats, and its tracks paddle it slowly across open water.
+ */
+export const KIND_PBV = 32
+
 /** Fixed simulation rate, in ticks per second. */
 export const TICK_RATE = 60
 
@@ -1702,6 +1708,102 @@ export const PAK_SHIELD_CENTRE = [0.0, 0.15, -0.95] as const
 
 /** The Pak 38's gunner kneels behind the shield, left of the breech, at the sight: in the mount's frame. */
 export const PAK_SEAT_HEAD = [-0.4, 0.2, 0.6] as const
+
+/**
+ * The Pbv 302 (`KIND_PBV`): an amphibious tracked troop carrier. The driver (seat 0) sits in the middle
+ * of the front; the gunner (seat 1) sits to their left under a small turret with a 20 mm automatic
+ * cannon; two troops (seats 2 and 3) ride sealed in the back and get out by the rear doors. It seats as
+ * many as the Strf 90, is nearly as quick, thinner-skinned and far more lightly armed, and it floats:
+ * on open water its tracks paddle it slowly along. Same body axes as the tank.
+ */
+export const PBV_SEATS = 4
+
+/**
+ * Half the hull's bounding box, metres: 5.35 m long, 2.86 m wide over the tracks and 1.4 m deep from the
+ * belly to the hull roof, which is 1.8 m off the ground.
+ */
+export const PBV_HALF_EXTENTS = [1.43, 0.7, 2.675] as const
+
+/** Road wheel radius, metres. */
+export const PBV_WHEEL_RADIUS = 0.42
+
+/** How far each track runs from the middle, metres. */
+export const PBV_TRACK_HALF = 1.24
+
+/**
+ * Z of the three axles, front first, metres: set well out towards the ends of the hull, so that its
+ * tail stays off the ground on a steep climb.
+ */
+export const PBV_AXLES_Z = [-2.0, 0.0, 2.0] as const
+
+/** Where the hull's centre settles over flat ground, metres: measured by `a_pbv_settles_at_its_ride_height`. */
+export const PBV_RIDE_HEIGHT = 1.1
+export const PBV_HARD_POINT_Y = -0.3
+export const PBV_SUSPENSION_REST = 0.44
+
+/** Top speed on the flat, m/s (66 km/h). */
+export const PBV_MAX_SPEED = 18.3
+
+/** Yaw rate at full stick, rad/s. */
+export const PBV_TURN_RATE = 1.3
+
+/** How deep its hull floats, metres: the roof is 0.4 m clear of the water. */
+export const PBV_DRAFT = 1.0
+
+/**
+ * Top speed afloat, m/s (9 km/h), how hard its tracks push it there, m/s², and its yaw rate at full
+ * stick, rad/s.
+ */
+export const PBV_SWIM_SPEED = 2.5
+export const PBV_SWIM_THRUST = 2.0
+export const PBV_SWIM_TURN = 0.5
+
+/**
+ * Where the turret's ring sits in the hull frame (the middle of the turret's solid): at the front
+ * left, over the gunner and beside the driver.
+ */
+export const PBV_TURRET_PIVOT = [-0.75, 0.95, -0.95] as const
+
+/**
+ * The turret's solid: a small cylinder on the ring, its base on the hull's roof and its top 2.3 m off
+ * the ground, metres.
+ */
+export const PBV_TURRET_RADIUS = 0.5
+export const PBV_TURRET_HALF_HEIGHT = 0.25
+
+/** How far the muzzle is from the ring, metres: it reaches a little past the nose. */
+export const PBV_BARREL_LENGTH = 2.0
+
+/** How fast the turret and barrel follow the gunner's aim, rad/s. */
+export const PBV_TURRET_SLEW = 1.8
+export const PBV_BARREL_SLEW = 1.4
+
+/** Barrel elevation limits, radians (+ is up): −10 to +37 degrees. */
+export const PBV_BARREL_MIN = -0.17
+export const PBV_BARREL_MAX = 0.65
+
+/** Ticks between rounds: ten a second. */
+export const PBV_CANNON_COOLDOWN_TICKS = 6
+
+/** How far a round strays from the bore, radians. */
+export const PBV_CANNON_SPREAD = 0.006
+
+/** Heat a round puts in the barrel, of 255: about four seconds of holding the trigger jams it. */
+export const PBV_CANNON_HEAT = 12.0
+
+/** How far a round flies, metres. */
+export const PBV_CANNON_RANGE = 400.0
+
+/** What a round takes off a soldier, a vehicle's hull and an aircraft. */
+export const PBV_CANNON_DAMAGE = 45
+export const PBV_CANNON_VEHICLE_DAMAGE = 10
+export const PBV_CANNON_PLANE_DAMAGE = 20
+
+/**
+ * Where a rider who gets out stands, in the hull frame (the middle of a standing soldier): behind the
+ * rear doors.
+ */
+export const PBV_DOOR_EXIT = [0.0, -0.1, 3.6] as const
 
 /**
  * The triplane: a Fokker Dr.I stretched into a two-seater, flown by a pilot (seat 0) who also fires the

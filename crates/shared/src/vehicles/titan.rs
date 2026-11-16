@@ -396,6 +396,7 @@ pub(super) const TITAN: VehicleDef = VehicleDef {
         steer_time: 0.0,
         steer_fade: STEER_FADE,
         skim: None,
+        swim: None,
         bow: 0.0,
         profile: Spec::BOX,
         springs: Springs::FIRM,

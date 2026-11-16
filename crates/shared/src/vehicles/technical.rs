@@ -109,6 +109,7 @@ pub(super) const TECHNICAL: VehicleDef = VehicleDef {
         steer_fade: STEER_FADE,
         // Too heavy to skip over water: it sinks and wades along the bed.
         skim: None,
+        swim: None,
         bow: 0.0,
         profile: Spec::BOX,
         // Half as stiff as a car's and with a long travel: it sags, pitches and rolls, and soaks up the bumps.
