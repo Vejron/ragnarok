@@ -451,13 +451,23 @@ Lakes (`StandingWater`) and wide rivers (`WatercoursePolygon`) are polygons; str
 2 km square (CRS84 bounding box, paged, cached like Overpass answers). It has **no surface height,
 depth or width**, so:
 
-- a body's surface is the median of the DTM inside it (the DTM is flat over water); a body whose
+- a lake's surface is the median of the DTM inside it (the DTM is flat over water); a lake whose
   10th and 90th percentile differ by more than 1.5 m is reported, since it is drawn flat;
+- a river falls along its course (`water::river_levels`), because a whole river is often one polygon
+  tens of kilometres long, and one level for all of it stands metres over its banks at one end of the
+  world and sits in a trench at the other (Vindelälven falls 25 m through `worlds/vindeln`). Each
+  connected stretch is measured along its length: the distance through the water from one end, whose
+  whole cross-section is the start where it leaves the grid. The DTM's median every 20 m along it is
+  fitted with the nearest profile that only falls one way (isotonic regression, in whichever direction
+  fits better). The surface is level across the river and steps down at rapids. Stretches of under 200
+  samples keep the median, and a stretch of 500 m or more has its fall logged;
 - the bed is a bowl cut below the surface: `0.3 m` at the bank, deepest at the body's inscribed
   radius `R` (the largest distance from the bank of any of its samples). The deepest point depends
-  on size: lakes `1 + 0.6·√R` (1.5 to 12 m), rivers `0.8 + 0.35·√R` (1.2 to 6 m), so a pond is about
-  2 m and a 100 m lake about 7 m. The bed is never more than 12 m below y = 0, which is still the
-  lowest *dry* ground;
+  on size: lakes `1.5 + √R` (2 to 24 m), rivers `1 + 0.6·√R` (1.5 to 12 m), so a pond is about
+  3.5 m, a 100 m lake about 8.5 m and a 20 m river about 3 m. The bowl is `1 − (1 − t)³` of the way
+  down at `t = shore / R`: it falls away from the bank at three times its average slope and flattens
+  in the middle. The bed is never more than 25 m below y = 0, which is still the lowest *dry* ground
+  (`KILL_Y` is −50 m);
 - `Tile.water` holds the surface height at every ground sample (`NO_WATER` where none; samples
   next to water sit just under the bank so the drawn shoreline falls between samples). The depth
   at a sample is `water − ground`; islands are simply ground above the surface;

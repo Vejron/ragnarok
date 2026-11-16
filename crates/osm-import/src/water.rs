@@ -35,11 +35,12 @@ const SEA_SHELF: f64 = 600.0;
 
 impl Kind {
     /// Depth of the deepest point of water whose widest part is `radius` metres from its bank.
-    /// The data has no depths: bigger water is deeper (a pond about 2 m, a 100 m lake about 7 m).
+    /// The data has no depths: bigger water is deeper (a pond about 3.5 m, a 100 m lake about 8.5 m,
+    /// a kilometre-wide one about 24 m; a 20 m river about 3 m, a 200 m one about 7 m).
     fn max_depth(self, radius: f64) -> f64 {
         match self {
-            Kind::Lake => (1.0 + 0.6 * radius.sqrt()).clamp(1.5, 12.0),
-            Kind::River => (0.8 + 0.35 * radius.sqrt()).clamp(1.2, 6.0),
+            Kind::Lake => (1.5 + 1.0 * radius.sqrt()).clamp(2.0, 24.0),
+            Kind::River => (1.0 + 0.6 * radius.sqrt()).clamp(1.5, 12.0),
             Kind::Sea => SEA_DEPTH,
         }
     }
@@ -56,11 +57,12 @@ impl Kind {
     }
 
     /// Bed depth at `shore` metres from the bank where the water reaches `radius` metres from it:
-    /// a bowl that is `SHORE_DEPTH` at the bank and `max_depth` at `radius`.
+    /// a bowl that is `SHORE_DEPTH` at the bank and `max_depth` at `radius`, falling away steeply
+    /// from the bank (three times its average slope) and flattening out towards the middle.
     fn depth(self, shore: f64, radius: f64) -> f64 {
         let max = self.max_depth(radius);
         let t = if radius > 0.0 { (shore / radius).min(1.0) } else { 1.0 };
-        SHORE_DEPTH + (max - SHORE_DEPTH) * (1.0 - (1.0 - t) * (1.0 - t))
+        SHORE_DEPTH + (max - SHORE_DEPTH) * (1.0 - (1.0 - t).powi(3))
     }
 }
 
@@ -111,8 +113,9 @@ const NONE: u32 = u32::MAX;
 pub struct Surface {
     grid: Grid,
     body: Vec<u32>,
-    /// Surface elevation of each body, metres above the height model's datum.
-    level: Vec<f64>,
+    /// Surface elevation at each sample, metres above the height model's datum (NaN on dry
+    /// samples). Flat over a lake; a river falls along its course (`river_levels`).
+    level: Vec<f32>,
     /// Bed depth under each sample, metres (0 on dry samples).
     depth: Vec<f32>,
 }
@@ -123,33 +126,43 @@ impl Surface {
     pub fn new(map: &Map, grid: Grid, mut elevation: impl FnMut(f64, f64) -> Option<f64>) -> Self {
         let n = (grid.side * grid.side) as usize;
         let mut body = vec![NONE; n];
-        let mut level = Vec::with_capacity(map.bodies.len());
+        // The height model at each wet sample of a body without a fixed level, NaN elsewhere.
+        let mut model = vec![f32::NAN; n];
+        // Each body's one surface: its fixed level, or the median of the model inside it.
+        let mut flat = Vec::with_capacity(map.bodies.len());
         for (index, b) in map.bodies.iter().enumerate() {
             let mut cells = Vec::new();
             fill(&b.rings, grid, |cell| cells.push(cell));
             if let Some(fixed) = b.level {
-                level.push(fixed);
+                flat.push(fixed);
                 for cell in cells {
                     body[cell] = index as u32;
                 }
                 continue;
             }
-            let mut heights: Vec<f64> = cells.iter().filter_map(|&c| elevation(grid.x(c as u32 % grid.side), grid.x(c as u32 / grid.side))).collect();
+            let mut heights = Vec::with_capacity(cells.len());
+            for &c in &cells {
+                let height = elevation(grid.x(c as u32 % grid.side), grid.x(c as u32 / grid.side));
+                model[c] = height.map_or(f32::NAN, |h| h as f32);
+                heights.extend(height);
+            }
             if heights.is_empty() {
-                level.push(f64::NAN);
+                flat.push(f64::NAN);
                 continue;
             }
             heights.sort_by(f64::total_cmp);
             let median = heights[heights.len() / 2];
             let spread = heights[heights.len() * 9 / 10] - heights[heights.len() / 10];
-            if spread > 1.5 && cells.len() > 200 {
-                eprintln!("water: a {} m² body has {spread:.1} m between its 10th and 90th percentile, drawn flat at {median:.1} m", cells.len() as f64 * (grid.cell as f64 / 100.0).powi(2));
+            if b.kind == Kind::Lake && spread > 1.5 && cells.len() > 200 {
+                eprintln!("water: a {} m² lake has {spread:.1} m between its 10th and 90th percentile, drawn flat at {median:.1} m", cells.len() as f64 * (grid.cell as f64 / 100.0).powi(2));
             }
-            level.push(median);
+            flat.push(median);
             for cell in cells {
                 body[cell] = index as u32;
             }
         }
+        let mut level: Vec<f32> = body.iter().map(|&b| if b == NONE { f32::NAN } else { flat[b as usize] as f32 }).collect();
+        river_levels(map, grid, &body, &model, &mut level);
         // Distance to the nearest dry sample, in thirds of a cell: a chamfer transform.
         const FAR: u32 = u32::MAX / 2;
         let side = grid.side as usize;
@@ -230,7 +243,7 @@ impl Surface {
         let Some(at) = self.index(x, z) else { return elevation };
         match self.body[at] {
             NONE => elevation,
-            b => Some(self.level[b as usize] - self.depth[at] as f64),
+            _ => Some(self.level[at] as f64 - self.depth[at] as f64),
         }
     }
 
@@ -251,7 +264,7 @@ impl Surface {
         let mut out = vec![NO_WATER; side * side];
         for (at, &b) in self.body.iter().enumerate() {
             if b != NONE {
-                out[at] = ((self.level[b as usize] - datum) * 100.0).round() as i32;
+                out[at] = ((self.level[at] as f64 - datum) * 100.0).round() as i32;
             }
         }
         let wet = out.clone();
@@ -362,6 +375,180 @@ fn local_radius(body: &[u32], shore: &[f32], side: usize, cell_m: f64) -> Vec<f3
     radius
 }
 
+/// A river's profile is the height model's median in each stretch this long along its course, metres.
+const RIVER_BIN: f64 = 20.0;
+/// A connected stretch of river with fewer wet samples than this keeps its body's flat level.
+const RIVER_MIN_SAMPLES: usize = 200;
+/// A stretch at least this long, metres, has its fall reported.
+const RIVER_REPORTED: f64 = 500.0;
+
+/// Gives every river a surface that falls along its course instead of one flat level: a whole
+/// river is often one polygon tens of kilometres long, and a level for all of it stands metres
+/// above the banks at one end of the world and below them at the other.
+///
+/// Each connected stretch of a river body is measured along its length (the distance through the
+/// water from one end, whose whole cross-section is the start where it leaves the grid), the
+/// height model's median is taken every `RIVER_BIN` metres along it, and those medians are fitted
+/// with the closest profile that only ever falls one way (isotonic regression, in whichever
+/// direction fits better). The surface is level across the river and steps down at rapids.
+fn river_levels(map: &Map, grid: Grid, body: &[u32], model: &[f32], level: &mut [f32]) {
+    let side = grid.side as usize;
+    let cell_m = grid.cell as f64 / 100.0;
+    let n = body.len();
+    let mut seen = vec![false; n];
+    let mut dist = vec![u32::MAX; n];
+    let mut stack = Vec::new();
+    for start in 0..n {
+        let b = body[start];
+        if seen[start] || b == NONE || map.bodies[b as usize].kind != Kind::River {
+            continue;
+        }
+        let mut members = Vec::new();
+        seen[start] = true;
+        stack.push(start);
+        while let Some(at) = stack.pop() {
+            members.push(at);
+            for (next, _) in neighbours(at, side) {
+                if !seen[next] && body[next] == b {
+                    seen[next] = true;
+                    stack.push(next);
+                }
+            }
+        }
+        if members.len() < RIVER_MIN_SAMPLES {
+            continue;
+        }
+        // One end of the stretch is the sample farthest through the water from any other.
+        chamfer(&[members[0]], body, side, &mut dist);
+        let end = *members.iter().max_by_key(|&&at| dist[at]).expect("a stretch has samples");
+        for &at in &members {
+            dist[at] = u32::MAX;
+        }
+        chamfer(&cross_section(end, body, side), body, side, &mut dist);
+        // Bin k holds the samples k to k + 1 bins along; its point of the profile is at k + 0.5.
+        let along = |at: usize| dist[at] as f64 / 3.0 * cell_m / RIVER_BIN;
+        let bins = members.iter().map(|&at| along(at) as usize).max().unwrap_or(0) + 1;
+        let mut heights: Vec<Vec<f32>> = vec![Vec::new(); bins];
+        for &at in &members {
+            if model[at].is_finite() {
+                heights[along(at) as usize].push(model[at]);
+            }
+        }
+        let (mut centres, mut medians, mut weights) = (Vec::new(), Vec::new(), Vec::new());
+        for (k, bin) in heights.iter_mut().enumerate().filter(|(_, bin)| !bin.is_empty()) {
+            bin.sort_by(f32::total_cmp);
+            centres.push(k as f64 + 0.5);
+            medians.push(bin[bin.len() / 2] as f64);
+            weights.push(bin.len() as f64);
+        }
+        if centres.len() < 3 {
+            continue;
+        }
+        let rising = isotonic(&medians, &weights);
+        let falling: Vec<f64> = isotonic(&medians.iter().map(|m| -m).collect::<Vec<_>>(), &weights).iter().map(|m| -m).collect();
+        let error = |fit: &[f64]| fit.iter().zip(&medians).zip(&weights).map(|((f, m), w)| w * (f - m) * (f - m)).sum::<f64>();
+        let profile = if error(&falling) <= error(&rising) { falling } else { rising };
+        for &at in &members {
+            level[at] = interpolate(&centres, &profile, along(at)) as f32;
+        }
+        let length = bins as f64 * RIVER_BIN;
+        if length >= RIVER_REPORTED {
+            let drop = (profile[0] - profile[profile.len() - 1]).abs();
+            eprintln!("water: a river falls {drop:.1} m over {length:.0} m");
+        }
+        for &at in &members {
+            dist[at] = u32::MAX;
+        }
+    }
+}
+
+/// The eight samples around `at` that are on the grid, with the chamfer cost of the step to each
+/// (3 straight, 4 diagonal, in thirds of a cell).
+fn neighbours(at: usize, side: usize) -> impl Iterator<Item = (usize, u32)> {
+    let (i, j) = ((at % side) as i64, (at / side) as i64);
+    [(-1, -1, 4), (0, -1, 3), (1, -1, 4), (-1, 0, 3), (1, 0, 3), (-1, 1, 4), (0, 1, 3), (1, 1, 4)].into_iter().filter_map(move |(di, dj, cost)| {
+        let (ni, nj) = (i + di, j + dj);
+        (ni >= 0 && nj >= 0 && ni < side as i64 && nj < side as i64).then(|| (nj as usize * side + ni as usize, cost))
+    })
+}
+
+/// Distance through the water of the seeds' body from the nearest seed, in thirds of a cell,
+/// written into `dist` (which must hold `u32::MAX` on the body's samples).
+fn chamfer(seeds: &[usize], body: &[u32], side: usize, dist: &mut [u32]) {
+    use std::cmp::Reverse;
+    use std::collections::BinaryHeap;
+    let mut queue = BinaryHeap::new();
+    for &seed in seeds {
+        dist[seed] = 0;
+        queue.push(Reverse((0, seed)));
+    }
+    while let Some(Reverse((d, at))) = queue.pop() {
+        if d > dist[at] {
+            continue;
+        }
+        for (next, cost) in neighbours(at, side) {
+            if body[next] == body[at] && d + cost < dist[next] {
+                dist[next] = d + cost;
+                queue.push(Reverse((d + cost, next)));
+            }
+        }
+    }
+}
+
+/// Where a river's end `end` leaves the grid, the whole run of its samples along that edge of
+/// the grid, so the distance along the river starts across its width; otherwise `end` alone.
+fn cross_section(end: usize, body: &[u32], side: usize) -> Vec<usize> {
+    let (i, j) = (end % side, end / side);
+    let last = side - 1;
+    let mut seeds = vec![end];
+    // For each edge `end` is on, the step along it.
+    let steps: Vec<(i64, i64)> = [(i == 0 || i == last, (0, 1)), (j == 0 || j == last, (1, 0))].into_iter().filter(|(on, _)| *on).map(|(_, step)| step).collect();
+    for (si, sj) in steps {
+        for sign in [-1i64, 1] {
+            let (mut ci, mut cj) = (i as i64, j as i64);
+            loop {
+                (ci, cj) = (ci + sign * si, cj + sign * sj);
+                if ci < 0 || cj < 0 || ci > last as i64 || cj > last as i64 {
+                    break;
+                }
+                let at = cj as usize * side + ci as usize;
+                if body[at] != body[end] {
+                    break;
+                }
+                seeds.push(at);
+            }
+        }
+    }
+    seeds
+}
+
+/// The non-decreasing sequence closest to `values` in weighted least squares (pool adjacent violators).
+fn isotonic(values: &[f64], weights: &[f64]) -> Vec<f64> {
+    // Blocks of pooled values: mean, total weight, how many values.
+    let mut blocks: Vec<(f64, f64, usize)> = Vec::with_capacity(values.len());
+    for (&value, &weight) in values.iter().zip(weights) {
+        blocks.push((value, weight, 1));
+        while blocks.len() >= 2 && blocks[blocks.len() - 2].0 > blocks[blocks.len() - 1].0 {
+            let (b, a) = (blocks.pop().unwrap(), blocks.pop().unwrap());
+            blocks.push(((a.0 * a.1 + b.0 * b.1) / (a.1 + b.1), a.1 + b.1, a.2 + b.2));
+        }
+    }
+    blocks.iter().flat_map(|&(mean, _, count)| std::iter::repeat_n(mean, count)).collect()
+}
+
+/// The piecewise linear function through `(xs[k], ys[k])` at `x`, held flat beyond the ends.
+fn interpolate(xs: &[f64], ys: &[f64], x: f64) -> f64 {
+    let k = xs.partition_point(|&p| p < x);
+    if k == 0 {
+        return ys[0];
+    }
+    if k == xs.len() {
+        return ys[k - 1];
+    }
+    let t = (x - xs[k - 1]) / (xs[k] - xs[k - 1]);
+    ys[k - 1] + (ys[k] - ys[k - 1]) * t
+}
+
 /// Calls `set` with the index of every grid sample inside the polygon (even-odd over its rings).
 fn fill(rings: &[Vec<P>], grid: Grid, mut set: impl FnMut(usize)) {
     let (mut z_min, mut z_max) = (f64::MAX, f64::MIN);
@@ -440,6 +627,65 @@ mod tests {
         assert!(depth(150.0, 0.0) > depth(-200.0, 0.0) + 1.0, "{} {}", depth(150.0, 0.0), depth(-200.0, 0.0));
     }
 
+    /// 321 × 321 samples every 2 m, from -320 to 320 m.
+    fn river_grid() -> Grid {
+        Grid { origin: -32_000, cell: 200, side: 321 }
+    }
+
+    fn river(ring: Vec<P>) -> Map {
+        Map { bodies: vec![Body { kind: Kind::River, rings: vec![ring], level: None }], streams: Vec::new() }
+    }
+
+    fn level(surface: &Surface, x: f64, z: f64) -> f64 {
+        surface.level[surface.index(x, z).unwrap()] as f64
+    }
+
+    /// A few decimetres of unevenness, the same every run.
+    fn noise(x: f64, z: f64) -> f64 {
+        0.3 * (x * 0.73 + z * 1.31).sin()
+    }
+
+    #[test]
+    fn a_river_falls_along_its_length_and_is_level_across() {
+        // 20 m wide, running past both ends of the grid; the ground falls 1 m per 100 m in x.
+        let map = river(vec![[-400.0, -10.0], [400.0, -10.0], [400.0, 10.0], [-400.0, 10.0]]);
+        let surface = Surface::new(&map, river_grid(), |x, z| Some(10.0 - x / 100.0 + noise(x, z)));
+        let profile: Vec<f64> = (-30..=30).map(|k| level(&surface, k as f64 * 10.0, 0.0)).collect();
+        assert!(profile.windows(2).all(|w| w[1] <= w[0] + 1e-4), "never rises downstream: {profile:?}");
+        let drop = profile[0] - profile[profile.len() - 1];
+        assert!((drop - 6.0).abs() < 0.5, "{drop}");
+        for x in [-250.0, 0.0, 170.0] {
+            assert!((level(&surface, x, -8.0) - level(&surface, x, 8.0)).abs() < 0.05, "level across at {x}");
+            assert!((level(&surface, x, 0.0) - (10.0 - x / 100.0)).abs() < 0.3, "follows the ground at {x}");
+        }
+    }
+
+    #[test]
+    fn a_bending_river_follows_its_course() {
+        // Runs east along z = 0 to x = 0, then turns south (+z); the ground falls 1 m per 100 m of course.
+        let map = river(vec![[-400.0, -10.0], [10.0, -10.0], [10.0, 400.0], [-10.0, 400.0], [-10.0, 10.0], [-400.0, 10.0]]);
+        let course = |x: f64, z: f64| x.min(0.0) + 400.0 + z.max(0.0);
+        let surface = Surface::new(&map, river_grid(), |x, z| Some(10.0 - course(x, z) / 100.0 + noise(x, z)));
+        let path: Vec<f64> = (-30..=-2).map(|k| level(&surface, k as f64 * 10.0, 0.0)).chain((2..=30).map(|k| level(&surface, 0.0, k as f64 * 10.0))).collect();
+        assert!(path.windows(2).all(|w| w[1] <= w[0] + 1e-4), "falls round the bend: {path:?}");
+        assert!(level(&surface, 0.0, 30.0) > level(&surface, 0.0, 300.0) + 2.0, "falls along the southern arm, where x does not change");
+    }
+
+    #[test]
+    fn rapids_are_a_step_not_a_flood() {
+        // The water drops 3 m at x = 0.
+        let map = river(vec![[-400.0, -10.0], [400.0, -10.0], [400.0, 10.0], [-400.0, 10.0]]);
+        let surface = Surface::new(&map, river_grid(), |x, z| Some(if x < 0.0 { 10.0 } else { 7.0 } + 0.05 * noise(x, z)));
+        assert!((level(&surface, -200.0, 0.0) - 10.0).abs() < 0.1, "{}", level(&surface, -200.0, 0.0));
+        assert!((level(&surface, 200.0, 0.0) - 7.0).abs() < 0.1, "{}", level(&surface, 200.0, 0.0));
+    }
+
+    #[test]
+    fn isotonic_pools_what_rises_out_of_order() {
+        assert_eq!(isotonic(&[1.0, 3.0, 2.0, 4.0], &[1.0; 4]), vec![1.0, 2.5, 2.5, 4.0]);
+        assert_eq!(isotonic(&[3.0, 1.0], &[1.0, 3.0]), vec![1.5, 1.5]);
+    }
+
     #[test]
     fn the_sea_shelves_steadily_out_to_its_farthest_point() {
         // A coast along x = -350 m, sea to the east as far as the grid goes (about 750 m).
@@ -463,7 +709,7 @@ mod tests {
     fn bigger_water_is_deeper() {
         assert!(Kind::Lake.max_depth(100.0) > Kind::Lake.max_depth(10.0));
         assert!(Kind::River.max_depth(150.0) > Kind::River.max_depth(3.0));
-        assert!(Kind::Lake.max_depth(1e6) <= 12.0 && Kind::River.max_depth(1e6) <= 6.0);
+        assert!(Kind::Lake.max_depth(1e6) <= 24.0 && Kind::River.max_depth(1e6) <= 12.0);
         assert!((Kind::Lake.depth(0.0, 50.0) - SHORE_DEPTH).abs() < 1e-9);
         assert!((Kind::Lake.depth(50.0, 50.0) - Kind::Lake.max_depth(50.0)).abs() < 1e-9);
         assert_eq!(Kind::Lake.depth(3.0, 0.0), Kind::Lake.max_depth(0.0), "no division by a zero radius");
