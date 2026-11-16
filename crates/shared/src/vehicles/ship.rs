@@ -107,6 +107,7 @@ pub(super) const SHIP: VehicleDef = VehicleDef {
         steer_fade: STEER_FADE,
         skim: None,
         bow: SHIP_BOW,
+        profile: Spec::BOX,
         springs: Springs::FIRM,
         airframe: None,
         gait: None,

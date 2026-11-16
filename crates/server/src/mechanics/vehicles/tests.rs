@@ -401,7 +401,8 @@ fn parked_cars_in_the_fixture_world_settle_and_stay_put() {
         // A plane stands taller on its undercarriage than any car, and a walker's, a hen's or a tupp's hull is up on its legs.
         let ride = match game.world.entities.of::<Vehicle>(id).kind {
             KIND_PLANE => 1.3,
-            KIND_STRV => 1.2,
+            // The tracked kinds stand with their bellies half a metre clear.
+            KIND_TANK | KIND_STRV | KIND_STRF => 1.25,
             KIND_WALKER | KIND_HEN | KIND_TUPP => WALKER_LEG_LENGTH + WALKER_HALF_EXTENTS[1],
             _ => 1.0,
         };
@@ -719,7 +720,7 @@ fn drive_into_a_pine(kind: u8, speed: f32) -> Option<(f32, f32, f32)> {
     let mut game = Game::new(map, 0).unwrap();
     game.world.clear_pickups();
     let vid = game.world.entities.all::<Vehicle>().find(|(_, vehicle)| vehicle.kind == kind).unwrap().0;
-    game.world.physics.reset_car(vid, [15.0, 1.0, 5.5], 0.0);
+    game.world.physics.reset_car(vid, [15.0, 1.3, 3.55 + sim::half_extents(kind)[2]], 0.0);
     for _ in 0..60 {
         Vehicles.on_tick(&mut game.world, TICK_DT);
     }
@@ -766,7 +767,7 @@ fn drive_into_a_line(kind: u8, speed: f32, line: u8) -> Option<(f32, f32, f32)> 
     let mut game = Game::new(map, 0).unwrap();
     game.world.clear_pickups();
     let vid = game.world.entities.all::<Vehicle>().find(|(_, vehicle)| vehicle.kind == kind).unwrap().0;
-    game.world.physics.reset_car(vid, [15.0, 1.0, 5.5], 0.0);
+    game.world.physics.reset_car(vid, [15.0, 1.3, 3.55 + sim::half_extents(kind)[2]], 0.0);
     for _ in 0..60 {
         Vehicles.on_tick(&mut game.world, TICK_DT);
     }

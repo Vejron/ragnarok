@@ -96,6 +96,7 @@ pub(super) const SNOWRACER: VehicleDef = VehicleDef {
         // Too small and slow to plane: it sinks.
         skim: None,
         bow: 0.0,
+        profile: Spec::BOX,
         springs: Springs::FIRM,
         airframe: None,
         gait: None,

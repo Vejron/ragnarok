@@ -4,7 +4,7 @@ use crate::entities::Health;
 use super::super::projectiles::Flying;
 use shared::armor::{Part, PenKind};
 use crate::game::{Command, Game, Seat};
-use shared::protocol::{KIND_HELI, KIND_JEEP, KIND_PAK, KIND_WALKER, KIND_PLANE, KIND_STRV, PROJECTILE_SHELL, WEAPON_SHELL};
+use shared::protocol::{KIND_HELI, KIND_JEEP, KIND_PAK, KIND_WALKER, KIND_PLANE, KIND_STRF, KIND_STRV, PROJECTILE_SHELL, WEAPON_SHELL};
 use shared::world::{Road, WORLD_VERSION, WorldFile};
 use tokio::sync::{mpsc, oneshot};
 
@@ -41,60 +41,108 @@ fn blocked(outcome: Outcome) -> f32 {
     }
 }
 
-const GLACIS: [f32; 3] = [0.0, 0.0, -2.7];
+/// Face `index` of a tracked `kind`'s outline, as a shot meets it on the hull's centre line: its outward
+/// normal and its middle. Face 0 is the glacis.
+fn face(kind: u8, index: usize) -> Strike {
+    let profile = vehicle_def(kind).spec.profile;
+    let ([z0, y0], [z1, y1]) = (profile[index], profile[(index + 1) % profile.len()]);
+    let len = ((z1 - z0).powi(2) + (y1 - y0).powi(2)).sqrt();
+    strike([0.0, (z1 - z0) / len, -(y1 - y0) / len], [0.0, (y0 + y1) / 2.0, (z0 + z1) / 2.0])
+}
+
+/// A unit vector into the front from `degrees` above level.
+fn from_above(degrees: f32) -> [f32; 3] {
+    let (sin, cos) = degrees.to_radians().sin_cos();
+    [0.0, -sin, cos]
+}
 
 #[test]
-fn a_level_shot_into_the_strvs_glacis_meets_it_at_its_slope_and_a_shell_still_goes_through() {
-    // 40 mm leaning back 55 degrees is 70 mm along a level shot.
-    let mm = blocked(judge(KIND_STRV, &strike([0.0, 0.0, -1.0], GLACIS), from_front(0.0), 60.0, 0.0));
-    assert!((mm - 40.0 / 55f32.to_radians().cos()).abs() < 0.5, "{mm}");
-    let scale = pierced(judge(KIND_STRV, &strike([0.0, 0.0, -1.0], GLACIS), from_front(0.0), SHOT, 0.0));
+fn a_level_shot_skids_off_the_strvs_long_glacis_and_one_plunging_onto_it_goes_through() {
+    let glacis = face(KIND_STRV, 0);
+    for degrees in [0.0, 5.0] {
+        let level = judge(KIND_STRV, &glacis, from_above(degrees), SHOT, 0.0);
+        assert!(matches!(level, Outcome::Ricochet { .. }), "{degrees} degrees down: {level:?}");
+    }
+    // So does one into the plate under the nose, and one from either front quarter.
+    let under = judge(KIND_STRV, &face(KIND_STRV, 6), from_front(0.0), SHOT, 0.0);
+    assert!(matches!(under, Outcome::Ricochet { .. }), "{under:?}");
+    for degrees in [-50.0, 50.0] {
+        let quarter = judge(KIND_STRV, &glacis, from_front(degrees), SHOT, 0.0);
+        assert!(matches!(quarter, Outcome::Ricochet { .. }), "{quarter:?}");
+    }
+    // 40 mm lying 13 degrees above level is 180 mm along a level shot, for a round too big to turn aside.
+    let mm = blocked(judge(KIND_STRV, &glacis, from_front(0.0), 150.0, 0.0));
+    assert!((mm - 180.0).abs() < 5.0, "{mm}");
+    // From 12 degrees up it bites and is stopped; from 25 it goes through.
+    assert!(blocked(judge(KIND_STRV, &glacis, from_above(12.0), SHOT, 0.0)) > SHOT);
+    let scale = pierced(judge(KIND_STRV, &glacis, from_above(25.0), SHOT, 0.0));
     assert!(scale > 0.5 && scale < 0.75, "with little to spare: {scale}");
 }
 
 #[test]
-fn a_shot_well_off_the_nose_glances_off_the_glacis() {
-    let off = judge(KIND_STRV, &strike([0.0, 0.0, -1.0], GLACIS), from_front(35.0), SHOT, 0.0);
-    assert!(matches!(off, Outcome::Ricochet { .. }), "{off:?}");
-    // The same angle on a plain tank's gentler plate goes in.
-    let tank = judge(KIND_TANK, &strike([0.0, 0.0, -1.0], [0.0, 0.0, -2.6]), from_front(35.0), SHOT, 0.0);
-    assert!(matches!(tank, Outcome::Pierced { .. }), "{tank:?}");
+fn a_shell_goes_through_the_tanks_steeper_glacis_from_ahead_and_from_well_off_the_nose() {
+    // 32 mm leaning back 57 degrees is 59 mm along a level shot.
+    let glacis = face(KIND_TANK, 0);
+    let mm = blocked(judge(KIND_TANK, &glacis, from_front(0.0), 50.0, 0.0));
+    assert!((mm - 32.0 / 57f32.to_radians().cos()).abs() < 1.0, "{mm}");
+    for degrees in [0.0, 35.0] {
+        let shell = judge(KIND_TANK, &glacis, from_front(degrees), SHOT, 0.0);
+        assert!(matches!(shell, Outcome::Pierced { plate: "glacis", .. }), "{shell:?}");
+    }
+    let grazing = judge(KIND_TANK, &glacis, from_front(60.0), SHOT, 0.0);
+    assert!(matches!(grazing, Outcome::Ricochet { .. }), "{grazing:?}");
 }
 
 #[test]
 fn a_shot_from_above_has_less_glacis_to_get_through_than_a_level_one() {
-    let level = blocked(judge(KIND_STRV, &strike([0.0, 0.0, -1.0], [0.0; 3]), from_front(0.0), 1.0, 0.0));
-    let (s, c) = 20f32.to_radians().sin_cos();
-    let falling = blocked(judge(KIND_STRV, &strike([0.0, 0.0, -1.0], [0.0; 3]), [0.0, -s, c], 1.0, 0.0));
+    let level = blocked(judge(KIND_TANK, &face(KIND_TANK, 0), from_front(0.0), 1.0, 0.0));
+    let falling = blocked(judge(KIND_TANK, &face(KIND_TANK, 0), from_above(20.0), 1.0, 0.0));
     assert!(falling < level, "{falling} vs {level}");
 }
 
 #[test]
+fn a_shot_into_the_plate_under_a_nose_or_a_tail_is_not_judged_as_belly() {
+    for (kind, under_nose, under_tail) in [(KIND_TANK, 6, 4), (KIND_STRV, 6, 4), (KIND_STRF, 5, 3)] {
+        let nose = judge(kind, &face(kind, under_nose), from_front(0.0), 1.0, 0.0);
+        assert!(matches!(nose, Outcome::Blocked { plate: "lower front", .. } | Outcome::Ricochet { .. }), "{kind}: {nose:?}");
+        let tail = judge(kind, &face(kind, under_tail), [0.0, 0.0, -1.0], 1.0, 0.0);
+        assert!(matches!(tail, Outcome::Blocked { plate: "hull rear" | "rear ramp", .. }), "{kind}: {tail:?}");
+    }
+}
+
+#[test]
 fn rifle_bullets_do_not_go_through_a_tank_anywhere_but_its_slits() {
+    let glacis = face(KIND_TANK, 0);
     let faces = [
-        ([0.0, 0.0, -1.0], [0.0, 0.0, -2.6], [0.0, 0.0, 1.0]),
-        ([1.0, 0.0, 0.0], [1.3, 0.0, 0.0], [-1.0, 0.0, 0.0]),
-        ([0.0, 0.0, 1.0], [0.0, 0.0, 2.6], [0.0, 0.0, -1.0]),
-        ([0.0, 1.0, 0.0], [0.0, 0.5, 0.0], [0.0, -1.0, 0.0]),
-        ([0.0, 1.0, 0.0], [0.0, 0.5, 2.0], [0.0, -1.0, 0.0]),
+        (glacis.normal, glacis.point, [0.0, 0.0, 1.0]),
+        ([1.0, 0.0, 0.0], [1.7, 0.0, 0.0], [-1.0, 0.0, 0.0]),
+        ([0.0, 0.0, 1.0], [0.0, 0.0, 3.8], [0.0, 0.0, -1.0]),
+        ([0.0, 1.0, 0.0], [0.0, 0.625, 0.0], [0.0, -1.0, 0.0]),
+        ([0.0, 1.0, 0.0], [0.0, 0.625, 2.4], [0.0, -1.0, 0.0]),
     ];
     for (normal, point, dir) in faces {
         let outcome = judge(KIND_TANK, &strike(normal, point), dir, BULLET, 0.0);
         assert!(matches!(outcome, Outcome::Blocked { .. } | Outcome::Ricochet { .. }), "{point:?}: {outcome:?}");
         assert_eq!(outcome.share(shared::armor::PenKind::Ball), 0.0);
     }
-    let visor = judge(KIND_TANK, &strike([0.0, 0.0, -1.0], [-0.55, 0.35, -2.6]), [0.0, 0.0, 1.0], BULLET, 0.0);
+    let visor = judge(KIND_TANK, &strike(glacis.normal, VISOR), [0.0, 0.0, 1.0], BULLET, 0.0);
     assert!(matches!(visor, Outcome::Pierced { slit: true, plate: "driver's visor", .. }), "{visor:?}");
+    // The Strv's gunner's sight is a gap in its glacis too.
+    let sight = judge(KIND_STRV, &strike(face(KIND_STRV, 0).normal, [-0.6, 0.6, -0.45]), [0.0, 0.0, 1.0], BULLET, 0.0);
+    assert!(matches!(sight, Outcome::Pierced { slit: true, plate: "periscope", .. }), "{sight:?}");
 }
+
+/// Where the tank's driver's visor is in its glacis, in the hull frame.
+const VISOR: [f32; 3] = [-0.7, 0.32, -3.15];
 
 #[test]
 fn a_shell_goes_through_the_side_easily_and_the_engine_grille_more_easily_than_the_roof() {
-    let side = pierced(judge(KIND_STRV, &strike([1.0, 0.0, 0.0], [1.3, 0.0, 0.0]), [-1.0, 0.0, 0.0], SHOT, 0.0));
-    let nose = pierced(judge(KIND_STRV, &strike([0.0, 0.0, -1.0], GLACIS), from_front(0.0), SHOT, 0.0));
+    let side = pierced(judge(KIND_TANK, &strike([1.0, 0.0, 0.0], [1.7, 0.0, 0.0]), [-1.0, 0.0, 0.0], SHOT, 0.0));
+    let nose = pierced(judge(KIND_TANK, &face(KIND_TANK, 0), from_front(0.0), SHOT, 0.0));
     assert!(side > nose, "{side} vs {nose}");
     // A heavy machine gun's 15 mm goes through the 10 mm grille but not the 12 mm roof beside it.
-    let grille = judge(KIND_TANK, &strike([0.0, 1.0, 0.0], [0.0, 0.5, 2.0]), [0.0, -1.0, 0.0], 11.0, 0.0);
-    let roof = judge(KIND_TANK, &strike([0.0, 1.0, 0.0], [0.0, 0.5, -1.5]), [0.0, -1.0, 0.0], 11.0, 0.0);
+    let grille = judge(KIND_TANK, &strike([0.0, 1.0, 0.0], [0.0, 0.625, 2.4]), [0.0, -1.0, 0.0], 11.0, 0.0);
+    let roof = judge(KIND_TANK, &strike([0.0, 1.0, 0.0], [0.0, 0.625, -1.5]), [0.0, -1.0, 0.0], 11.0, 0.0);
     assert!(matches!(grille, Outcome::Pierced { .. }) && matches!(roof, Outcome::Blocked { .. }), "{grille:?} {roof:?}");
 }
 
@@ -117,7 +165,7 @@ fn a_jeeps_sheet_steel_is_no_match_for_anything_and_a_plane_is_less() {
 fn a_turrets_plates_turn_with_it() {
     // From the left, square onto the drum: its 30 mm side with the gun ahead...
     // Low on the drum, under the mantlet once it has turned.
-    let hit = on_turret([-1.0, 0.0, 0.0], [-1.0, 0.55, 0.3]);
+    let hit = on_turret([-1.0, 0.0, 0.0], [-1.15, 0.75, -0.4]);
     let ahead = judge(KIND_TANK, &hit, [1.0, 0.0, 0.0], 40.0, 0.0);
     assert!(matches!(ahead, Outcome::Pierced { turret: true, plate: "turret side", .. }), "{ahead:?}");
     // ...its 50 mm front once it has turned to face the shot.
@@ -193,7 +241,7 @@ fn shoot_at(game: &mut Game, vid: u32, target: [f32; 3], local_from: [f32; 3]) -
 }
 
 #[test]
-fn a_shell_into_the_side_of_a_strv_hurts_and_one_into_its_glacis_off_axis_glances_off() {
+fn a_shell_into_the_side_of_a_strv_hurts_and_one_into_its_glacis_glances_off() {
     let mut game = game();
     let vid = of_kind(&game, KIND_STRV);
     let full = game.world.entities.of::<Health>(vid).hp;
@@ -202,24 +250,34 @@ fn a_shell_into_the_side_of_a_strv_hurts_and_one_into_its_glacis_off_axis_glance
     let after_side = game.world.entities.of::<Health>(vid).hp;
     let side_damage = full - after_side;
     assert!(side_damage >= 40, "a square side hit hurts: {side_damage}");
-    // 40 degrees off the nose at the middle of the glacis: a glancing blow.
-    let (s, c) = 40f32.to_radians().sin_cos();
-    let events = shoot_at(&mut game, vid, [0.0, 0.0, -STRV_HALF_EXTENTS[2] + 0.05], [s, 0.0, -c]);
-    assert!(!events.iter().any(|e| matches!(e.weapon, WEAPON_SHELL | shared::protocol::WEAPON_AP)), "a ricochet does not burst: {events:?}");
-    assert_eq!(game.world.entities.of::<Health>(vid).hp, after_side);
+    // Level at the glacis, from dead ahead and from 40 degrees off the nose: glancing blows.
+    for degrees in [0f32, 40.0] {
+        let (s, c) = degrees.to_radians().sin_cos();
+        let events = shoot_at(&mut game, vid, [0.0, 0.3, -1.76], [s, 0.0, -c]);
+        assert!(!events.iter().any(|e| matches!(e.weapon, WEAPON_SHELL | shared::protocol::WEAPON_AP)), "a ricochet does not burst: {events:?}");
+        assert_eq!(game.world.entities.of::<Health>(vid).hp, after_side);
+    }
 }
 
 #[test]
-fn a_hit_from_behind_costs_more_than_one_into_the_nose() {
+fn a_shell_from_behind_a_strv_goes_in_where_one_into_its_nose_skids_off() {
     let mut game = game();
     let vid = of_kind(&game, KIND_STRV);
     let full = game.world.entities.of::<Health>(vid).hp;
     shoot(&mut game, vid, [0.0, 0.0, -1.0]);
-    let nose = full - game.world.entities.of::<Health>(vid).hp;
-    let before = game.world.entities.of::<Health>(vid).hp;
+    assert_eq!(game.world.entities.of::<Health>(vid).hp, full, "the nose turns it");
     shoot(&mut game, vid, [0.0, 0.0, 1.0]);
-    let tail = before - game.world.entities.of::<Health>(vid).hp;
-    assert!(nose > 0 && u32::from(tail) * 3 > u32::from(nose) * 4, "nose {nose}, tail {tail}");
+    assert!(game.world.entities.of::<Health>(vid).hp < full, "the tail does not");
+}
+
+#[test]
+fn a_shell_plunging_onto_a_strvs_glacis_from_ahead_goes_through() {
+    let mut game = game();
+    let vid = of_kind(&game, KIND_STRV);
+    let full = game.world.entities.of::<Health>(vid).hp;
+    let (s, c) = 30f32.to_radians().sin_cos();
+    shoot_at(&mut game, vid, [0.0, 0.3, -1.76], [0.0, s, -c]);
+    assert!(game.world.entities.of::<Health>(vid).hp < full);
 }
 
 fn join(game: &mut Game) -> u32 {
@@ -285,8 +343,8 @@ fn a_shell_into_a_tanks_turret_damages_the_turret() {
     let vid = of_kind(&game, KIND_TANK);
     let pose = game.world.physics.car_pose(vid).unwrap();
     // A shell from the side, at the height of the turret drum.
-    let target = pose.world_point([0.0, 0.85, 0.3]);
-    let from = pose.world_point([-12.0, 0.85, 0.3]);
+    let target = pose.world_point(TANK_TURRET_PIVOT);
+    let from = pose.world_point([-12.0, TANK_TURRET_PIVOT[1], TANK_TURRET_PIVOT[2]]);
     let dir = [target[0] - from[0], target[1] - from[1], target[2] - from[2]];
     let len = vec3::length(dir);
     let id = game.world.alloc_id();
@@ -421,12 +479,12 @@ fn a_rifle_round_through_the_drivers_visor_hits_the_driver_and_not_the_tank() {
     let driver = seat(&mut game, vid, 0);
     let full = game.world.entities.of::<Health>(vid).hp;
     let before = game.world.entities.of::<Health>(driver).hp;
-    rifle_at(&mut game, vid, [-0.55, 0.35, -2.6], [0.0, 0.0, -1.0]);
+    rifle_at(&mut game, vid, VISOR, [0.0, 0.0, -1.0]);
     assert!(game.world.entities.of::<Health>(driver).hp < before, "the driver is hit");
     assert_eq!(game.world.entities.of::<Health>(vid).hp, full, "the tank is not");
     // A hand's breadth to the side, the glacis stops it.
     let after = game.world.entities.of::<Health>(driver).hp;
-    rifle_at(&mut game, vid, [-0.1, 0.35, -2.6], [0.0, 0.0, -1.0]);
+    rifle_at(&mut game, vid, [-0.2, VISOR[1], VISOR[2]], [0.0, 0.0, -1.0]);
     assert_eq!(game.world.entities.of::<Health>(driver).hp, after);
 }
 
@@ -435,7 +493,7 @@ fn a_shell_into_the_rear_wrecks_the_engine_and_the_tank_cannot_drive() {
     let mut game = game();
     let vid = of_kind(&game, KIND_TANK);
     assert_eq!(condition(&game, vid).power, 1.0);
-    shoot_at(&mut game, vid, [0.0, 0.0, 2.6], [0.0, 0.0, 1.0]);
+    shoot_at(&mut game, vid, [0.0, 0.0, 3.8], [0.0, 0.0, 1.0]);
     assert!(!game.world.entities.dead(vid), "it is not a wreck");
     assert_eq!(part(&game, vid, Part::Engine), 0, "{:?}", game.world.entities.of::<Vehicle>(vid).parts);
     let now = condition(&game, vid);
@@ -446,7 +504,7 @@ fn a_shell_into_the_rear_wrecks_the_engine_and_the_tank_cannot_drive() {
 fn a_shell_low_on_the_flank_breaks_that_track() {
     let mut game = game();
     let vid = of_kind(&game, KIND_TANK);
-    shoot_at(&mut game, vid, [-1.3, -0.3, 1.0], [-1.0, 0.0, 0.0]);
+    shoot_at(&mut game, vid, [-1.7, -0.3, 1.0], [-1.0, 0.0, 0.0]);
     assert_eq!(part(&game, vid, Part::TrackLeft), 0);
     assert!(part(&game, vid, Part::TrackRight) > 0);
     let now = condition(&game, vid);
@@ -459,7 +517,7 @@ fn a_shell_into_the_ammunition_cooks_it_off() {
     let mut game = game();
     let vid = of_kind(&game, KIND_TANK);
     let crew = seat(&mut game, vid, 0);
-    shoot_at(&mut game, vid, [1.3, 0.0, 0.2], [1.0, 0.0, 0.0]);
+    shoot_at(&mut game, vid, [1.7, 0.0, 0.2], [1.0, 0.0, 0.0]);
     assert!(game.world.entities.dead(vid), "wrecked");
     assert!(!game.world.entities.alive(crew), "with its crew");
 }
@@ -470,7 +528,7 @@ fn a_shell_through_the_mantlet_smashes_the_breech_and_kills_the_gunner() {
     let vid = of_kind(&game, KIND_TANK);
     let gunner = seat(&mut game, vid, 1);
     let driver = seat(&mut game, vid, 0);
-    shoot_at(&mut game, vid, [0.0, 0.85, -0.7], [0.0, 0.0, -1.0]);
+    shoot_at(&mut game, vid, [0.0, 1.125, -1.55], [0.0, 0.0, -1.0]);
     assert!(!game.world.entities.dead(vid));
     assert!(part_gone(&game.world, vid, Part::Breech));
     assert!(!game.world.entities.alive(gunner), "the gunner was behind it");
@@ -481,7 +539,7 @@ fn a_shell_through_the_mantlet_smashes_the_breech_and_kills_the_gunner() {
 fn burning_fuel_eats_the_tank_until_it_is_a_wreck_and_a_fresh_one_is_whole() {
     let mut game = game();
     let vid = of_kind(&game, KIND_TANK);
-    let entry = Entry { at: [-1.0, -0.25, 1.15], dir: [1.0, 0.0, 0.0], residual: 50.0, calibre: 75.0, kind: PenKind::Ap, slit: true, crew: 100, weapon: WEAPON_SHELL, attacker: None };
+    let entry = Entry { at: [-1.2, -0.3, 1.5], dir: [1.0, 0.0, 0.0], residual: 50.0, calibre: 75.0, kind: PenKind::Ap, slit: true, crew: 100, weapon: WEAPON_SHELL, attacker: None };
     let done = inside(&mut game.world, vid, entry);
     let fuel = 1 << Part::Fuel.slot().unwrap();
     assert_eq!(done.gone & fuel, fuel, "{done:?}");
@@ -506,7 +564,7 @@ fn a_spray_of_fragments_is_the_same_every_time() {
     let run = || {
         let mut game = game();
         let vid = of_kind(&game, KIND_TANK);
-        let entry = Entry { at: [1.3, 0.1, -1.0], dir: [-1.0, 0.0, 0.0], residual: 60.0, calibre: 75.0, kind: PenKind::Ap, slit: false, crew: 100, weapon: WEAPON_SHELL, attacker: None };
+        let entry = Entry { at: [1.7, 0.1, -1.0], dir: [-1.0, 0.0, 0.0], residual: 60.0, calibre: 75.0, kind: PenKind::Ap, slit: false, crew: 100, weapon: WEAPON_SHELL, attacker: None };
         inside(&mut game.world, vid, entry);
         game.world.entities.of::<Vehicle>(vid).parts
     };
@@ -518,16 +576,16 @@ fn an_at_rifle_goes_through_a_tanks_sides_and_rear_but_not_its_front() {
     let mut game = game();
     let vid = of_kind(&game, KIND_TANK);
     let full = game.world.entities.of::<Health>(vid).hp;
-    gun_at(&mut game, shared::items::ITEM_AT_RIFLE, vid, [0.0, 0.0, -2.6], [0.0, 0.0, -1.0]);
+    gun_at(&mut game, shared::items::ITEM_AT_RIFLE, vid, [0.0, 0.0, -3.8], [0.0, 0.0, -1.0]);
     assert_eq!(game.world.entities.of::<Health>(vid).hp, full, "the glacis stops it");
-    gun_at(&mut game, shared::items::ITEM_AT_RIFLE, vid, [0.0, 0.0, 2.6], [0.0, 0.0, 1.0]);
+    gun_at(&mut game, shared::items::ITEM_AT_RIFLE, vid, [0.0, 0.0, 3.8], [0.0, 0.0, 1.0]);
     assert!(game.world.entities.of::<Health>(vid).hp < full, "the rear plate does not");
     assert!(part(&game, vid, Part::Engine) < Vehicle::fresh_parts(KIND_TANK)[Part::Engine.slot().unwrap()], "and it hits the engine behind it");
     let before = game.world.entities.of::<Health>(vid).hp;
-    gun_at(&mut game, shared::items::ITEM_AT_RIFLE, vid, [-1.3, 0.0, 0.5], [-1.0, 0.0, -0.3]);
+    gun_at(&mut game, shared::items::ITEM_AT_RIFLE, vid, [-1.7, 0.0, 0.5], [-1.0, 0.0, -0.3]);
     assert!(game.world.entities.of::<Health>(vid).hp < before, "nor the side plate, a little off square");
     let before = game.world.entities.of::<Health>(vid).hp;
-    gun_at(&mut game, shared::items::ITEM_AT_RIFLE, vid, [-1.0, 0.6, 0.3], [-1.0, 0.0, 0.0]);
+    gun_at(&mut game, shared::items::ITEM_AT_RIFLE, vid, [-1.15, 1.2, -0.4], [-1.0, 0.0, 0.0]);
     assert!(game.world.entities.of::<Health>(vid).hp < before, "nor the turret's side");
 }
 
@@ -553,7 +611,7 @@ fn high_explosive_does_little_to_a_tanks_front_and_wrecks_a_jeep() {
     let mut game = game();
     let tank = of_kind(&game, KIND_TANK);
     let full = game.world.entities.of::<Health>(tank).hp;
-    he_at(&mut game, tank, [0.0, 0.0, -2.6], [0.0, 0.0, -1.0]);
+    he_at(&mut game, tank, [0.0, 0.0, -3.8], [0.0, 0.0, -1.0]);
     let lost = full - game.world.entities.of::<Health>(tank).hp;
     assert!(lost > 0 && lost < 25, "the blast scorches it: {lost}");
     let jeep = of_kind(&game, KIND_JEEP);
@@ -568,16 +626,16 @@ fn the_shooter_and_the_crew_are_told_what_a_round_did() {
     let vid = of_kind(&game, KIND_TANK);
     seat(&mut game, vid, 0);
     game.world.armor_hits.clear();
-    rifle_at(&mut game, vid, [0.0, 0.0, -2.6], [0.0, 0.0, -1.0]);
+    rifle_at(&mut game, vid, [0.0, 0.0, -3.8], [0.0, 0.0, -1.0]);
     assert_eq!(game.world.armor_hits.iter().map(|hit| hit.result).collect::<Vec<_>>(), [ARMOR_BLOCKED]);
     game.world.armor_hits.clear();
-    rifle_at(&mut game, vid, [-0.55, 0.35, -2.6], [0.0, 0.0, -1.0]);
+    rifle_at(&mut game, vid, VISOR, [0.0, 0.0, -1.0]);
     let slit = game.world.armor_hits[0];
     assert_eq!(slit.result, ARMOR_SLIT);
     assert_ne!(slit.inside.crew & 1, 0, "the driver was hit: {slit:?}");
     // An AT rifle through the rear plate, into the engine.
     game.world.armor_hits.clear();
-    gun_at(&mut game, shared::items::ITEM_AT_RIFLE, vid, [0.0, 0.0, 2.6], [0.0, 0.0, 1.0]);
+    gun_at(&mut game, shared::items::ITEM_AT_RIFLE, vid, [0.0, 0.0, 3.8], [0.0, 0.0, 1.0]);
     let engine = 1 << Part::Engine.slot().unwrap();
     assert!(game.world.armor_hits.iter().any(|hit| hit.result == ARMOR_PIERCED && hit.inside.hurt & engine != 0), "{:?}", game.world.armor_hits);
 }
@@ -601,14 +659,14 @@ fn a_hail_of_rifle_rounds_on_a_tank_is_one_scuff_a_snapshot_but_every_one_is_cal
     game.world.marks.clear();
     game.world.armor_hits.clear();
     for k in 0..10 {
-        fire_at(&mut game, [-0.3 + k as f32 * 0.06, 0.0, -2.6]);
+        fire_at(&mut game, [-0.3 + k as f32 * 0.06, 0.0, -3.8]);
     }
     let scuffs = game.world.marks.iter().filter(|(mark, _)| mark.vehicle == vid && matches!(mark.style, MARK_GLANCE | MARK_SCUFF)).count();
     assert_eq!(scuffs, 1, "{:?}", game.world.marks);
     assert_eq!(game.world.armor_hits.len(), 10, "the shooter hears of every one");
     // A round through the visor leaves its mark even so: in the hull's frame, where the visor is, going back along the hull.
-    fire_at(&mut game, [-0.55, 0.35, -2.6]);
+    fire_at(&mut game, VISOR);
     let (hole, _) = *game.world.marks.iter().find(|(mark, _)| mark.style == MARK_HOLE).expect("a hole");
-    assert_eq!((hole.x, hole.y, hole.z), (-55, 35, -260));
+    assert_eq!((hole.x, hole.y, hole.z), (-70, 32, -315));
     assert!(hole.dz > 120, "{hole:?}");
 }

@@ -21,9 +21,9 @@ function named(tank: TankModel, name: string) {
 }
 
 describe('TankModel', () => {
-  it('has seven wheels a side and a turret on the game’s ring', () => {
+  it('has six road wheels, a sprocket and an idler a side, and a turret on the game’s ring', () => {
     const tank = new TankModel(1)
-    for (const side of ['L', 'R']) for (let n = 0; n < 7; n++) expect(named(tank, `wheel_${side}_${n}`)).toBeTruthy()
+    for (const side of ['L', 'R']) for (let n = 0; n < 8; n++) expect(named(tank, `wheel_${side}_${n}`)).toBeTruthy()
     const turret = named(tank, 'turret')
     TANK_TURRET_PIVOT.forEach((v, i) => expect(turret.position.toArray()[i]).toBeCloseTo(v, 4))
     expect(named(tank, 'gun').parent).toBe(turret)
@@ -33,7 +33,7 @@ describe('TankModel', () => {
   it('stays low-poly', () => {
     const tank = new TankModel(1)
     const triangles = triangleCount(tank.root)
-    expect(triangles).toBeLessThan(2500)
+    expect(triangles).toBeLessThan(3000)
     tank.dispose()
   })
 

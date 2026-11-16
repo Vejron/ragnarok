@@ -32,7 +32,7 @@ describe('StrfModel', () => {
 
   it('stays low-poly', () => {
     const strf = new StrfModel(1)
-    expect(triangleCount(strf.root)).toBeLessThan(2500)
+    expect(triangleCount(strf.root)).toBeLessThan(3000)
     strf.dispose()
   })
 

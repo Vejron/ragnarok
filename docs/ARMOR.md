@@ -16,12 +16,24 @@ vehicle's own solids (`Physics::armor_strike`), which gives the solid it hit (th
 is the one met. Small, special plates (a visor slit, the mantlet, an engine grille) are listed before
 the plain faces.
 
+A tracked hull is not a box but its real side outline (`Spec::profile`, see
+[VEHICLES-XVI.md](VEHICLES-XVI.md)), and a round meets each face of it as it lies. The face is told
+from the real normal, so a glacis that lies flatter than 45 degrees is struck as *top*: its plate is a
+`Zone::Top` plate with a region over the glacis, listed before the plain roof. The plate under a
+nose is told apart from the belly the same way.
+
 - A turret's plates are judged in the turret's frame, turned as the gun is. A turret facing the shot
   shows its 50 mm front; turned away, it shows its 30 mm side.
-- A plate's `slope` leans its normal back, so a level shot into the Strv S's 55-degree glacis meets
-  it at 55 degrees.
+- A hull with an outline slopes as it is drawn: a level shot from ahead meets the tank's glacis at
+  57 degrees and the Strv S's at 77. A plate's `slope` leans the normal of a plate on an upright solid
+  back instead (the Strf 90's turret face), which has no slope of its own.
+- **The Strv S turns most shots from ahead.** Its glacis is half its length and lies 13 degrees above
+  level, and the plate under its nose leans far back too. A level shell skids off either, from dead
+  ahead and from the front quarters. A shell coming down at 12 degrees bites but has 107 mm to get
+  through and is stopped; from 25 degrees up it goes through. Its sides, tail and decks are thin, and
+  the gunner's sight in the glacis is a slit.
 - Past a plate's `ricochet` angle a round glances off. A shell is reflected and flies on at 60 %
-  speed, and everyone nearby sees sparks (`WEAPON_RICOCHET`). A round that **overmatches** the plate
+  speed, and the plate shows a gouge and sparks (`MARK_GLANCE`). A round that **overmatches** the plate
   (penetration of at least three times its thickness) bites in at any angle.
 - Otherwise it has to get through `mm / cos(incidence)`. A round that cannot is **blocked**: a scuff
   and a ping (`MARK_SCUFF`), and no damage. An HE shell's blast still does 15 %.
@@ -35,8 +47,9 @@ the plain faces.
 
 | kind | plates (mm) | slits |
 |---|---|---|
-| tank | glacis 50 at 20 deg, hull side 30, rear 20, roof 12, belly 10, engine grille 10; turret front 50, mantlet 60, turret side 30, turret roof 12 | driver's visor (glacis, front left), gunner's sight (beside the mantlet) |
-| Strv S | glacis 40 at 55 deg, side 25, rear 20, roof 12, belly 10, engine deck 8; casemate front 40 at 30 deg, casemate side 20, casemate roof 10 | periscope (casemate face, left) |
+| tank | glacis 32 leaning back 57 deg (59 along a level shot), lower front 45, hull side 30, rear 20, roof 12, belly 10, engine grille 10; turret front 50, mantlet 60, turret side 30, turret roof 12 | driver's visor (glacis, front left), gunner's sight (beside the mantlet) |
+| Strv S | glacis 40 leaning back 77 deg (180 along a level shot), lower front 40 leaning back 57 deg, side 25, rear 20, roof 12, belly 10, engine deck 8 | gunner's sight (glacis, left of the gun) |
+| Strf 90 | engine cover 8 leaning back 76 deg (33 along a level shot), lower front 30, side 18, rear ramp 10, roof 10, belly 8; turret front 30 at 15 deg, turret side 20, turret roof 10 | driver's periscope (engine cover, front left), gunner's sight (beside the gun) |
 | Pak 38 | shield 8, sloped 11 deg; carriage 3 | sight gap in the shield |
 | jeep, cars, drones | 1.5 sheet steel | none |
 | helicopter, walker, hen, mortar | 3 light alloy | none |
@@ -100,7 +113,7 @@ The tank's parts are, from front to back: the transmission in the nose, the driv
 the ammunition along the right of the fighting compartment, the fuel ahead of the engine, and the
 engine at the back under the grille. The breech and the gunner are in the turret. The Strv S has its
 engine and gearbox at the back, its fuel under the middle, its magazine behind the crew and its one
-crew member at front left, under the periscope. The Pak 38's crew are in the open; only its breech
+crew member on the left, behind the gunner's sight. The Pak 38's crew are in the open; only its breech
 is a part.
 
 The other vehicles have parts too, so they behave as a tank does when shot: a hole where every round
@@ -141,7 +154,7 @@ A wreck coming back as new (`Vehicle::renew`) has every part whole and its fire 
 - Marks stay on the vehicle as scars on the mesh they struck (`client/src/render/hullmarks.ts`,
   [HULL-DAMAGE.md](HULL-DAMAGE.md)): a dented, sooted hole ringed with blued steel that glows and
   cools, a scorched dent where a plate stopped a shell, a gouge to bare metal where one glanced off,
-  and a chip in the paint for a bullet. The server's point is on its boxes and drums, which only
+  and a chip in the paint for a bullet. The server's point is on its hull outlines, boxes and drums, which only
   approximate the model. So the client follows the round's path from 0.8 m before that point to
   0.8 m past it into the model's triangles (`render/surface.ts`), and the scar goes on the mesh the
   path first meets, in that mesh's frame, so it slopes with the glacis and turns with the turret, the

@@ -428,8 +428,8 @@ pub const ROOF_AIM_UP: f32 = 1.2;
 pub const WALKER_AIM_BACK: f32 = 12.0;
 pub const WALKER_AIM_UP: f32 = 5.0;
 /// Behind a Strv S's gun trunnion.
-pub const STRV_AIM_BACK: f32 = 9.0;
-pub const STRV_AIM_UP: f32 = 3.2;
+pub const STRV_AIM_BACK: f32 = 11.0;
+pub const STRV_AIM_UP: f32 = 3.6;
 /// How far the camera's ray is followed to find what a mounted gun's reticle is on, metres, when the
 /// gun's own reach does not say.
 pub const MOUNT_AIM_RANGE: f32 = 1500.0;

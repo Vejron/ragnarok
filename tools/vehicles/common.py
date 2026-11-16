@@ -55,6 +55,62 @@ def stadium(front, rear, z, radius, steps=8):
     return [p for i, p in enumerate(loop) if i == 0 or p != loop[i - 1]]
 
 
+def track_loops(circles, thickness=0.08, steps=16):
+    """The (y, z) outline of a track drawn tight round `circles` (y, z, radius): the outer loop and the
+    inner one, point for point, for `Part.ring`."""
+    samples = []
+    for y, z, r in circles:
+        for k in range(steps):
+            a = 2 * math.pi * k / steps
+            samples.append((y + (r + thickness) * math.cos(a), z + (r + thickness) * math.sin(a), y + (r + 0.01) * math.cos(a), z + (r + 0.01) * math.sin(a)))
+    samples = sorted(set(samples))
+
+    def cross(o, a, b):
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+    def half(points):
+        chain = []
+        for p in points:
+            while len(chain) >= 2 and cross(chain[-2], chain[-1], p) <= 1e-9:
+                chain.pop()
+            chain.append(p)
+        return chain[:-1]
+
+    around = half(samples) + half(samples[::-1])
+    return [(p[0], p[1]) for p in around], [(p[2], p[3]) for p in around]
+
+
+def tracked_preview(directory, length, ride):
+    """Renders a tracked vehicle `length` m long, whose ground is `ride` m below its origin, from the
+    side, the top, the front, the front left and the rear right into `directory`."""
+    scene = bpy.context.scene
+    os.makedirs(directory, exist_ok=True)
+    scene.render.engine = "BLENDER_WORKBENCH"
+    scene.display.shading.light = "STUDIO"
+    scene.display.shading.color_type = "MATERIAL"
+    scene.render.resolution_x, scene.render.resolution_y = 1000, 580
+    cam_data = bpy.data.cameras.new("cam")
+    cam = bpy.data.objects.new("cam", cam_data)
+    scene.collection.objects.link(cam)
+    scene.camera = cam
+    middle = 0.9 - ride
+    views = {
+        "side": ("ORTHO", Vector((14, 1.0, middle)), Vector((0, 1.0, middle)), length + 4.5),
+        "top": ("ORTHO", Vector((0, 1.0, 14)), Vector((0, 1.0, 0)), length + 4.5),
+        "front": ("ORTHO", Vector((0, 14, middle)), Vector((0, 0, middle)), 6.0),
+        "three": ("PERSP", Vector((-10.5, 10.5, 3.0)), Vector((0, 1.2, middle)), 0),
+        "rear": ("PERSP", Vector((8.5, -11.0, 5.0)), Vector((0, 0, middle)), 0),
+    }
+    for name, (kind, pos, target, scale) in views.items():
+        cam_data.type = kind
+        if kind == "ORTHO":
+            cam_data.ortho_scale = scale
+        cam.location = pos
+        cam.rotation_euler = (target - pos).to_track_quat("-Z", "Y").to_euler()
+        scene.render.filepath = os.path.join(directory, f"{name}.png")
+        bpy.ops.render.render(write_still=True)
+
+
 def export(out):
     os.makedirs(os.path.dirname(out), exist_ok=True)
     bpy.ops.object.select_all(action="SELECT")

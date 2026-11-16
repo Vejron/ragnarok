@@ -5,7 +5,7 @@ import { STRF_TRACK_HALF } from '@/sim/consts'
 export const STRF_MODEL_URL = `${import.meta.env.BASE_URL}models/strf.glb`
 
 /** Radius of the road wheels in the model (`WHEEL_RADIUS` in build_strf.py). */
-const WHEEL_RADIUS = 0.36
+const WHEEL_RADIUS = 0.3
 /**
  * Swedish splinter camo, base coat first: light green with dark green and black, then a darker green
  * with the same two, and a winter-faded one.
@@ -16,10 +16,10 @@ const PAINTS = [
   [0x8a8f6a, 0x3d4a2c, 0x23241f],
 ] as const
 /**
- * The driver's head shows in the hatch at the front left, beside the engine deck; the gunner's in the
+ * The driver's head shows in the hatch at the front left, beside the engine's louvres; the gunner's in the
  * hatch on the turret's left, in the turret's frame. The 40 mm barrel kicks back a short way.
  */
-const LAYOUT: TankLayout = { driverHead: [-0.75, 0.78, -2.25], gunnerHead: [-0.4, 0.42, 0.25], wheelRadius: WHEEL_RADIUS, trackHalf: STRF_TRACK_HALF, paints: PAINTS, recoilStroke: 0.18 }
+const LAYOUT: TankLayout = { driverHead: [-0.8, 0.7, -1.9], gunnerHead: [-0.4, 0.5, 0.3], wheelRadius: WHEEL_RADIUS, trackHalf: STRF_TRACK_HALF, paints: PAINTS, recoilStroke: 0.18 }
 
 let asset: Node | null = null
 

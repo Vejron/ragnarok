@@ -397,6 +397,7 @@ pub(super) const TITAN: VehicleDef = VehicleDef {
         steer_fade: STEER_FADE,
         skim: None,
         bow: 0.0,
+        profile: Spec::BOX,
         springs: Springs::FIRM,
         airframe: None,
         gait: Some(TITAN_GAIT),

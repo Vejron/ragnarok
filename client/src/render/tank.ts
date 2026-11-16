@@ -11,7 +11,7 @@ import type { VehicleModel } from './car'
 export const TANK_MODEL_URL = `${import.meta.env.BASE_URL}models/tank.glb`
 
 /** Radius of the road wheels in the model (`WHEEL_RADIUS` in build_tank.py): the tracks' speed over them is what rolls them. */
-const WHEEL_RADIUS = 0.4
+const WHEEL_RADIUS = 0.38
 const RECOIL_STROKE = 0.5
 const RECOIL_SECONDS = 0.35
 /**
@@ -40,7 +40,8 @@ export interface TankLayout {
   recoilStroke?: number
 }
 
-const TANK_LAYOUT: TankLayout = { driverHead: [0, 0.55, -1.55], gunnerHead: [-0.45, 0.5, 0.3], wheelRadius: WHEEL_RADIUS, trackHalf: TANK_TRACK_HALF }
+/** The driver's head shows in the hatch at the front left of the hull's roof; the gunner's in the loader's hatch on the turret's left. */
+const TANK_LAYOUT: TankLayout = { driverHead: [-0.7, 0.75, -2.25], gunnerHead: [-0.5, 0.62, 0.35], wheelRadius: WHEEL_RADIUS, trackHalf: TANK_TRACK_HALF }
 
 let asset: Node | null = null
 
@@ -73,7 +74,7 @@ export async function loadTankModel(url = TANK_MODEL_URL) {
 }
 
 /**
- * A T-55 in silhouette: a hull on two track runs with seven wheels each, and a turret that swings
+ * A Strv 104 (a Centurion): a hull on two track runs with eight wheels each, and a turret that swings
  * on the hull with a barrel that nods, and a heavy machine gun that turns and nods on its roof. The
  * driver's head shows in a hatch, the gunner's in the turret's cupola; the machine gunner is a soldier
  * in the roof hatch (`Riders`). Wheels roll with the movement of each track (so turning on the spot rolls them

@@ -21,7 +21,7 @@ export { ON_FOOT_HEIGHT, ON_FOOT_SHOULDER }
 /** Third-person camera distance behind the player, metres. */
 export const ON_FOOT_DISTANCE = 3.2
 export const DRIVING_DISTANCE = 9
-export const TANK_DISTANCE = 13
+export const TANK_DISTANCE = 16
 export const HELI_DISTANCE = 16
 export const WALKER_DISTANCE = 15
 /** Behind a Titan's shoulders, far enough to see all of it, and this far above the line of the look. */
@@ -34,9 +34,9 @@ export const HEN_DISTANCE = 17
 /** Behind the field mortar, which is low and wide. */
 export const MORTAR_DISTANCE = 9
 /** The Strv S driver's camera, when not aiming (`STRV_AIM_BACK` and `STRV_AIM_UP` when aiming). */
-export const STRV_DISTANCE = 12
-/** Behind the Strf 90, which is longer than the tank but lower. */
-export const STRF_DISTANCE = 13
+export const STRV_DISTANCE = 15
+/** Behind the Strf 90, which is shorter than the tank and lower. */
+export const STRF_DISTANCE = 15
 /** A plane's pilot looks where they fly, from behind and above, so the plane sits below the middle of the screen. */
 export const PLANE_DISTANCE = 12
 export const PLANE_CAMERA_HEIGHT = 2.4

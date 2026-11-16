@@ -115,8 +115,8 @@ describe('a tank\'s vision slits', () => {
     expect(root.children).toHaveLength(4)
     const glints = root.children.filter((_, i) => i % 2 === 1) as InstanceType<typeof import('@ragnarok/engine').Mesh>[]
     // The gunner's sight, beside the mantlet, is behind the turret's pivot with the turret turned about.
-    expect(glints[1]!.position.x).toBeCloseTo(-0.4, 1)
-    expect(glints[1]!.position.z).toBeCloseTo(1.22, 1)
+    expect(glints[1]!.position.x).toBeCloseTo(-0.45, 1)
+    expect(glints[1]!.position.z).toBeCloseTo(0.66, 1)
     // The driver is in, the gunner is not.
     expect(glints[0]!.tint[3]).toBeGreaterThan(0)
     expect(glints[1]!.tint[3]).toBe(0)

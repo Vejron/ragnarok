@@ -30,7 +30,7 @@ export const TANK: VehicleKind = {
     wheels: TRACK_WHEELS,
     drivenFrom: 0,
     exhaust: 'pipe',
-    bay: [0, 1.3, 1.6],
+    bay: [0, 0.8, 2.4],
     // Two broad, low washes off the wide tracks: a tank does not pull hard, but it moves a lot of snow.
     roost: { at: [[-TANK_TRACK_HALF, TANK_HALF_EXTENTS[2] + 0.1], [TANK_TRACK_HALF, TANK_HALF_EXTENTS[2] + 0.1]], accel: [0.5, 3], width: 0.35, up: 3.5, power: 1.1 },
   },

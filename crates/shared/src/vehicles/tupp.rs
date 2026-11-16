@@ -86,6 +86,7 @@ pub(super) const TUPP: VehicleDef = VehicleDef {
         steer_fade: STEER_FADE,
         skim: None,
         bow: 0.0,
+        profile: Spec::BOX,
         springs: Springs::FIRM,
         airframe: None,
         gait: Some(Gait::WALKER),

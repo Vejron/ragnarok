@@ -403,9 +403,9 @@ const TREE_RAM_DAMAGE_PER_SPEED: f32 = 6.0;
 const TANK_TREE_FACTOR: f32 = 5.0;
 /// Share of its speed a car keeps through a tree it fells, as the trunk gives way.
 const CAR_PLOW_KEEP: f32 = 0.6;
-/// How far (metres) a tank's hull reaches for a trunk: along its length, and out from each of the three points.
-const TANK_PLOW_REACH: f32 = 1.9;
-const TANK_PLOW_SPREAD: f32 = 1.8;
+/// How far (metres) past its hull a tank reaches for a trunk: beyond its nose and tail, and out past its sides.
+const TANK_PLOW_PAST_END: f32 = 0.6;
+const TANK_PLOW_PAST_SIDE: f32 = 0.5;
 
 /// Share of its speed a light vehicle keeps through the fence it breaks: wire and posts barely slow it.
 const FENCE_KEEP: f32 = 0.95;
@@ -451,7 +451,7 @@ fn plow_trees(world: &mut World, before: &BTreeMap<u32, CarPose>) {
         // The hull is long: look at its middle and a point towards each end. A tank reaches a little
         // past its hull; anything else is taken at its own size.
         let [hx, _, hz] = sim::half_extents(kind);
-        let (reach, spread) = if heavy { (TANK_PLOW_REACH, TANK_PLOW_SPREAD) } else { ((hz - hx).max(0.0), hx + 0.1) };
+        let (reach, spread) = if heavy { ((hz + TANK_PLOW_PAST_END - hx - TANK_PLOW_PAST_SIDE).max(0.0), hx + TANK_PLOW_PAST_SIDE) } else { ((hz - hx).max(0.0), hx + 0.1) };
         let (fx, fz) = (-now.yaw().sin(), -now.yaw().cos());
         let mut found: Vec<Obj> = [-reach, 0.0, reach].into_iter().flat_map(|along| world.physics.objects_near([now.position[0] + fx * along, now.position[1], now.position[2] + fz * along], spread)).collect();
         found.sort_by_key(|object| match *object {

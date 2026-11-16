@@ -4,7 +4,7 @@ import { KIND_STRV } from '@/net/codec'
 import { STRV_DISTANCE } from '@/render/scene'
 import { loadStrvModel, StrvModel } from '@/render/strvs'
 import { SHELL_COOLDOWN_TICKS, STRV_HALF_EXTENTS, STRV_MAX_SPEED, STRV_TRACK_HALF } from '@/sim/consts'
-import { TRACK_WHEELS } from '@/sim/slip'
+import { STRV_TRACKS } from '@/sim/slip'
 import type { VehicleKind } from './kind'
 
 export const STRV: VehicleKind = {
@@ -18,12 +18,11 @@ export const STRV: VehicleKind = {
     chop: { type: 'bandpass', hz: 650 },
     engine: { name: 'gears', shifts: [0], top: STRV_MAX_SPEED, hz: 36, level: 0.3, tracks: true },
   },
-  // Its tracks leave the tank's marks.
   fx: {
-    wheels: TRACK_WHEELS,
+    wheels: STRV_TRACKS,
     drivenFrom: 0,
     exhaust: 'pipe',
-    bay: [0, 1.1, 1.8],
+    bay: [0, 0.75, 2.6],
     roost: { at: [[-STRV_TRACK_HALF, STRV_HALF_EXTENTS[2] + 0.1], [STRV_TRACK_HALF, STRV_HALF_EXTENTS[2] + 0.1]], accel: [0.5, 3], width: 0.35, up: 3.5, power: 1.1 },
   },
 }

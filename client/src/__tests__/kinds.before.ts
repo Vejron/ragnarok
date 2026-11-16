@@ -4,7 +4,7 @@
 import { KIND_DRONE, KIND_HELI, KIND_HEN, KIND_LOITER, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER } from '@/net/codec'
 import { JEEP_MAX_SPEED, ROADSTER_MAX_SPEED, SPORTS_MAX_SPEED, STRV_MAX_SPEED, TANK_MAX_SPEED } from '@/sim/consts'
 import { groundGain, squealGain, type SoundInput, type SoundMix } from '@/sim/engine'
-import { JEEP_WHEELS, PLANE_WHEELS, SPORTS_WHEELS, TRACK_WHEELS } from '@/sim/slip'
+import { JEEP_WHEELS, PLANE_WHEELS, SPORTS_WHEELS, STRV_TRACKS, TRACK_WHEELS } from '@/sim/slip'
 import { SURFACE_ASPHALT } from '@/sim/surface'
 import { isTracked } from '@/sim/vehicles'
 
@@ -157,6 +157,7 @@ export const chop = (kind: number) => ({
 export function wheels(kind: number) {
   if (kind === KIND_HELI) return null
   if (kind === KIND_PLANE) return PLANE_WHEELS
+  if (kind === KIND_STRV) return STRV_TRACKS
   if (isTracked(kind)) return TRACK_WHEELS
   if (kind === KIND_SPORTS || kind === KIND_ROADSTER) return SPORTS_WHEELS
   return JEEP_WHEELS
@@ -167,8 +168,8 @@ export const exhaust = (kind: number) => (kind === KIND_HELI ? null : kind === K
 export const backfire = (kind: number) => kind === KIND_SPORTS
 /** `engineBay`. */
 export function bay(kind: number): [number, number, number] {
-  if (kind === KIND_TANK) return [0, 1.3, 1.6]
-  if (kind === KIND_STRV) return [0, 1.1, 1.8]
+  if (kind === KIND_TANK) return [0, 0.8, 2.4]
+  if (kind === KIND_STRV) return [0, 0.75, 2.6]
   if (kind === KIND_HELI) return [0, 1.6, 0.4]
   if (kind === KIND_PLANE) return [0, 0.5, -1.8]
   return [0, 0.75, -1.35]

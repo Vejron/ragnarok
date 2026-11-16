@@ -38,7 +38,7 @@ export const STRF: VehicleKind = {
     drivenFrom: 0,
     exhaust: 'pipe',
     // The engine is in the front right, beside the driver.
-    bay: [0.65, 0.75, -2.1],
+    bay: [0.75, 0.6, -2.3],
     roost: { at: [[-STRF_TRACK_HALF, STRF_HALF_EXTENTS[2] + 0.1], [STRF_TRACK_HALF, STRF_HALF_EXTENTS[2] + 0.1]], accel: [0.5, 3], width: 0.32, up: 3.5, power: 1.1 },
   },
 }

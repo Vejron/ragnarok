@@ -71,8 +71,9 @@ pub struct Plate {
     pub region: Option<Box3>,
     /// Thickness, millimetres.
     pub mm: f32,
-    /// How far it leans back from square to its face, degrees: a glacis's 55. It turns the plate's
-    /// normal up, so a level shot meets it at that angle.
+    /// How far it leans back from square to its face, degrees: it turns the plate's normal up, so a
+    /// level shot meets it at that angle. For a plate on an upright solid (a turret's drum); a hull
+    /// with a `Spec::profile` slopes as it is drawn and needs none.
     pub slope: f32,
     /// Incidence beyond which a round glances off, degrees (unless it overmatches the plate).
     pub ricochet: f32,
@@ -114,6 +115,12 @@ impl Plate {
     /// A slit in `face` of the hull at `region`.
     pub const fn slit(name: &'static str, face: Zone, region: Box3) -> Plate {
         Plate { name, on: On::Hull, face: Some(face), region: Some(region), mm: 0.0, slope: 0.0, ricochet: 91.0, slit: true, towards: face }
+    }
+
+    /// The same plate looking out `towards` rather than square to its face: a visor in a sloping glacis,
+    /// which is struck on the hull's top and looks ahead.
+    pub const fn looks(self, towards: Zone) -> Plate {
+        Plate { towards, ..self }
     }
 
     /// Whether a shot that struck solid `solid` (`None` the hull) on `face` at `point` meets this plate.

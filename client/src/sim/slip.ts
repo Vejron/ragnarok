@@ -1,15 +1,12 @@
 import {
   BUS_AXLE_Z, BUS_MAX_STEER, BUS_RIDE_HEIGHT, BUS_TRACK_HALF, GOLF_CART_AXLE_Z, GOLF_CART_MAX_STEER, GOLF_CART_RIDE_HEIGHT, GOLF_CART_TRACK_HALF, TECHNICAL_AXLE_Z, TECHNICAL_MAX_STEER, TECHNICAL_RIDE_HEIGHT, TECHNICAL_TRACK_HALF, JEEP_AXLE_Z, JEEP_MAX_STEER, JEEP_RIDE_HEIGHT, JEEP_TRACK_HALF, SNOWMOBILE_AXLE_Z, SNOWMOBILE_MAX_STEER, SNOWMOBILE_RIDE_HEIGHT, SNOWMOBILE_TRACK_HALF, SNOWRACER_AXLE_Z, SNOWRACER_MAX_STEER, SNOWRACER_RIDE_HEIGHT, SNOWRACER_TRACK_HALF, SPORTS_AXLE_Z, SPORTS_MAX_STEER, SPORTS_RIDE_HEIGHT, SPORTS_TRACK_HALF,
-  STRF_AXLES_Z, STRF_RIDE_HEIGHT, STRF_TRACK_HALF, TANK_AXLES_Z, TANK_TRACK_HALF, PLANE_AXLES_Z, PLANE_MAX_STEER, PLANE_TRACK_HALF, SEAPLANE_AXLES_Z, SEAPLANE_FLOAT_HALF_TRACK, SEAPLANE_MAX_STEER, SEAPLANE_RIDE_HEIGHT,
+  STRF_AXLES_Z, STRF_RIDE_HEIGHT, STRF_TRACK_HALF, STRV_AXLES_Z, STRV_RIDE_HEIGHT, STRV_TRACK_HALF, TANK_AXLES_Z, TANK_RIDE_HEIGHT, TANK_TRACK_HALF, PLANE_AXLES_Z, PLANE_MAX_STEER, PLANE_TRACK_HALF, SEAPLANE_AXLES_Z, SEAPLANE_FLOAT_HALF_TRACK, SEAPLANE_MAX_STEER, SEAPLANE_RIDE_HEIGHT,
 } from './consts'
 
 /**
  * Where a vehicle's tyres meet the ground and how hard they are sliding, worked out from where the
  * vehicle is drawn. Only effects use it; the physics has its own wheels.
  */
-
-/** Chassis centre above the ground of a settled tank, metres (measured in `vehicle.rs`'s fixture). */
-const TANK_RIDE_HEIGHT = 0.94
 
 export interface WheelLayout {
   /** Contact points in the body frame, front first, left before right. */
@@ -46,9 +43,11 @@ export const SNOWRACER_WHEELS: WheelLayout = {
   maxSteer: SNOWRACER_MAX_STEER,
   width: 0.1,
 }
-/** A track lays its mark from end to end; the corners stand in for it. The Strv S's are the tank's. */
-export const TRACK_WHEELS: WheelLayout = { contacts: corners(TANK_TRACK_HALF, TANK_AXLES_Z[0], TANK_AXLES_Z[2], TANK_RIDE_HEIGHT), steered: 0, maxSteer: 0, width: 0.55 }
-/** The Strf 90's tracks: longer, set wider and a touch narrower than the tank's. */
+/** A track lays its mark from end to end; the corners stand in for it. */
+export const TRACK_WHEELS: WheelLayout = { contacts: corners(TANK_TRACK_HALF, TANK_AXLES_Z[0], TANK_AXLES_Z[2], TANK_RIDE_HEIGHT), steered: 0, maxSteer: 0, width: 0.6 }
+/** The Strv S's tracks: a shorter run on the ground than the tank's, under a hull that rides higher. */
+export const STRV_TRACKS: WheelLayout = { contacts: corners(STRV_TRACK_HALF, STRV_AXLES_Z[0], STRV_AXLES_Z[2], STRV_RIDE_HEIGHT), steered: 0, maxSteer: 0, width: 0.62 }
+/** The Strf 90's tracks: shorter and narrower than the tank's. */
 export const STRF_TRACKS: WheelLayout = { contacts: corners(STRF_TRACK_HALF, STRF_AXLES_Z[0], STRF_AXLES_Z[2], STRF_RIDE_HEIGHT), steered: 0, maxSteer: 0, width: 0.5 }
 
 /** Chassis centre above the ground of a parked plane, metres (`build_plane.py`'s `GROUND`). */

@@ -172,15 +172,15 @@ Known limits:
 
 Later, the tracked kinds (the tank, the Strv S and the Strf 90) were reworked. They used to stop dead against a hump or a step that a tank should drive over, and swung round downhill on a side slope. The cause was the plain box hull: its blunt nose and tail met rising ground before the wheels under them did, and nothing held a track's heading.
 
-- **A swept hull.** A tracked hull's underside sweeps up at both ends, from the bottom to half its height (`hull` in `crates/sim/src/vehicle.rs`), as a track runs up round its sprocket and idler. The sweep runs back 0.9 of the half height (`TRACKED_SWEEP_RUN`), so it rises more steeply than 45°. The hull keeps the box's mass and balance, and its belly's friction is 0.1 rather than 0.4, so it slides over what it touches instead of dragging on it.
+- **A swept hull.** A tracked hull's underside sweeps up at both ends (`hull` in `crates/sim/src/vehicle.rs`), as a track runs up round its sprocket and idler. It was a fixed sweep on the box at first; it is now the hull's real outline (`Spec::profile`, [VEHICLES-XVI.md](VEHICLES-XVI.md)), whose plates under the nose and the tail do the same work. The hull keeps the box's mass and balance, and its belly's friction is 0.1 rather than 0.4, so it slides over what it touches instead of dragging on it.
 - **Track end wheels.** Each track has a ray-cast wheel at the nose and one at the tail besides its road wheels. Each is hung from the hull's top and rides `TRACK_END_CLEAR` (0.25 m) above flat ground, so it touches nothing on the flat and the ride is unchanged. Where the ground rises under the nose or the tail it bites: the spring lifts that end, and the engine pulls through it, up onto a hump or a step. The engine's pull is still shared out over the road wheels only.
 - **Holding the heading.** A tracked hull on the ground holds the yaw rate its driver asks for, none included. Before, it was left free when the stick was centred, and gravity swung it round downhill on a side slope.
 - **Wheel rays** of a tracked kind skip the trees its hull goes through, as the hull does.
 - **The tank's engine** went from 88 to 100 kN (about 7.4 m/s²), so it grinds up a 35° slope from a standing start. Its top speed is still 12 m/s.
 
-Armour is still laid out on the box. `Physics::armor_strike` judges a shot into a tracked hull by the face of the box it comes in through, where that face is, not by the swept surface: a sweep's slanted face would otherwise be judged belly plate. A ricochet comes off the plate from that point (`Outcome::Ricochet::at`).
+Armour was laid out on the box then. Since the hulls got their real outlines, `Physics::armor_strike` gives the face of the outline a shot meets, and the plates lie on those faces ([ARMOR.md](ARMOR.md)). A ricochet comes off the plate from that point (`Outcome::Ricochet::at`).
 
-What they manage now, measured by the tests in `crates/sim/src/vehicle/tests.rs`:
+What they managed then, measured by the tests in `crates/sim/src/vehicle/tests.rs` (at their real sizes they climb 1.0 m, 1.1 m and 1.2 m, and the long tank touches a crest with its belly between humps and slows to about 3 m/s there):
 
 | | Tank | Strv S | Strf 90 |
 |---|---|---|---|

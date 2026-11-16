@@ -82,14 +82,14 @@ const SCRIPTED_CHECKPOINTS: [(u8, u32, [f32; 3]); 16] = [
     (KIND_SPORTS, 210, [4.3494, 0.3961, -44.2191]),
     (KIND_SPORTS, 300, [56.9594, 0.3953, -54.7882]),
     (KIND_SPORTS, 480, [125.6157, 0.3959, -128.6126]),
-    (KIND_TANK, 90, [0.0, 0.9400, -0.9477]),
-    (KIND_TANK, 210, [0.5893, 0.9400, -18.9004]),
-    (KIND_TANK, 300, [12.0362, 0.9400, -31.0095]),
-    (KIND_TANK, 480, [25.9842, 0.9400, -42.5130]),
-    (KIND_STRV, 90, [0.0000, 1.0798, -1.1357]),
-    (KIND_STRV, 210, [0.8855, 1.0800, -23.6921]),
-    (KIND_STRV, 300, [18.7068, 1.0800, -35.1709]),
-    (KIND_STRV, 480, [44.5596, 1.0799, -44.1725]),
+    (KIND_TANK, 90, [0.0, 1.1300, -0.9490]),
+    (KIND_TANK, 210, [0.5937, 1.1300, -18.9117]),
+    (KIND_TANK, 300, [12.0193, 1.1300, -31.0185]),
+    (KIND_TANK, 480, [25.7233, 1.1300, -41.9264]),
+    (KIND_STRV, 90, [0.0000, 1.2000, -1.1390]),
+    (KIND_STRV, 210, [0.8934, 1.2000, -23.7257]),
+    (KIND_STRV, 300, [18.5748, 1.2000, -35.2314]),
+    (KIND_STRV, 480, [43.6059, 1.2000, -43.3173]),
 ];
 
 #[test]
@@ -638,15 +638,15 @@ fn over_the_step(kind: u8, height: f32) -> f32 {
 
 #[test]
 fn tracked_vehicles_climb_a_step_and_the_strv_and_strf_a_taller_one() {
-    // All three take a kerb, and a 0.8 m wall, riding up it on the front run of their tracks.
+    // All three take a kerb, and a 0.8 m wall, riding up it on the plate under their nose.
     for kind in [KIND_TANK, KIND_STRV, KIND_STRF] {
         assert!(over_the_step(kind, 0.3) > 100.0, "kind {kind}");
         assert!(over_the_step(kind, 0.8) > 100.0, "kind {kind}: {}", over_the_step(kind, 0.8));
     }
-    // A metre: the bigger wheels and the higher belly get the Strv S and the Strf 90 over, the tank sits against it.
-    assert!(over_the_step(KIND_STRV, 1.0) > 100.0, "{}", over_the_step(KIND_STRV, 1.0));
-    assert!(over_the_step(KIND_STRF, 1.0) > 100.0, "{}", over_the_step(KIND_STRF, 1.0));
-    assert!(over_the_step(KIND_TANK, 1.0) < 0.0, "{}", over_the_step(KIND_TANK, 1.0));
+    // 1.1 m: the higher noses of the Strv S and the Strf 90 get them over, the tank sits against it.
+    assert!(over_the_step(KIND_STRV, 1.1) > 100.0, "{}", over_the_step(KIND_STRV, 1.1));
+    assert!(over_the_step(KIND_STRF, 1.1) > 100.0, "{}", over_the_step(KIND_STRF, 1.1));
+    assert!(over_the_step(KIND_TANK, 1.1) < 0.0, "{}", over_the_step(KIND_TANK, 1.1));
 }
 
 #[test]
@@ -1898,8 +1898,10 @@ fn tracked_vehicles_ride_over_metre_high_humps_without_stopping() {
             pose = run(&mut physics, FORWARD, 10);
             slowest = slowest.min(pose.forward_speed);
         }
-        // The nose rides up each hump on its track's front run instead of ramming it.
-        assert!(pose.position[2] < -60.0 && slowest > 4.0 && pose.up_y > 0.9, "kind {kind}: {pose:?}, slowest {slowest}");
+        // The nose rides up each hump on the plate under it instead of ramming it. The tank is long
+        // enough to touch a crest with its belly between two humps, which slows it more than the others.
+        let floor = if kind == KIND_TANK { 2.5 } else { 4.0 };
+        assert!(pose.position[2] < -60.0 && slowest > floor && pose.up_y > 0.9, "kind {kind}: {pose:?}, slowest {slowest}");
     }
 }
 

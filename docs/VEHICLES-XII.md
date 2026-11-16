@@ -18,14 +18,14 @@ The Strf 90 is a tracked infantry fighting vehicle, modelled on the Swedish CV90
   - **High explosive** is the helicopter's and walker's autocannon round (`PROJECTILE_CANNON`). It bursts a third as wide as a tank's high explosive shell and goes through 20 mm.
   - **Armour-piercing** is new: `PROJECTILE_CANNON_AP` (12). It goes through about 45 mm close in and 35 mm far out, then bursts behind the plate with half the charge of a tank's armour-piercing shell. That is through the Strf's own sides and the tank's sides, roof and engine deck, but not the tank's sloped glacis or mantlet.
   - **On a wall** its charge is too small for its blast to bite (`CARVE_MIN_RADIUS` in `combat.rs`), so the round punches the wall out `CANNON_AP_WALL_HOLE` (0.85 m) round where it strikes: a cell or two a round (`Burst::hole`, `punch` in `projectiles.rs`).
-- **The armour** is light all round: a 30 mm glacis sloped at 30°, 30 mm on the turret's face, 18–20 mm sides, 10 mm on the roof and the rear ramp, and 8 mm underneath. The driver's periscope and the gunner's sight are weak spots. Every seat has a crew module, so a round that gets in can kill a troop in the back.
+- **The armour** is light all round: 30 mm on the lower front plate and the turret's face, an 8 mm engine cover that lies so flat a level shot has 33 mm to get through, 18–20 mm sides, 10 mm on the roof and the rear ramp, and 8 mm underneath. The driver's periscope and the gunner's sight are weak spots. Every seat has a crew module, so a round that gets in can kill a troop in the back.
 
 ## The definition
 
 `crates/shared/src/vehicles/strf.rs` holds everything about it.
 
-- **The hull** is a 3.0 × 1.2 × 6.4 m box at 600 kg/m³: about 13.8 t, a little more than the tank. It has more engine (115 kN) and the same firm springs.
-- **It rides** `STRF_RIDE_HEIGHT` (1.01 m) above the ground. The sim's `a_strf_settles_at_its_ride_height` measures it.
+- **The hull** is the CV90's size, 3.2 × 1.3 × 6.55 m, with its real side outline ([VEHICLES-XVI.md](VEHICLES-XVI.md)), at 507 kg/m³: about 13.8 t, a little more than the tank. It has more engine (115 kN) and the same firm springs.
+- **It rides** `STRF_RIDE_HEIGHT` (1.1 m) above the ground. The sim's `a_strf_settles_at_its_ride_height` measures it.
 - **The turret** is a weightless solid cylinder on the ring at `STRF_TURRET_PIVOT`, as the tank's is, so a hit on it counts against the turret. It is shot off at the same `TANK_TURRET_HP` as the tank's.
 - **The cannon** is one `MountDef` row: `Aim::Turret`, `Fire::Shell` with the armour-piercing and high explosive rounds, and `heat` for the jam. No gunnery code is new.
 - **The ramp** is `exit: Some(STRF_RAMP_EXIT)`, the ship's way of setting someone down at a chosen spot.
@@ -44,12 +44,12 @@ The armour-piercing round's burst and armour penetration are in `burst_of` and `
 
 ## The model
 
-`tools/vehicles/build_strf.py` builds `client/public/models/strf.glb`, about 1,900 triangles. It has the node names of the tank's model.
+`tools/vehicles/build_strf.py` builds `client/public/models/strf.glb`, about 2,500 triangles. It has the node names of the tank's model.
 
-- **The hull** is long and flat, with a shallow glacis up to the driver's hatch at the front left and the engine grille at the front right.
-- **The upper hull** overhangs the tracks, and there is a tall rear with the ramp and its door.
+- **The hull** has a high nose, from which the engine's cover slopes gently up to a flat roof, with the driver's hatch at the front left and the engine's louvres at the front right.
+- **The upper hull** is the full width over the tracks, with skirt plates and a stowage box along each side, and an upright rear with the troops' door between two stowage boxes.
 - **The running gear** is seven road wheels a side, with a drive sprocket at the front and an idler at the back.
-- **The turret** is faceted, with bevelled cheeks, smoke dischargers, the gunner's sight on the right and the commander's on the left. The 40 mm barrel is long, with a perforated jacket and a muzzle brake.
+- **The turret** is faceted, with lower cheeks, smoke dischargers, the commander's cupola and the gunner's sight on the right and the gunner's hatch on the left. The 40 mm barrel is thin, with a jacket at its root and a cone at the muzzle.
 
 ```sh
 /Applications/Blender.app/Contents/MacOS/Blender -b -P tools/vehicles/build_strf.py -- --preview <dir>

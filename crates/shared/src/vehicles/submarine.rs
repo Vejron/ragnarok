@@ -106,6 +106,7 @@ pub(super) const SUBMARINE: VehicleDef = VehicleDef {
         steer_fade: STEER_FADE,
         skim: None,
         bow: SUB_BOW,
+        profile: Spec::BOX,
         springs: Springs::FIRM,
         airframe: None,
         gait: None,

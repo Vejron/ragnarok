@@ -280,7 +280,7 @@ describe('snow off the tracks', () => {
 
   it('washes snow off both tracks of a tank pulling away', () => {
     const { w, roost } = winterWorld(SURFACE_GRASS)
-    pull(KIND_TANK, w, 0.94, 0, 3)
+    pull(KIND_TANK, w, 1.13, 0, 3)
     expect(roost.alive).toBeGreaterThan(60)
   })
 

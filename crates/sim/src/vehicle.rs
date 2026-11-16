@@ -86,9 +86,6 @@ const FRICTION_SLIP: f32 = 12.0;
 /// How high a track's end wheels ride over flat ground, metres: ground rising more than this under the
 /// nose or the tail lifts it.
 const TRACK_END_CLEAR: f32 = 0.25;
-/// How far back from the nose (and forward from the tail) a tracked hull's underside sweeps up, as a
-/// share of its half height. Under 1, so the sweep rises more steeply than 45°.
-const TRACKED_SWEEP_RUN: f32 = 0.9;
 /// Friction of a tracked hull's belly, against 0.4 for anything else's.
 const TRACKED_HULL_FRICTION: f32 = 0.1;
 /// Gravity, m/s², for the sag of a vehicle's springs under its own weight.
@@ -427,7 +424,7 @@ pub(crate) fn heavy(kind: u8) -> bool {
 }
 
 /// The solids a vehicle of `kind` has besides its hull box, placed in the hull frame: a tank's turret,
-/// a Strv's casemate, a plane's wings, a walker's legs. Heavy vehicles' leave the felled-able trees
+/// a plane's wings, a walker's legs. Heavy vehicles' leave the felled-able trees
 /// out of what they touch, as the hull does.
 pub(crate) fn extra_solids(kind: u8) -> Vec<ColliderBuilder> {
     let solids = physical(spec(kind)).map(|solid| ColliderBuilder::new(solid.shape(0.0)).translation(Vector::from(solid.at)));
@@ -457,20 +454,16 @@ fn turned(spec: &Spec, steer: f32, speed: f32) -> f32 {
 }
 
 /// A vehicle's hull: its box, with the front of the underside swept up if it has a `nose`, or its
-/// sides tapered in to a stem if it has a `bow`. A tracked one's underside sweeps up at both ends to
-/// half its height at the nose and the tail, as its tracks run up round the sprocket and the idler: it
-/// rides up onto a bump or a step rather than ramming it. The sweeps rise more than they run, so a
-/// shot into one still meets front or rear armour, not the belly (`Zone::of`).
+/// sides tapered in to a stem if it has a `bow`. A kind with a `profile` (the tracked ones) has that
+/// outline instead, across its whole width: the glacis, the plates leaning back under the nose and the
+/// tail, and the decks as they are, so it rides up onto a bump or a step rather than ramming it, and a
+/// round meets each plate at its real slope.
 pub(crate) fn hull(kind: u8) -> ColliderBuilder {
     let spec = spec(kind);
     let [hx, hy, hz] = spec.half_extents;
-    if heavy(kind) {
-        let run = TRACKED_SWEEP_RUN * hy;
-        let mut corners = Vec::new();
-        for x in [-hx, hx] {
-            corners.extend([[x, hy, -hz], [x, hy, hz], [x, 0.0, -hz], [x, 0.0, hz], [x, -hy, run - hz], [x, -hy, hz - run]].map(Vector::from));
-        }
-        return ColliderBuilder::convex_hull(&corners).expect("a tracked hull is not flat");
+    if !spec.profile.is_empty() {
+        let corners: Vec<Vector> = [-hx, hx].into_iter().flat_map(|x| spec.profile.iter().map(move |&[z, y]| Vector::new(x, y, z))).collect();
+        return ColliderBuilder::convex_hull(&corners).expect("a hull's outline is not flat");
     }
     if spec.bow > 0.0 {
         let stem = hx * STEM;
@@ -594,7 +587,7 @@ impl Physics {
         let body = self.bodies.insert(body);
         // A tracked hull's belly slides over what it rests on rather than dragging on it.
         let mut chassis = hull(kind).friction(if heavy(kind) { TRACKED_HULL_FRICTION } else { 0.4 });
-        // A tracked hull keeps the mass and balance of its whole box, swept-up ends and all.
+        // A tracked hull keeps the mass and balance of its whole box, whatever its outline cuts away.
         chassis = if spec.com_drop > 0.0 || heavy(kind) {
             // The box's own mass and inertia, with the centre of mass lowered.
             let mass = spec.density * 8.0 * hx * hy * hz;
@@ -1380,20 +1373,6 @@ impl Physics {
         let (collider, hit) = queries.cast_ray_and_get_normal(&ray, max, true)?;
         let to_local = body.rotation().inverse();
         let solid = car.extra.iter().position(|&handle| handle == collider).and_then(|index| solid_index(car.spec, index));
-        // A tracked hull's armour is laid out on its box, not on the swept-up ends it drives on: a shot
-        // into one meets the face of the box it comes in through, where that face is. The box is cast
-        // from a box's breadth back, as the shot may already be inside it but short of the hull.
-        if solid.is_none() && tracked(car.spec) {
-            let half = Vector::from(car.spec.half_extents);
-            let back = 2.0 * half.length();
-            let along = to_local * Vector::from(dir);
-            let start = to_local * (Vector::from(origin) - body.translation());
-            let face = Cuboid::new(half).cast_local_ray_and_get_normal(&Ray::new(start - along * back, along), max + back, true);
-            if let Some(face) = face.filter(|face| face.normal.length_squared() > 0.5) {
-                let distance = (face.time_of_impact - back).max(0.0);
-                return Some(Strike { distance, solid, normal: face.normal.into(), point: (start - along * back + along * face.time_of_impact).into() });
-            }
-        }
         let point = Vector::from(origin) + Vector::from(dir) * hit.time_of_impact;
         Some(Strike {
             distance: hit.time_of_impact,

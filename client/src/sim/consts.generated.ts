@@ -596,8 +596,8 @@ export const WALKER_AIM_BACK = 12.0
 export const WALKER_AIM_UP = 5.0
 
 /** Behind a Strv S's gun trunnion. */
-export const STRV_AIM_BACK = 9.0
-export const STRV_AIM_UP = 3.2
+export const STRV_AIM_BACK = 11.0
+export const STRV_AIM_UP = 3.6
 
 /**
  * How far the camera's ray is followed to find what a mounted gun's reticle is on, metres, when the
@@ -2199,22 +2199,25 @@ export const SPORTS_SEAT_HEADS = [[-0.35, 0.4, 0.1], [0.35, 0.4, 0.1]] as const
  */
 export const STRF_SEATS = 4
 
-/** Half the hull box, metres: about 6.4 m long, 3 m wide and 1.2 m deep without the turret. */
-export const STRF_HALF_EXTENTS = [1.5, 0.6, 3.2] as const
+/**
+ * Half the hull's bounding box, metres: 6.55 m long, 3.2 m wide over the tracks and 1.3 m deep from the
+ * belly to the hull roof, which is 1.75 m off the ground. The size of a CV90.
+ */
+export const STRF_HALF_EXTENTS = [1.6, 0.65, 3.275] as const
 
 /** Road wheel radius, metres. */
 export const STRF_WHEEL_RADIUS = 0.42
 
 /** How far each track runs from the middle, metres. */
-export const STRF_TRACK_HALF = 1.3
+export const STRF_TRACK_HALF = 1.33
 
 /** Z of the three axles, front first, metres. */
 export const STRF_AXLES_Z = [-2.3, 0.0, 2.3] as const
 
 /** Where the hull's centre settles over flat ground, metres: measured by `a_strf_settles_at_its_ride_height`. */
-export const STRF_RIDE_HEIGHT = 1.01
-export const STRF_HARD_POINT_Y = -0.25
-export const STRF_SUSPENSION_REST = 0.4
+export const STRF_RIDE_HEIGHT = 1.1
+export const STRF_HARD_POINT_Y = -0.3
+export const STRF_SUSPENSION_REST = 0.44
 
 /** Top speed on the flat, m/s (about 70 km/h). */
 export const STRF_MAX_SPEED = 19.0
@@ -2222,15 +2225,21 @@ export const STRF_MAX_SPEED = 19.0
 /** Yaw rate at full stick, rad/s. */
 export const STRF_TURN_RATE = 1.4
 
-/** Where the turret ring sits in the hull frame, forward of the middle with the troop bay behind it. */
-export const STRF_TURRET_PIVOT = [0.0, 0.9, -0.5] as const
+/**
+ * Where the turret ring sits in the hull frame (the middle of the turret's solid), forward of the
+ * middle with the troop bay behind it.
+ */
+export const STRF_TURRET_PIVOT = [0.0, 1.025, -0.4] as const
 
-/** The turret's solid: a cylinder on the ring, its base on the hull's roof, metres. */
-export const STRF_TURRET_RADIUS = 0.95
-export const STRF_TURRET_HALF_HEIGHT = 0.3
+/**
+ * The turret's solid: a cylinder on the ring, its base on the hull's roof and its top 2.5 m off the
+ * ground, metres.
+ */
+export const STRF_TURRET_RADIUS = 1.0
+export const STRF_TURRET_HALF_HEIGHT = 0.375
 
-/** How far the muzzle is from the ring, metres. */
-export const STRF_BARREL_LENGTH = 3.0
+/** How far the muzzle is from the ring, metres: it reaches a little past the nose. */
+export const STRF_BARREL_LENGTH = 3.1
 
 /** How fast the turret and barrel follow the gunner's aim, rad/s: quicker than the tank's. */
 export const STRF_TURRET_SLEW = 2.0
@@ -2253,46 +2262,48 @@ export const STRF_CANNON_HEAT = 22.0
  * Where a rider who gets out stands, in the hull frame (the middle of a standing soldier): behind the
  * rear ramp.
  */
-export const STRF_RAMP_EXIT = [0.0, -0.1, 4.1] as const
+export const STRF_RAMP_EXIT = [0.0, -0.1, 4.2] as const
 
 /**
- * The Strv S (`KIND_STRV`): a turretless tank with the gun fixed in the hull. One seat: the driver steers
- * by pivoting the hull and fires the main gun, which only the barrel's elevation can aim. Quicker and
- * lower than the tank, with a steeply sloped glacis. Same body axes as the tank; mirrors `STRV_*` in
- * `sim/consts.ts`.
+ * The Strv S (`KIND_STRV`): a turretless tank with the gun fixed in the hull, the size and shape of a
+ * Stridsvagn 103. One seat: the driver steers by pivoting the hull and fires the main gun, which only
+ * the barrel's elevation can aim. Quicker and lower than the tank, and a wedge: its glacis is half its
+ * length. Same body axes as the tank; mirrors `STRV_*` in `sim/consts.ts`.
  */
 export const STRV_SEATS = 1
-export const STRV_HALF_EXTENTS = [1.3, 0.45, 2.7] as const
+
+/**
+ * Half the hull's bounding box, metres: 7.04 m long, 3.4 m wide over the tracks and 1.4 m deep from the
+ * belly to the roof, which is 1.9 m off the ground.
+ */
+export const STRV_HALF_EXTENTS = [1.7, 0.7, 3.52] as const
 
 /**
  * Bigger wheels and a longer suspension than the tank's, with the hull higher on them: it steps over
  * obstacles the tank has to go around.
  */
-export const STRV_WHEEL_RADIUS = 0.52
-export const STRV_TRACK_HALF = 1.2
+export const STRV_WHEEL_RADIUS = 0.5
+export const STRV_TRACK_HALF = 1.36
 
 /** Z of the three axles, front first. */
-export const STRV_AXLES_Z = [-1.9, 0.0, 1.9] as const
-export const STRV_HARD_POINT_Y = -0.2
-export const STRV_SUSPENSION_REST = 0.42
+export const STRV_AXLES_Z = [-2.4, 0.0, 2.4] as const
+
+/** Where the hull's centre settles over flat ground, metres: measured by `scripted_drive_matches_fixture`. */
+export const STRV_RIDE_HEIGHT = 1.2
+export const STRV_HARD_POINT_Y = -0.3
+export const STRV_SUSPENSION_REST = 0.46
 export const STRV_MAX_SPEED = 16.0
 
 /** Yaw rate at full stick, rad/s. */
 export const STRV_TURN_RATE = 1.5
 
 /**
- * The casemate the gun sits in is a solid box on the hull's roof, weightless like the tank's turret:
- * its half extents and centre in the hull frame.
+ * Where the gun's trunnion is in the hull frame (where the barrel leaves the glacis), how far the muzzle
+ * is from it (2 m past the nose), how fast the barrel elevates (rad/s) and its limits, radians (+ is
+ * up). The gun points where the hull does.
  */
-export const STRV_CASEMATE_HALF = [0.9, 0.17, 1.25] as const
-export const STRV_CASEMATE_CENTRE = [0.0, 0.62, -0.25] as const
-
-/**
- * Where the gun's trunnion is in the hull frame, how far the muzzle is from it, how fast the barrel
- * elevates (rad/s) and its limits, radians (+ is up). The gun points where the hull does.
- */
-export const STRV_GUN_PIVOT = [0.0, 0.72, -1.3] as const
-export const STRV_BARREL_LENGTH = 4.4
+export const STRV_GUN_PIVOT = [0.0, 0.5, -1.0] as const
+export const STRV_BARREL_LENGTH = 4.5
 export const STRV_BARREL_SLEW = 1.2
 export const STRV_BARREL_MIN = -0.15
 export const STRV_BARREL_MAX = 0.3
@@ -2366,33 +2377,48 @@ export const SUB_LAUNCH_SPEED = 12.0
 
 /**
  * The tank: a heavy six-wheel hull that turns on the spot, with a driver (seat 0), a gunner (seat 1)
- * who aims the turret and fires, and a machine gunner (seat 2) out of the roof hatch. Same body axes
- * as the car.
+ * who aims the turret and fires, and a machine gunner (seat 2) out of the roof hatch. It is the size
+ * and shape of a Strv 104 (a Centurion). Same body axes as the car.
  */
 export const TANK_SEATS = 3
-export const TANK_HALF_EXTENTS = [1.3, 0.5, 2.6] as const
+
+/**
+ * Half the hull's bounding box, metres: 7.6 m long, 3.4 m wide over the tracks and 1.25 m deep from
+ * the belly to the hull roof, which is 1.75 m off the ground.
+ */
+export const TANK_HALF_EXTENTS = [1.7, 0.625, 3.8] as const
 export const TANK_WHEEL_RADIUS = 0.45
-export const TANK_TRACK_HALF = 1.2
+export const TANK_TRACK_HALF = 1.4
 
 /** Z of the three axles, front first. */
-export const TANK_AXLES_Z = [-1.9, 0.0, 1.9] as const
-export const TANK_HARD_POINT_Y = -0.2
-export const TANK_SUSPENSION_REST = 0.35
+export const TANK_AXLES_Z = [-2.6, 0.0, 2.6] as const
+
+/**
+ * Where the hull's centre settles over flat ground, metres: measured by `scripted_drive_matches_fixture`.
+ * A whole number of centimetres, as a snapshot carries it: a settled tank's prediction then starts
+ * from where the server has it.
+ */
+export const TANK_RIDE_HEIGHT = 1.13
+export const TANK_HARD_POINT_Y = -0.3
+export const TANK_SUSPENSION_REST = 0.44
 export const TANK_MAX_SPEED = 12.0
 
 /** Yaw rate at full stick, rad/s. */
 export const TANK_TURN_RATE = 1.1
 
-/** Where the turret ring sits in the hull frame, and how far the muzzle is from the ring. */
-export const TANK_TURRET_PIVOT = [0.0, 0.85, 0.3] as const
-export const TANK_BARREL_LENGTH = 3.2
+/**
+ * Where the turret ring sits in the hull frame (the middle of the turret's solid), a little ahead of
+ * the hull's middle, and how far the muzzle is from the ring: the long gun reaches 2.3 m past the nose.
+ */
+export const TANK_TURRET_PIVOT = [0.0, 1.125, -0.4] as const
+export const TANK_BARREL_LENGTH = 5.7
 
 /**
  * The turret is solid: a cylinder on the ring, so it is the same shape whichever way it points.
- * Its base is the hull's top.
+ * Its base is the hull's top, and its roof is 2.75 m off the ground.
  */
-export const TANK_TURRET_RADIUS = 1.0
-export const TANK_TURRET_HALF_HEIGHT = 0.35
+export const TANK_TURRET_RADIUS = 1.15
+export const TANK_TURRET_HALF_HEIGHT = 0.5
 
 /** How fast the turret and barrel follow the gunner's aim, rad/s. */
 export const TANK_TURRET_SLEW = 1.4
@@ -2413,13 +2439,13 @@ export const TANK_TURRET_HP = 90
 export const TANK_MG_SEAT = 2
 
 /** Where the roof gun turns, from the turret ring in the turret's frame, over the hatch on its right. */
-export const TANK_MG_AT = [0.45, 0.6, 0.3] as const
+export const TANK_MG_AT = [0.5, 0.75, 0.35] as const
 
 /**
  * The machine gunner's head from the ring, with the turret ahead: out of the hatch, behind the gun, and
  * clear over the turret's solid, so they can be shot from all round.
  */
-export const TANK_MG_HEAD = [0.45, 1.0, 0.75] as const
+export const TANK_MG_HEAD = [0.5, 1.15, 0.85] as const
 export const TANK_MG_LENGTH = 1.1
 
 /**

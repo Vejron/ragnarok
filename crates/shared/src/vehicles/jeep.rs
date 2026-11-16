@@ -78,6 +78,7 @@ pub(super) const JEEP: VehicleDef = VehicleDef {
         // Driven hard enough it skips over a lake, but only just, and a turn drops it in.
         skim: Some(Skim { sink_speed: 16.0, plane_speed: 22.0, thrust: 0.15, grip: 0.4, bank_drag: 1.6 }),
         bow: 0.0,
+        profile: Spec::BOX,
         springs: Springs::FIRM,
         airframe: None,
         gait: None,

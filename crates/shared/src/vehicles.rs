@@ -382,6 +382,75 @@ mod tests {
         assert!(ship.board.is_some() && ship.exit.is_some() && ship.spec.lift == Lift::Sail);
     }
 
+    /// The outward normal and the middle of each face of a hull's outline, in order, in the hull frame.
+    fn outline_faces(profile: &[[f32; 2]]) -> Vec<([f32; 3], [f32; 3])> {
+        (0..profile.len())
+            .map(|i| {
+                let ([z0, y0], [z1, y1]) = (profile[i], profile[(i + 1) % profile.len()]);
+                let len = ((z1 - z0).powi(2) + (y1 - y0).powi(2)).sqrt();
+                ([0.0, (z1 - z0) / len, -(y1 - y0) / len], [0.0, (y0 + y1) / 2.0, (z0 + z1) / 2.0])
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_hulls_outline_is_convex_fills_its_box_and_only_tracked_kinds_have_one() {
+        for def in VEHICLES {
+            let profile = def.spec.profile;
+            assert_eq!(!profile.is_empty(), [KIND_TANK, KIND_STRV, KIND_STRF].contains(&def.kind), "{}", def.name);
+            if profile.is_empty() {
+                continue;
+            }
+            let [_, hy, hz] = def.half_extents();
+            for axis in 0..2 {
+                let (low, high) = profile.iter().fold((f32::MAX, f32::MIN), |(low, high), p| (low.min(p[axis]), high.max(p[axis])));
+                let half = [hz, hy][axis];
+                assert!((low + half).abs() < 1e-4 && (high - half).abs() < 1e-4, "{}: the outline spans the box", def.name);
+            }
+            // Going round it, every corner turns the same way.
+            for i in 0..profile.len() {
+                let (a, b, c) = (profile[i], profile[(i + 1) % profile.len()], profile[(i + 2) % profile.len()]);
+                let turn = (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0]);
+                assert!(turn < 0.0, "{}: corner {} of the outline is not convex", def.name, i + 1);
+            }
+        }
+    }
+
+    #[test]
+    fn every_face_of_a_tracked_hulls_outline_meets_its_own_plate() {
+        let cases: [(u8, &[&str]); 3] = [
+            (KIND_TANK, &["glacis", "hull roof", "hull rear", "hull rear", "hull rear", "belly", "lower front"]),
+            (KIND_STRV, &["glacis", "hull roof", "engine deck", "hull rear", "hull rear", "belly", "lower front"]),
+            (KIND_STRF, &["engine cover", "hull roof", "rear ramp", "rear ramp", "belly", "lower front"]),
+        ];
+        for (kind, plates) in cases {
+            let def = vehicle_def(kind);
+            let met: Vec<&str> = outline_faces(def.spec.profile).iter().map(|&(normal, middle)| def.armor.plate(None, crate::armor::Zone::of(normal), middle).unwrap().name).collect();
+            assert_eq!(met, plates, "{}", def.name);
+            let side = def.armor.plate(None, crate::armor::Zone::of([1.0, 0.0, 0.0]), [def.half_extents()[0], 0.0, 0.0]).unwrap();
+            assert_eq!(side.name, "hull side");
+        }
+    }
+
+    #[test]
+    fn a_level_shot_from_ahead_meets_the_strvs_glacis_far_flatter_than_the_tanks() {
+        let level = |kind: u8| {
+            let (normal, _) = outline_faces(vehicle_def(kind).spec.profile)[0];
+            (-normal[2]).acos().to_degrees()
+        };
+        assert!((level(KIND_TANK) - 57.0).abs() < 1.0, "the tank's glacis leans back {}", level(KIND_TANK));
+        assert!(level(KIND_STRV) > 75.0 && level(KIND_STRF) > 75.0);
+        // Each slit is in the face it is struck on, close enough to the outline to be met.
+        for kind in [KIND_TANK, KIND_STRV, KIND_STRF] {
+            let def = vehicle_def(kind);
+            let slit = def.armor.plates.iter().find(|plate| plate.slit && plate.on == crate::armor::On::Hull).unwrap();
+            let [x, _, z] = slit.region.unwrap().centre;
+            let [[z0, y0], [z1, y1]] = [def.spec.profile[0], def.spec.profile[1]];
+            let on_glacis = [x, y0 + (y1 - y0) * (z - z0) / (z1 - z0), z];
+            assert_eq!(def.armor.plate(None, crate::armor::Zone::Top, on_glacis).unwrap().name, slit.name, "{}", def.name);
+        }
+    }
+
     #[test]
     fn a_tanks_machine_gunner_alone_shows_and_turns_with_the_turret() {
         assert!(seat_head(KIND_TANK, 0, 0.0).is_none() && seat_head(KIND_TANK, 1, 0.0).is_none());

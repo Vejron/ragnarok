@@ -101,6 +101,11 @@ pub struct Spec {
     /// How far back from the front its hull's sides taper in to the full width, metres, as a ship's
     /// bow does to its stem. 0 for a square front.
     pub bow: f32,
+    /// The hull's side outline, for a kind whose hull is not a box: the corners of a convex shape as
+    /// `[z, y]` in the hull frame, metres, which runs the hull's whole width. The physics drives on it and
+    /// a round meets its faces as they lie, so a glacis slopes as it is drawn. Its bounding box is
+    /// `half_extents`. `Spec::BOX` (empty) for a plain box.
+    pub profile: &'static [[f32; 2]],
     /// How its wheels' springs give: firm on most, soft and long on a truck built for rough ground.
     pub springs: Springs,
     /// How its wings fly, for a `Lift::Wing` kind. `None` for everything else.
@@ -113,6 +118,11 @@ pub struct Spec {
     pub gait: Option<Gait>,
     /// Its two arms, whose fists its pilot moves. `None` for everything but a Titan.
     pub arms: Option<Arms>,
+}
+
+impl Spec {
+    /// The `profile` of a hull that is its plain box.
+    pub const BOX: &'static [[f32; 2]] = &[];
 }
 
 /// A giant's two arms. Each fist is a ball the pilot moves about its shoulder: it goes where it is

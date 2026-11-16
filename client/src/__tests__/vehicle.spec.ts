@@ -72,14 +72,14 @@ const checkpoints: [number, number, [number, number, number]][] = [
   [KIND_SPORTS, 210, [4.3494, 0.3961, -44.2191]],
   [KIND_SPORTS, 300, [56.9594, 0.3953, -54.7882]],
   [KIND_SPORTS, 480, [125.6157, 0.3959, -128.6126]],
-  [KIND_TANK, 90, [0, 0.94, -0.9477]],
-  [KIND_TANK, 210, [0.5893, 0.94, -18.9004]],
-  [KIND_TANK, 300, [12.0362, 0.94, -31.0095]],
-  [KIND_TANK, 480, [25.9842, 0.94, -42.513]],
-  [KIND_STRV, 90, [0, 1.0798, -1.1357]],
-  [KIND_STRV, 210, [0.8855, 1.08, -23.6921]],
-  [KIND_STRV, 300, [18.7068, 1.08, -35.1709]],
-  [KIND_STRV, 480, [44.5596, 1.0799, -44.1725]],
+  [KIND_TANK, 90, [0, 1.13, -0.949]],
+  [KIND_TANK, 210, [0.5937, 1.13, -18.9117]],
+  [KIND_TANK, 300, [12.0193, 1.13, -31.0185]],
+  [KIND_TANK, 480, [25.7233, 1.13, -41.9264]],
+  [KIND_STRV, 90, [0, 1.2, -1.139]],
+  [KIND_STRV, 210, [0.8934, 1.2, -23.7257]],
+  [KIND_STRV, 300, [18.5748, 1.2, -35.2314]],
+  [KIND_STRV, 480, [43.6059, 1.2, -43.3173]],
 ]
 
 /** Same as `scripted_flight` in vehicle.rs. */
@@ -369,7 +369,7 @@ describe('driving a predicted vehicle', () => {
       // Wire quantization and a replayed 20 ticks of hard driving: about 5 cm in practice.
       const distance = Math.hypot(...predicted.position.map((v, i) => v - corrected.position[i]!))
       expect(distance, `kind ${kind}`).toBeLessThan(0.1)
-      expect(driver.lastCorrection).toBeLessThan(0.1)
+      expect(driver.lastCorrection, `kind ${kind}`).toBeLessThan(0.1)
       driver.dispose()
       motor.dispose()
     }
@@ -397,17 +397,17 @@ describe('driving a predicted vehicle', () => {
 describe('a tank’s turret', () => {
   it('is dropped as a solid for a predicted tank and put back', async () => {
     const motor = await field(200)
-    motor.startCar(CAR, KIND_TANK, [0, 0.94, 0])
+    motor.startCar(CAR, KIND_TANK, [0, 1.13, 0])
     motor.driveCar(CAR, COAST, TICK_DT)
-    motor.placeCar(CAR, { position: [0, 0.94, 0] })
-    // The turret ring is at y 0.85 above the centre; the ray at 0.76 above the hull's top meets only it.
-    const ray = () => motor.castRay([0, 1.7, 5.3], [0, 0, -1], 20)
+    motor.placeCar(CAR, { position: [0, 1.13, 0] })
+    // The turret ring is at y 1.125 above the centre; the ray at 0.5 above the hull's top meets only it.
+    const ray = () => motor.castRay([0, 2.26, 8], [0, 0, -1], 20)
     motor.driveCar(CAR, { ...COAST, handbrake: true }, TICK_DT)
     expect(ray()).not.toBeNull()
-    motor.placeCar(CAR, { position: [0, 0.94, 0], turret: false })
+    motor.placeCar(CAR, { position: [0, 1.13, 0], turret: false })
     motor.driveCar(CAR, { ...COAST, handbrake: true }, TICK_DT)
     expect(ray()).toBeNull()
-    motor.placeCar(CAR, { position: [0, 0.94, 0], turret: true })
+    motor.placeCar(CAR, { position: [0, 1.13, 0], turret: true })
     motor.driveCar(CAR, { ...COAST, handbrake: true }, TICK_DT)
     expect(ray()).not.toBeNull()
     motor.dispose()

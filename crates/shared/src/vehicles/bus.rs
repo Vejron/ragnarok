@@ -103,6 +103,7 @@ pub(super) const BUS: VehicleDef = VehicleDef {
         // Far too heavy to skim: it sinks and wades along the bed.
         skim: None,
         bow: 0.0,
+        profile: Spec::BOX,
         springs: Springs::FIRM,
         airframe: None,
         gait: None,

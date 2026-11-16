@@ -18,13 +18,16 @@ beforeAll(async () => {
 const named = (tank: StrvModel, name: string) => tank.root.getObjectByName(name)!
 
 describe('StrvModel', () => {
-  it('has seven wheels a side, a gun on the trunnion and no turret', () => {
+  it('has four road wheels, a sprocket and an idler a side, a gun on the trunnion and no turret', () => {
     const tank = new StrvModel(1)
-    for (const side of ['L', 'R']) for (let n = 0; n < 7; n++) expect(named(tank, `wheel_${side}_${n}`)).toBeTruthy()
+    for (const side of ['L', 'R']) for (let n = 0; n < 6; n++) expect(named(tank, `wheel_${side}_${n}`)).toBeTruthy()
     expect(tank.root.getObjectByName('turret')).toBeUndefined()
     const gun = named(tank, 'gun')
     STRV_GUN_PIVOT.forEach((v, i) => expect(gun.position.toArray()[i]).toBeCloseTo(v, 4))
     expect(tank.turretOn).toBe(false)
+    // The sprocket drives from the front, ahead of the first road wheel, and the idler is at the back.
+    expect(named(tank, 'wheel_L_4').position.z).toBeLessThan(named(tank, 'wheel_L_0').position.z)
+    expect(named(tank, 'wheel_L_5').position.z).toBeGreaterThan(named(tank, 'wheel_L_3').position.z)
     tank.dispose()
   })
 
