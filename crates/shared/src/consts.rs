@@ -1,5 +1,6 @@
 //! Simulation and network constants. `client/scripts/gen-consts.ts` generates the client's copy from this file: run `npm run gen:consts` in `client` after editing.
 
+pub use crate::vehicles::amv::*;
 pub use crate::vehicles::drone::*;
 pub use crate::vehicles::bus::*;
 pub use crate::vehicles::golf_cart::*;
@@ -29,7 +30,7 @@ pub use crate::vehicles::titan::*;
 pub use crate::vehicles::walker::*;
 
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
-pub const PROTOCOL_VERSION: u8 = 84;
+pub const PROTOCOL_VERSION: u8 = 85;
 
 /// Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
 /// `crate::vehicles`.
@@ -104,6 +105,9 @@ pub const KIND_BUS: u8 = 31;
 /// The Pbv 302: an amphibious tracked troop carrier with a 20 mm automatic cannon in a small turret. It
 /// floats, and its tracks paddle it slowly across open water.
 pub const KIND_PBV: u8 = 32;
+/// The AMV XA-361: an eight-wheeled armoured mortar carrier, its turret's two 120 mm tubes lobbing a
+/// pair of bombs in quick succession before a reload.
+pub const KIND_AMV: u8 = 33;
 
 /// Fixed simulation rate, in ticks per second.
 pub const TICK_RATE: u32 = 60;

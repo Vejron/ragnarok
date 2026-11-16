@@ -1,10 +1,11 @@
-import { Group, boxGeometry, cylinderGeometry } from '@ragnarok/engine'
+import { Group, type Vector3, boxGeometry, cylinderGeometry } from '@ragnarok/engine'
 import { TowedGun } from './towedgun'
 import type { VehicleModel } from './car'
 import type { Turret } from '@/entities/units'
 import { TURRET_STOWED } from '@/net/codec'
 import { MORTAR_BARREL_LENGTH, MORTAR_GUN_PIVOT, MORTAR_SEAT_HEAD, MORTAR_TRACK_HALF, MORTAR_WHEEL_RADIUS } from '@/sim/consts'
 import { lerp } from '@/math'
+import { MORTAR_LOB, type Lob } from '@/sim/lob'
 
 /** Fore and aft of each axle, metres (`axles` in `spec.rs`). */
 const AXLE_Z = 0.9
@@ -99,6 +100,17 @@ interface Trail {
   readonly side: number
 }
 
+/** A model with a mortar's tubes, which its gunner lays with the range dial (`Aim::Lob`): its dial, and the tube as drawn. */
+export interface LobGun {
+  readonly lob: Lob
+  barrel(): { origin: Vector3; direction: Vector3 }
+}
+
+/** Whether `model` is a mortar's: the field mortar, or a mortar carrier. */
+export function isLobGun(model: unknown): model is LobGun {
+  return typeof model === 'object' && model !== null && 'lob' in model
+}
+
 /**
  * The field gun, drawn after the Swedish Haubits 77: a low carriage on tandem wheels, two split trails
  * forward to the tow end, and a long barrel in a cradle on a turning upper carriage with its own power
@@ -109,7 +121,8 @@ interface Trail {
  * then the trails close into a tow bar at the hitch and the firing pad lifts. Let go, it unfolds the same
  * way backwards. The fold is only drawn: the server fires only an unhitched gun.
  */
-export class MortarModel extends TowedGun implements VehicleModel {
+export class MortarModel extends TowedGun implements VehicleModel, LobGun {
+  readonly lob = MORTAR_LOB
   private readonly pad = new Group()
   private readonly trails: Trail[] = []
 

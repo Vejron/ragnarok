@@ -134,6 +134,7 @@ pub(super) const PBV: VehicleDef = VehicleDef {
         engine_force: 110_000.0,
         max_speed: PBV_MAX_SPEED,
         steer_lock: 0.0,
+        steer_axles: Spec::FRONT_STEER,
         turn_rate: PBV_TURN_RATE,
         lift: Lift::Wheels,
         linear_damping: 0.05,

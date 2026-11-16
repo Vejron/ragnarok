@@ -5,6 +5,7 @@
 //! (`crate::vehicles`); a new way of aiming or firing is a variant here and its arm in `Gunnery`.
 
 use crate::armor::Pen;
+use crate::consts::GRAVITY;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MountDef {
@@ -63,14 +64,53 @@ pub enum Aim {
     /// none) and `pitch`, at `slew`.
     Mount { yaw_limit: Option<f32>, pitch: (f32, f32), slew: f32 },
     /// A mortar: the mount turns to the occupant's heading at `slew`, the range dial (`BUTTON_RANGE_UP`
-    /// and `BUTTON_RANGE_DOWN`) sets how far the bomb flies, and the tube rises or falls at `pitch_slew`
-    /// to the high lob that lands it there.
-    Lob { slew: f32, pitch_slew: f32 },
+    /// and `BUTTON_RANGE_DOWN`) sets how far the bomb flies, within `dial`, and the tube rises or falls at
+    /// `pitch_slew` to the high lob that lands it there.
+    Lob { slew: f32, pitch_slew: f32, dial: Dial },
     /// A gun on a turret's roof that follows the occupant's look in the world, whatever the hull and the
     /// turret do, but only within `yaw_limit` either side of the turret, which carries it round. Its yaw
     /// is from the turret, so a vehicle with one has a `Show::Turret` mount, listed before it. `pitch` at
     /// `slew`, as is its turning.
     Pintle { yaw_limit: f32, pitch: (f32, f32), slew: f32 },
+}
+
+/// A mortar's range dial: how far its bombs can be sent and how fast the dial walks. Its lobs are the
+/// high ones, the steeper of the two elevations that reach a range, so the shorter the range the closer
+/// to vertical the tube stands.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Dial {
+    /// The bomb's muzzle speed, m/s: the mount's `Fire::Shell::speed`.
+    pub speed: f32,
+    /// The shortest and the longest range the dial reaches, metres, and where it starts.
+    pub min: f32,
+    pub max: f32,
+    pub start: f32,
+    /// How fast holding a dial button walks it, metres a second.
+    pub rate: f32,
+}
+
+impl Dial {
+    /// The elevation of the high lob that lands a bomb `range` metres out on level ground, radians, kept
+    /// within what the dial reaches.
+    pub fn pitch(&self, range: f32) -> f32 {
+        self.lob(range.clamp(self.min, self.max))
+    }
+
+    /// How far a bomb lobbed at elevation `pitch` (radians) lands on level ground, metres: the inverse
+    /// of [`Dial::pitch`], so a tube laid by its elevation shows the range that would have laid it.
+    pub fn range(&self, pitch: f32) -> f32 {
+        self.speed * self.speed * (2.0 * pitch).sin() / GRAVITY
+    }
+
+    /// The flattest and the steepest elevation the tube is laid to: the ends of the dial.
+    pub fn pitches(&self) -> (f32, f32) {
+        (self.lob(self.max), self.lob(self.min))
+    }
+
+    fn lob(&self, range: f32) -> f32 {
+        let sine = (GRAVITY * range / (self.speed * self.speed)).min(1.0);
+        0.5 * (std::f32::consts::PI - sine.asin())
+    }
 }
 
 /// Where a mount's rounds leave it, in the hull frame.
@@ -132,6 +172,9 @@ pub enum Refill {
     Parked(u32),
     /// One more every this many ticks while not full.
     Regrow(u32),
+    /// Full again this many ticks after the last round fired: a crew loading every tube at once, which
+    /// starts over with each round that goes.
+    Reload(u32),
 }
 
 /// Something that has to hold for a mount to work.
@@ -224,13 +267,20 @@ mod tests {
     }
 
     #[test]
-    fn a_mount_that_must_point_clear_can_turn_and_one_that_runs_out_carries_some() {
+    fn a_mount_that_must_point_clear_can_turn_one_that_runs_out_carries_some_and_a_mortars_dial_fits_its_bomb() {
         for def in VEHICLES {
             for mount in def.mounts {
                 if mount.needs.iter().any(|need| matches!(need, Need::Clear(_))) {
                     assert!(matches!(mount.aim, Aim::Mount { .. }), "{}", def.name);
                 }
                 assert!(mount.ammo.is_none_or(|ammo| ammo.full > 0), "{}", def.name);
+                // A mortar's dial lobs the bomb the mount fires, and reaches no further than it can.
+                if let Aim::Lob { dial, .. } = mount.aim {
+                    let Fire::Shell { speed, .. } = mount.fire else { panic!("{}: a mortar fires shells", def.name) };
+                    assert_eq!(dial.speed, speed, "{}", def.name);
+                    assert!(dial.min < dial.start && dial.start < dial.max && dial.max <= speed * speed / GRAVITY + 0.5, "{}", def.name);
+                    assert!(dial.pitches().1 < 1.5, "{}: the shortest lob is short of vertical", def.name);
+                }
             }
         }
     }

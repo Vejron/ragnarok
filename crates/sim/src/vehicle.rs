@@ -864,8 +864,9 @@ impl Physics {
         };
         let handbrake = if controls.handbrake { BRAKE_PER_KG * mass } else { 0.0 };
 
-        // Only a car's first axle steers and is spared the handbrake, which also lets its tail slide.
-        let front_wheels = if car.spec.steer_lock > 0.0 { 2 } else { 0 };
+        // Only a car's steered axles (its first, or an eight-wheeler's first two) steer and are spared the
+        // handbrake, which also lets its tail slide.
+        let front_wheels = if car.spec.steer_lock > 0.0 { 2 * car.spec.steer_axles } else { 0 };
         let drift = controls.handbrake && front_wheels > 0;
         // A kind that slides lets its rear go in a hard turn at speed, the more so under power: grip
         // falls away towards the handbrake's, geometrically, since even a third of it holds firm.
@@ -891,7 +892,7 @@ impl Physics {
             let toe = if index % 2 == 0 { TOE_MAX } else { -TOE_MAX } * wear;
             // Wheels are added front pair first, left before right. The steering angle is negated:
             // +angle turns the wheel about the controller's up axis, which turns the car left.
-            wheel.steering = if front { -steer } else { 0.0 } + toe;
+            wheel.steering = if front { -steer * spec.steer_share(index / 2) } else { 0.0 } + toe;
             // Wheels are added left before right: a broken track's side is not driven, and drags.
             let side = condition.sides[index % 2];
             wheel.engine_force = if gone { 0.0 } else { engine * side };
@@ -1078,15 +1079,19 @@ impl Physics {
                 wing(body, airframe, car.flight, car.condition.power, grounded, self.bound, floor(id), dt);
                 continue;
             }
-            // Open water holds it up while it skims, which is as good as being on the ground.
+            // Open water holds it up while it skims, which is as good as being on the ground. A hull that
+            // floats is held by the water too, not flying, so it gets no air control there: its throttle
+            // would lift its nose.
+            let mut floating = false;
             if let Some(water) = water_under(&self.waters, waves, body, car.spec) {
+                floating = car.spec.swim.is_some() && !car.condition.wrecked;
                 let boosted = car.spec.buttons == Buttons::Sled && boosting(car.flight, car.tank);
                 grounded |= wade(body, car.spec, car.flight, car.steer, car.condition, boosted, &water, dt);
             }
             // A sled has no downforce to hold it down over a crest, and steers itself in the air.
             if let Some(runners) = &car.spec.runners {
                 on_runners(body, runners, car.air, grounded, dt);
-            } else if car.spec.steer_lock > 0.0 {
+            } else if car.spec.steer_lock > 0.0 && !floating {
                 assist(body, car.air, grounded, dt);
             }
             let speed = body.linvel().dot(*body.rotation() * Vector::new(0.0, 0.0, -1.0));

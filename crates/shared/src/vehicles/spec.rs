@@ -59,6 +59,10 @@ pub struct Spec {
     pub max_speed: f32,
     /// Steering lock of the front axle at standstill, radians. Zero for a tank, which turns by `turn_rate`.
     pub steer_lock: f32,
+    /// How many axles from the front steer: one for a car (`Spec::FRONT_STEER`), two for an eight-wheeler.
+    /// The first turns to the full lock and each behind it less, in proportion to how far it is from the
+    /// middle of the axles that do not steer, so every wheel rolls round the same point.
+    pub steer_axles: usize,
     /// Yaw rate at full stick for a vehicle that turns on the spot, rad/s.
     pub turn_rate: f32,
     pub lift: Lift,
@@ -124,8 +128,25 @@ pub struct Spec {
 }
 
 impl Spec {
+    /// Only the front axle steers, as on a car.
+    pub const FRONT_STEER: usize = 1;
     /// The `profile` of a hull that is its plain box.
     pub const BOX: &'static [[f32; 2]] = &[];
+
+    /// How far axle `index` (front first, as `axles` lists them) is turned, as a share of the front
+    /// axle's: 1 for the front one, less for each steered one behind it in proportion to its distance from
+    /// the middle of the axles that do not steer, and 0 for those.
+    pub fn steer_share(&self, index: usize) -> f32 {
+        if index >= self.steer_axles || self.steer_lock == 0.0 {
+            return 0.0;
+        }
+        let fixed = &self.axles[self.steer_axles.min(self.axles.len())..];
+        if fixed.is_empty() {
+            return 1.0;
+        }
+        let pivot = fixed.iter().sum::<f32>() / fixed.len() as f32;
+        (pivot - self.axles[index]) / (pivot - self.axles[0])
+    }
 }
 
 /// A giant's two arms. Each fist is a ball the pilot moves about its shoulder: it goes where it is
@@ -477,7 +498,7 @@ pub struct Swim {
     pub draft: f32,
     /// Top speed afloat, m/s; astern it makes half of it.
     pub speed: f32,
-    /// How hard its tracks push it afloat from a stop, m/s².
+    /// How hard its tracks (or water jets) push it afloat from a stop, m/s².
     pub thrust: f32,
     /// Yaw rate afloat at full stick, rad/s.
     pub turn: f32,

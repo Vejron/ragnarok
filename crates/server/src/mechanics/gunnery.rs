@@ -10,7 +10,7 @@ use crate::game::{Bot, Mount, Mounts, Player, Seats, Vehicle, World};
 use sim::CarPose;
 use shared::consts::*;
 use shared::items::Falloff;
-use shared::mounts::{Aim, Ammo, Eye, Fire, MountDef, Muzzle, Need, Refill};
+use shared::mounts::{Aim, Ammo, Dial, Eye, Fire, MountDef, Muzzle, Need, Refill};
 use shared::protocol::{DAMAGE_TURRET, InputFrame, PROJECTILE_BULLET, PROJECTILE_ROCKET, ShotEvent, TURRET_GONE};
 use shared::quant::{from_mrad, to_cm, wrap_angle};
 
@@ -48,20 +48,6 @@ fn aim_from(pose: &CarPose, pivot: [f32; 3], yaw: f32, pitch: f32) -> ([f32; 3],
 fn on_turret(ring: [f32; 3], [x, y, z]: [f32; 3], yaw: f32) -> [f32; 3] {
     let (sin, cos) = yaw.sin_cos();
     [ring[0] + x * cos + z * sin, ring[1] + y, ring[2] - x * sin + z * cos]
-}
-
-/// The elevation of the high lob that lands a bomb `range` metres out on level ground, from `MORTAR_SHELL_SPEED`
-/// and `GRAVITY`: the steeper of the two angles that reach it, so the shorter the range the closer to vertical.
-/// Clamped to the mortar's elevation travel.
-pub fn lob_pitch(range: f32) -> f32 {
-    let sine = (GRAVITY * range / (MORTAR_SHELL_SPEED * MORTAR_SHELL_SPEED)).min(1.0);
-    (0.5 * (std::f32::consts::PI - sine.asin())).clamp(MORTAR_PITCH_MIN, MORTAR_PITCH_MAX)
-}
-
-/// How far a bomb lobbed at elevation `pitch` (radians) lands on level ground, metres: the inverse of
-/// [`lob_pitch`], so a tube laid by its elevation shows the range dial that would have laid it.
-pub fn lob_range(pitch: f32) -> f32 {
-    MORTAR_SHELL_SPEED * MORTAR_SHELL_SPEED * (2.0 * pitch).sin() / GRAVITY
 }
 
 /// A machine gun's barrels cooling for a tick; a jammed gun clears once they are cool enough.
@@ -153,8 +139,11 @@ fn work(world: &mut World, vid: u32, def: &MountDef, mut mount: Mount, pose: &Ca
     mount.shots = mount.shots.wrapping_add(1);
     mount.cooldown = def.cooldown;
     heat_up(&mut mount.heat, &mut mount.jammed, def.heat);
-    if def.ammo.is_some() {
+    if let Some(ammo) = def.ammo {
         mount.ammo -= 1;
+        if let Refill::Reload(_) = ammo.refill {
+            mount.refill = 0;
+        }
     }
     mount
 }
@@ -169,6 +158,14 @@ fn refill(world: &World, mount: &mut Mount, ammo: Ammo, pose: &CarPose) {
             mount.refill = if parked { mount.refill + 1 } else { 0 };
             if mount.refill >= ticks {
                 mount.ammo = ammo.full;
+            }
+        }
+        Refill::Reload(ticks) => {
+            // Firing starts the count over (`work`).
+            mount.refill = if mount.ammo < ammo.full { mount.refill + 1 } else { 0 };
+            if mount.refill >= ticks {
+                mount.ammo = ammo.full;
+                mount.refill = 0;
             }
         }
         Refill::Regrow(ticks) => {
@@ -321,25 +318,27 @@ fn turn(mount: &mut Mount, aim: Aim, input: &InputFrame, want: [f32; 3], pose: &
             mount.yaw = step_toward(mount.yaw, yaw, slew * dt).clamp(-yaw_limit, yaw_limit);
             mount.pitch = step_toward(mount.pitch, pitch.clamp(min, max), slew * dt);
         }
-        Aim::Lob { slew, pitch_slew } => {
+        Aim::Lob { slew, pitch_slew, dial } => {
             mount.yaw = follow(mount.yaw, wrap_angle(from_mrad(input.yaw) - pose.yaw()), slew * dt);
             let buttons = input.buttons();
             // A gun never laid has its tube put straight to its first lob rather than raised from flat.
             let fresh = mount.range == 0.0;
+            let Dial { min, max, start, rate, .. } = dial;
+            let (flattest, steepest) = dial.pitches();
             if buttons & BUTTON_ALT != 0 {
                 // Laid from above (aim held): the look's pitch carries the elevation the gunner wants, worked
                 // out on their side for the height of the ground at the mark. The dial follows it, so letting
                 // go of aim keeps the lay.
-                let pitch = from_mrad(input.pitch()).clamp(lob_pitch(MORTAR_RANGE_MAX), lob_pitch(MORTAR_RANGE_MIN));
-                mount.range = lob_range(pitch).clamp(MORTAR_RANGE_MIN, MORTAR_RANGE_MAX);
+                let pitch = from_mrad(input.pitch()).clamp(flattest, steepest);
+                mount.range = dial.range(pitch).clamp(min, max);
             } else {
                 // A gun that has never been dialled starts at the middle of the range, not at zero.
-                let range = if mount.range == 0.0 { MORTAR_RANGE_START } else { mount.range };
-                let dial = f32::from(buttons & BUTTON_RANGE_UP != 0) - f32::from(buttons & BUTTON_RANGE_DOWN != 0);
-                mount.range = (range + dial * MORTAR_RANGE_RATE * dt).clamp(MORTAR_RANGE_MIN, MORTAR_RANGE_MAX);
+                let range = if mount.range == 0.0 { start } else { mount.range };
+                let walk = f32::from(buttons & BUTTON_RANGE_UP != 0) - f32::from(buttons & BUTTON_RANGE_DOWN != 0);
+                mount.range = (range + walk * rate * dt).clamp(min, max);
             }
             // The tube takes its time to the lob the range calls for, as a turret's barrel does.
-            let wanted = if buttons & BUTTON_ALT != 0 { from_mrad(input.pitch()).clamp(lob_pitch(MORTAR_RANGE_MAX), lob_pitch(MORTAR_RANGE_MIN)) } else { lob_pitch(mount.range) };
+            let wanted = if buttons & BUTTON_ALT != 0 { from_mrad(input.pitch()).clamp(flattest, steepest) } else { dial.pitch(mount.range) };
             mount.pitch = if fresh { wanted } else { step_toward(mount.pitch, wanted, pitch_slew * dt) };
         }
     }

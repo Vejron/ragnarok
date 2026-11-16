@@ -61,6 +61,7 @@ pub(super) const JEEP: VehicleDef = VehicleDef {
         engine_force: 10_000.0,
         max_speed: JEEP_MAX_SPEED,
         steer_lock: JEEP_MAX_STEER,
+        steer_axles: Spec::FRONT_STEER,
         turn_rate: 0.0,
         lift: Lift::Wheels,
         linear_damping: 0.05,

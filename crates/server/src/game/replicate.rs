@@ -13,7 +13,7 @@
 use super::*;
 use crate::entities::{Health, NetKind, Transform, With};
 use crate::mechanics::{Struck, Wounds};
-use shared::mounts::Show;
+use shared::mounts::{Refill, Show};
 use shared::replicated::{self as wire, Replicated, Scene};
 use shared::vehicles::{crew_shows, vehicle_def};
 
@@ -136,9 +136,12 @@ impl Game {
         let shown = |show| mounts.and_then(|mounts| mounts.shown(show)).copied();
         // A hitched mortar is drawn folded up for travel.
         let stowed = if self.world.physics.towed_by(id).is_some() { TURRET_STOWED } else { 0 };
+        // A gun loaded all at once that has fired its last round shows it is being loaded.
+        let loads = def.mounts.iter().any(|mount| mount.show == Show::Turret && mount.ammo.is_some_and(|ammo| matches!(ammo.refill, Refill::Reload(_))));
         let turret = shown(Show::Turret).map(|gun| {
             let beam = if gun.charge > 0 { TURRET_CHARGING } else if gun.beam > 0 { TURRET_BEAM } else { 0 };
-            let flags = stowed | beam | if gun.alt { TURRET_ALT } else { 0 } | if gun.jammed { TURRET_JAMMED } else { 0 };
+            let empty = if loads && gun.ammo == 0 { TURRET_EMPTY } else { 0 };
+            let flags = stowed | beam | empty | if gun.alt { TURRET_ALT } else { 0 } | if gun.jammed { TURRET_JAMMED } else { 0 };
             wire::Turret { yaw: to_mrad(gun.yaw), pitch: to_mrad(gun.pitch), shots: gun.shots, range: (gun.range * 10.0).round().clamp(0.0, u16::MAX as f32) as u16, heat: heat_byte(gun.heat), flags }
         });
         let pintle = shown(Show::Pintle).map(|gun| wire::Pintle { yaw: to_mrad(gun.yaw), pitch: to_mrad(gun.pitch), shots: gun.shots, heat: heat_byte(gun.heat), flags: if gun.jammed { PINTLE_JAMMED } else { 0 } });

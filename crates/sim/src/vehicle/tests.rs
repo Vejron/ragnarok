@@ -1,7 +1,7 @@
 use shared::vec3;
 use super::*;
 use shared::consts::TICK_DT;
-use shared::protocol::{KIND_BUS, KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MISSILE, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_SEAPLANE, KIND_SNOWMOBILE, KIND_SNOWRACER, KIND_SPORTS, KIND_STRF, KIND_STRV, KIND_TANK, KIND_TECHNICAL, KIND_TITAN, KIND_WALKER};
+use shared::protocol::{KIND_AMV, KIND_BUS, KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MISSILE, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_SEAPLANE, KIND_SNOWMOBILE, KIND_SNOWRACER, KIND_SPORTS, KIND_STRF, KIND_STRV, KIND_TANK, KIND_TECHNICAL, KIND_TITAN, KIND_WALKER};
 use shared::world::{CollisionMesh, WORLD_VERSION, WorldFile};
 
 fn flat() -> WorldFile {
@@ -155,7 +155,7 @@ fn a_car_climbs_a_slope_like_wasm() {
 #[test]
 fn ride_heights_differ_between_cars() {
     let mut heights = vec![];
-    for (kind, ride) in [(KIND_JEEP, JEEP_RIDE_HEIGHT), (KIND_SPORTS, SPORTS_RIDE_HEIGHT), (KIND_GOLF_CART, GOLF_CART_RIDE_HEIGHT), (KIND_TECHNICAL, TECHNICAL_RIDE_HEIGHT), (KIND_SNOWRACER, SNOWRACER_RIDE_HEIGHT), (KIND_BUS, BUS_RIDE_HEIGHT)] {
+    for (kind, ride) in [(KIND_JEEP, JEEP_RIDE_HEIGHT), (KIND_SPORTS, SPORTS_RIDE_HEIGHT), (KIND_GOLF_CART, GOLF_CART_RIDE_HEIGHT), (KIND_TECHNICAL, TECHNICAL_RIDE_HEIGHT), (KIND_SNOWRACER, SNOWRACER_RIDE_HEIGHT), (KIND_BUS, BUS_RIDE_HEIGHT), (KIND_AMV, AMV_RIDE_HEIGHT)] {
         let mut physics = Physics::new(&flat()).unwrap();
         physics.add_car(1, kind, [0.0, 1.5, 0.0], 0.0);
         let pose = run(&mut physics, COAST, 240);
@@ -164,8 +164,9 @@ fn ride_heights_differ_between_cars() {
     }
     // Ground clearance under the chassis: the jeep clears at least four times what the sports car does.
     assert!(heights[0] > 0.4 && heights[1] < 0.15 && heights[0] > 3.0 * heights[1], "{heights:?}");
-    // The technical clears more than the jeep.
+    // The technical clears more than the jeep, and the AMV nearly as much as the technical.
     assert!(heights[3] > heights[0] + 0.1, "{heights:?}");
+    assert!(heights[6] > 0.4, "{heights:?}");
 }
 
 #[test]
@@ -225,6 +226,54 @@ fn a_bus_gets_going_slowly_and_stays_on_its_wheels_at_full_lock() {
     let turned = (yaw(&physics.car_pose(1).unwrap()) - start).rem_euclid(std::f32::consts::TAU);
     assert!(worst > 0.8, "flat out at full lock it stays on its wheels: {worst}");
     assert!(turned > 0.5, "and turns: {turned}");
+}
+
+#[test]
+fn an_amv_gets_going_like_a_heavy_truck_and_stays_on_its_eight_wheels_at_full_lock() {
+    let mut physics = Physics::new(&flat()).unwrap();
+    physics.add_car(1, KIND_AMV, [0.0, 1.8, 0.0], 0.0);
+    run(&mut physics, COAST, 60);
+    let early = run(&mut physics, FORWARD, 60 * 3);
+    let top = run(&mut physics, FORWARD, 60 * 5);
+    assert!(early.forward_speed > 8.0 && early.forward_speed < 18.0, "gets going, but not as a car does: {early:?}");
+    assert!(top.forward_speed > AMV_MAX_SPEED - 4.0 && top.forward_speed <= AMV_MAX_SPEED + 1.0, "tops out at its own speed: {top:?}");
+    let start = yaw(&top);
+    let mut worst = 1.0_f32;
+    for _ in 0..60 * 3 {
+        let pose = run(&mut physics, CarControls { throttle: 1.0, steer: -1.0, ..CarControls::IDLE }, 1);
+        worst = worst.min(pose.up_y);
+    }
+    let turned = (yaw(&physics.car_pose(1).unwrap()) - start).rem_euclid(std::f32::consts::TAU);
+    assert!(worst > 0.8, "flat out at full lock it stays on its wheels: {worst}");
+    assert!(turned > 0.5, "and turns: {turned}");
+}
+
+/// How tight a circle `kind` drives at full lock and a crawl, metres: its radius, from how far it goes
+/// against how far round it turns.
+fn turning_radius(kind: u8) -> f32 {
+    let mut physics = Physics::new(&flat()).unwrap();
+    physics.add_car(1, kind, [0.0, 1.8, 0.0], 0.0);
+    run(&mut physics, COAST, 60);
+    let crawl = CarControls { throttle: 0.3, steer: -1.0, ..CarControls::IDLE };
+    let mut pose = run(&mut physics, crawl, 60 * 3);
+    let (mut along, mut turned) = (0.0, 0.0);
+    for _ in 0..60 * 3 {
+        let next = run(&mut physics, crawl, 1);
+        along += (next.position[0] - pose.position[0]).hypot(next.position[2] - pose.position[2]);
+        turned += (yaw(&next) - yaw(&pose) + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+        pose = next;
+    }
+    along / turned.abs()
+}
+
+#[test]
+fn an_amv_steers_two_axles_and_turns_tighter_than_a_bus() {
+    let def = shared::vehicles::vehicle_def(KIND_AMV);
+    assert_eq!(def.spec.steer_axles, 2);
+    let (amv, bus) = (turning_radius(KIND_AMV), turning_radius(KIND_BUS));
+    // On its front axle alone it went round 11.2 m, as wide as the bus.
+    assert!(amv < 10.0 && amv < bus - 1.0, "a tighter circle than the bus's {bus} m: {amv} m");
+    assert!(amv > turning_radius(KIND_JEEP), "but wider than a jeep's");
 }
 
 #[test]

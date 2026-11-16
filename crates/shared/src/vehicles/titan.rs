@@ -381,6 +381,7 @@ pub(super) const TITAN: VehicleDef = VehicleDef {
         engine_force: 0.0,
         max_speed: TITAN_MAX_SPEED,
         steer_lock: 0.0,
+        steer_axles: Spec::FRONT_STEER,
         turn_rate: TITAN_TURN_RATE,
         lift: Lift::Walker,
         linear_damping: 0.05,

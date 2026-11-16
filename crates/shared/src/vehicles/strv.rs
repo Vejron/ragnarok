@@ -92,6 +92,7 @@ pub(super) const STRV: VehicleDef = VehicleDef {
         engine_force: 112_000.0,
         max_speed: STRV_MAX_SPEED,
         steer_lock: 0.0,
+        steer_axles: Spec::FRONT_STEER,
         turn_rate: STRV_TURN_RATE,
         lift: Lift::Wheels,
         linear_damping: 0.05,

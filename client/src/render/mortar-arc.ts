@@ -10,7 +10,7 @@ const BEAM_HEIGHT = 60
 const PULSE_RATE = 3
 
 /**
- * A field mortar's landing mark: a ring the size of the blast, pulsing on the ground where the bomb
+ * A mortar's landing mark: a ring the size of the blast, pulsing on the ground where the bomb
  * would first land, and a beam standing over it that fades out towards the sky.
  */
 export class MortarArc {
@@ -53,14 +53,17 @@ export class MortarArc {
     return geometry
   }
 
-  /** Shows the mark where `path` first lands, or hides it when it is null or never lands. Call every frame to animate. */
-  set(path: Trajectory | null) {
+  /**
+   * Shows the mark where `path` first lands, the size of a burst `radius` metres across, or hides it when
+   * it is null or never lands. Call every frame to animate.
+   */
+  set(path: Trajectory | null, radius = MORTAR_RADIUS) {
     const impact = path?.firstImpact ?? null
     this.root.visible = impact !== null
     if (!impact) return
     const pulse = Math.sin((performance.now() / 1000) * PULSE_RATE * Math.PI * 2)
     this.ring.position.set(impact[0], impact[1] + 0.05, impact[2])
-    this.ring.scale.setScalar(1 + 0.05 * pulse)
+    this.ring.scale.setScalar((radius / MORTAR_RADIUS) * (1 + 0.05 * pulse))
     this.ringMaterial.opacity = 0.65 + 0.25 * pulse
     this.ringMaterial.needsUpdate()
     this.beam.position.set(impact[0], impact[1], impact[2])

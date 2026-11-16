@@ -13,7 +13,7 @@ import type { Placed } from '@/entities/presenters/vehicles'
 import type { Turret } from '@/entities/units'
 import type { VehicleModel } from '@/render/car'
 import type { ChaseView } from '@/render/chase'
-import { MortarModel } from '@/render/mortar'
+import { isLobGun } from '@/render/mortar'
 import { PlaneModel } from '@/render/plane'
 import { CAMERA_HEIGHT, PLANE_CAMERA_HEIGHT, PLANE_DISTANCE, AIM_DISTANCE_SCALE, TITAN_AIM_UP, TITAN_PIVOT_UP, type Scene } from '@/render/scene'
 import { StrvModel } from '@/render/strvs'
@@ -22,7 +22,7 @@ import { TankModel } from '@/render/tank'
 import type { VehicleFx } from '@/render/tyres'
 import { TuppModel } from '@/render/tupp'
 import { WalkerModel } from '@/render/walker'
-import { MORTAR_RANGE_MAX, MORTAR_RANGE_MIN, MORTAR_RANGE_START, PASSENGER_DISTANCE, ROOF_AIM_BACK, ROOF_AIM_UP, STRV_AIM_BACK, STRV_AIM_UP, WALKER_AIM_BACK, WALKER_AIM_UP, PASSENGER_HEIGHT, PASSENGER_SHOULDER, PLANE_AIM_MAX_PITCH, PLANE_CRUISE_SPEED, SIGHT_EYE_UP, STRV_BARREL_MAX, STRV_BARREL_MIN, SUB_MAST_HEIGHT, SUB_SAIL_Z, TITAN_HEAD_DOWN, TITAN_HEAD_TURN, TITAN_HEAD_UP, TUPP_HEAD_LIMIT, TUPP_HEAD_PITCH_MAX, TUPP_HEAD_PITCH_MIN, WALKER_GUN_PITCH_MAX, WALKER_GUN_PITCH_MIN, WALKER_TORSO_LIMIT } from '@/sim/consts'
+import { PASSENGER_DISTANCE, ROOF_AIM_BACK, ROOF_AIM_UP, STRV_AIM_BACK, STRV_AIM_UP, WALKER_AIM_BACK, WALKER_AIM_UP, PASSENGER_HEIGHT, PASSENGER_SHOULDER, PLANE_AIM_MAX_PITCH, PLANE_CRUISE_SPEED, SIGHT_EYE_UP, STRV_BARREL_MAX, STRV_BARREL_MIN, SUB_MAST_HEIGHT, SUB_SAIL_Z, TITAN_HEAD_DOWN, TITAN_HEAD_TURN, TITAN_HEAD_UP, TUPP_HEAD_LIMIT, TUPP_HEAD_PITCH_MAX, TUPP_HEAD_PITCH_MIN, WALKER_GUN_PITCH_MAX, WALKER_GUN_PITCH_MIN, WALKER_TORSO_LIMIT } from '@/sim/consts'
 import type { InputController } from '@/sim/input'
 import { layTube } from '@/sim/lob'
 import type { Rig, SeatView } from '@/seats'
@@ -399,7 +399,7 @@ export class Cameras {
   }
 
   /**
-   * Behind a field mortar: the mouse sets the bearing, the mount turns to face it, and W and S set the range.
+   * Behind a mortar: the mouse sets the bearing, the mount turns to face it, and W and S set the range.
    * With aim held the view rises over a mark on the ground and looks down at it, and the mouse moves the mark over the ground
    * instead: up on the screen (the bearing when aim was taken) is farther, and the tube is laid to land on
    * the mark, its bearing in the look's yaw and its elevation in `layPitch` (`sim/lob`). Letting go swings
@@ -432,11 +432,11 @@ export class Cameras {
       },
       frame: ({ ride, dt, distance, aimHeld, model }) => {
         const at = new Vector3(ride.x, ride.y + 0.4, ride.z)
-        const gun = model instanceof MortarModel && ride.turret ? { model, turret: ride.turret } : null
+        const gun = isLobGun(model) && ride.turret ? { model, turret: ride.turret } : null
         if (aimHeld && gun && !laying) {
           laying = true
           up = ride.yaw + gun.turret.yaw
-          const range = gun.turret.range || MORTAR_RANGE_START
+          const range = gun.turret.range || gun.model.lob.start
           mark.set(at.x - Math.sin(up) * range, at.y, at.z - Math.cos(up) * range)
           lookPitch = this.input.pitch
           this.input.pitch = 0
@@ -456,14 +456,14 @@ export class Cameras {
           const dx = mark.x - pivot.x
           const dz = mark.z - pivot.z
           const along = Math.hypot(dx, dz) || 1
-          const kept = clamp(along, MORTAR_RANGE_MIN, MORTAR_RANGE_MAX)
+          const kept = clamp(along, gun.model.lob.min, gun.model.lob.max)
           mark.x = pivot.x + (dx / along) * kept
           mark.z = pivot.z + (dz / along) * kept
           // What the bomb would land on there: a ray straight down, so a roof counts.
           const top = pivot.y + LAY_RAY_UP
           const hit = this.castRay([mark.x, top, mark.z], [0, -1, 0], LAY_RAY_UP * 2)
           mark.y = hit ? top - hit.t : this.scene.groundAt(mark.x, mark.z)
-          const lay = layTube([pivot.x, pivot.y, pivot.z], [mark.x, mark.y, mark.z])
+          const lay = layTube(gun.model.lob, [pivot.x, pivot.y, pivot.z], [mark.x, mark.y, mark.z])
           this.input.yaw = lay.yaw
           setYaw = lay.yaw
           this.input.layPitch = lay.pitch

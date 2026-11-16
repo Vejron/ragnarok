@@ -96,6 +96,7 @@ pub(super) const MISSILE: VehicleDef = VehicleDef {
         engine_force: 0.0,
         max_speed: 0.0,
         steer_lock: 0.0,
+        steer_axles: Spec::FRONT_STEER,
         turn_rate: 0.0,
         lift: Lift::Missile,
         linear_damping: MISSILE_DAMPING,

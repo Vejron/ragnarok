@@ -1,4 +1,5 @@
 import { Vector3 } from '@ragnarok/engine'
+import { AmvModel } from '@/render/amv'
 import { HeliModel } from '@/render/heli'
 import { AUTOCANNON, BEAM, BLACK_POWDER, CANNON, MORTAR, ROTARY, type MuzzleProfile } from '@/render/gunfire'
 import { LaserEyes } from '@/render/lasereyes'
@@ -15,7 +16,7 @@ import { TitanModel } from '@/render/titan'
 import { TuppModel } from '@/render/tupp'
 import { WalkerModel } from '@/render/walker'
 import { arcTime } from '@/render/rounds'
-import { HELI_GUN_LENGTH, MORTAR_BARREL_LENGTH, PAK_BARREL_LENGTH, PBV_BARREL_LENGTH, PBV_CANNON_RANGE, SHIP_GUN_BARREL_LENGTH, PLANE_GUN_RANGE, STRF_BARREL_LENGTH, STRV_BARREL_LENGTH, TANK_BARREL_LENGTH, TANK_MG_LENGTH, TANK_MG_RANGE, TECHNICAL_MG_LENGTH, TECHNICAL_MG_RANGE, TECHNICAL_MG_SEAT, TITAN_GUN_LENGTH, WALKER_GUN_LENGTH } from '@/sim/consts'
+import { AMV_BARREL_LENGTH, HELI_GUN_LENGTH, MORTAR_BARREL_LENGTH, PAK_BARREL_LENGTH, PBV_BARREL_LENGTH, PBV_CANNON_RANGE, SHIP_GUN_BARREL_LENGTH, PLANE_GUN_RANGE, STRF_BARREL_LENGTH, STRV_BARREL_LENGTH, TANK_BARREL_LENGTH, TANK_MG_LENGTH, TANK_MG_RANGE, TECHNICAL_MG_LENGTH, TECHNICAL_MG_RANGE, TECHNICAL_MG_SEAT, TITAN_GUN_LENGTH, WALKER_GUN_LENGTH } from '@/sim/consts'
 import type { Frame, Presenter } from '../presenter'
 import type { Entity } from '../units'
 import type { VehicleWorld, Vehicles } from './vehicles'
@@ -36,7 +37,7 @@ interface Cannon {
   range?: number
 }
 
-type CannonModel = TankModel | HeliModel | WalkerModel | MortarModel | PakModel | ShipGunModel | TitanModel
+type CannonModel = AmvModel | TankModel | HeliModel | WalkerModel | MortarModel | PakModel | ShipGunModel | TitanModel
 
 /** Who fires it: the driver of a walker, a Titan, a Strv S or a gun on a carriage, the gunner of the rest. */
 function cannonOf(model: unknown): Cannon | null {
@@ -46,6 +47,7 @@ function cannonOf(model: unknown): Cannon | null {
   if (model instanceof StrvModel) return { length: STRV_BARREL_LENGTH, profile: CANNON, gunner: 0, heavy: true }
   if (model instanceof StrfModel) return { length: STRF_BARREL_LENGTH, profile: AUTOCANNON, gunner: 1, heavy: false }
   if (model instanceof PbvModel) return { length: PBV_BARREL_LENGTH, profile: AUTOCANNON, gunner: 1, heavy: false, range: PBV_CANNON_RANGE }
+  if (model instanceof AmvModel) return { length: AMV_BARREL_LENGTH, profile: MORTAR, gunner: 1, heavy: false }
   if (model instanceof MortarModel) return { length: MORTAR_BARREL_LENGTH, profile: MORTAR, gunner: 0, heavy: false }
   if (model instanceof PakModel) return { length: PAK_BARREL_LENGTH, profile: CANNON, gunner: 0, heavy: false }
   if (model instanceof ShipGunModel) return { length: SHIP_GUN_BARREL_LENGTH, profile: BLACK_POWDER, gunner: 0, heavy: false }
@@ -111,8 +113,9 @@ export class Turrets implements Presenter<Frame> {
   private cannon(id: number, gun: CannonModel, cannon: Cannon, shots: number, fired: number, seats: readonly number[], frame: Frame) {
     let heat = this.heat.get(id) ?? 0
     if (!fired && heat <= 0) return
-    // A walker's barrels fire in turn: the counter has already gone up for this shot.
-    const { origin, direction } = gun instanceof WalkerModel ? gun.barrel((shots - 1) % 2 === 0 ? -1 : 1) : gun.barrel()
+    // A walker's barrels and a mortar carrier's tubes fire in turn: the counter has already gone up for this shot.
+    const side = (shots - 1) % 2 === 0 ? -1 : 1
+    const { origin, direction } = gun instanceof WalkerModel || gun instanceof AmvModel ? gun.barrel(side) : gun.barrel()
     const muzzle = origin.clone().addScaledVector(direction, cannon.length)
     const { profile } = cannon
     const { effects, sounds } = this.world

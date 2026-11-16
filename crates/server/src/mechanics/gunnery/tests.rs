@@ -5,7 +5,8 @@ use crate::entities::Health;
 use crate::game::{Command, Game, Seat};
 use sim::STANDING_Y;
 use shared::items::Falloff;
-use shared::mounts::Show;
+use shared::mounts::{Dial, Show};
+use shared::vehicles::vehicle_def;
 use shared::protocol::{PROJECTILE_BULLET, KIND_HELI, KIND_HEN, KIND_MORTAR, KIND_TUPP, KIND_PAK, KIND_PLANE, KIND_SEAPLANE, KIND_STRV, KIND_TANK, KIND_WALKER, PROJECTILE_BOMB, PROJECTILE_CANNON, PROJECTILE_EGG, PROJECTILE_SHELL, WEAPON_BOMB, WEAPON_LASER, WEAPON_MG};
 use shared::quant::to_mrad;
 use shared::world::{Road, WORLD_VERSION, WorldFile};
@@ -870,11 +871,18 @@ fn the_range_dial_walks_the_lob_and_the_elevation_follows_it() {
     assert!(gun.pitch > 1.4 && gun.pitch <= MORTAR_PITCH_MAX, "nearly vertical at the shortest: {}", gun.pitch);
 }
 
+/// The field mortar's range dial.
+fn mortar_dial() -> Dial {
+    let Aim::Lob { dial, .. } = vehicle_def(KIND_MORTAR).mounts[0].aim else { panic!("the mortar lobs") };
+    dial
+}
+
 #[test]
-fn lob_range_undoes_lob_pitch() {
+fn a_dials_range_undoes_its_pitch() {
+    let dial = mortar_dial();
     for range in [MORTAR_RANGE_MIN, 80.0, MORTAR_RANGE_START, 200.0, MORTAR_RANGE_MAX] {
-        let back = lob_range(lob_pitch(range));
-        assert!((back - range).abs() < 0.5, "{range} m lays to {} rad and back to {back} m", lob_pitch(range));
+        let back = dial.range(dial.pitch(range));
+        assert!((back - range).abs() < 0.5, "{range} m lays to {} rad and back to {back} m", dial.pitch(range));
     }
 }
 
@@ -894,12 +902,12 @@ fn a_mortar_gunner_holding_aim_lays_the_elevation_they_send_within_the_dials_ban
     aim_and_hold(&mut game, gunner, &mut seq, 0.0, 1.2, BUTTON_ALT, 120);
     let gun = turret(&game, vid);
     assert!((gun.pitch - 1.2).abs() < 0.002, "laid to what was sent: {}", gun.pitch);
-    assert!((gun.range - lob_range(1.2)).abs() < 0.5, "and the dial shows its range: {}", gun.range);
+    assert!((gun.range - mortar_dial().range(1.2)).abs() < 0.5, "and the dial shows its range: {}", gun.range);
     // Past either end of the dial it stops there.
     aim_and_hold(&mut game, gunner, &mut seq, 0.0, 0.3, BUTTON_ALT, 360);
-    assert!((turret(&game, vid).pitch - lob_pitch(MORTAR_RANGE_MAX)).abs() < 0.002);
+    assert!((turret(&game, vid).pitch - mortar_dial().pitch(MORTAR_RANGE_MAX)).abs() < 0.002);
     aim_and_hold(&mut game, gunner, &mut seq, 0.0, 1.55, BUTTON_ALT, 360);
-    assert!((turret(&game, vid).pitch - lob_pitch(MORTAR_RANGE_MIN)).abs() < 0.002);
+    assert!((turret(&game, vid).pitch - mortar_dial().pitch(MORTAR_RANGE_MIN)).abs() < 0.002);
 }
 
 #[test]
@@ -1510,4 +1518,88 @@ fn a_pbv_round_goes_through_another_pbv_and_a_strfs_side_but_no_side_of_a_tank()
     let thinnest = |kind: u8| vehicle_def(kind).armor.plates.iter().filter(|plate| !plate.slit && plate.face == Some(shared::armor::Zone::Side)).map(|plate| plate.mm).fold(f32::MAX, f32::min);
     assert!(pen.near > thinnest(shared::protocol::KIND_PBV) && pen.near > thinnest(shared::protocol::KIND_STRF));
     assert!(pen.near < thinnest(shared::protocol::KIND_TANK), "{pen:?}");
+}
+
+/// An AMV off the road with its mortar operator in seat 1, settled and looking where the hull points.
+fn amv_crewed() -> (Game, u32, u32, u32) {
+    let mut game = game();
+    let (operator, _inbox) = join(&mut game);
+    let vid = crate::mechanics::vehicles::add_vehicle(&mut game.world, shared::protocol::KIND_AMV, [0.0, AMV_RIDE_HEIGHT + 0.2, 25.0], 0.0);
+    seat(&mut game, operator, vid, 1);
+    let mut seq = 0;
+    let yaw = game.world.physics.car_pose(vid).unwrap().yaw();
+    aim_and_hold(&mut game, operator, &mut seq, yaw, 0.0, 0, 90);
+    (game, operator, vid, seq)
+}
+
+#[test]
+fn an_amvs_mortar_fires_a_pair_in_quick_succession_then_reloads_for_three_seconds() {
+    let (mut game, operator, vid, mut seq) = amv_crewed();
+    let yaw = game.world.physics.car_pose(vid).unwrap().yaw();
+    // Held: the first round goes at once and the second a third of a second later.
+    let mut fired_at = Vec::new();
+    for tick in 0..60 * 5 {
+        let before = turret(&game, vid).shots;
+        aim_and_hold(&mut game, operator, &mut seq, yaw, 0.0, BUTTON_FIRE, 1);
+        if turret(&game, vid).shots != before {
+            fired_at.push(tick);
+        }
+    }
+    assert!(fired_at.len() >= 3, "a pair, and the next pair: {fired_at:?}");
+    assert_eq!(fired_at[1] - fired_at[0], AMV_COOLDOWN_TICKS, "the pair: {fired_at:?}");
+    let gap = fired_at[2] - fired_at[1];
+    assert!(gap.abs_diff(AMV_RELOAD_TICKS) <= 1, "then three seconds of loading: {gap} ticks");
+    assert_eq!(fired_at[3] - fired_at[2], AMV_COOLDOWN_TICKS, "and another pair: {fired_at:?}");
+}
+
+#[test]
+fn an_empty_amv_shows_it_is_loading_and_a_round_left_in_the_tubes_is_kept() {
+    let (mut game, operator, vid, mut seq) = amv_crewed();
+    let yaw = game.world.physics.car_pose(vid).unwrap().yaw();
+    let flags = |game: &Game| game.seen(vid).unwrap().turret.unwrap().flags;
+    // A press reaches the gun the tick after it is sent.
+    aim_and_hold(&mut game, operator, &mut seq, yaw, 0.0, BUTTON_FIRE, 2);
+    aim_and_hold(&mut game, operator, &mut seq, yaw, 0.0, 0, 30);
+    assert_eq!(turret(&game, vid).ammo, 1, "one round fired, one left");
+    assert_eq!(flags(&game) & shared::protocol::TURRET_EMPTY, 0, "not empty yet");
+    aim_and_hold(&mut game, operator, &mut seq, yaw, 0.0, BUTTON_FIRE, 2);
+    assert_eq!(turret(&game, vid).ammo, 0);
+    assert_ne!(flags(&game) & shared::protocol::TURRET_EMPTY, 0, "it shows it is loading");
+    aim_and_hold(&mut game, operator, &mut seq, yaw, 0.0, 0, AMV_RELOAD_TICKS + 1);
+    assert_eq!(turret(&game, vid).ammo, AMV_ROUNDS, "both tubes loaded");
+    assert_eq!(flags(&game) & shared::protocol::TURRET_EMPTY, 0);
+}
+
+#[test]
+fn an_amvs_bombs_land_on_the_dialled_range_well_short_of_a_field_mortars_reach() {
+    let (mut game, operator, vid, mut seq) = amv_crewed();
+    let yaw = game.world.physics.car_pose(vid).unwrap().yaw();
+    let start = game.world.physics.car_pose(vid).unwrap().position;
+    // Dialled all the way out, so the tubes stand at 45 degrees.
+    aim_and_hold(&mut game, operator, &mut seq, yaw, 0.0, BUTTON_RANGE_UP, 300);
+    assert_eq!(turret(&game, vid).range, AMV_RANGE_MAX);
+    let mut last = None;
+    aim_and_hold(&mut game, operator, &mut seq, yaw, 0.0, BUTTON_FIRE, AMV_COOLDOWN_TICKS + 1);
+    for _ in 0..900 {
+        let flying: Vec<_> = game.world.in_flight().values().map(|bomb| (bomb.kind, bomb.position)).collect();
+        if flying.is_empty() {
+            break;
+        }
+        assert!(flying.iter().all(|&(kind, _)| kind == shared::protocol::PROJECTILE_AMV_BOMB));
+        last = Some(flying[0].1);
+        aim_and_hold(&mut game, operator, &mut seq, yaw, 0.0, 0, 1);
+    }
+    let [x, y, z] = last.expect("the bombs flew");
+    assert!(y < 4.0, "they burst on the ground: {y} m up");
+    let range = (x - start[0]).hypot(z - start[2]);
+    assert!((range - AMV_RANGE_MAX).abs() < 15.0, "dialled to {AMV_RANGE_MAX} m, landed {range} m out");
+    assert!(range < MORTAR_RANGE_MAX - 50.0, "well short of the field mortar's reach");
+}
+
+#[test]
+fn an_amvs_bomb_bursts_smaller_than_a_field_mortars() {
+    use super::projectiles::burst_of;
+    let (amv, mortar) = (burst_of(shared::protocol::PROJECTILE_AMV_BOMB).unwrap(), burst_of(shared::protocol::PROJECTILE_MORTAR).unwrap());
+    assert!(amv.radius < mortar.radius && amv.damage < mortar.damage && amv.knock < mortar.knock);
+    assert!(amv.radius > 0.75 * mortar.radius && amv.damage > 0.75 * mortar.damage, "but only a little");
 }

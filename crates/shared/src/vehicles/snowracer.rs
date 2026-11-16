@@ -73,6 +73,7 @@ pub(super) const SNOWRACER: VehicleDef = VehicleDef {
         engine_force: 700.0,
         max_speed: SNOWRACER_MAX_SPEED,
         steer_lock: SNOWRACER_MAX_STEER,
+        steer_axles: Spec::FRONT_STEER,
         turn_rate: 0.0,
         lift: Lift::Wheels,
         // Its runners' drag holds it back, not this.

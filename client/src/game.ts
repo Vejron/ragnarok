@@ -66,7 +66,7 @@ import { BallCam } from './render/ballcam'
 import { ChaseCam } from './render/chase'
 import { PerfReadout } from './render/perf'
 import { LookWorker } from './render/lookworker'
-import { encodeHands, encodeRtc, KIND_MISSILE, KIND_PBV, KIND_STRF, KIND_STRV, KIND_SUBMARINE, KIND_TANK, LIMB_ALL, LIMB_ARMS, LIMB_LEGS, TURRET_ALT } from './net/codec'
+import { encodeHands, encodeRtc, KIND_AMV, KIND_MISSILE, KIND_PBV, KIND_STRF, KIND_STRV, KIND_SUBMARINE, KIND_TANK, LIMB_ALL, LIMB_ARMS, LIMB_LEGS, TURRET_ALT, TURRET_EMPTY } from './net/codec'
 import { TankMusic } from './music'
 import { VoiceChat } from './voice'
 import { PlaneModel } from './render/plane'
@@ -1070,7 +1070,7 @@ export class Game {
 
     const seat = this.seat
     const view = seat ? seatView(seat.kind, seat.index) : null
-    this.music.want(seat !== null && this.player.alive && (seat.kind === KIND_TANK || seat.kind === KIND_STRV || seat.kind === KIND_STRF || seat.kind === KIND_PBV))
+    this.music.want(seat !== null && this.player.alive && (seat.kind === KIND_TANK || seat.kind === KIND_STRV || seat.kind === KIND_STRF || seat.kind === KIND_PBV || seat.kind === KIND_AMV))
     this.driven = this.driver?.pose(this.accumulator / TICK_MS, dt) ?? null
     // Everything replicated, sampled once at the render tick; each group of presenters draws its part.
     const sampled = this.store.sampleAll(renderTick)
@@ -1464,7 +1464,8 @@ export class Game {
       callouts: this.callouts.view(now),
       limbs: player.body(),
       ammo: gauges?.includes('ammo') ? ((ride?.turret?.flags ?? 0) & TURRET_ALT ? 'HE' : 'AP') : null,
-      reload: this.reloaded(now, ride ? rideView(ride.kind).reload : SHELL_COOLDOWN_TICKS),
+      // A gun loaded all at once that has fired its last round takes its whole reload, counted from that round.
+      reload: this.reloaded(now, ride ? ((ride.turret?.flags ?? 0) & TURRET_EMPTY ? (rideView(ride.kind).refill ?? null) : rideView(ride.kind).reload) : SHELL_COOLDOWN_TICKS),
       ...(gauges?.includes('pintle') ? roofGun(ride?.pintle ?? null) : gauges?.includes('heat') ? mountGun(ride?.turret ?? null) : cockpit(gauges?.includes('cockpit') ? (ride?.arms ?? null) : null, aviator, seat ? this.vehicles.fx(seat.vehicle) : undefined, ride ? rideView(ride.kind).stall : undefined)),
       // A Titan's missile tubes, as pips over its gun's heat.
       ...(gauges?.includes('tubes') ? { bombs: ride?.arms?.bombs ?? null } : {}),

@@ -149,6 +149,7 @@ pub(super) const PLANE: VehicleDef = VehicleDef {
         engine_force: 0.0,
         max_speed: 0.0,
         steer_lock: PLANE_MAX_STEER,
+        steer_axles: Spec::FRONT_STEER,
         turn_rate: 0.0,
         lift: Lift::Wing,
         // Drag is `PLANE_DRAG`, by the square of the speed.

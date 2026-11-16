@@ -62,7 +62,7 @@ pub const OBJ_BUILDING: u8 = 1;
 /// A piece of a fence or wall (`shared::world::line_pieces`).
 pub const OBJ_LINE: u8 = 2;
 
-pub use crate::consts::{KIND_BUS, KIND_DEER, KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MISSILE, KIND_MORTAR, KIND_PAK, KIND_PBV, KIND_PLANE, KIND_ROADSTER, KIND_ROOSTER, KIND_SEAPLANE, KIND_SHIP, KIND_SHIP_GUN, KIND_SNOWMOBILE, KIND_SNOWRACER, KIND_SOLDIER, KIND_SPORTS, KIND_STAG, KIND_STRF, KIND_STRV, KIND_SUBMARINE, KIND_TANK, KIND_TECHNICAL, KIND_TITAN, KIND_TUPP, KIND_WALKER, KIND_ZOMBIE};
+pub use crate::consts::{KIND_AMV, KIND_BUS, KIND_DEER, KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MISSILE, KIND_MORTAR, KIND_PAK, KIND_PBV, KIND_PLANE, KIND_ROADSTER, KIND_ROOSTER, KIND_SEAPLANE, KIND_SHIP, KIND_SHIP_GUN, KIND_SNOWMOBILE, KIND_SNOWRACER, KIND_SOLDIER, KIND_SPORTS, KIND_STAG, KIND_STRF, KIND_STRV, KIND_SUBMARINE, KIND_TANK, KIND_TECHNICAL, KIND_TITAN, KIND_TUPP, KIND_WALKER, KIND_ZOMBIE};
 
 /// Whether `kind` is a drone: flown from a remote seat by whoever launched it (see the `Drones` mechanic).
 pub fn is_drone(kind: u8) -> bool {
@@ -265,6 +265,8 @@ pub const PROJECTILE_CANNON_AP: u8 = 12;
 /// A Titan's rotary cannon's heavy round: a shell as big as a mortar bomb, fired flat, that bursts
 /// on what it meets, smaller than a mortar bomb.
 pub const PROJECTILE_ROTARY: u8 = 13;
+/// A mortar carrier's bomb (`KIND_AMV`): lobbed as `PROJECTILE_MORTAR` is, and bursting a little smaller.
+pub const PROJECTILE_AMV_BOMB: u8 = 14;
 
 /// A message's field: its name, its Rust type and its unit (`UNITS`), or `""` for a count, a set of
 /// bits, an id or text, which have none.
@@ -600,6 +602,9 @@ pub const TURRET_CHARGING: u8 = 1 << 2;
 pub const TURRET_BEAM: u8 = 1 << 3;
 /// `replicated::Turret::flags`: a machine gun on a mount has overheated and jammed (`MountDef::heat`).
 pub const TURRET_JAMMED: u8 = 1 << 4;
+/// `replicated::Turret::flags`: a gun that is loaded all at once (`Refill::Reload`) has fired its last
+/// round and is being loaded again.
+pub const TURRET_EMPTY: u8 = 1 << 5;
 
 /// `replicated::Pintle::flags`: the gun is jammed.
 pub const PINTLE_JAMMED: u8 = 1 << 0;

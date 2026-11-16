@@ -38,6 +38,8 @@ export const STRV_DISTANCE = 15
 /** Behind the Strf 90, which is shorter than the tank and lower. */
 export const STRF_DISTANCE = 15
 export const PBV_DISTANCE = 14
+/** Behind the AMV, which is longer than the Pbv 302 and taller. */
+export const AMV_DISTANCE = 15
 /** A plane's pilot looks where they fly, from behind and above, so the plane sits below the middle of the screen. */
 export const PLANE_DISTANCE = 12
 export const PLANE_CAMERA_HEIGHT = 2.4

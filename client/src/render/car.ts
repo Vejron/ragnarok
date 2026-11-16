@@ -2,14 +2,15 @@ import { Group, Mesh, type Material, type Node, Matrix4, Vector3 } from '@ragnar
 import { parseToonModel, unlitMaterial } from './models'
 import { toonMaterial } from './toon'
 import {
-  BUS_MAX_STEER, BUS_SEATS, BUS_WHEEL_RADIUS, GOLF_CART_MAX_STEER, GOLF_CART_SEATS, GOLF_CART_WHEEL_RADIUS, TECHNICAL_MAX_STEER, TECHNICAL_SEATS, TECHNICAL_WHEEL_RADIUS, JEEP_MAX_STEER, JEEP_WHEEL_RADIUS, ROADSTER_MAX_STEER, ROADSTER_SEATS, ROADSTER_WHEEL_RADIUS, SNOWMOBILE_MAX_STEER, SNOWMOBILE_SEATS, SNOWMOBILE_WHEEL_RADIUS, SNOWRACER_MAX_STEER, SNOWRACER_SEATS, SNOWRACER_WHEEL_RADIUS, SPORTS_MAX_STEER, SPORTS_SEATS,
+  AMV_MAX_STEER, AMV_SEATS, AMV_WHEEL_RADIUS, BUS_MAX_STEER, BUS_SEATS, BUS_WHEEL_RADIUS, GOLF_CART_MAX_STEER, GOLF_CART_SEATS, GOLF_CART_WHEEL_RADIUS, TECHNICAL_MAX_STEER, TECHNICAL_SEATS, TECHNICAL_WHEEL_RADIUS, JEEP_MAX_STEER, JEEP_WHEEL_RADIUS, ROADSTER_MAX_STEER, ROADSTER_SEATS, ROADSTER_WHEEL_RADIUS, SNOWMOBILE_MAX_STEER, SNOWMOBILE_SEATS, SNOWMOBILE_WHEEL_RADIUS, SNOWRACER_MAX_STEER, SNOWRACER_SEATS, SNOWRACER_WHEEL_RADIUS, SPORTS_MAX_STEER, SPORTS_SEATS,
   SPORTS_WHEEL_RADIUS, CAR_SEATS,
 } from '@/sim/consts'
-import { KIND_BUS, KIND_GOLF_CART, KIND_JEEP, KIND_TECHNICAL, KIND_ROADSTER, KIND_SNOWMOBILE, KIND_SNOWRACER, KIND_SPORTS, THRUST_BOOST, THRUST_LIFT } from '@/net/codec'
+import { KIND_AMV, KIND_BUS, KIND_GOLF_CART, KIND_JEEP, KIND_TECHNICAL, KIND_ROADSTER, KIND_SNOWMOBILE, KIND_SNOWRACER, KIND_SPORTS, THRUST_BOOST, THRUST_LIFT } from '@/net/codec'
 import type { Arms, Turret } from '@/entities/units'
 import { CarWear } from './carwear'
 import type { Debris } from './debris'
 import { halfExtentsOf } from '@/sim/kinds'
+import { AMV_STEER_SHARES } from '@/sim/slip'
 
 /** What `Game` needs from a vehicle's model, whatever the kind. */
 export interface VehicleModel {
@@ -25,10 +26,14 @@ export interface VehicleModel {
   dispose(): void
 }
 
-export type CarKind = 'jeep' | 'sports' | 'roadster' | 'snowmobile' | 'golf_cart' | 'technical' | 'snowracer' | 'bus'
+export type CarKind = 'jeep' | 'sports' | 'roadster' | 'snowmobile' | 'golf_cart' | 'technical' | 'snowracer' | 'bus' | 'amv'
 
-/** Per-body facts the model needs: its vehicle kind, where its mesh is, how big its wheels are and how far they steer. */
-const KINDS: Record<CarKind, { kind: number; url: string; wheelRadius: number; maxSteer: number; seats: number }> = {
+/**
+ * Per-body facts the model needs: its vehicle kind, where its mesh is, how big its wheels are and how far
+ * they steer (and how far its second axle steers, for one that steers two), and the colour it is painted
+ * when every one of the kind wears the same.
+ */
+const KINDS: Record<CarKind, { kind: number; url: string; wheelRadius: number; maxSteer: number; seats: number; paint?: number; secondSteer?: number }> = {
   jeep: { kind: KIND_JEEP, url: `${import.meta.env.BASE_URL}models/jeep.glb`, wheelRadius: JEEP_WHEEL_RADIUS, maxSteer: JEEP_MAX_STEER, seats: CAR_SEATS },
   sports: { kind: KIND_SPORTS, url: `${import.meta.env.BASE_URL}models/sports.glb`, wheelRadius: SPORTS_WHEEL_RADIUS, maxSteer: SPORTS_MAX_STEER, seats: SPORTS_SEATS },
   roadster: { kind: KIND_ROADSTER, url: `${import.meta.env.BASE_URL}models/roadster.glb`, wheelRadius: ROADSTER_WHEEL_RADIUS, maxSteer: ROADSTER_MAX_STEER, seats: ROADSTER_SEATS },
@@ -39,6 +44,8 @@ const KINDS: Record<CarKind, { kind: number; url: string; wheelRadius: number; m
   // One steering ski on its front pivot, and runners that are part of the body: nothing rolls.
   snowracer: { kind: KIND_SNOWRACER, url: `${import.meta.env.BASE_URL}models/snowracer.glb`, wheelRadius: SNOWRACER_WHEEL_RADIUS, maxSteer: SNOWRACER_MAX_STEER, seats: SNOWRACER_SEATS },
   bus: { kind: KIND_BUS, url: `${import.meta.env.BASE_URL}models/bus.glb`, wheelRadius: BUS_WHEEL_RADIUS, maxSteer: BUS_MAX_STEER, seats: BUS_SEATS },
+  // Army green, whoever drives it.
+  amv: { kind: KIND_AMV, url: `${import.meta.env.BASE_URL}models/amv.glb`, wheelRadius: AMV_WHEEL_RADIUS, maxSteer: AMV_MAX_STEER, seats: AMV_SEATS, paint: 0x5b6440, secondSteer: AMV_STEER_SHARES[1] },
 }
 
 const BODY_COLORS = [0xff9f1c, 0x2ec4b6, 0xe71d36, 0x5aa9e6, 0xb5e48c, 0xf15bb5, 0xffd23f, 0x9d4edd]
@@ -46,7 +53,7 @@ const BODY_COLORS = [0xff9f1c, 0x2ec4b6, 0xe71d36, 0x5aa9e6, 0xb5e48c, 0xf15bb5,
 const assets = new Map<CarKind, Node>()
 
 /**
- * Parses `jeep.glb`, `sports.glb`, `roadster.glb`, `snowmobile.glb`, `golf_cart.glb`, `technical.glb`, `snowracer.glb` or `bus.glb` (built by `tools/vehicles/build_car.py`) for every `CarModel` of
+ * Parses `jeep.glb`, `sports.glb`, `roadster.glb`, `snowmobile.glb`, `golf_cart.glb`, `technical.glb`, `snowracer.glb`, `bus.glb` or `amv.glb` (built by `tools/vehicles/build_car.py`) for every `CarModel` of
  * that kind to share. Materials become flat toon ones to match the rest of the scene (`lamp` ones are
  * unlit, like a headlight); `paint` is replaced per car.
  */
@@ -107,12 +114,13 @@ export interface Jet {
 
 /**
  * An open jeep, a low sports car or a Roadster, from the glTF the Blender script builds. Wheels roll with the
- * speed the interpolator reports and the front pair steers. Its riders are drawn sitting by `Game`,
+ * speed the interpolator reports and the front pair steers (an eight-wheeler's first two pairs). Its riders are drawn sitting by `Game`,
  * their heads on the `seat_N` markers of the model (`VehicleDef.seatHeads`).
  */
 export class CarModel implements VehicleModel {
   readonly root = new Group()
-  private readonly frontPivots: Node[] = []
+  /** The steered wheels' pivots, and each one's share of the lock. */
+  private readonly frontPivots: { pivot: Node; share: number }[] = []
   private readonly spinners: Node[] = []
   /** Each seat's head point in the car's frame, from the model's `seat_N` markers. */
   readonly seatMarkers: Vector3[] = []
@@ -134,16 +142,18 @@ export class CarModel implements VehicleModel {
   constructor(name: CarKind, id: number) {
     const asset = assets.get(name)
     if (!asset) throw new Error('loadCarModels() must finish before cars are created')
-    const { kind, wheelRadius, maxSteer, seats } = KINDS[name]
+    const { kind, wheelRadius, maxSteer, seats, paint: color, secondSteer } = KINDS[name]
     this.wheelRadius = wheelRadius
     this.maxSteer = maxSteer
     const model = asset.clone()
     this.root.add(model)
-    const paint = (this.paint = toonMaterial({ color: BODY_COLORS[id % BODY_COLORS.length]! }))
+    const paint = (this.paint = toonMaterial({ color: color ?? BODY_COLORS[id % BODY_COLORS.length]! }))
     model.traverse((node) => {
       if (node instanceof Mesh && node.material.name === 'paint') node.material = paint
-      if (/^wheel_[FR][LR]$/.test(node.name)) this.spinners.push(node)
-      if (/^pivot_F[LR]$/.test(node.name)) this.frontPivots.push(node)
+      // An eight-wheeler's middle axles are `wheel_FL2` and so on.
+      if (/^wheel_[FR][LR]2?$/.test(node.name)) this.spinners.push(node)
+      if (/^pivot_F[LR]$/.test(node.name)) this.frontPivots.push({ pivot: node, share: 1 })
+      if (secondSteer !== undefined && /^pivot_F[LR]2$/.test(node.name)) this.frontPivots.push({ pivot: node, share: secondSteer })
       const nozzle = /^nozzle_(rear|lift)_\d+$/.exec(node.name)
       if (nozzle) this.nozzles.push({ at: new Vector3(node.position.x, node.position.y, node.position.z), lift: nozzle[1] === 'lift' })
     })
@@ -175,7 +185,7 @@ export class CarModel implements VehicleModel {
     this.placed = true
     for (const spinner of this.spinners) spinner.rotation.x = this.roll
     // Turning right (positive) is a clockwise yaw, which is a negative rotation about +Y.
-    for (const pivot of this.frontPivots) pivot.rotation.y = -steer * this.maxSteer
+    for (const { pivot, share } of this.frontPivots) pivot.rotation.y = -steer * this.maxSteer * share
   }
 
   /**

@@ -85,6 +85,7 @@ pub(super) const SHIP: VehicleDef = VehicleDef {
         engine_force: 0.0,
         max_speed: SHIP_MAX_SPEED,
         steer_lock: 0.0,
+        steer_axles: Spec::FRONT_STEER,
         turn_rate: SHIP_TURN_RATE,
         lift: Lift::Sail,
         linear_damping: 0.0,

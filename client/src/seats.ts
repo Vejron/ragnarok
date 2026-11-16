@@ -57,6 +57,11 @@ export interface RideView {
   distance: number
   /** Ticks between shots of the gun its crew fires, for the HUD's reload ring; null for guns that never reload. */
   reload: number | null
+  /**
+   * Ticks a gun loaded all at once takes to load again after its last round (`Refill::Reload`), for the
+   * reload ring while the turret shows `TURRET_EMPTY`.
+   */
+  refill?: number
   seats: readonly SeatView[]
   /** An aeroplane's stall speed, m/s, for its pilot's stall warning; the triplane's when left out. */
   stall?: number

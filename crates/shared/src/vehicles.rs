@@ -10,13 +10,14 @@
 //! `UPDATE_PARITY=1 cargo test -p shared parity` regenerates from this one.
 
 use crate::consts::*;
-use crate::mounts::{Aim, Ammo, Eye, Fire, MountDef, Muzzle, Need, Refill, Show};
+use crate::mounts::{Aim, Ammo, Dial, Eye, Fire, MountDef, Muzzle, Need, Refill, Show};
 use crate::items::*;
 use crate::protocol::{
-    KIND_BUS, KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MISSILE, KIND_MORTAR, KIND_PAK, KIND_PBV, KIND_PLANE, KIND_ROADSTER, KIND_SEAPLANE, KIND_SHIP, KIND_SHIP_GUN, KIND_SNOWMOBILE, KIND_SNOWRACER, KIND_SPORTS, KIND_STRF, KIND_STRV, KIND_SUBMARINE, KIND_TANK, KIND_TECHNICAL, KIND_TITAN, KIND_TUPP, KIND_WALKER, PROJECTILE_BALL, PROJECTILE_BOMB, PROJECTILE_CANNON, PROJECTILE_CANNON_AP,
+    KIND_AMV, KIND_BUS, KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MISSILE, KIND_MORTAR, KIND_PAK, KIND_PBV, KIND_PLANE, KIND_ROADSTER, KIND_SEAPLANE, KIND_SHIP, KIND_SHIP_GUN, KIND_SNOWMOBILE, KIND_SNOWRACER, KIND_SPORTS, KIND_STRF, KIND_STRV, KIND_SUBMARINE, KIND_TANK, KIND_TECHNICAL, KIND_TITAN, KIND_TUPP, KIND_WALKER, PROJECTILE_AMV_BOMB, PROJECTILE_BALL, PROJECTILE_BOMB, PROJECTILE_CANNON, PROJECTILE_CANNON_AP,
     PROJECTILE_EGG, PROJECTILE_HE, PROJECTILE_MORTAR, PROJECTILE_ROTARY, PROJECTILE_SHELL, WEAPON_AUTOCANNON, WEAPON_DRONE, WEAPON_LASER, WEAPON_LOITER, WEAPON_MG, WEAPON_MISSILE, WEAPON_ROCKET, WEAPON_SHELL,
 };
 
+pub mod amv;
 pub mod bus;
 pub mod drone;
 pub mod golf_cart;
@@ -271,6 +272,7 @@ pub static VEHICLES: &[VehicleDef] = &[
     titan::TITAN,
     bus::BUS,
     pbv::PBV,
+    amv::AMV,
 ];
 
 /// Where each kind id's definition is in `VEHICLES`: 0, the jeep's, for ids that are not a vehicle.
@@ -352,7 +354,7 @@ mod tests {
     #[test]
     fn only_armed_kinds_have_a_gun_and_only_the_planes_and_the_hen_have_pilot_arms() {
         assert!(vehicle_def(KIND_PLANE).arms() && vehicle_def(KIND_SEAPLANE).arms() && vehicle_def(KIND_HEN).arms() && !vehicle_def(KIND_TANK).arms());
-        assert!(vehicle_def(KIND_TANK).gun() && vehicle_def(KIND_HELI).gun() && vehicle_def(KIND_PLANE).gun() && vehicle_def(KIND_SEAPLANE).gun() && vehicle_def(KIND_WALKER).gun() && vehicle_def(KIND_STRV).gun() && vehicle_def(KIND_STRF).gun() && vehicle_def(KIND_PBV).gun());
+        assert!(vehicle_def(KIND_TANK).gun() && vehicle_def(KIND_HELI).gun() && vehicle_def(KIND_PLANE).gun() && vehicle_def(KIND_SEAPLANE).gun() && vehicle_def(KIND_WALKER).gun() && vehicle_def(KIND_STRV).gun() && vehicle_def(KIND_STRF).gun() && vehicle_def(KIND_PBV).gun() && vehicle_def(KIND_AMV).gun());
         assert!(!vehicle_def(KIND_JEEP).gun() && !vehicle_def(KIND_SPORTS).gun() && !vehicle_def(KIND_ROADSTER).gun() && !vehicle_def(KIND_HEN).gun());
         assert!(vehicle_def(KIND_TUPP).gun() && !vehicle_def(KIND_TUPP).arms());
         assert!(vehicle_def(KIND_MORTAR).gun() && vehicle_def(KIND_PAK).gun());
@@ -464,6 +466,19 @@ mod tests {
         assert!((turned_x - px + (x - px)).abs() < 1e-4 && (turned_z - pz + (z - pz)).abs() < 1e-4);
         assert_eq!(y, turned_y);
         assert!(y > tank::TANK_TURRET_PIVOT[1] + tank::TANK_TURRET_HALF_HEIGHT, "over the turret's solid");
+    }
+
+    #[test]
+    fn a_car_steers_its_front_axle_and_the_amv_its_first_two_the_second_less() {
+        let jeep = vehicle_def(KIND_JEEP).spec;
+        assert_eq!((jeep.steer_share(0), jeep.steer_share(1)), (1.0, 0.0));
+        let amv = vehicle_def(KIND_AMV).spec;
+        let shares: Vec<f32> = (0..4).map(|axle| amv.steer_share(axle)).collect();
+        // Round the middle of the two rear axles: the second axle is 2.45 m from it, the first 3.95 m.
+        assert!(shares[0] == 1.0 && (shares[1] - 2.45 / 3.95).abs() < 1e-4 && shares[2] == 0.0 && shares[3] == 0.0, "{shares:?}");
+        for def in VEHICLES {
+            assert!(def.spec.steer_axles >= 1 && def.spec.steer_axles < def.spec.axles.len().max(2), "{} leaves an axle unsteered", def.name);
+        }
     }
 
     #[test]

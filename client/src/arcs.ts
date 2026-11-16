@@ -1,16 +1,16 @@
 /**
  * The arcs drawn ahead of what the local player is about to throw, fire or drop: a grenade in hand, a
- * field mortar's bomb, or a plane's bomb, where each would land if let go now.
+ * mortar's bomb, or a plane's bomb, where each would land if let go now.
  */
 
 import { Matrix4, Vector3 } from '@ragnarok/engine'
 import type { VehicleModel } from '@/render/car'
-import { MortarModel } from '@/render/mortar'
+import { isLobGun, type LobGun } from '@/render/mortar'
 import type { MortarArc } from '@/render/mortar-arc'
 import { PlaneModel } from '@/render/plane'
 import type { TrajectoryView } from '@/render/trajectory'
 import type { VehicleFx } from '@/render/tyres'
-import { MORTAR_BARREL_LENGTH, MORTAR_SHELL_SPEED, MORTAR_SHELL_TTL_TICKS, PLANE_BOMB_MIN_HEIGHT } from '@/sim/consts'
+import { PLANE_BOMB_MIN_HEIGHT } from '@/sim/consts'
 import { dropTrajectory, throwTrajectory } from '@/sim/grenade'
 import type { SimMotor } from '@/sim/motor'
 import type { SeatView } from '@/seats'
@@ -32,21 +32,22 @@ export class Arcs {
 
   update({ motor, arc, vehicle, grenade, groundAt }: Aim) {
     const castRay = (origin: [number, number, number], dir: [number, number, number], max: number) => motor!.castRay(origin, dir, max)
-    this.mortarArc.set(motor && arc === 'mortar' && vehicle ? this.mortarPath(vehicle.model, castRay) : null)
+    const model = vehicle?.model
+    const lob = motor && arc === 'mortar' && isLobGun(model) ? model : null
+    this.mortarArc.set(lob ? this.mortarPath(lob, castRay) : null, lob?.lob.radius ?? 0)
     if (motor && arc === 'mortar') this.trajectory.set(null)
     else if (motor && arc === 'bombs' && vehicle) this.trajectory.set(this.bombPath(vehicle, castRay, groundAt))
     else if (motor && grenade) this.trajectory.set(throwTrajectory(castRay, grenade.eye, grenade.yaw, grenade.pitch))
     else this.trajectory.set(null)
   }
 
-  /** For a field mortar's gunner: where a bomb fired now would land, from the tube's muzzle at the mortar's muzzle speed. */
-  private mortarPath(mount: VehicleModel | undefined, castRay: Parameters<typeof dropTrajectory>[0]) {
-    if (!(mount instanceof MortarModel)) return null
-    const { origin, direction } = mount.barrel()
-    const start = origin.clone().addScaledVector(direction, MORTAR_BARREL_LENGTH)
-    const velocity = direction.clone().multiplyScalar(MORTAR_SHELL_SPEED)
+  /** For a mortar's gunner: where a bomb fired now would land, from the tube's muzzle at its bomb's muzzle speed. */
+  private mortarPath(gun: LobGun, castRay: Parameters<typeof dropTrajectory>[0]) {
+    const { origin, direction } = gun.barrel()
+    const start = origin.clone().addScaledVector(direction, gun.lob.length)
+    const velocity = direction.clone().multiplyScalar(gun.lob.speed)
     // Only where it first lands matters: the bomb flies its whole lifetime, as the real one does.
-    return dropTrajectory(castRay, [start.x, start.y, start.z], [velocity.x, velocity.y, velocity.z], 3, MORTAR_SHELL_TTL_TICKS)
+    return dropTrajectory(castRay, [start.x, start.y, start.z], [velocity.x, velocity.y, velocity.z], 3, gun.lob.ttl)
   }
 
   /** For a plane's pilot with bombs on the rack and room under them: where one let go now would land. */

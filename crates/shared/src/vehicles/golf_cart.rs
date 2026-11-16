@@ -53,6 +53,7 @@ pub(super) const GOLF_CART: VehicleDef = VehicleDef {
         engine_force: 3_000.0,
         max_speed: GOLF_CART_MAX_SPEED,
         steer_lock: GOLF_CART_MAX_STEER,
+        steer_axles: Spec::FRONT_STEER,
         turn_rate: 0.0,
         lift: Lift::Wheels,
         linear_damping: 0.05,

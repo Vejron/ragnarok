@@ -2,7 +2,7 @@
 // change the Rust and run `npm run gen:consts`. Client-only constants live in consts.ts.
 
 /** Wire schema version. Bumped on any incompatible protocol or world-format change. */
-export const PROTOCOL_VERSION = 84
+export const PROTOCOL_VERSION = 85
 
 /**
  * Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
@@ -127,6 +127,12 @@ export const KIND_BUS = 31
  * floats, and its tracks paddle it slowly across open water.
  */
 export const KIND_PBV = 32
+
+/**
+ * The AMV XA-361: an eight-wheeled armoured mortar carrier, its turret's two 120 mm tubes lobbing a
+ * pair of bombs in quick succession before a reload.
+ */
+export const KIND_AMV = 33
 
 /** Fixed simulation rate, in ticks per second. */
 export const TICK_RATE = 60
@@ -1229,6 +1235,126 @@ export const LIFT_WHEEL_SEGMENTS = 8
 export const LIFT_RIDER_CENTRE = 0.45
 
 /**
+ * The AMV XA-361 (`KIND_AMV`): an eight-wheeled armoured vehicle with a turret on its back carrying
+ * two 120 mm mortar tubes side by side, which lob their bombs as the field mortar does: the range dial
+ * sets how far, and the tubes rise to the high lob that lands them there. They are shorter-ranged than
+ * the field mortar's (200 m against 300) and burst a little smaller, but fire two in quick succession,
+ * after which the turret takes three seconds to load both tubes again. The driver (seat 0) sits at the
+ * front left beside the engine, the mortar operator (seat 1) under the turret, and one rider (seat 2)
+ * in the back, all sealed in; they get out by the rear door. It floats, and two water jets at the
+ * back push it slowly across open water. Same body axes as a car, and true to size:
+ * 7.7 m long, 2.8 m wide and 2.3 m to the hull roof, 3 m to the turret's top.
+ */
+export const AMV_SEATS = 3
+
+/**
+ * Half the hull's box, metres: 7.7 m long, 2.8 m wide and 1.85 m deep, its belly about 0.45 m off the
+ * ground.
+ */
+export const AMV_HALF_EXTENTS = [1.4, 0.925, 3.85] as const
+
+/** Wheel radius, metres: tall run-flat tyres, 1.2 m across. */
+export const AMV_WHEEL_RADIUS = 0.6
+
+/** How far each wheel is from the middle, metres. */
+export const AMV_TRACK_HALF = 1.12
+
+/** Z of the four axles, front first, metres: two pairs, 1.5 m apart within a pair. */
+export const AMV_AXLES_Z = [-2.35, -0.85, 0.85, 2.35] as const
+export const AMV_HARD_POINT_Y = -0.3
+export const AMV_SUSPENSION_REST = 0.5
+
+/** Where the hull's centre settles over flat ground, metres: measured by `ride_heights_differ_between_cars`. */
+export const AMV_RIDE_HEIGHT = 1.35
+
+/** How far the front axle's wheels turn at a standstill, radians. */
+export const AMV_MAX_STEER = 0.5
+
+/** How many axles from the front steer: the front pair, the second turning less than the first. */
+export const AMV_STEER_AXLES = 2
+
+/** Top speed on the flat, m/s (90 km/h). */
+export const AMV_MAX_SPEED = 25.0
+
+/**
+ * How deep its hull floats, metres: 24 tonnes on its 2.8 × 7.7 m footprint, so the roof is 0.65 m clear
+ * of the water and the turret's top 1.35 m.
+ */
+export const AMV_DRAFT = 1.2
+
+/**
+ * Top speed afloat, m/s (10 km/h), how hard its two water jets push it there, m/s², and its yaw rate at
+ * full stick, rad/s: a long hull, slower to swing round than the Pbv 302's.
+ */
+export const AMV_SWIM_SPEED = 2.8
+export const AMV_SWIM_THRUST = 2.0
+export const AMV_SWIM_TURN = 0.35
+
+/**
+ * The turret's solid: a low drum on the hull roof behind the middle, 2.2 m across, its top 3 m off the
+ * ground, metres. It is part of the hull: it does not come off.
+ */
+export const AMV_TURRET_RING = [0.0, 1.275, 0.9] as const
+export const AMV_TURRET_RADIUS = 1.1
+export const AMV_TURRET_HALF_HEIGHT = 0.35
+
+/**
+ * Where the tubes turn and elevate, in the hull frame: on the turret's trunnions, a little ahead of
+ * the ring's middle.
+ */
+export const AMV_GUN_PIVOT = [0.0, 1.45, 0.7] as const
+
+/** How far apart the two tubes are either side of the middle, metres, and how long they are. */
+export const AMV_TUBE_X = 0.3
+export const AMV_BARREL_LENGTH = 3.0
+
+/**
+ * The range dial, metres: the longest lob is 200 m (`GRAVITY` and the muzzle speed at 45 degrees),
+ * and the steepest the tubes stand reaches about 35 m, so the dial stops at 40.
+ */
+export const AMV_RANGE_MIN = 40.0
+export const AMV_RANGE_MAX = 200.0
+export const AMV_RANGE_START = 100.0
+export const AMV_RANGE_RATE = 50.0
+
+/** Muzzle speed of its bomb, m/s: under `GRAVITY` it reaches 200 m at 45 degrees. */
+export const AMV_SHELL_SPEED = 63.25
+
+/**
+ * How fast the turret follows the operator's look, rad/s, and the tubes the range, rad/s: powered,
+ * so far quicker than the field mortar's crank.
+ */
+export const AMV_TRAVERSE_SLEW = 1.0
+export const AMV_ELEVATION_SLEW = 0.6
+
+/** Ticks between the two rounds of a pair: a third of a second. */
+export const AMV_COOLDOWN_TICKS = 20
+
+/** Rounds in the tubes when loaded: one in each. */
+export const AMV_ROUNDS = 2
+
+/** Ticks after the last round before both tubes are loaded again: three seconds. */
+export const AMV_RELOAD_TICKS = 3 * TICK_RATE
+
+/** Speed the hull is shoved back at when a tube fires, m/s: hardly anything, on 24 tonnes. */
+export const AMV_RECOIL = 0.3
+
+/**
+ * Blast of its bomb: a little smaller and weaker than the field mortar's (`MORTAR_RADIUS`,
+ * `MORTAR_DAMAGE`, `MORTAR_KNOCK`), and the crater it digs, metres.
+ */
+export const AMV_BOMB_RADIUS = 9.5
+export const AMV_BOMB_DAMAGE = 210.0
+export const AMV_BOMB_KNOCK = 25.0
+export const AMV_BOMB_CRATER = [7.5, 1.3] as const
+
+/**
+ * Where a rider who gets out stands, in the hull frame (the middle of a standing soldier): behind the
+ * rear door.
+ */
+export const AMV_DOOR_EXIT = [0.0, -0.4, 4.6] as const
+
+/**
  * The bus (`KIND_BUS`): a twelve-metre city bus on two axles, with a driver at the front and twelve
  * passengers in six rows of window seats behind. It is heavy, slow to get going and slow flat out,
  * and it needs most of a road to turn. On a world with bus lines the server drives them
@@ -1622,7 +1748,7 @@ export const MORTAR_BARREL_LENGTH = 3.2
 
 /**
  * Elevation travel, radians: a high lob at the bottom, nearly vertical at the top. The gunner never sets
- * it by hand: the range dial does (`lob_pitch` in gunnery).
+ * it by hand: the range dial does (`Dial::pitch`).
  */
 export const MORTAR_PITCH_MIN = 0.785
 export const MORTAR_PITCH_MAX = 1.484
@@ -2269,6 +2395,9 @@ export const SNOWRACER_SEAT_HEADS = [[0.0, 0.85, 0.0], [0.0, 0.85, 0.5]] as cons
 
 /** The speed at which a car's steering lock has halved, m/s: the usual `Spec::steer_fade`. */
 export const STEER_FADE = 20.0
+
+/** Only the front axle steers, as on a car. */
+export const FRONT_STEER = 1
 
 /**
  * The sports car (`KIND_SPORTS`): a low two-seater with small wheels and a big engine. Quick in a

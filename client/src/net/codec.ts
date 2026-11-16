@@ -26,7 +26,7 @@ export const OBJ_LINE = 2
 
 /** Entity kinds, generated from `consts.rs`. A vehicle kind's definition is `vehicleDef`. */
 export {
-  KIND_BACKPACK, KIND_BUS, KIND_DEER, KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MISSILE, KIND_MORTAR, KIND_PAK, KIND_PBV, KIND_PLANE, KIND_ROADSTER, KIND_ROOSTER, KIND_SEAPLANE, KIND_SHIP, KIND_SHIP_GUN, KIND_SNOWMOBILE, KIND_SNOWRACER, KIND_SPORTS, KIND_SOLDIER, KIND_STAG, KIND_STRF, KIND_STRV, KIND_SUBMARINE, KIND_TANK, KIND_TECHNICAL, KIND_TITAN, KIND_TUPP, KIND_WALKER, KIND_ZOMBIE,
+  KIND_AMV, KIND_BACKPACK, KIND_BUS, KIND_DEER, KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MISSILE, KIND_MORTAR, KIND_PAK, KIND_PBV, KIND_PLANE, KIND_ROADSTER, KIND_ROOSTER, KIND_SEAPLANE, KIND_SHIP, KIND_SHIP_GUN, KIND_SNOWMOBILE, KIND_SNOWRACER, KIND_SPORTS, KIND_SOLDIER, KIND_STAG, KIND_STRF, KIND_STRV, KIND_SUBMARINE, KIND_TANK, KIND_TECHNICAL, KIND_TITAN, KIND_TUPP, KIND_WALKER, KIND_ZOMBIE,
 } from '@/sim/consts'
 export { isDrone } from '@/sim/vehicles'
 
@@ -188,6 +188,8 @@ export const PROJECTILE_GOLF_BALL = 11
 export const PROJECTILE_CANNON_AP = 12
 /** A Titan's rotary cannon's heavy round: as big as a mortar bomb, fired flat, bursting smaller. */
 export const PROJECTILE_ROTARY = 13
+/** A mortar carrier's bomb, lobbed as a field mortar's is. */
+export const PROJECTILE_AMV_BOMB = 14
 
 /** `Turret`'s flags: a field mortar is hitched to a car, so it is drawn folded up for travel. Mirrors `TURRET_STOWED`. */
 export const TURRET_STOWED = 1 << 0
@@ -198,6 +200,8 @@ export const TURRET_CHARGING = 1 << 2
 export const TURRET_BEAM = 1 << 3
 /** `Turret`'s flags: a machine gun on a mount has overheated and jammed. Mirrors `TURRET_JAMMED`. */
 export const TURRET_JAMMED = 1 << 4
+/** `Turret`'s flags: a gun loaded all at once has fired its last round and is being loaded. Mirrors `TURRET_EMPTY`. */
+export const TURRET_EMPTY = 1 << 5
 
 /** `Arms.flags`: the blip switch is cutting the engine, and either set of guns is jammed. Mirrors `ARMS_*`. */
 export const ARMS_CUT = 1 << 0

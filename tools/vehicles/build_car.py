@@ -3,7 +3,7 @@ Builds the three cars, an open jeep, a low sports car and the thruster Roadster,
 to client/public/models/.
 
     /Applications/Blender.app/Contents/MacOS/Blender -b -P tools/vehicles/build_car.py -- \
-        [--out DIR] [--only jeep|sports|roadster|snowmobile|golf_cart|technical|snowracer|bus] [--preview DIR]
+        [--out DIR] [--only jeep|sports|roadster|snowmobile|golf_cart|technical|snowracer|bus|amv] [--preview DIR]
 
 Everything is procedural and flat-shaded: about a thousand triangles each.
 
@@ -61,6 +61,8 @@ SPECS = {
     "snowracer": dict(half=(0.3, 0.15, 0.75), wheel_radius=0.1, wheel_width=0.1, track=0.25, axle=0.55, ride=0.202),
     # BUS_*: `half` is the frame under the floor; the body stands on it up to 2.3 m over the origin.
     "bus": dict(half=(1.25, 0.5, 6.0), wheel_radius=0.5, wheel_width=0.3, track=1.05, axle=3.0, ride=1.057),
+    # AMV_*: eight wheels on four axles (`axles`, front first in the game's z), under an armoured hull.
+    "amv": dict(half=(1.4, 0.925, 3.85), wheel_radius=0.6, wheel_width=0.4, track=1.12, axle=2.35, axles=(-2.35, -0.85, 0.85, 2.35), ride=1.35),
 }
 
 MATERIAL_COLORS = {
@@ -667,7 +669,115 @@ def build_bus():
     return [body_obj, *wheels]
 
 
-BUILDERS = {"bus": build_bus, "jeep": build_jeep, "sports": build_sports, "roadster": build_roadster, "snowmobile": build_snowmobile, "golf_cart": build_golf_cart, "technical": build_technical, "snowracer": build_snowracer}
+# --------------------------------------------------------------------------------------------------
+# The AMV XA-361: an eight-wheeled armoured carrier with a mortar turret. The upper hull overhangs the
+# wheels, the lower hull runs narrow between them, the glacis slopes up from a blunt nose to a flat
+# roof with the driver's hatch at the front left and the engine's grilles at the front right, and the
+# rear is one big door. The turret (`turret`) yaws about AMV_GUN_PIVOT on a ring behind the middle, and
+# its two tubes in their armoured sleeves (`gun`) pitch about the same point. The axles pair up: the
+# front pair is `pivot_FL`/`pivot_FR` and `pivot_FL2`/`pivot_FR2`, which both steer, the rear pair
+# `pivot_RL2`/`pivot_RR2` and `pivot_RL`/`pivot_RR`.
+# --------------------------------------------------------------------------------------------------
+AMV_GUN_PIVOT = (0.0, -0.7, 1.45)
+AMV_RING = (0.0, -0.9, 0.925)
+AMV_TUBE_X = 0.3
+AMV_BARREL = 3.0
+
+
+def amv_wheels(spec):
+    radius, width = spec["wheel_radius"], spec["wheel_width"]
+    z = radius - spec["ride"]
+    names = ("F", "F2", "R2", "R")
+    built = []
+    for name, game_z in zip(names, spec["axles"]):
+        for side, x in (("L", -spec["track"]), ("R", spec["track"])):
+            tag = name[0] + side + name[1:]
+            pivot = empty(f"pivot_{tag}", (x, -game_z, z))
+            wheel = Part(f"wheel_{tag}", parent=pivot)
+            wheel.cylinder((0, 0, 0), radius, width, DARK, axis="X", segments=14)
+            wheel.cylinder((0, 0, 0), radius * 0.55, width + 0.04, PAINT, axis="X", segments=8)
+            wheel.cylinder((0, 0, 0), radius * 0.2, width + 0.08, STEEL, axis="X", segments=6)
+            # Chunky tread blocks round the tyre, so that rolling can be seen.
+            for k in range(6):
+                a = 2 * math.pi * k / 6
+                wheel.box((0, (radius + 0.015) * math.cos(a), (radius + 0.015) * math.sin(a)), (width * 0.9, 0.2, 0.06), DARK, rx=a + math.pi / 2)
+            built.append(wheel.build())
+    return built
+
+
+def build_amv():
+    spec = SPECS["amv"]
+    half_x, half_y, half_z = spec["half"][0], spec["half"][2], spec["half"][1]
+    body = Part("body")
+    # The upper hull over the wheels: an upright nose plate, sloped glacis, flat roof, upright rear.
+    upper = [(-half_y, -0.1), (half_y, -0.1), (half_y, 0.3), (2.5, half_z), (-half_y, half_z)]
+    body.prism(upper, -half_x, half_x, PAINT)
+    # The lower hull, narrow between the wheels, its nose sloped back under to the belly.
+    lower = [(-3.6, -half_z), (3.0, -half_z), (half_y, -0.1), (-half_y, -0.1), (-half_y, -0.6)]
+    body.prism(lower, -0.82, 0.82, PAINT)
+    # A dark skirt under the overhang, so the wheel wells read as shadow.
+    mirrored(body, 0.84, -0.15, -0.35, (0.04, 6.6, 0.5), DARK)
+    # Stowage bins along the upper sides, and a rail along the roof's edge.
+    for y in (1.2, -1.0, -2.6):
+        mirrored(body, half_x + 0.06, y, 0.45, (0.12, 1.1, 0.5), PAINT)
+    mirrored(body, half_x - 0.06, -0.6, half_z + 0.05, (0.06, 6.4, 0.06), DARK)
+    # The driver's hatch and periscopes at the front left, the engine's grilles at the front right.
+    body.cylinder((-0.6, 2.25, half_z + 0.04), 0.32, 0.08, DARK, segments=10)
+    body.cylinder((-0.6, 2.25, half_z + 0.1), 0.26, 0.06, PAINT, segments=10)
+    for x in (-0.85, -0.6, -0.35):
+        body.box((x, 2.62, 0.82), (0.14, 0.06, 0.08), GLASS, rx=0.52)
+    for k in range(5):
+        body.box((0.65, 2.15 - k * 0.22, half_z + 0.02), (0.9, 0.1, 0.03), DARK)
+    body.box((half_x + 0.02, 2.0, 0.3), (0.04, 0.8, 0.35), DARK)
+    # Headlamps in guards, tow hooks and a bar across the nose.
+    for side in (-1, 1):
+        body.box((side * 1.05, half_y + 0.02, 0.1), (0.26, 0.05, 0.14), LAMP)
+        body.box((side * 1.05, half_y + 0.06, 0.2), (0.34, 0.06, 0.04), DARK)
+        body.box((side * 0.55, 3.5, -0.4), (0.12, 0.25, 0.12), DARK)
+    # The rear: one big door, tail lamps and the exhaust.
+    body.box((0.0, -half_y - 0.02, 0.15), (1.1, 0.05, 1.3), DARK)
+    body.box((0.0, -half_y - 0.04, 0.15), (0.95, 0.04, 1.15), PAINT)
+    body.box((0.3, -half_y - 0.07, 0.15), (0.12, 0.04, 0.06), STEEL)
+    for side in (-1, 1):
+        body.box((side * 1.15, -half_y - 0.02, 0.6), (0.14, 0.04, 0.1), RED)
+    # The turret ring on the roof.
+    body.cylinder(AMV_RING, 1.0, 0.1, DARK, segments=12)
+    body_obj = body.build()
+
+    # The turret yaws about the gun's pivot: a wide, flat-topped box with a chamfered face, the
+    # commander's hatch, sights and smoke dischargers.
+    px, py, pz = AMV_GUN_PIVOT
+    turret = Part("turret", location=AMV_GUN_PIVOT, parent=body_obj)
+    base, top = half_z + 0.05 - pz, half_z + 0.7 - pz
+    face = [(-1.5, base), (0.55, base), (0.95, base + 0.3), (0.75, top), (-1.5, top)]
+    turret.prism(face, -1.0, 1.0, PAINT)
+    turret.box((0.0, -1.55, (base + top) / 2), (1.8, 0.1, top - base - 0.1), DARK)
+    turret.cylinder((-0.55, -0.7, top + 0.06), 0.28, 0.12, PAINT, segments=10)
+    turret.box((0.55, -0.3, top + 0.12), (0.35, 0.3, 0.24), PAINT)
+    turret.box((0.55, -0.15, top + 0.14), (0.25, 0.03, 0.12), GLASS)
+    for side in (-1, 1):
+        for k in range(3):
+            turret.cylinder((side * 1.05, 0.2 - k * 0.15, top - 0.05), 0.05, 0.25, DARK, axis="Y", segments=6)
+    # The slot the tubes rise in, dark between their sleeves.
+    turret.box((0.0, 0.8, (base + top) / 2 + 0.05), (1.0, 0.2, top - base - 0.1), DARK)
+    turret_obj = turret.build()
+
+    # The two tubes pitch about the pivot, each in an armoured sleeve near the breech, behind one mantlet.
+    gun = Part("gun", parent=turret_obj)
+    gun.box((0.0, 0.85, 0.0), (1.0, 0.25, 0.42), PAINT)
+    for side in (-1, 1):
+        x = side * AMV_TUBE_X
+        gun.box((x, 0.6, 0.0), (0.3, 1.4, 0.3), PAINT)
+        gun.cylinder((x, 1.4 + (AMV_BARREL - 1.4) / 2, 0.0), 0.085, AMV_BARREL - 1.4, DARK, axis="Y", segments=10)
+        gun.cylinder((x, AMV_BARREL - 0.08, 0.0), 0.105, 0.16, DARK, axis="Y", segments=10)
+    gun_obj = gun.build()
+    wheels = amv_wheels(spec)
+    # Head points for the seats (the crew is sealed in and never drawn): driver, operator, rider.
+    add_seats([(-0.6, 2.4, 0.6), (0.0, -0.7, 0.8), (0.0, -3.0, 0.5)])
+    return [body_obj, turret_obj, gun_obj, *wheels]
+
+
+BUILDERS = {"amv": build_amv, "bus": build_bus, "jeep": build_jeep, "sports": build_sports, "roadster": build_roadster, "snowmobile": build_snowmobile, "golf_cart": build_golf_cart, "technical": build_technical, "snowracer": build_snowracer}
 
 
 # --------------------------------------------------------------------------------------------------

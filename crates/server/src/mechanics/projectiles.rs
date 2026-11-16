@@ -20,7 +20,7 @@ use crate::game::{Player, World};
 use shared::armor::Pen;
 use shared::consts::*;
 use shared::items::{FLARE_DRAG, FLARE_RADIUS, FLARE_SINK, Falloff, GRENADE_BLAST_RADIUS, GRENADE_BOUNCE, GRENADE_DAMAGE, GRENADE_KNOCK, GRENADE_RADIUS, def};
-use shared::protocol::{PROJECTILE_BALL, PROJECTILE_GOLF_BALL, PROJECTILE_BOMB, PROJECTILE_BULLET, PROJECTILE_CANNON, PROJECTILE_CANNON_AP, PROJECTILE_EGG, PROJECTILE_FLARE, PROJECTILE_GRENADE, PROJECTILE_HE, PROJECTILE_MORTAR, PROJECTILE_ROCKET, PROJECTILE_ROTARY, PROJECTILE_SHELL, ShotEvent, WEAPON_AP, WEAPON_BALL, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_BULLET, WEAPON_EGG, WEAPON_GRENADE, WEAPON_MORTAR, WEAPON_RIFLE, WEAPON_ROCKET, WEAPON_ROTARY, WEAPON_SHELL, WEAPON_SPLASH};
+use shared::protocol::{PROJECTILE_AMV_BOMB, PROJECTILE_BALL, PROJECTILE_GOLF_BALL, PROJECTILE_BOMB, PROJECTILE_BULLET, PROJECTILE_CANNON, PROJECTILE_CANNON_AP, PROJECTILE_EGG, PROJECTILE_FLARE, PROJECTILE_GRENADE, PROJECTILE_HE, PROJECTILE_MORTAR, PROJECTILE_ROCKET, PROJECTILE_ROTARY, PROJECTILE_SHELL, ShotEvent, WEAPON_AP, WEAPON_BALL, WEAPON_AUTOCANNON, WEAPON_BOMB, WEAPON_BULLET, WEAPON_EGG, WEAPON_GRENADE, WEAPON_MORTAR, WEAPON_RIFLE, WEAPON_ROCKET, WEAPON_ROTARY, WEAPON_SHELL, WEAPON_SPLASH};
 use shared::quant::to_cm;
 use std::collections::BTreeMap;
 
@@ -224,6 +224,7 @@ pub fn burst_of(kind: u8) -> Option<Burst> {
         PROJECTILE_BOMB => Burst { crater: [CRATER_BOMB_RADIUS, CRATER_BOMB_DEPTH], hit_knock: BOMB_HIT_KNOCK, ..blast(WEAPON_BOMB, BOMB_RADIUS, BOMB_DAMAGE, BOMB_KNOCK) },
         PROJECTILE_ROTARY => Burst { crater: TITAN_ROUND_CRATER, hit_knock: TITAN_ROUND_HIT_KNOCK, ..blast(WEAPON_ROTARY, TITAN_ROUND_RADIUS, TITAN_ROUND_DAMAGE, TITAN_ROUND_KNOCK) },
         PROJECTILE_MORTAR => Burst { crater: [CRATER_MORTAR_RADIUS, CRATER_MORTAR_DEPTH], hit_knock: MORTAR_HIT_KNOCK, ..blast(WEAPON_MORTAR, MORTAR_RADIUS, MORTAR_DAMAGE, MORTAR_KNOCK) },
+        PROJECTILE_AMV_BOMB => Burst { crater: AMV_BOMB_CRATER, hit_knock: MORTAR_HIT_KNOCK, ..blast(WEAPON_MORTAR, AMV_BOMB_RADIUS, AMV_BOMB_DAMAGE, AMV_BOMB_KNOCK) },
         PROJECTILE_GRENADE => Burst { upward: true, crater: [CRATER_GRENADE_RADIUS, CRATER_GRENADE_DEPTH], ..blast(WEAPON_GRENADE, GRENADE_BLAST_RADIUS, GRENADE_DAMAGE, GRENADE_KNOCK) },
         PROJECTILE_EGG => Burst { upward: true, crater: [CRATER_EGG_RADIUS, CRATER_EGG_DEPTH], ..blast(WEAPON_EGG, HEN_EGG_BLAST_RADIUS, HEN_EGG_DAMAGE, HEN_EGG_KNOCK) },
         PROJECTILE_BALL => Burst { crater: [CRATER_BALL_RADIUS, CRATER_BALL_DEPTH], hit_knock: BALL_HIT_KNOCK, ..blast(WEAPON_BALL, BALL_BLAST_RADIUS, BALL_BLAST_DAMAGE, BALL_BLAST_KNOCK) },
@@ -253,6 +254,8 @@ pub fn pen_of(kind: u8) -> Pen {
         PROJECTILE_CANNON_AP => Pen::ap(45.0, 35.0, 1.0, 40.0),
         PROJECTILE_BOMB => Pen::he(60.0, 250.0),
         PROJECTILE_MORTAR => Pen::he(15.0, 81.0),
+        // A 120 mm bomb, but with a smaller charge than its size would say.
+        PROJECTILE_AMV_BOMB => Pen::he(15.0, 120.0),
         // As big as a mortar bomb, and fired flat at its mark: a little more of it gets through.
         PROJECTILE_ROTARY => Pen::he(25.0, 81.0),
         // Solid iron: through a ship's planks and a car, not a tank.
@@ -272,7 +275,7 @@ fn prefab(kind: u8, round: Round, entity: &mut bevy_ecs::world::EntityWorldMut) 
         PROJECTILE_ROCKET => {
             entity.insert((Motor { accel: ROCKET_ACCEL, top: ROCKET_MAX_SPEED }, Strikes { bodies: true, armor: false, lost_below: false }));
         }
-        PROJECTILE_SHELL | PROJECTILE_HE | PROJECTILE_CANNON | PROJECTILE_CANNON_AP | PROJECTILE_BOMB | PROJECTILE_MORTAR | PROJECTILE_ROTARY | PROJECTILE_BALL => {
+        PROJECTILE_SHELL | PROJECTILE_HE | PROJECTILE_CANNON | PROJECTILE_CANNON_AP | PROJECTILE_BOMB | PROJECTILE_MORTAR | PROJECTILE_AMV_BOMB | PROJECTILE_ROTARY | PROJECTILE_BALL => {
             entity.insert((Gravity(1.0), SHELL, GunStage));
         }
         PROJECTILE_GRENADE => {
@@ -810,7 +813,7 @@ mod tests {
 
     #[test]
     fn everything_explosive_digs_a_crater_inside_its_blast() {
-        for kind in [PROJECTILE_ROCKET, PROJECTILE_SHELL, PROJECTILE_CANNON, PROJECTILE_BOMB, PROJECTILE_MORTAR, PROJECTILE_ROTARY, PROJECTILE_GRENADE, PROJECTILE_EGG] {
+        for kind in [PROJECTILE_ROCKET, PROJECTILE_SHELL, PROJECTILE_CANNON, PROJECTILE_BOMB, PROJECTILE_MORTAR, PROJECTILE_AMV_BOMB, PROJECTILE_ROTARY, PROJECTILE_GRENADE, PROJECTILE_EGG] {
             let [radius, depth] = burst_of(kind).unwrap().crater;
             assert!(radius > 0.0 && depth > 0.0 && depth < radius, "kind {kind}");
         }
@@ -820,13 +823,13 @@ mod tests {
     #[test]
     fn every_kind_does_exactly_one_thing_on_meeting_something_and_moves_at_its_stage() {
         let mut game = game();
-        let kinds = [PROJECTILE_ROCKET, PROJECTILE_GRENADE, PROJECTILE_SHELL, PROJECTILE_CANNON, PROJECTILE_BULLET, PROJECTILE_BOMB, PROJECTILE_MORTAR, PROJECTILE_ROTARY, PROJECTILE_EGG, PROJECTILE_FLARE];
+        let kinds = [PROJECTILE_ROCKET, PROJECTILE_GRENADE, PROJECTILE_SHELL, PROJECTILE_CANNON, PROJECTILE_BULLET, PROJECTILE_BOMB, PROJECTILE_MORTAR, PROJECTILE_AMV_BOMB, PROJECTILE_ROTARY, PROJECTILE_EGG, PROJECTILE_FLARE];
         for kind in kinds {
             let id = launch(&mut game, kind, [0.0, 50.0, 0.0], [0.0, 0.0, -10.0]);
             let e = &game.world.entities;
             let contacts = [e.get::<Strikes>(id).is_some(), e.get::<Bounces>(id).is_some(), e.get::<Sticks>(id).is_some(), e.get::<Round>(id).is_some()];
             assert_eq!(contacts.iter().filter(|&&c| c).count(), 1, "kind {kind}: {contacts:?}");
-            let guns = matches!(kind, PROJECTILE_SHELL | PROJECTILE_CANNON | PROJECTILE_BOMB | PROJECTILE_MORTAR | PROJECTILE_ROTARY);
+            let guns = matches!(kind, PROJECTILE_SHELL | PROJECTILE_CANNON | PROJECTILE_BOMB | PROJECTILE_MORTAR | PROJECTILE_AMV_BOMB | PROJECTILE_ROTARY);
             assert_eq!(e.get::<GunStage>(id).is_some(), guns, "kind {kind}");
             assert_eq!(e.get::<Burst>(id).copied(), burst_of(kind), "kind {kind}");
         }

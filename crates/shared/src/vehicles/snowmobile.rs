@@ -71,6 +71,7 @@ pub(super) const SNOWMOBILE: VehicleDef = VehicleDef {
         engine_force: 16_000.0,
         max_speed: SNOWMOBILE_MAX_SPEED,
         steer_lock: SNOWMOBILE_MAX_STEER,
+        steer_axles: Spec::FRONT_STEER,
         turn_rate: 0.0,
         lift: Lift::Wheels,
         linear_damping: 0.05,

@@ -229,7 +229,7 @@ export class VehicleFx {
       const contact = this.contact.set(local[0], local[1], local[2]).applyQuaternion(this.q).add(this.lastPosition!)
       const steered = wheel < layout.steered
       this.side.set(1, 0, 0)
-      if (steered) this.side.applyQuaternion(this.steerTurn.setFromAxisAngle(VehicleFx.UP, -steer * layout.maxSteer))
+      if (steered) this.side.applyQuaternion(this.steerTurn.setFromAxisAngle(VehicleFx.UP, -steer * layout.maxSteer * (layout.shares?.[wheel] ?? 1)))
       this.side.applyQuaternion(this.q)
       const before = this.last[wheel]
       const sideways = before ? contact.clone().sub(before).divideScalar(dt).dot(this.side) : 0

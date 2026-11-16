@@ -249,7 +249,7 @@ fn swim(body: &mut RigidBody, swim: &shared::vehicles::Swim, controls: CarContro
 mod tests {
     use super::*;
     use shared::consts::TICK_DT;
-    use shared::protocol::{KIND_JEEP, KIND_PBV, KIND_SNOWMOBILE, KIND_TANK};
+    use shared::protocol::{KIND_AMV, KIND_JEEP, KIND_PBV, KIND_SNOWMOBILE, KIND_TANK};
     use shared::world::{NO_WATER, THEME_WINTER, WORLD_VERSION, WorldFile};
 
     /// Flat ground at 0 over 200 m in 2.5 m cells, with a lake 3 m deep from x = -40..40 and
@@ -493,6 +493,57 @@ mod tests {
         physics.set_car_condition(1, CarCondition { wrecked: true, ..CarCondition::NEW });
         let sunk = drive(&mut physics, CarControls::IDLE, 8 * TICKS_PER_SECOND);
         assert!(sunk.position[1] < -1.5, "{sunk:?}");
+    }
+
+    /// An AMV set down on the middle of the calm lake and left for three seconds to settle.
+    fn amv_afloat() -> (Physics, CarPose) {
+        let mut physics = calm(&pond());
+        physics.add_car(1, KIND_AMV, [0.0, 0.5, -55.0], 0.0);
+        let pose = drive(&mut physics, CarControls::IDLE, 3 * TICKS_PER_SECOND);
+        (physics, pose)
+    }
+
+    #[test]
+    fn an_amv_floats_at_its_draft_with_its_roof_clear() {
+        let (_, settled) = amv_afloat();
+        let underside = settled.position[1] - AMV_HALF_EXTENTS[1];
+        assert!((underside + AMV_DRAFT).abs() < 0.05 && settled.up_y > 0.99, "its underside is {AMV_DRAFT} m down: {settled:?}");
+        assert!(settled.position[1] + AMV_HALF_EXTENTS[1] > 0.6, "its roof is out of the water: {settled:?}");
+    }
+
+    #[test]
+    fn an_amv_swims_on_its_water_jets_and_swings_round_with_the_stick() {
+        let (mut physics, start) = amv_afloat();
+        let ahead = drive(&mut physics, FORWARD, 6 * TICKS_PER_SECOND);
+        assert!(ahead.forward_speed > 0.8 * AMV_SWIM_SPEED && ahead.forward_speed <= AMV_SWIM_SPEED + 0.05, "{} m/s", ahead.forward_speed);
+        assert!(ahead.position[2] < start.position[2] - 8.0 && ahead.position[0].abs() < 0.5 && ahead.up_y > 0.99, "{ahead:?}");
+        let (mut physics, _) = amv_afloat();
+        let turned = drive(&mut physics, CarControls { throttle: 1.0, steer: 1.0, ..CarControls::IDLE }, 4 * TICKS_PER_SECOND);
+        assert!(turned.world_dir([0.0, 0.0, -1.0])[0] > 0.5, "it swings its nose to the right: {turned:?}");
+    }
+
+    #[test]
+    fn an_amv_drives_in_off_one_shore_swims_the_lake_and_drives_out_on_the_other() {
+        let mut physics = calm(&shelving());
+        physics.add_car(1, KIND_AMV, [0.0, AMV_RIDE_HEIGHT + 0.1, 0.0], 0.0);
+        drive(&mut physics, CarControls::IDLE, TICKS_PER_SECOND);
+        let (mut low, mut fastest_afloat, mut pose) = (f32::INFINITY, 0.0f32, physics.car_pose(1).unwrap());
+        for _ in 0..50 * TICKS_PER_SECOND {
+            pose = drive(&mut physics, FORWARD, 1);
+            let z = pose.position[2];
+            if (-85.0..-25.0).contains(&z) {
+                low = low.min(pose.position[1]);
+            }
+            if (-75.0..-40.0).contains(&z) {
+                fastest_afloat = fastest_afloat.max(pose.forward_speed);
+            }
+            if z < -98.0 {
+                break;
+            }
+        }
+        assert!(low + AMV_HALF_EXTENTS[1] > 0.0, "driven in at speed it ploughs in, but its roof stays out of the water: down to {low}");
+        assert!(fastest_afloat <= AMV_SWIM_SPEED + 0.3, "no faster than it swims: {fastest_afloat} m/s");
+        assert!(pose.position[2] < -98.0 && pose.position[1] > 1.0 && pose.up_y > 0.95, "it is out on the far shore: {pose:?}");
     }
 
     /// A snowmobile driven flat out with the boost from the shore down the lake, slanting over its swell: the

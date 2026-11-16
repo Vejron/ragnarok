@@ -96,6 +96,7 @@ pub(super) const HEN: VehicleDef = VehicleDef {
         engine_force: 0.0,
         max_speed: WALKER_MAX_SPEED,
         steer_lock: 0.0,
+        steer_axles: Spec::FRONT_STEER,
         turn_rate: WALKER_TURN_RATE,
         lift: Lift::Walker,
         linear_damping: 0.05,

@@ -12,7 +12,7 @@ pub const MORTAR_TRACK_HALF: f32 = 0.85;
 pub const MORTAR_GUN_PIVOT: [f32; 3] = [0.0, 0.7, -0.2];
 pub const MORTAR_BARREL_LENGTH: f32 = 3.2;
 /// Elevation travel, radians: a high lob at the bottom, nearly vertical at the top. The gunner never sets
-/// it by hand: the range dial does (`lob_pitch` in gunnery).
+/// it by hand: the range dial does (`Dial::pitch`).
 pub const MORTAR_PITCH_MIN: f32 = 0.785;
 pub const MORTAR_PITCH_MAX: f32 = 1.484;
 /// The range dial, metres: W and S walk it at `MORTAR_RANGE_RATE` while `BUTTON_RANGE_UP` /
@@ -69,6 +69,7 @@ pub(super) const MORTAR: VehicleDef = VehicleDef {
         engine_force: 0.0,
         max_speed: 1.0,
         steer_lock: 0.0,
+        steer_axles: Spec::FRONT_STEER,
         turn_rate: 0.0,
         lift: Lift::Wheels,
         linear_damping: 0.05,
@@ -101,10 +102,13 @@ pub(super) const MORTAR: VehicleDef = VehicleDef {
     fittings: &[],
 };
 
+/// Its range dial, out to the longest lob of its bomb.
+const DIAL: Dial = Dial { speed: MORTAR_SHELL_SPEED, min: MORTAR_RANGE_MIN, max: MORTAR_RANGE_MAX, start: MORTAR_RANGE_START, rate: MORTAR_RANGE_RATE };
+
 /// The tube, which a towed mortar cannot fire: it is being pulled.
 const MOUNTS: &[MountDef] = &[MountDef {
     seat: 0,
-    aim: Aim::Lob { slew: MORTAR_TRAVERSE_SLEW, pitch_slew: MORTAR_ELEVATION_SLEW },
+    aim: Aim::Lob { slew: MORTAR_TRAVERSE_SLEW, pitch_slew: MORTAR_ELEVATION_SLEW, dial: DIAL },
     muzzle: Muzzle::One(MORTAR_GUN_PIVOT),
     fire: Fire::Shell { kind: PROJECTILE_MORTAR, alt: PROJECTILE_MORTAR, speed: MORTAR_SHELL_SPEED, length: MORTAR_BARREL_LENGTH, ttl: MORTAR_SHELL_TTL_TICKS },
     trigger: BUTTON_FIRE,

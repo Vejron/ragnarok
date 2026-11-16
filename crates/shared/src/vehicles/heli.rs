@@ -84,6 +84,7 @@ pub(super) const HELI: VehicleDef = VehicleDef {
         engine_force: 0.0,
         max_speed: 0.0,
         steer_lock: 0.0,
+        steer_axles: Spec::FRONT_STEER,
         turn_rate: 0.0,
         lift: Lift::Rotor,
         // Air drag is what limits the speed: the rotor's lean gives about 4.9 m/s², so about 25 m/s.

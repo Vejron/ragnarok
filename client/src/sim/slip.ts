@@ -1,5 +1,5 @@
 import {
-  BUS_AXLE_Z, BUS_MAX_STEER, BUS_RIDE_HEIGHT, BUS_TRACK_HALF, GOLF_CART_AXLE_Z, GOLF_CART_MAX_STEER, GOLF_CART_RIDE_HEIGHT, GOLF_CART_TRACK_HALF, TECHNICAL_AXLE_Z, TECHNICAL_MAX_STEER, TECHNICAL_RIDE_HEIGHT, TECHNICAL_TRACK_HALF, JEEP_AXLE_Z, JEEP_MAX_STEER, JEEP_RIDE_HEIGHT, JEEP_TRACK_HALF, SNOWMOBILE_AXLE_Z, SNOWMOBILE_MAX_STEER, SNOWMOBILE_RIDE_HEIGHT, SNOWMOBILE_TRACK_HALF, SNOWRACER_AXLE_Z, SNOWRACER_MAX_STEER, SNOWRACER_RIDE_HEIGHT, SNOWRACER_TRACK_HALF, SPORTS_AXLE_Z, SPORTS_MAX_STEER, SPORTS_RIDE_HEIGHT, SPORTS_TRACK_HALF,
+  AMV_AXLES_Z, AMV_MAX_STEER, AMV_RIDE_HEIGHT, AMV_STEER_AXLES, AMV_TRACK_HALF, BUS_AXLE_Z, BUS_MAX_STEER, BUS_RIDE_HEIGHT, BUS_TRACK_HALF, GOLF_CART_AXLE_Z, GOLF_CART_MAX_STEER, GOLF_CART_RIDE_HEIGHT, GOLF_CART_TRACK_HALF, TECHNICAL_AXLE_Z, TECHNICAL_MAX_STEER, TECHNICAL_RIDE_HEIGHT, TECHNICAL_TRACK_HALF, JEEP_AXLE_Z, JEEP_MAX_STEER, JEEP_RIDE_HEIGHT, JEEP_TRACK_HALF, SNOWMOBILE_AXLE_Z, SNOWMOBILE_MAX_STEER, SNOWMOBILE_RIDE_HEIGHT, SNOWMOBILE_TRACK_HALF, SNOWRACER_AXLE_Z, SNOWRACER_MAX_STEER, SNOWRACER_RIDE_HEIGHT, SNOWRACER_TRACK_HALF, SPORTS_AXLE_Z, SPORTS_MAX_STEER, SPORTS_RIDE_HEIGHT, SPORTS_TRACK_HALF,
   PBV_AXLES_Z, PBV_RIDE_HEIGHT, PBV_TRACK_HALF, STRF_AXLES_Z, STRF_RIDE_HEIGHT, STRF_TRACK_HALF, STRV_AXLES_Z, STRV_RIDE_HEIGHT, STRV_TRACK_HALF, TANK_AXLES_Z, TANK_RIDE_HEIGHT, TANK_TRACK_HALF, PLANE_AXLES_Z, PLANE_MAX_STEER, PLANE_TRACK_HALF, SEAPLANE_AXLES_Z, SEAPLANE_FLOAT_HALF_TRACK, SEAPLANE_MAX_STEER, SEAPLANE_RIDE_HEIGHT,
 } from './consts'
 
@@ -15,6 +15,8 @@ export interface WheelLayout {
   steered: number
   /** Front wheel angle at full lock, radians. */
   maxSteer: number
+  /** How far each steered contact turns, as a share of `maxSteer`; all of it when left out. */
+  shares?: readonly number[]
   /** Width of the mark a tyre leaves, metres. */
   width: number
 }
@@ -28,6 +30,29 @@ export const JEEP_WHEELS: WheelLayout = { contacts: corners(JEEP_TRACK_HALF, -JE
 export const SPORTS_WHEELS: WheelLayout = { contacts: corners(SPORTS_TRACK_HALF, -SPORTS_AXLE_Z, SPORTS_AXLE_Z, SPORTS_RIDE_HEIGHT), steered: 2, maxSteer: SPORTS_MAX_STEER, width: 0.26 }
 export const GOLF_CART_WHEELS: WheelLayout = { contacts: corners(GOLF_CART_TRACK_HALF, -GOLF_CART_AXLE_Z, GOLF_CART_AXLE_Z, GOLF_CART_RIDE_HEIGHT), steered: 2, maxSteer: GOLF_CART_MAX_STEER, width: 0.18 }
 export const TECHNICAL_WHEELS: WheelLayout = { contacts: corners(TECHNICAL_TRACK_HALF, -TECHNICAL_AXLE_Z, TECHNICAL_AXLE_Z, TECHNICAL_RIDE_HEIGHT), steered: 2, maxSteer: TECHNICAL_MAX_STEER, width: 0.36 }
+/**
+ * How far each of the first `steered` axles of `axles` (front first) turns, as a share of the front one's
+ * lock: the server's `Spec::steer_share`, each in proportion to its distance from the middle of the axles
+ * that do not steer.
+ */
+export function steerShares(axles: readonly number[], steered: number): number[] {
+  const fixed = axles.slice(steered)
+  if (fixed.length === 0) return axles.slice(0, steered).map(() => 1)
+  const pivot = fixed.reduce((sum, z) => sum + z, 0) / fixed.length
+  return axles.slice(0, steered).map((z) => (pivot - z) / (pivot - axles[0]!))
+}
+
+/** The AMV's front axles' shares of the lock. */
+export const AMV_STEER_SHARES = steerShares(AMV_AXLES_Z, AMV_STEER_AXLES)
+
+/** The AMV's eight wheels, two to each of its four axles: the front two pairs steer, as in the physics. */
+export const AMV_WHEELS: WheelLayout = {
+  contacts: AMV_AXLES_Z.flatMap((z) => [[-AMV_TRACK_HALF, -AMV_RIDE_HEIGHT, z] as const, [AMV_TRACK_HALF, -AMV_RIDE_HEIGHT, z] as const]),
+  steered: 2 * AMV_STEER_AXLES,
+  shares: AMV_STEER_SHARES.flatMap((share) => [share, share]),
+  maxSteer: AMV_MAX_STEER,
+  width: 0.4,
+}
 export const BUS_WHEELS: WheelLayout = { contacts: corners(BUS_TRACK_HALF, -BUS_AXLE_Z, BUS_AXLE_Z, BUS_RIDE_HEIGHT), steered: 2, maxSteer: BUS_MAX_STEER, width: 0.3 }
 /** The snowmobile's two skis, then its track: a wide mark from the middle of the sled to its tail. */
 export const SNOWMOBILE_WHEELS: WheelLayout = {

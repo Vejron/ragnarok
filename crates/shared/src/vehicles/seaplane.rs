@@ -106,6 +106,7 @@ pub(super) const SEAPLANE: VehicleDef = VehicleDef {
         engine_force: 0.0,
         max_speed: 0.0,
         steer_lock: SEAPLANE_MAX_STEER,
+        steer_axles: Spec::FRONT_STEER,
         turn_rate: 0.0,
         lift: Lift::Wing,
         // Drag is `SEAPLANE_DRAG`, by the square of the speed.

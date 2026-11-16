@@ -72,6 +72,7 @@ pub(super) const PAK: VehicleDef = VehicleDef {
         engine_force: 0.0,
         max_speed: 1.0,
         steer_lock: 0.0,
+        steer_axles: Spec::FRONT_STEER,
         turn_rate: 0.0,
         lift: Lift::Wheels,
         linear_damping: 0.05,
