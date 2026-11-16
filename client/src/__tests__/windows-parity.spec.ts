@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { serverOpenings, type Tri } from '@/sim/carve'
-import { HEAD_ARCH, HEAD_ROUND, HEAD_SQUARE, openingQuads, openingTriangles, openingsOf } from '@/render/windows'
-import { BUILDING_CHURCH, type CollisionMesh } from '@/world'
+import { HEAD_ARCH, HEAD_ROUND, HEAD_SQUARE, drawnOpenings, openingQuads, openingTriangles, openingsOf } from '@/render/windows'
+import { BUILDING_BARN, BUILDING_CHURCH, BUILDING_FARMHOUSE, BUILDING_FIRE_STATION, BUILDING_HALL, BUILDING_OUTBUILDING, BUILDING_PUBLIC, BUILDING_SHOP, BUILDING_VILLA, type CollisionMesh } from '@/world'
 
 /*
  * The server places windows with its own port of `openingsOf` (`shared::windows`), and cuts them out
@@ -74,6 +74,19 @@ function church(): Tri[] {
   ]
 }
 
+/** A hall 31.3 × 16.7 m with walls 6.4 m high, turned 40°: a barn, a hall or a shop by the kind it is given. */
+function hall(): Tri[] {
+  const [W, D, H] = [3130, 1670, 640]
+  const [c, s] = [Math.cos(0.7), Math.sin(0.7)]
+  const p = (x: number, y: number, z: number): [number, number, number] => [Math.round(x * c - z * s) - 3319, y, Math.round(x * s + z * c) + 871]
+  return [
+    ...face([p(0, 0, 0), p(W, 0, 0), p(W, H, 0), p(0, H, 0)], [-s, 0, -c]),
+    ...face([p(W, 0, 0), p(W, 0, D), p(W, H, D), p(W, H, 0)], [c, 0, s]),
+    ...face([p(W, 0, D), p(0, 0, D), p(0, H, D), p(W, H, D)], [s, 0, c]),
+    ...face([p(0, 0, D), p(0, 0, 0), p(0, H, 0), p(0, H, D)], [-c, 0, -s]),
+  ]
+}
+
 function lookOf(tris: Tri[]): CollisionMesh {
   const vertices = new Float32Array(tris.length * 9)
   tris.forEach((t, i) => t.forEach((v, k) => (vertices[i * 9 + k] = v / 100)))
@@ -82,11 +95,29 @@ function lookOf(tris: Tri[]): CollisionMesh {
 
 describe('window placement', () => {
   it('is the same on the server as on the client, house for house', () => {
-    for (const [walls, kind] of [[gable(), 0], [turned(), 0], [dormered(), 0], [church(), BUILDING_CHURCH], [gable(), BUILDING_CHURCH]] as const) {
+    for (const [walls, kind] of [[gable(), 0], [turned(), 0], [dormered(), 0], [church(), BUILDING_CHURCH], [gable(), BUILDING_CHURCH], [hall(), BUILDING_BARN], [hall(), BUILDING_HALL], [hall(), BUILDING_SHOP], [hall(), BUILDING_OUTBUILDING], [gable(), BUILDING_BARN], [turned(), BUILDING_OUTBUILDING], [dormered(), BUILDING_HALL], [church(), BUILDING_SHOP], [hall(), BUILDING_PUBLIC], [church(), BUILDING_PUBLIC], [dormered(), BUILDING_PUBLIC], [gable(), BUILDING_FARMHOUSE], [dormered(), BUILDING_FARMHOUSE], [turned(), BUILDING_VILLA], [gable(), BUILDING_VILLA], [hall(), BUILDING_FIRE_STATION], [gable(), BUILDING_FIRE_STATION]] as const) {
       const ours = openingsOf(lookOf(walls), { first: 0, walls: walls.length, roof: 0, kind })
       const theirs = serverOpenings(walls, kind)
       expect(theirs.length).toBe(ours.length)
-      expect(ours.length).toBeGreaterThan(3)
+      expect(ours.length).toBeGreaterThan(0)
+      ours.forEach((o, i) => {
+        const t = theirs[i]!
+        expect(t.door).toBe(o.door)
+        expect(t.head).toBe(o.head)
+        for (let k = 0; k < 4; k++) for (let a = 0; a < 3; a++) expect(t.corners[k]![a]).toBeCloseTo(o.corners[k]![a]!, 4)
+        for (let a = 0; a < 3; a++) expect(t.normal[a]).toBeCloseTo(o.normal[a]!, 5)
+      })
+    }
+  })
+
+  it('is the same on the server as on the client for a building by a road, whichever way the road lies', () => {
+    const fronts = [[0, 127], [0, -127], [127, 0], [-127, 0], [90, 90], [-110, 64], [34, -122]] as const
+    const cases = [[gable(), 0], [turned(), 0], [dormered(), 0], [hall(), BUILDING_BARN], [hall(), BUILDING_HALL], [turned(), BUILDING_SHOP], [gable(), BUILDING_OUTBUILDING], [hall(), BUILDING_FIRE_STATION], [church(), BUILDING_FIRE_STATION], [church(), BUILDING_CHURCH], [dormered(), BUILDING_VILLA]] as const
+    for (const [walls, kind, front] of cases.flatMap(([walls, kind]) => fronts.map((front) => [walls, kind, front] as const))) {
+      const ours = openingsOf(lookOf(walls), { first: 0, walls: walls.length, roof: 0, kind, front })
+      const theirs = serverOpenings(walls, kind, front)
+      expect(theirs.length).toBe(ours.length)
+      expect(ours.length).toBeGreaterThan(0)
       ours.forEach((o, i) => {
         const t = theirs[i]!
         expect(t.door).toBe(o.door)
@@ -150,6 +181,27 @@ describe('window placement', () => {
       })
       expect(quads * 2).toBe(openingTriangles([o]))
       expect(masonry).toBeGreaterThan(10)
+    }
+  })
+
+  it('draws a barn\'s gate as its frame only, and a house\'s open door with its leaf swung in', () => {
+    for (const [kind, leaves, side] of [[BUILDING_BARN, 0, 1], [0, 1, -1]] as const) {
+      const walls = hall()
+      const door = openingsOf(lookOf(walls), { first: 0, walls: walls.length, roof: 0, kind }).find((o) => o.door)!
+      const open = drawnOpenings([door], true)
+      const sides: number[] = []
+      let quads = 0
+      openingQuads(open, (corners, _rgb, normal) => {
+        quads++
+        // A leaf stands across the wall: its face is along it, not out from it.
+        if (Math.abs(normal[0] * door.normal[0] + normal[2] * door.normal[2]) > 0.5) return
+        const mid = corners.reduce((sum, p) => sum + ((p[0] - door.corners[0][0]) * door.normal[0] + (p[2] - door.corners[0][2]) * door.normal[2]) / 4, 0)
+        sides.push(Math.sign(mid))
+      })
+      expect(quads * 2).toBe(openingTriangles(open))
+      // Each leaf is drawn from both sides.
+      expect(sides.length).toBe(leaves * 2)
+      expect(sides.every((s) => s === side)).toBe(true)
     }
   })
 })

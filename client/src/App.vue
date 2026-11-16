@@ -101,7 +101,7 @@ const slotTaps = computed(() => (stats.value?.touch && stats.value.hands ? hotba
 /** The keys, in pairs, for the pause screen. */
 const KEYS: [string, string][] = [
   ['WASD', 'move'], ['Shift', 'run'], ['Space', 'jump'], ['C', 'crouch'], ['Z', 'lie down'],
-  ['E', 'take, drive, ride or man a gun'], ['1–5 / wheel', 'pick an item'], ['Click', 'fire'],
+  ['E', 'take, drive, ride, man a gun or work a gate'], ['1–5 / wheel', 'pick an item'], ['Click', 'fire'],
   ['Right mouse', 'aim (scope with the sniper or Carl Gustaf)'], ['R', 'reload'], ['X', 'holster'],
   ['G', 'parachute'], ['K', 'skis (winter)'], ['L', 'headlamp'], ['V', 'talk'], ['M', 'read the map'], ['B', 'a Titan: from its head'], ['Space', 'a Titan: leap, hold to fly'],
   ['Tab', 'scores'], ['F3', 'network stats'], ['Esc', 'release the mouse'],

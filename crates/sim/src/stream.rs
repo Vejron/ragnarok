@@ -26,6 +26,9 @@ pub(crate) struct StreamedTile {
     /// Buildings already cut into cells, by their number in `world`, with their floors: unpacking a
     /// big one is most of the work of a hit, so it is done once. `None` for one that cannot be cut.
     shells: std::collections::HashMap<usize, Option<(shared::carve::Shell, Vec<shared::carve::Tri>)>>,
+    /// The cells gone from each carved building, by its number in `world`, as `carve_building` was
+    /// last told: a gate that is opened or shut reshapes what is left of its building.
+    carved: std::collections::HashMap<usize, Vec<u32>>,
 }
 
 /// The manifest's world with nothing in it and no terrain: enough for the slab, the walls and one
@@ -91,7 +94,7 @@ impl Physics {
         for (collider, object) in object_colliders(&world)? {
             handles.push(self.insert_static(collider, object));
         }
-        self.tiles.insert((col, row), StreamedTile { handles, ground, world, shells: Default::default() });
+        self.tiles.insert((col, row), StreamedTile { handles, ground, world, shells: Default::default(), carved: Default::default() });
         self.refresh();
         Ok(())
     }
@@ -134,6 +137,7 @@ impl Physics {
     pub fn carve_building(&mut self, col: u16, row: u16, index: u32, removed: &[u32]) {
         let Some(tile) = self.tiles.get_mut(&(col, row)) else { return };
         let Some(at) = tile.world.building_ids.iter().position(|id| id.index == index) else { return };
+        tile.carved.insert(at, removed.to_vec());
         let world = &tile.world;
         let Some((shell, floor)) = tile.shells.entry(at).or_insert_with(|| building_shell(world, at)).as_ref() else { return };
         let mut gone = shell.untouched();
@@ -144,6 +148,26 @@ impl Physics {
         }
         let shape = building_solid(world, at, Some((shell, &gone)), floor);
         self.replace_building(Obj::Building(shared::world::ObjId { col, row, index }), shape);
+    }
+
+    /// Shuts the gates `shut` of building `index` of streamed tile `(col, row)` (their numbers among
+    /// its openings, `BuildingLook::shut`) and opens its others, as the server has them: a shut gate
+    /// is wall. Takes effect at the next `refresh`. Does nothing for a building that is not there.
+    pub fn set_gates(&mut self, col: u16, row: u16, index: u32, shut: &[u32]) {
+        let Some(tile) = self.tiles.get_mut(&(col, row)) else { return };
+        let Some(at) = tile.world.building_ids.iter().position(|id| id.index == index) else { return };
+        let Some(look) = tile.world.looks.get_mut(at) else { return };
+        if look.shut == shut {
+            return;
+        }
+        look.shut = shut.to_vec();
+        match tile.carved.get(&at).cloned() {
+            Some(removed) => self.carve_building(col, row, index, &removed),
+            None => {
+                let shape = building_shape(&tile.world, at);
+                self.replace_building(Obj::Building(shared::world::ObjId { col, row, index }), shape);
+            }
+        }
     }
 
     /// Carries out queued destructions and reshapes (`destroy`, `replace_building`) and brings the

@@ -70,7 +70,7 @@ export function replaceRibbons(group: Group, ribbons: readonly Ribbon[]) {
 }
 
 /** Every tile's buildings share this one; each vertex carries its colour. */
-const buildingMaterial = toonMaterial({ vertexColors: true, walls: true })
+export const buildingMaterial = toonMaterial({ vertexColors: true, walls: true })
 /** Window glass: a pale translucent sheet, lit, drawn after everything solid and after water. */
 export const glassMaterial = toonMaterial({ color: 0xbcd6ea, opacity: 0.45, blend: 'alpha', depthWrite: false, side: 'double' })
 /** Where the glass is drawn among what is translucent: over water (1), so a pane seen over a lake is blended on top of it. */

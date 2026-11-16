@@ -43,6 +43,14 @@ const MIN_AREA: f64 = 40.0;
 /// How far above the foot of the walls the ground floor lies, centimetres: a plinth a soldier steps
 /// up at the door (under `AUTOSTEP_HEIGHT`), so uneven ground inside the footprint stays under it.
 pub const PLINTH: i32 = 30;
+/// The same for a building that is driven into (a barn, a hall, a garage), centimetres: a sill a wheel rolls over.
+pub const SILL: i32 = 10;
+
+/// How far above the foot of its walls the ground floor of a `kind` (`BUILDING_*`) lies, centimetres.
+pub fn plinth(kind: u8) -> i32 {
+    use crate::world::{BUILDING_BARN, BUILDING_FIRE_STATION, BUILDING_HALL, BUILDING_OUTBUILDING};
+    if matches!(kind, BUILDING_BARN | BUILDING_HALL | BUILDING_OUTBUILDING | BUILDING_FIRE_STATION) { SILL } else { PLINTH }
+}
 /// From one upper floor to the next, centimetres, as the rows of windows are (`windows::STOREY`).
 const STOREY: i32 = 280;
 /// An upper floor is laid only this far below the eaves or more, and with this much room under the ridge, centimetres.
@@ -277,8 +285,9 @@ fn without(polys: Vec<Poly>, frame: &Frame, [a0, a1, b0, b1]: Rect) -> Vec<Poly>
 
 /// The inside of the house on `footprint` (`[x, z]`, centimetres) whose look is `walls` and `roof`
 /// and whose openings are `windows` (`windows::openings_of`): a ground floor on a plinth, and a
-/// floor `SLAB` thick for every storey that fits under the eaves, with stairs up to it. A church
-/// (`kind`, `BUILDING_*`) has the ground floor only: one hall, open to its roof. Empty for a
+/// floor `SLAB` thick for every storey that fits under the eaves, with stairs up to it. A church,
+/// a barn, an outbuilding, a hall, a shop and a fire station (`kind`, `BUILDING_*`) have the ground floor only: one
+/// hall, open to its roof, and where it is driven into that floor is a low sill (`plinth`). Empty for a
 /// house too small, or with no door to come in by. The outer door of a house with an inside is an
 /// open doorway (`facade`).
 pub fn rooms(footprint: &[[i32; 2]], walls: &[Tri], roof: &[Tri], windows: &[Window], kind: u8) -> Vec<Part> {
@@ -332,8 +341,9 @@ pub fn rooms(footprint: &[[i32; 2]], walls: &[Tri], roof: &[Tri], windows: &[Win
     let door_at = frame.of([0, 2].map(|k| (door.corners[0][k] as f64 + door.corners[1][k] as f64) / 2.0));
 
     // The floors: the ground floor on its plinth, then one a storey while there is room under the roof.
-    let mut levels = vec![off_lattice(base + PLINTH)];
-    let storeys = if kind == crate::world::BUILDING_CHURCH { 0 } else { MAX_STOREYS as i32 };
+    let mut levels = vec![off_lattice(base + plinth(kind))];
+    let floored = matches!(kind, crate::world::BUILDING_PLAIN | crate::world::BUILDING_FLATS | crate::world::BUILDING_PUBLIC | crate::world::BUILDING_CABIN | crate::world::BUILDING_FARMHOUSE | crate::world::BUILDING_VILLA);
+    let storeys = if floored { MAX_STOREYS as i32 } else { 0 };
     for k in 1..=storeys {
         let y = off_lattice(base + k * STOREY);
         if y > eave - EAVE_CLEAR || ridge - y < HEADROOM {
@@ -445,7 +455,7 @@ mod tests {
             look.vertices.extend([[t[0], t[1], t[2]], [t[3], t[4], t[5]], [t[6], t[7], t[8]]]);
             look.triangles.push([at, at + 1, at + 2]);
         }
-        let windows = openings_of(&look, [0, walls.len() as u32, roof.len() as u32], 0);
+        let windows = openings_of(&look, [0, walls.len() as u32, roof.len() as u32], 0, [0, 0]);
         (walls, roof, windows)
     }
 
@@ -474,6 +484,22 @@ mod tests {
         let hall = rooms(&footprint, &walls, &roof, &windows, crate::world::BUILDING_CHURCH);
         assert_eq!(floors(&hall).len(), 1);
         assert!(hall.iter().all(|part| part.kind == PART_FLOOR));
+    }
+
+    #[test]
+    fn a_barn_is_one_hall_on_a_sill_low_enough_to_drive_over() {
+        let footprint = rect(2200, 1100);
+        let (walls, roof, _) = house(&footprint, 500, 900);
+        let mut look = crate::world::Look::default();
+        for t in &walls {
+            let base = look.vertices.len() as u32;
+            look.vertices.extend([[t[0], t[1], t[2]], [t[3], t[4], t[5]], [t[6], t[7], t[8]]]);
+            look.triangles.push([base, base + 1, base + 2]);
+        }
+        let windows = openings_of(&look, [0, walls.len() as u32, 0], crate::world::BUILDING_BARN, [0, 0]);
+        let barn = rooms(&footprint, &walls, &roof, &windows, crate::world::BUILDING_BARN);
+        assert_eq!(floors(&barn), vec![off_lattice(SILL)]);
+        assert!(barn.iter().all(|part| part.kind == PART_FLOOR));
     }
 
     #[test]

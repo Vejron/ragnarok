@@ -531,6 +531,10 @@ A church is neither: it is fitted as a nave under one steep gable with its annex
 beside it (`church.rs`), and falls back to `roof::fit` when it is not that simple. Its windows, door
 and inside are a church's too. See [CHURCHES.md](CHURCHES.md).
 
+Barns, outbuildings, halls and shops are told from houses by their tags, the land use they stand in
+and what stands round them (`classify.rs`), and each has doors, windows, an inside and colours of
+its own. See [BUILDING-STYLES.md](BUILDING-STYLES.md).
+
 The mesh (`roof::build`) cuts the footprint into pieces each under one plane of the roof. Every line
 of the whole roof cuts every piece (valleys and dormer sides only the pieces of their wings), and
 each corner of a piece is added to the sides of its neighbours, so pieces always meet corner to
@@ -689,6 +693,7 @@ routed along and drawn on the minimap like any road, but the client does not pai
 under the deck, and nobody spawns on it. A road that crosses under a bridge is not carried.
 `WORLD_VERSION` 24 added each bus stop's sign to its line (`BusLine::signs`).
 `WORLD_VERSION` 25 added the graveyards' tombstones to each tile (`Tile::graves`, GRAVEYARDS.md).
+`WORLD_VERSION` 26 added which way each building's road lies (`Building::front`, BUILDING-STYLES.md).
 
 Both sides check `WORLD_VERSION` and read only the current layout: there is no reading of older
 worlds. When the layout changes, bump it in `crates/shared/src/world.rs` **and**

@@ -68,6 +68,9 @@ pub fn query([south, west, north, east]: [f64; 4]) -> String {
         query.push_str(&format!("way{filter}({bbox});relation{filter}({bbox});"));
     }
     let lifts = crate::osm::LIFTS.join("|");
+    // The nodes that say what a building is (`osm::is_poi`).
+    let uses = crate::classify::PUBLIC.iter().chain(&crate::classify::TRADES).copied().chain(["fire_station"]).collect::<Vec<_>>().join("|");
+    query.push_str(&format!(r#"node["shop"]({bbox});node["amenity"~"^({uses})$"]({bbox});"#));
     query.push_str(&format!(
         r#"way["waterway"~"^(river|stream|canal)$"]({bbox});way["natural"="coastline"]({bbox});way["golf"]({bbox});node["golf"="pin"]({bbox});node["highway"="bus_stop"]({bbox});way["aerialway"~"^({lifts})$"]({bbox});way["piste:type"~"nordic"]({bbox});relation["piste:type"~"nordic"]({bbox});relation["route"="ski"]({bbox});"#
     ));

@@ -1,9 +1,10 @@
 import { Color } from '@ragnarok/engine'
 import type { Sphere } from '@ragnarok/engine'
-import { BUILDING_CHURCH, ROOF_FLAT, type Bridge, type Building, type TileData } from '@/world'
+import { BUILDING_BARN, BUILDING_CABIN, BUILDING_CHURCH, BUILDING_FARMHOUSE, BUILDING_FIRE_STATION, BUILDING_FLATS, BUILDING_HALL, BUILDING_PLAIN, BUILDING_VILLA, BUILDING_OUTBUILDING, BUILDING_PUBLIC, BUILDING_SHOP, ROOF_FLAT, type Bridge, type Building, type TileData } from '@/world'
 import { shellOf } from '@/sim/carve'
 import { drawnOpenings, facing, openingQuads, openingTriangles, openingsFor, type Opening } from './windows'
 import { eaveQuads, eaveTriangles, eavesFor, type EaveStrip } from './eaves'
+import { CHIMNEY_RGB, DETAIL_TRIM_RGB, detailTriangles, detailsOf, type DetailQuad } from './details'
 import { glassBuffers, type GlassBuffers } from './glass'
 import { FLOOR_RGB, INSIDE_RGB, INTERIOR_SHADE, facadeFor, innerOf, type Facade } from './facade'
 import { normalOf, type Poly } from './geom'
@@ -27,10 +28,31 @@ const ROOF_COLORS = [0xb5543f, 0x6d7a8c, 0x8d6e63, 0x4f5d6b, 0x9c4a3c]
 const FLAT_ROOF_COLORS = [0xb0b4ba, 0x9aa0a6, 0xc4c7cc]
 /** A church: whitewashed render under a copper roof gone dark green. */
 const CHURCH_COLORS = { wall: 0xf4f0e6, roof: 0x4a5a55 }
+/** Sheet metal on a pitched roof that is not a house's: dark, darker and weathered grey. */
+const SHEET_ROOF_COLORS = [0x5a5f63, 0x3f4447, 0x7d8388]
+/**
+ * The walls of the kinds that are not houses (`BUILDING_*`), and whether their pitched roofs are
+ * sheet metal: a barn falu red, now and then tarred dark or left to go grey; an outbuilding as the
+ * wooden houses are; a hall profiled sheet in grey, blue, green, cream or red; a shop light render or
+ * brick; a block of flats render or brick; a public building yellow or red brick or white render; a
+ * cabin dark timber; an old house red, ochre or white boards; a villa brick, pale boards or render; a fire station red or yellow brick, or render.
+ */
+const KIND_COLORS: Readonly<Record<number, { walls: readonly number[]; sheet: boolean }>> = {
+  [BUILDING_BARN]: { walls: [0xa8432f, 0xa8432f, 0xa8432f, 0x6e5642, 0x8c857a], sheet: true },
+  [BUILDING_OUTBUILDING]: { walls: [0xa8432f, 0xa8432f, 0x6e5642, 0xd9b45a, 0xeee9dc], sheet: true },
+  [BUILDING_HALL]: { walls: [0xa3abb0, 0x7f93a6, 0x8a9a86, 0xd6d2c8, 0x94564a], sheet: true },
+  [BUILDING_SHOP]: { walls: [0xeee9dc, 0xd8d3c8, 0xe4dcc6, 0x8f3a2c], sheet: false },
+  [BUILDING_FLATS]: { walls: [0xd8d3c8, 0xc9c4b8, 0xe9c9b6, 0x8f3a2c, 0xead0a0, 0xb5bda4], sheet: false },
+  [BUILDING_PUBLIC]: { walls: [0xcfae6a, 0xcfae6a, 0x8f3a2c, 0xf4f0e6], sheet: false },
+  [BUILDING_CABIN]: { walls: [0x6e5642, 0x6e5642, 0x4a3a2e, 0xa8432f], sheet: true },
+  [BUILDING_FARMHOUSE]: { walls: [0xa8432f, 0xa8432f, 0xd9b45a, 0xeee9dc, 0xe4dcc6], sheet: false },
+  [BUILDING_VILLA]: { walls: [0x8f3a2c, 0xcfae6a, 0xeee9dc, 0xc9c4b8, 0xd8c6a3, 0xa9a59c], sheet: false },
+  [BUILDING_FIRE_STATION]: { walls: [0x8f3a2c, 0x8f3a2c, 0xcfae6a, 0xd8d3c8], sheet: false },
+}
 
 /** What of a tile its buildings are drawn from: small enough to send to the worker. */
 export interface BuildingTile {
-  buildings: readonly (Pick<Building, 'first' | 'walls' | 'roof' | 'roofKind' | 'cells' | 'paint' | 'look'> & { kind?: number })[]
+  buildings: readonly (Pick<Building, 'first' | 'walls' | 'roof' | 'roofKind' | 'cells' | 'paint' | 'look'> & { kind?: number; footprint?: Building['footprint'] })[]
   bridges: readonly Bridge[]
   collision: TileData['collision']
   look?: TileData['look']
@@ -62,27 +84,81 @@ export function buildingTransferables(buffers: BuildingBuffers): ArrayBuffer[] {
   return arrays.map((array) => array.buffer as ArrayBuffer)
 }
 
+/** An outbuilding is painted as the house within this of it, metres between their middles. */
+const YARD = 40
+/** The kinds an outbuilding belongs to: the houses. */
+const HOUSES: ReadonlySet<number> = new Set([BUILDING_PLAIN, BUILDING_FARMHOUSE, BUILDING_VILLA, BUILDING_CABIN])
+const yards = new WeakMap<object, Map<number, number | null>>()
+
+/** The house of the tile that outbuilding `index` stands beside (the nearest within `YARD`), if any. */
+function houseOf(tile: Pick<BuildingTile, 'buildings'>, index: number): number | null {
+  let known = yards.get(tile.buildings)
+  if (!known) yards.set(tile.buildings, (known = new Map()))
+  const cached = known.get(index)
+  if (cached !== undefined) return cached
+  const middle = (footprint: Building['footprint']) => {
+    let [x, z] = [0, 0]
+    for (const p of footprint) {
+      x += p[0] / footprint.length
+      z += p[1] / footprint.length
+    }
+    return [x, z] as const
+  }
+  let best: number | null = null
+  const own = tile.buildings[index]?.footprint
+  if (own && own.length > 0) {
+    const [x, z] = middle(own)
+    let nearest = YARD
+    tile.buildings.forEach((other, at) => {
+      if (at === index || !other.footprint || other.footprint.length === 0 || !HOUSES.has(other.kind ?? 0)) return
+      const [ox, oz] = middle(other.footprint)
+      const distance = Math.hypot(ox - x, oz - z)
+      if (distance < nearest) {
+        nearest = distance
+        best = at
+      }
+    })
+  }
+  known.set(index, best)
+  return best
+}
+
 /**
  * The wall and roof colours of building `index`: the ones the importer gave it, or a church's, or
- * else picked from the palettes, stable between reloads and varied across tiles by `salt`.
+ * else picked from the palettes (its kind's, where that has its own), stable between reloads and
+ * varied across tiles by `salt`. An outbuilding takes the colours of the wooden house in its yard.
  */
 export function buildingColors(tile: Pick<BuildingTile, 'buildings'>, index: number, salt: number): { wall: number; roof: number } {
   const building = tile.buildings[index]!
   if (building?.paint) return { wall: building.paint[0], roof: building.paint[1] }
   if (building?.kind === BUILDING_CHURCH) return CHURCH_COLORS
-  const palette = building?.roofKind === ROOF_FLAT ? FLAT_ROOF_COLORS : ROOF_COLORS
-  return { wall: BUILDING_COLORS[(index + salt) % BUILDING_COLORS.length]!, roof: palette[(index + salt) % palette.length]! }
+  const kind = KIND_COLORS[building?.kind ?? 0]
+  const palette = building?.roofKind === ROOF_FLAT ? FLAT_ROOF_COLORS : kind?.sheet ? SHEET_ROOF_COLORS : ROOF_COLORS
+  const walls = kind?.walls ?? BUILDING_COLORS
+  const own = { wall: walls[(index + salt) % walls.length]!, roof: palette[(index + salt) % palette.length]! }
+  // An outbuilding beside a wooden house is painted as the house, and roofed as it where both roofs are pitched.
+  const house = building?.kind === BUILDING_OUTBUILDING ? houseOf(tile, index) : null
+  if (house === null) return own
+  const colors = buildingColors(tile, house, salt)
+  const boards = WALL_SURFACES.get(colors.wall)
+  if (boards !== Surface.Upright && boards !== Surface.Lap) return own
+  const pitched = building!.roofKind !== ROOF_FLAT && tile.buildings[house]!.roofKind !== ROOF_FLAT
+  return { wall: colors.wall, roof: pitched ? colors.roof : own.roof }
 }
 
 /** Patterns drawn on a building's faces by the shader (walls.wgsl.ts in the engine), as a vertex's custom x. */
 export const Surface = { Plain: 0, Upright: 1, Lap: 2, Brick: 3, Render: 4, Tiles: 5, Sheet: 6, Felt: 7, Ashlar: 8, Shingles: 9 } as const
 export type Surface = (typeof Surface)[keyof typeof Surface]
 
-/** Falu red and dark stained wood are upright boards; ochre, white and beige lap boards; the dark red brick; greys and sage render. */
+/**
+ * Falu red, dark stained and bare grey wood are upright boards, and so is a hall's profiled sheet,
+ * ribbed the same way; ochre, white and beige lap boards; the dark red brick; greys and sage render.
+ */
 const WALL_SURFACES = new Map<number, Surface>([
-  [0xa8432f, Surface.Upright], [0x6e5642, Surface.Upright],
+  [0xa8432f, Surface.Upright], [0x6e5642, Surface.Upright], [0x8c857a, Surface.Upright], [0x4a3a2e, Surface.Upright],
+  [0xa3abb0, Surface.Upright], [0x7f93a6, Surface.Upright], [0x8a9a86, Surface.Upright], [0xd6d2c8, Surface.Upright], [0x94564a, Surface.Upright],
   [0xd9b45a, Surface.Lap], [0xeee9dc, Surface.Lap], [0xe4dcc6, Surface.Lap], [0xd8c6a3, Surface.Lap],
-  [0x8f3a2c, Surface.Brick],
+  [0x8f3a2c, Surface.Brick], [0xcfae6a, Surface.Brick],
   [0xc9c4b8, Surface.Render], [0xb5bda4, Surface.Render], [0xa9a59c, Surface.Render],
   // France (the importer's `paint::WALLS`): limestone and sandstone are cut stone, the brick brick, plaster and ochre render.
   [0xf0e6cc, Surface.Ashlar], [0xe6d3b2, Surface.Ashlar], [0xdcc6a2, Surface.Ashlar],
@@ -277,13 +353,18 @@ export function buildingBuffers(tile: BuildingTile, salt: number, destroyed: Rea
     const seen = destroyed.has(index) ? null : looked(index)
     return seen ? eavesFor(look!, seen) : null
   })
+  // A house's chimney and porch.
+  const details: (DetailQuad[] | null)[] = tile.buildings.map((_, index) => {
+    const seen = destroyed.has(index) ? null : looked(index)
+    return seen ? detailsOf(look!, seen, openings[index] ?? []) : null
+  })
   const fan = (polys: readonly Poly[]) => polys.reduce((n, poly) => n + poly.length - 2, 0)
   let count = 0
   tile.buildings.forEach((building, index) => {
     const own = faces[index]
     const seen = destroyed.has(index) ? null : looked(index)
     const facade = facades[index]
-    if (seen && facade) count += 2 * (fan(facade.walls) + fan(facade.roof)) + fan(facade.floor) + 2 * facade.inside.length + openingTriangles(openings[index] ?? []) + eaveTriangles(eaves[index] ?? [])
+    if (seen && facade) count += 2 * (fan(facade.walls) + fan(facade.roof)) + fan(facade.floor) + 2 * facade.inside.length + openingTriangles(openings[index] ?? []) + eaveTriangles(eaves[index] ?? []) + detailTriangles(details[index] ?? [])
     else if (own) count += own.roof.length
     else if (own === null) count += building.walls + building.roof
   })
@@ -327,6 +408,10 @@ export function buildingBuffers(tile: BuildingTile, salt: number, destroyed: Rea
         soup.surface = masonry ? surfaces.wall : Surface.Plain
         soup.quad(facing(corners, normal), masonry ? [wall.r, wall.g, wall.b] : rgb)
       })
+      for (const { corners, normal, paint } of details[index] ?? []) {
+        soup.surface = paint === 'chimney' ? Surface.Brick : paint === 'roof' ? surfaces.roof : Surface.Plain
+        soup.quad(facing(corners, normal), paint === 'chimney' ? CHIMNEY_RGB : paint === 'roof' ? [roof.r, roof.g, roof.b] : DETAIL_TRIM_RGB)
+      }
       soup.surface = Surface.Plain
     } else if (own) soup.faces(own, wall, roof)
     else {

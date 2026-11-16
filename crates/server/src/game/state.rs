@@ -912,6 +912,50 @@ impl World {
         }
     }
 
+    /// Opens (`open`) or shuts gate `opening` of building `id` (its number among the building's
+    /// openings): a shut gate is wall in the building's collider from the next step, and everyone
+    /// is told (`Fresh::gates`). False, and nothing done, when there is no such gate or it is so already.
+    pub fn set_gate(&mut self, id: ObjId, opening: u32, open: bool) -> bool {
+        let Some(&index) = self.buildings_by_id.get(&id) else { return false };
+        {
+            let Some(look) = self.map.looks.get_mut(index) else { return false };
+            if look.inside.is_empty() || !look.windows.get(opening as usize).is_some_and(|w| w.is_gate()) || look.shut.contains(&opening) != open {
+                return false;
+            }
+            if open {
+                look.shut.retain(|&gate| gate != opening);
+            } else {
+                look.shut.push(opening);
+                look.shut.sort_unstable();
+            }
+        }
+        let shape = match self.carves.get(&id) {
+            Some(carving) => sim::building_solid(&self.map, index, Some((&carving.shell, &carving.removed)), &carving.floor),
+            None => sim::building_shape(&self.map, index),
+        };
+        self.physics.replace_building(Obj::Building(id), shape);
+        self.fresh.gates.push((id, opening, open));
+        true
+    }
+
+    /// Whether gate `opening` of building `id` stands shut; `None` when there is no such gate.
+    pub fn gate_shut(&self, id: ObjId, opening: u32) -> Option<bool> {
+        let look = self.map.looks.get(*self.buildings_by_id.get(&id)?)?;
+        (!look.inside.is_empty() && look.windows.get(opening as usize).is_some_and(|w| w.is_gate())).then(|| look.shut.contains(&opening))
+    }
+
+    /// The gates of the world that stand open: the building and the gate's number among its openings.
+    pub fn open_gates(&self) -> Vec<(ObjId, u32)> {
+        let mut open = Vec::new();
+        for (look, &id) in self.map.looks.iter().zip(&self.map.building_ids) {
+            if look.inside.is_empty() {
+                continue;
+            }
+            open.extend(shared::windows::gates(&look.windows).into_iter().filter(|gate| !look.shut.contains(gate)).map(|gate| (id, gate)));
+        }
+        open
+    }
+
     /// Building `id` cut into cells, as `physics::building_shell`.
     pub(super) fn cut_building(&self, id: ObjId) -> Option<Carving> {
         let index = *self.buildings_by_id.get(&id)?;
@@ -949,6 +993,8 @@ pub struct Fresh {
     pub built: FreshBuilt,
     /// Messages for everyone (`NOTICE_SAY`): a golf ball holed.
     pub said: Vec<String>,
+    /// Gates opened or shut: the building, the gate's number among its openings, and whether it is open now.
+    pub gates: Vec<(ObjId, u32, bool)>,
 }
 
 /// A building hurt: its identity, its damage stage and where a blast marked it.

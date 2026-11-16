@@ -98,6 +98,7 @@ fn samples() -> Vec<(&'static str, Vec<u8>)> {
         case("damaged", S_DAMAGED, &Damaged { tag: S_DAMAGED, buildings: vec![DamagedBuilding { col: 2, row: 3, index: 70_000, stage: 3, mark: Some([1000, 20, -1000]) }, DamagedBuilding { col: 0, row: 1, index: 4, stage: 1, mark: None }] }),
         case("carved", S_CARVED, &Carved { tag: S_CARVED, live: true, buildings: vec![CarvedBuilding { col: 2, row: 3, index: 70_000, point: [1000, 20, -1000], blasted: vec![5, 300], fell: vec![9] }] }),
         case("built", S_BUILT, &Built { tag: S_BUILT, live: true, placed: vec![BuiltCube { x: -3, y: 40, z: 70_000, color: 11, material: 0 }], removed: vec![CubePos { x: 1, y: 2, z: -3 }], fell: vec![CubePos { x: 0, y: 41, z: 0 }, CubePos { x: -1, y: 41, z: 0 }] }),
+        case("gates", S_GATES, &Gates { tag: S_GATES, live: true, gates: vec![GateState { col: 2, row: 3, index: 70_000, door: 300, open: true }, GateState { col: 0, row: 1, index: 4, door: 0, open: false }] }),
         case("cratered", S_CRATERED, &Cratered { tag: S_CRATERED, live: false, craters: vec![CraterEntry { x: -70_000, z: 1200, radius: 560, depth: 100, age: 1799 }] }),
         case("dug", S_DUG, &Dug { tag: S_DUG, tiles: vec![DugTile { col: 2, row: 3, runs: vec![40, 3, -12, -300, -1, 70_000, 1, -5] }] }),
         case("hit", S_HIT, &Hit { tag: S_HIT, role: HIT_TAKEN, kind: HIT_BODY, amount: 25, weapon: WEAPON_RIFLE, bearing: Some(-1571), x: 100, y: 90, z: -250, target: 7 }),

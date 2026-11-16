@@ -1,3 +1,4 @@
+import { detailTriangles, detailsOf } from '@/render/details'
 import { describe, expect, it } from 'vitest'
 import { Shell, type Tri } from '@/sim/carve'
 import { lookChunk, lookFracture } from '@/render/lookfracture'
@@ -188,7 +189,7 @@ describe('a tile\'s buildings with eaves', () => {
     const strips = eavesOf(look, range)
     const facade = facadeOf(look, range)
     const fan = (polys: readonly (readonly unknown[])[]) => polys.reduce((n, poly) => n + poly.length - 2, 0)
-    expect(buffers.positions.length / 9).toBe(2 * (fan(facade.walls) + fan(facade.roof)) + fan(facade.floor) + openingTriangles(openingsOf(look, range)) + eaveTriangles(strips))
+    expect(buffers.positions.length / 9).toBe(2 * (fan(facade.walls) + fan(facade.roof)) + fan(facade.floor) + openingTriangles(openingsOf(look, range)) + eaveTriangles(strips) + detailTriangles(detailsOf(look, range, openingsOf(look, range))))
     // Every vertex outside the walls' box (above the frames) is the overhang: tiles on top, plain elsewhere.
     let top = 0
     let plain = 0

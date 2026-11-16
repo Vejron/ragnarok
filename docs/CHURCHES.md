@@ -11,9 +11,9 @@ with a sacristy 7.3 × 7.0 m against its north wall.
 
 ## What is a church
 
-`assemble::kind_of` reads the OpenStreetMap tags: `building=church`, `chapel` or `cathedral`, or
+`classify::is_church` reads the OpenStreetMap tags: `building=church`, `chapel` or `cathedral`, or
 `amenity=place_of_worship` with `religion=christian`. The result is `Building::kind`
-(`BUILDING_CHURCH`, else `BUILDING_PLAIN`), a byte in the tile after `roof_kind`
+(`BUILDING_CHURCH`; the other kinds are in [BUILDING-STYLES.md](BUILDING-STYLES.md)), a byte in the tile after `roof_kind`
 (`WORLD_VERSION` 20). Everything below hangs on it. A church is never held to a house's height
 (`cap`).
 

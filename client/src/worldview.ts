@@ -1,5 +1,5 @@
 import { CRATER_FADE, Group, type Mesh, type Scene, type Vector3 } from '@ragnarok/engine'
-import { OBJ_LINE, OBJ_TREE, type Built, type CarvedBuilding, type CraterEntry, type DamagedBuilding, type DestroyedObject, type DugTile } from './net/codec'
+import { OBJ_LINE, OBJ_TREE, type Built, type CarvedBuilding, type GateState, type CraterEntry, type DamagedBuilding, type DestroyedObject, type DugTile } from './net/codec'
 import type { Effects } from './render/effects'
 import { FallingTrees, type TreeFx, type TreeNoise } from './render/falling'
 import { BuildingDamage } from './render/damage'
@@ -13,6 +13,7 @@ import { reliefPixels, terrainBuffers, terrainLevel, TERRAIN_LOD_ERRORS, type Pi
 import { winter } from './render/season'
 import { buildWater, disposeWater } from './render/water'
 import { Glazing } from './render/glazing'
+import { GateView } from './render/gates'
 import { Debris } from './render/debris'
 import { shellOf } from './sim/carve'
 import { CHUNK, Construct, cellAt, chunkKey, chunkOf, cubeCentre, posKey, type Cube, type Pos } from './sim/construct'
@@ -153,6 +154,8 @@ export class WorldView {
 
   /** Which window panes are broken, and the breaking of them. */
   readonly glazing: Glazing
+  /** The gates of barns, halls and garages: which stand open, and their leaves. */
+  readonly gateView = new GateView()
 
   /** `debris` is where broken glass flies; without one (tests) it is thrown into a pile of its own that is never drawn. */
   constructor(private readonly scene: Scene, debris: Debris = new Debris()) {
@@ -174,6 +177,7 @@ export class WorldView {
   update(dt: number, effects: Effects, camera: Vector3, fx: TreeFx) {
     this.fallingTrees.update(dt, fx)
     this.damage.update(dt, effects, camera, fx.smoke)
+    this.gateView.update(dt)
     this.reshapeNear(camera)
     this.updateCubes(dt, effects)
     // Marks that have faded out are dropped from the ground's shader.
@@ -602,6 +606,9 @@ export class WorldView {
     this.preparedWith.delete(key)
     this.damage.attach(key, tile, salt)
     this.glazing.attach(key, tile, group, this.damage.carved(key))
+    this.gateView.attach(key, tile, group, this.damage.carved(key))
+    // The physics takes every gate as shut until it is told which are open.
+    for (const index of this.gateView.opened(key)) this.motor?.setGates(ref.col, ref.row, index, this.gateView.shut(key, index))
     if (this.damage.carved(key).size > 0) this.reshapeBuildings(key)
     // Trees that fell before this tile streamed in (or while it was away) are already down.
     for (const [index, yaw] of this.fellTrees.get(key) ?? []) this.fellTree(key, index, yaw, false)
@@ -615,6 +622,7 @@ export class WorldView {
       this.loaded.delete(key)
       this.damage.detach(key)
       this.glazing.detach(key)
+      this.gateView.detach(key)
       disposeTile(group)
       if (water) disposeWater(water)
       this.groups.delete(key)
@@ -679,6 +687,18 @@ export class WorldView {
   }
 
   /**
+   * The server says these gates were opened or shut. Each moves to where it now stands (at once when
+   * `live` is false, the catch-up on joining), and is wall or gateway in the prediction's physics.
+   */
+  gates(gates: readonly GateState[], live: boolean) {
+    for (const gate of gates) {
+      const key = tileKey(gate.col, gate.row)
+      this.gateView.set(key, gate.index, gate.door, gate.open, live)
+      if (this.loaded.has(key)) this.motor?.setGates(gate.col, gate.row, gate.index, this.gateView.shut(key, gate.index))
+    }
+  }
+
+  /**
    * The server says blasts took these cells out of standing buildings. The building is redrawn
    * without them, they fly or fall, and the walls stop being solid there in both simulations.
    * `live` is false for the catch-up on joining.
@@ -688,6 +708,7 @@ export class WorldView {
       const key = tileKey(b.col, b.row)
       const first = this.damage.carve(key, b.index, b.blasted, b.fell, live ? b.point : null, live)
       this.glazing.holed(key, b.index, this.damage.carved(key).get(b.index) ?? new Set(), live)
+      this.gateView.holed(key, b.index, this.damage.carved(key).get(b.index) ?? new Set())
       const dirty = this.reshape.get(key) ?? new Set<number>()
       dirty.add(b.index)
       this.reshape.set(key, dirty)
@@ -754,7 +775,7 @@ export class WorldView {
 
   /** Whether the world is as its files have it: nothing a server said has changed it. */
   get pristine() {
-    return this.fellTrees.size === 0 && this.brokenLines.size === 0 && this.damage.untouched && this.glazing.untouched && this.dugTiles.size === 0 && this.marked.length === 0 && this.construct.size === 0
+    return this.fellTrees.size === 0 && this.brokenLines.size === 0 && this.damage.untouched && this.glazing.untouched && this.gateView.untouched && this.dugTiles.size === 0 && this.marked.length === 0 && this.construct.size === 0
   }
 
   /**
@@ -767,6 +788,7 @@ export class WorldView {
     this.fallingTrees.clear()
     this.damage.reset()
     this.glazing.reset()
+    this.gateView.reset()
     this.reshape.clear()
     this.dugTiles.clear()
     this.craters.length = 0
@@ -787,6 +809,7 @@ export class WorldView {
     this.scene.craters.clear()
     this.damage.dispose()
     this.glazing.dispose()
+    this.gateView.dispose()
     this.cubes.dispose()
     this.builder?.dispose()
   }

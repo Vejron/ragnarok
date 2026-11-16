@@ -69,6 +69,10 @@ impl Game {
         for batch in cubes.chunks(BUILT_BATCH) {
             out.push(encode(&built_message(false, batch.to_vec(), Vec::new(), Vec::new())));
         }
+        let gates: Vec<GateState> = world.open_gates().into_iter().map(|(id, door)| GateState { col: id.col, row: id.row, index: id.index, door: door as u16, open: true }).collect();
+        if !gates.is_empty() {
+            out.push(encode(&Gates { tag: S_GATES, live: false, gates }));
+        }
         if let Some(objective) = self.scenario.as_ref().map(Scenario::objective).filter(|o| !o.is_empty()) {
             out.push(encode(&Notice { tag: S_NOTICE, kind: NOTICE_OBJECTIVE, text: objective.into() }));
         }

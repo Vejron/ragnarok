@@ -66,7 +66,7 @@ export function lookSlice(look: CollisionMesh, range: LookRange): { look: Collis
     }
     triangles[k] = at
   }
-  return { look: { vertices: Float32Array.from(vertices), triangles }, range: { first: 0, walls: range.walls, roof: range.roof, kind: range.kind ?? 0, inside: range.inside ?? new Int32Array(0) } }
+  return { look: { vertices: Float32Array.from(vertices), triangles }, range: { first: 0, walls: range.walls, roof: range.roof, kind: range.kind ?? 0, front: range.front ?? [0, 0], inside: range.inside ?? new Int32Array(0) } }
 }
 
 export class LookWorker {

@@ -3,7 +3,7 @@ import tables from './sim/tables.generated.json'
 
 /** Mirrors `crates/shared/src/world.rs`. Coordinates are metres: +X east, +Z south, +Y up. */
 
-export const WORLD_VERSION = 25
+export const WORLD_VERSION = 26
 
 /** `Manifest::theme`, mirrors `crates/shared/src/world.rs`. */
 export const THEME_WINTER = 1
@@ -222,6 +222,11 @@ export interface Building {
   roofKind: number
   /** `BUILDING_*`: what the building is, where that changes its windows, its inside and its colours. */
   kind: number
+  /**
+   * Which way the road it stands by lies from its middle, `[x, z]` of a unit vector times 127: the
+   * wall facing that way is its front, with its door. `[0, 0]` where no road is near.
+   */
+  front: [number, number]
   /** Its 1 m cubes as the importer baked them, or null for a building with none (it keeps its triangles). */
   cells: Cells | null
   /** `[wall, roof]` as `0xRRGGBB` where the importer knows them (France: the roof from the aerial photo), else null. */
@@ -230,7 +235,7 @@ export interface Building {
    * Its own walls and roof in the tile's `look`, to be drawn: `walls` triangles from `first`, then
    * `roof`. Null when it has none (a world made before looks): it is then drawn as its cubes.
    */
-  look?: { first: number; walls: number; roof: number; kind?: number; footprint?: Int32Array; inside?: Int32Array } | null
+  look?: { first: number; walls: number; roof: number; kind?: number; front?: readonly [number, number]; footprint?: Int32Array; inside?: Int32Array } | null
 }
 
 /**
@@ -274,9 +279,24 @@ export const ROOF_SHED = 1
 export const ROOF_GABLE = 2
 export const ROOF_HIP = 3
 
-/** `Building.kind`, mirrors `BUILDING_*` in `crates/shared/src/world.rs`: a building like any other, and a church. */
+/**
+ * `Building.kind`, mirrors `BUILDING_*` in `crates/shared/src/world.rs`: a building like any other, a
+ * church, a barn, an outbuilding (a garage, a shed), a hall (a factory, a warehouse), a shop, a block
+ * of flats, a public building (a school, a town hall), a cabin, an old wooden house, a post-war villa
+ * and a fire station.
+ */
 export const BUILDING_PLAIN = 0
 export const BUILDING_CHURCH = 1
+export const BUILDING_BARN = 2
+export const BUILDING_OUTBUILDING = 3
+export const BUILDING_HALL = 4
+export const BUILDING_SHOP = 5
+export const BUILDING_FLATS = 6
+export const BUILDING_PUBLIC = 7
+export const BUILDING_CABIN = 8
+export const BUILDING_FARMHOUSE = 9
+export const BUILDING_VILLA = 10
+export const BUILDING_FIRE_STATION = 11
 
 export interface Road {
   width: number
@@ -584,7 +604,7 @@ function flatIndices(triangles: readonly number[][]): Uint32Array {
 
 export function decodeTile(bytes: Uint8Array): TileData {
   const [buildings, roads, [vertices, triangles], ground, cover, trees, water, streams, bridges, detail, rails, ski, lines, stones, look, graves] = decode(bytes) as [
-    [number, number[][], number, number, number, number, number, number, [number[], number[], Uint8Array, Uint8Array], [number, number] | null][],
+    [number, number[][], number, number, number, number, number, number, [number, number], [number[], number[], Uint8Array, Uint8Array], [number, number] | null][],
     [number, number, boolean, number[][]][],
     [number[][], number[][]],
     [number, Uint8Array],
@@ -603,7 +623,7 @@ export function decodeTile(bytes: Uint8Array): TileData {
   ]
   const looks = look[2]
   return {
-    buildings: buildings.map(([height, footprint, base, first, walls, roof, roofKind, kind, cells, paint], index) => ({
+    buildings: buildings.map(([height, footprint, base, first, walls, roof, roofKind, kind, front, cells, paint], index) => ({
       height: metres(height),
       footprint: footprint.map(point),
       base: metres(base),
@@ -612,12 +632,13 @@ export function decodeTile(bytes: Uint8Array): TileData {
       roof,
       roofKind,
       kind,
+      front,
       cells:
         cells[1][0]! * cells[1][1]! * cells[1][2]! > 0
           ? { origin: cells[0] as [number, number, number], dims: cells[1] as [number, number, number], solid: cells[2], roof: cells[3] }
           : null,
       paint,
-      look: looks[index] && looks[index]![1]! + looks[index]![2]! > 0 ? { first: looks[index]![0]!, walls: looks[index]![1]!, roof: looks[index]![2]!, kind, footprint: Int32Array.from(footprint.flat()) } : null,
+      look: looks[index] && looks[index]![1]! + looks[index]![2]! > 0 ? { first: looks[index]![0]!, walls: looks[index]![1]!, roof: looks[index]![2]!, kind, front, footprint: Int32Array.from(footprint.flat()) } : null,
     })),
     roads: roads.map(([width, kind, carried, points]) => ({ width: metres(width), kind, carried, points: points.map(point) })),
     cover: cover.map(([kind, rings]) => ({ kind, rings: rings.map((ring) => ring.map(point)) })),

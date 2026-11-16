@@ -40,6 +40,7 @@ pub const S_DUG: u8 = 15;
 pub const S_ARMOR: u8 = 16;
 pub const S_MARKS: u8 = 17;
 pub const S_BACKPACK: u8 = 18;
+pub const S_GATES: u8 = 19;
 
 /// `Hit` roles: whose feedback it is.
 /// You hurt something.
@@ -477,6 +478,18 @@ messages! {
     /// nothing holding them up, which come down; both as lattice places (`construct::Pos`).
     #[derive(Eq)]
     [S_BUILT] Built { live: bool, placed: Vec<BuiltCube>, removed: Vec<CubePos>, fell: Vec<CubePos> }
+
+    /// A gate (a barn's, a hall's, a garage's: `windows::Window::is_gate`) and whether it stands open.
+    /// `(col, row, index)` is its building's `ObjId` and `door` its number among the building's
+    /// openings (`windows::openings_of`).
+    #[derive(Copy, Eq)]
+    [] GateState { col: u16, row: u16, index: u32, door: u16, open: bool }
+
+    /// Sent on a reliable stream: to everyone when gates are opened or shut, and to a player who just
+    /// joined with every gate that stands open (`live` false, so it is state and not news). A gate
+    /// nobody has touched is shut.
+    #[derive(Eq)]
+    [S_GATES] Gates { live: bool, gates: Vec<GateState> }
 
     /// A crater a blast dug: where it is centred on the ground plane, how wide it is and how deep at the
     /// middle, all in whole centimetres (`terrain::Ground::dig`, which the client mirrors sample for

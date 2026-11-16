@@ -9,6 +9,7 @@ mod building;
 mod buses;
 mod combat;
 mod drones;
+mod gates;
 mod golf;
 mod gunnery;
 mod life;
@@ -40,6 +41,7 @@ pub(crate) use backpack::{carries, lying as backpack_lying};
 pub use armor::ArmorHit;
 pub use backpack::{Backpack, BackpackState};
 pub use drones::Drones;
+pub use gates::Gates;
 pub use golf::Golf;
 pub use gunnery::Gunnery;
 pub use life::{Life, record_trails};
@@ -112,7 +114,7 @@ pub fn register_components(ecs: &mut bevy_ecs::world::World) {
 /// More on the order: `Bots` and `Zombies` go first: they write their input, which
 /// everything after reads as it reads anyone's, and `Buses` likewise for its drivers. `Life` brings the dead back before `Npcs` and `Wildlife` move them.
 pub fn default_mechanics() -> Vec<Box<dyn Mechanic>> {
-    vec![Box::<Bots>::default(), Box::<Zombies>::default(), Box::<Buses>::default(), Box::new(Spawn), Box::<Titans>::default(), Box::<Lifts>::default(), Box::new(Pickups), Box::new(Submarines), Box::new(Drones), Box::new(Vehicles), Box::new(Gunnery), Box::new(Movement), Box::new(Breath), Box::<Mend>::default(), Box::new(Backpack), Box::new(Life), Box::new(Npcs), Box::<Wildlife>::default(), Box::new(Combat), Box::new(Golf), Box::new(Structure), Box::new(Scores)]
+    vec![Box::<Bots>::default(), Box::<Zombies>::default(), Box::<Buses>::default(), Box::new(Spawn), Box::<Titans>::default(), Box::<Lifts>::default(), Box::new(Pickups), Box::new(Submarines), Box::new(Drones), Box::new(Gates::seated()), Box::new(Vehicles), Box::<Gates>::default(), Box::new(Gunnery), Box::new(Movement), Box::new(Breath), Box::<Mend>::default(), Box::new(Backpack), Box::new(Life), Box::new(Npcs), Box::<Wildlife>::default(), Box::new(Combat), Box::new(Golf), Box::new(Structure), Box::new(Scores)]
 }
 
 /// What tests outside the mechanics reach in for: setting up a busy room without playing it.

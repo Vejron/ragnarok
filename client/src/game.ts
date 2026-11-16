@@ -714,6 +714,9 @@ export class Game {
       case 'built':
         this.view.built(message)
         break
+      case 'gates':
+        this.view.gates(message.gates, message.live)
+        break
       case 'scores':
         this.board.replace(message.scores)
         break

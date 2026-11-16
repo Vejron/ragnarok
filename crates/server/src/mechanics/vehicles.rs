@@ -822,10 +822,15 @@ impl Mechanic for Vehicles {
         // Boarding and leaving.
         let pressed = world.entities.ids_where::<Player>(|id, player| world.entities.alive(id) && player.input.buttons() & BUTTON_USE != 0);
         for id in pressed {
-            if world.entities.of::<Player>(id).seat.is_some() {
+            let seated = world.entities.of::<Player>(id).seat.is_some();
+            if seated {
                 alight(world, id);
             } else {
                 board(world, id);
+            }
+            // A press that got someone in or out is spent: it does not also work the gate they stand at (`Gates`).
+            if world.entities.get::<Player>(id).is_some_and(|player| player.seat.is_some() != seated) {
+                world.entities.of_mut::<Player>(id).input.buttons &= !BUTTON_USE;
             }
         }
         // A driver hitches or unhitches the mortar behind the car.

@@ -892,12 +892,12 @@ fn looked_house() -> (WorldFile, Shell, Vec<Tri>) {
         mesh.vertices.extend([[t[0], t[1], t[2]], [t[3], t[4], t[5]], [t[6], t[7], t[8]]]);
         mesh.triangles.push([base, base + 1, base + 2]);
     }
-    let building = Building { height: r, footprint: vec![[0, 0], [w, 0], [w, d], [0, d]], base: 0, first: 0, walls: 0, roof: 0, roof_kind: 2, kind: 0, cells: shell.cells(), paint: None };
+    let building = Building { height: r, footprint: vec![[0, 0], [w, 0], [w, d], [0, d]], base: 0, first: 0, walls: 0, roof: 0, roof_kind: 2, kind: 0, front: [0, 0], cells: shell.cells(), paint: None };
     let world = WorldFile {
         buildings: vec![building],
         building_ids: vec![ObjId { col: 0, row: 0, index: 0 }],
         building_triangles: vec![[0, floor.len() as u32]],
-        looks: vec![BuildingLook { walls: walls.clone(), roof: roof.clone(), windows: shared::windows::openings_of(&look, range, 0), inside: Vec::new() }],
+        looks: vec![BuildingLook { walls: walls.clone(), roof: roof.clone(), windows: shared::windows::openings_of(&look, range, 0, [0, 0]), inside: Vec::new(), shut: Vec::new() }],
         collision: mesh,
         ..flat_world()
     };
@@ -950,7 +950,7 @@ fn furnished_house() -> (WorldFile, Vec<shared::interior::Part>) {
         look.vertices.extend([[t[0], t[1], t[2]], [t[3], t[4], t[5]], [t[6], t[7], t[8]]]);
         look.triangles.push([base, base + 1, base + 2]);
     }
-    let windows = shared::windows::openings_of(&look, [0, walls.len() as u32, roof.len() as u32], 0);
+    let windows = shared::windows::openings_of(&look, [0, walls.len() as u32, roof.len() as u32], 0, [0, 0]);
     let footprint = vec![[0, 0], [w, 0], [w, d], [0, d]];
     let parts = shared::interior::rooms(&footprint, &walls, &roof, &windows, 0);
     let mut mesh = CollisionMesh::default();
@@ -959,13 +959,13 @@ fn furnished_house() -> (WorldFile, Vec<shared::interior::Part>) {
         mesh.vertices.extend([[t[0], t[1], t[2]], [t[3], t[4], t[5]], [t[6], t[7], t[8]]]);
         mesh.triangles.push([base, base + 1, base + 2]);
     }
-    let building = Building { height: h, footprint, base: 0, first: 0, walls: 0, roof: 0, roof_kind: 0, kind: 0, cells: Shell::new(&walls, &roof).unwrap().cells(), paint: None };
+    let building = Building { height: h, footprint, base: 0, first: 0, walls: 0, roof: 0, roof_kind: 0, kind: 0, front: [0, 0], cells: Shell::new(&walls, &roof).unwrap().cells(), paint: None };
     let inside = parts.iter().filter(|p| p.collided()).map(|p| p.tri).collect();
     let world = WorldFile {
         buildings: vec![building],
         building_ids: vec![ObjId { col: 0, row: 0, index: 0 }],
         building_triangles: vec![[0, floor.len() as u32]],
-        looks: vec![BuildingLook { walls, roof, windows, inside }],
+        looks: vec![BuildingLook { walls, roof, windows, inside, shut: Vec::new() }],
         collision: mesh,
         ..flat_world()
     };

@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::terrain::Ground;
 
-pub const WORLD_VERSION: u8 = 25;
+pub const WORLD_VERSION: u8 = 26;
 
 /// `Manifest::theme`: the world as it always was.
 pub const THEME_PLAIN: u8 = 0;
@@ -358,6 +358,9 @@ pub struct BuildingLook {
     /// What stands inside it and is collided with (`interior::rooms`, without the steps drawn over
     /// the stairs): floors and the stairs' slopes. Empty for a house without.
     pub inside: Vec<crate::carve::Tri>,
+    /// The gates standing shut, by their number among `windows` (`windows::gates`): every gate of a
+    /// building with an inside, until someone opens it. A shut gate is wall to what collides with it.
+    pub shut: Vec<u32>,
 }
 
 impl BuildingLook {
@@ -675,6 +678,10 @@ pub struct Building {
     pub roof_kind: u8,
     /// `BUILDING_*`: what the building is, where that changes its windows, its inside and its colours.
     pub kind: u8,
+    /// Which way the road it stands by lies from its middle, `[x, z]` of a unit vector times 127:
+    /// the wall facing that way is its front, with its door (`windows::openings_of`). `[0, 0]` where
+    /// no road is near, and the front is its longest wall.
+    pub front: [i8; 2],
     /// The building's 1 m cubes (`carve::Shell`), worked out by the importer from its walls and
     /// roof; the server and clients make the boxes to collide with, and the clients the faces to
     /// draw, from them. Empty
@@ -888,6 +895,35 @@ pub const BUILDING_PLAIN: u8 = 0;
 /// A church or a chapel: a few tall round-headed windows along its long walls, a door and a round
 /// window in a gable end, and one open hall inside (`windows::openings_of`, `interior::rooms`).
 pub const BUILDING_CHURCH: u8 = 1;
+/// A barn, a cowshed or a hay barn out in a field: a gate wide enough to drive in by in a long
+/// wall, a few small windows or none, and one hall inside under a sheet-metal roof.
+pub const BUILDING_BARN: u8 = 2;
+/// What stands beside a house: a garage, a shed, a storehouse. One storey, a wide door and one
+/// small window.
+pub const BUILDING_OUTBUILDING: u8 = 3;
+/// A factory, a workshop or a warehouse: sheet-metal walls, a gate for lorries in each long wall,
+/// a ribbon of windows high up, and one hall inside.
+pub const BUILDING_HALL: u8 = 4;
+/// A shop or a supermarket: a front of tall panes with its door in the middle, and blank walls
+/// round the rest of its one hall.
+pub const BUILDING_SHOP: u8 = 5;
+/// A block of flats, a dormitory or a hotel: a house's rows of windows and floors, in render or brick.
+pub const BUILDING_FLATS: u8 = 6;
+/// A school, a library, a town hall or a police station: big windows a storey apart, a double
+/// door, floors and stairs, in yellow or red brick.
+pub const BUILDING_PUBLIC: u8 = 7;
+/// A cabin or a hut out on its own: a small house of dark timber.
+pub const BUILDING_CABIN: u8 = 8;
+/// An old wooden house, as on a farm or in the old part of a village: tall narrow windows close
+/// together, in falu red, ochre or white boards.
+pub const BUILDING_FARMHOUSE: u8 = 9;
+/// A villa of the 1960s and 70s: wide low windows far apart, in brick, pale boards or render.
+pub const BUILDING_VILLA: u8 = 10;
+/// A fire station: a row of garage doors for the engines in its front, a public building's windows
+/// round the rest, and one hall inside to drive into.
+pub const BUILDING_FIRE_STATION: u8 = 11;
+/// How many kinds of building there are.
+pub const BUILDING_KINDS: usize = 12;
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Road {
@@ -1280,9 +1316,10 @@ impl WorldFile {
                 let range = tile.look.buildings.get(index).copied().unwrap_or([0; 3]);
                 world.looks.push(if range[1] + range[2] > 0 {
                     let (walls, roof) = tile.look.parts(range);
-                    let windows = crate::windows::openings_of(&tile.look, range, building.kind);
-                    let inside = crate::interior::rooms(&building.footprint, &walls, &roof, &windows, building.kind).into_iter().filter(|part| part.collided()).map(|part| part.tri).collect();
-                    BuildingLook { walls, roof, windows, inside }
+                    let windows = crate::windows::openings_of(&tile.look, range, building.kind, building.front);
+                    let inside = crate::interior::rooms(&building.footprint, &walls, &roof, &windows, building.kind).into_iter().filter(|part| part.collided()).map(|part| part.tri).collect::<Vec<_>>();
+                    let shut = if inside.is_empty() { Vec::new() } else { crate::windows::gates(&windows) };
+                    BuildingLook { walls, roof, windows, inside, shut }
                 } else {
                     BuildingLook::default()
                 });
@@ -1429,7 +1466,7 @@ mod tests {
         assert!(!manifest.frozen());
         assert!(Manifest { open_water: false, ..manifest.clone() }.frozen());
         let tile = Tile {
-            buildings: vec![Building { height: 800, footprint: vec![[0, 0], [100, 0], [100, 100]], base: 250, first: 0, walls: 6, roof: 2, roof_kind: ROOF_GABLE, kind: BUILDING_CHURCH, cells: Cells { origin: [-100, 0, 200], dims: [2, 1, 5], solid: Bits(vec![0b1011, 3]), roof: Bits(vec![1, 0]) }, paint: Some([0xeee3c8, 0x4f5866]) }, Building { height: 300, ..Default::default() }],
+            buildings: vec![Building { height: 800, footprint: vec![[0, 0], [100, 0], [100, 100]], base: 250, first: 0, walls: 6, roof: 2, roof_kind: ROOF_GABLE, kind: BUILDING_CHURCH, front: [0, -127], cells: Cells { origin: [-100, 0, 200], dims: [2, 1, 5], solid: Bits(vec![0b1011, 3]), roof: Bits(vec![1, 0]) }, paint: Some([0xeee3c8, 0x4f5866]) }, Building { height: 300, ..Default::default() }],
             roads: vec![Road { width: 600, kind: ROAD_MINOR, carried: false, points: vec![[0, 0], [500, 500]] }],
             collision: CollisionMesh { vertices: vec![[0, 0, 0]], triangles: vec![[0, 0, 0]] },
             ground: vec![0, 10, 20, 30],

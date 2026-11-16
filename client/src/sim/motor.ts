@@ -178,6 +178,17 @@ export class SimMotor {
   }
 
   /**
+   * Shuts the gates `shut` of building `index` of tile `(col, row)` (their numbers among its
+   * openings) and opens its others, as the server has them: a shut gate is wall.
+   */
+  setGates(col: number, row: number, index: number, shut: readonly number[]) {
+    timed(() => {
+      this.sim.setGates(col, row, index, Uint32Array.from(shut))
+      this.sim.refresh()
+    })
+  }
+
+  /**
    * Gives each chunk of placed cubes in `chunks` the shape of its cubes (`cells`, one byte a cube,
    * 0 for none), as the server has them; a chunk with none stops being solid.
    */

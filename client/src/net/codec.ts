@@ -9,7 +9,7 @@ import { decodeMessage, writeClientHands, writeClientInput, writePing, writeRtc,
  */
 
 export type {
-  BulletSpawn, Built, CarvedBuilding, ClientHands, CraterEntry, DamagedBuilding, DestroyedObject, DugTile, HullMark, InputFrame, ProfileEntry, Score, ServerMessage, ShotEvent,
+  BulletSpawn, Built, CarvedBuilding, ClientHands, CraterEntry, DamagedBuilding, DestroyedObject, DugTile, GateState, HullMark, InputFrame, ProfileEntry, Score, ServerMessage, ShotEvent,
 } from './messages.generated'
 
 /** `Notice` kinds: what a world's scenario is telling everyone. */

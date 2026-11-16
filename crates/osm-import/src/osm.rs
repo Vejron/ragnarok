@@ -40,6 +40,8 @@ pub struct Area {
 pub struct Osm {
     pub ways: Vec<Way>,
     pub areas: Vec<Area>,
+    /// The shops, police stations and the like mapped as nodes (`is_poi`): what the building each lies in is.
+    pub pois: Vec<Node>,
 }
 
 /// A way that is a member of a relation, with its role and geometry.
@@ -106,7 +108,7 @@ impl Data {
                 Area { id: relation.id, tags: relation.tags.clone(), outer, inner }
             })
             .collect();
-        Osm { ways, areas }
+        Osm { ways, areas, pois: self.nodes.iter().filter(|node| is_poi(&node.tags)).cloned().collect() }
     }
 }
 
@@ -209,6 +211,12 @@ pub fn is_bus_stop<T: Lookup + ?Sized>(tags: &T) -> bool {
     tag(tags, "highway") == Some("bus_stop")
 }
 
+/// A node of the main query: a shop, a place of trade, a public building or a fire station, mapped
+/// as a point inside its building (`classify::by_use`).
+pub fn is_poi<T: Lookup + ?Sized>(tags: &T) -> bool {
+    crate::classify::by_use(tags).is_some()
+}
+
 /// The `aerialway` values that are lifts a skier rides: not stations, pylons, goods lines or zip lines.
 pub const LIFTS: [&str; 10] = ["chair_lift", "mixed_lift", "drag_lift", "t-bar", "j-bar", "platter", "rope_tow", "gondola", "cable_car", "magic_carpet"];
 
@@ -239,7 +247,7 @@ pub fn wants_relation<T: Lookup + ?Sized>(tags: &T) -> bool {
 
 /// Whether any pass wants this node.
 pub fn wants_node<T: Lookup + ?Sized>(tags: &T) -> bool {
-    is_golf_node(tags) || is_bus_stop(tags)
+    is_golf_node(tags) || is_bus_stop(tags) || is_poi(tags)
 }
 
 /// Reads everything any pass wants in each of `pieces` (`[south, west, north, east]`): from a local
@@ -271,9 +279,10 @@ mod tests {
                 Relation { id: 5, tags: tags(&[("type", "multipolygon"), ("landuse", "forest")]), members: vec![member("outer"), member("inner")] },
                 Relation { id: 6, tags: tags(&[("type", "multipolygon"), ("natural", "water")]), members: vec![member("outer")] },
             ],
-            nodes: Vec::new(),
+            nodes: [(7, ("shop", "bakery")), (8, ("highway", "bus_stop")), (9, ("amenity", "police"))].into_iter().map(|(id, pair)| Node { id, tags: tags(&[pair]), at: LatLon { lat: 0.0, lon: 0.0 } }).collect(),
         };
         let osm = data.main();
+        assert_eq!(osm.pois.iter().map(|n| n.id).collect::<Vec<_>>(), [7, 9], "the shop and the police, not the bus stop");
         assert_eq!(osm.ways.iter().map(|w| w.id).collect::<Vec<_>>(), [1, 3]);
         assert_eq!(osm.areas.len(), 1);
         assert_eq!((osm.areas[0].outer.len(), osm.areas[0].inner.len()), (1, 1));

@@ -30,7 +30,7 @@ function looked() {
 describe('the inside of a house', () => {
   it('is the same through WebAssembly as the server works it out', () => {
     const { footprint, walls, roof } = house()
-    const raw = interior_of(footprint, walls, roof, 0)
+    const raw = interior_of(footprint, walls, roof, 0, 0, 0)
     // As `the_same_house_gets_the_same_floors` in `interior.rs` sums it.
     const mask = (1n << 64n) - 1n
     let sum = 0n

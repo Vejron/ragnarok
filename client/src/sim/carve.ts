@@ -311,11 +311,11 @@ export function shellOf(
 
 /**
  * The windows and door the server places on the walls `walls` (nine centimetre numbers a triangle,
- * `shared::windows::openings_of`) of a building of `kind`: corners in metres and the wall's normal, as `openingsOf` gives
+ * `shared::windows::openings_of`) of a building of `kind` whose road lies `front` of it: corners in metres and the wall's normal, as `openingsOf` gives
  * them, for the two to be checked against each other.
  */
-export function serverOpenings(walls: readonly Tri[], kind = 0): { corners: [number, number, number][]; normal: [number, number, number]; door: boolean; head: number }[] {
-  const flat = windows_of(Int32Array.from(walls.flat()), kind)
+export function serverOpenings(walls: readonly Tri[], kind = 0, front: readonly [number, number] = [0, 0]): { corners: [number, number, number][]; normal: [number, number, number]; door: boolean; head: number }[] {
+  const flat = windows_of(Int32Array.from(walls.flat()), kind, front[0], front[1])
   const out: { corners: [number, number, number][]; normal: [number, number, number]; door: boolean; head: number }[] = []
   for (let i = 0; i + 17 <= flat.length; i += 17) {
     const at = (k: number): [number, number, number] => [flat[i + k]!, flat[i + k + 1]!, flat[i + k + 2]!]

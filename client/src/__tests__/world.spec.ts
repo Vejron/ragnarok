@@ -121,11 +121,28 @@ describe('world files', () => {
   })
 
   it('decodes a building\'s paint, and draws it in its own colours', () => {
-    const house = [600, [[0, 0], [100, 0], [100, 100]], 0, 0, 0, 0, ROOF_GABLE, 0, NO_CELLS]
+    const house = [600, [[0, 0], [100, 0], [100, 100]], 0, 0, 0, 0, ROOF_GABLE, 0, [0, -127], NO_CELLS]
     const tile = decodeTile(tileWith({ 0: [[...house, null], [...house, [0xf0e6cc, 0x56606e]]] }))
     expect(tile.buildings.map((b) => b.paint)).toEqual([null, [0xf0e6cc, 0x56606e]])
+    expect(tile.buildings[0]!.front).toEqual([0, -127])
     expect(buildingColors(tile, 1, 3)).toEqual({ wall: 0xf0e6cc, roof: 0x56606e })
     // Without paint the client picks from its palettes.
     expect(buildingColors(tile, 0, 3).roof).not.toBe(0x56606e)
+  })
+
+  it('paints a shed as the wooden house in its yard, and one with no house near as its own kind', () => {
+    const at = (x: number, kind: number) => ({ first: 0, walls: 0, roof: 0, roofKind: ROOF_GABLE, kind, cells: null, paint: null, look: null, footprint: [[x, 0], [x + 6, 0], [x + 6, 5], [x, 5]] as [number, number][] })
+    // An old wooden house (kind 9), its shed 15 m off (kind 3), and a shed 200 m away.
+    const tile = { buildings: [at(0, 9), at(15, 3), at(200, 3)] }
+    for (let salt = 0; salt < 5; salt++) {
+      const house = buildingColors(tile, 0, salt)
+      expect(buildingColors(tile, 1, salt)).toEqual(house)
+      // The far one has its own kind's roof: sheet metal, which no house has.
+      expect([0x5a5f63, 0x3f4447, 0x7d8388]).toContain(buildingColors(tile, 2, salt).roof)
+    }
+    // Beside a brick villa (kind 10, brick at this salt) a shed keeps its own boards.
+    const brick = { buildings: [at(0, 10), at(15, 3)] }
+    const salt = [0, 1, 2, 3, 4, 5].find((s) => buildingColors(brick, 0, s).wall === 0x8f3a2c)!
+    expect(buildingColors(brick, 1, salt).wall).not.toBe(0x8f3a2c)
   })
 })

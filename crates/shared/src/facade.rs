@@ -90,10 +90,11 @@ pub fn split_plane(poly: &[P], n: P, d: f64) -> (Poly, Poly) {
 }
 
 /// `walls` with the windows of `windows` cut out of the ones in their planes, and with `doorway`
-/// the door too, down to the ground: the way into a house with rooms (`interior`). A door is
-/// otherwise no hole.
-pub fn cut_windows(mut walls: Vec<Poly>, windows: &[Window], doorway: bool) -> Vec<Poly> {
-    for w in windows.iter().filter(|w| !w.door || doorway) {
+/// the doors too, down to the ground: the way into a house with rooms (`interior`). A door is
+/// otherwise no hole, and neither is one of `shut` (a gate standing shut, by its number among
+/// `windows`): its leaf is wall.
+pub fn cut_windows(mut walls: Vec<Poly>, windows: &[Window], doorway: bool, shut: &[u32]) -> Vec<Poly> {
+    for (_, w) in windows.iter().enumerate().filter(|(at, w)| !w.door || (doorway && !shut.contains(&(*at as u32)))) {
         let [mut a, b, _, mut d] = w.corners.map(|c| c.map(f64::from));
         if w.door {
             a[1] -= DOOR_SILL;
@@ -199,9 +200,10 @@ fn orphan(grid: &Grid, removed: &[bool], c: [i64; 3]) -> bool {
 /// as they stand: the windows cut out, and with `cut` (its cells and which are gone) the pieces in
 /// gone cells left out, the rest sliced along the cell grid near them. Three corners a triangle,
 /// metres; nothing degenerate. `inside` is what stands in its rooms (`BuildingLook::inside`), which
-/// goes with its cells as the walls do; a house with any has its door open.
-pub fn standing(walls: &[Tri], roof: &[Tri], windows: &[Window], inside: &[Tri], cut: Option<(&Shell, &[bool])>) -> Vec<[f32; 3]> {
-    let wall_polys = cut_windows(walls.iter().map(poly_of).collect(), windows, !inside.is_empty());
+/// goes with its cells as the walls do; a house with any has its door open, but for the gates that
+/// are `shut` (`BuildingLook::shut`).
+pub fn standing(walls: &[Tri], roof: &[Tri], windows: &[Window], inside: &[Tri], shut: &[u32], cut: Option<(&Shell, &[bool])>) -> Vec<[f32; 3]> {
+    let wall_polys = cut_windows(walls.iter().map(poly_of).collect(), windows, !inside.is_empty(), shut);
     let polys: Vec<Poly> = wall_polys.into_iter().chain(roof.iter().map(poly_of)).chain(inside.iter().map(poly_of)).collect();
     let mut out = Vec::new();
     let mut emit = |poly: &[P]| {
@@ -362,8 +364,8 @@ mod tests {
     fn the_windows_are_holes_in_the_walls_and_the_rest_stands() {
         let (walls, roof) = house();
         let look = look_of(&walls, &roof);
-        let windows = openings_of(&look, look.buildings[0], 0);
-        let tris = standing(&walls, &roof, &windows, &[], None);
+        let windows = openings_of(&look, look.buildings[0], 0, [0, 0]);
+        let tris = standing(&walls, &roof, &windows, &[], &[], None);
         let pane = windows.iter().find(|o| !o.door && o.normal[2] < -0.9).unwrap();
         let [a, b, _, d] = pane.corners;
         assert!(!covered(&tris, (a[0] + b[0]) / 2.0, (a[1] + d[1]) / 2.0), "through the window");
@@ -383,11 +385,11 @@ mod tests {
         let count = shell.dims[0] * shell.dims[1] * shell.dims[2];
         let hole = (0..count as u32).filter(|&id| shell.is_solid(id)).min_by_key(|&id| { let c = shell.centre(id); (c[0] - 80).pow(2) + (c[1] - 150).pow(2) + c[2].pow(2) }).unwrap();
         removed[hole as usize] = true;
-        let tris = standing(&walls, &roof, &[], &[], Some((&shell, &removed)));
+        let tris = standing(&walls, &roof, &[], &[], &[], Some((&shell, &removed)));
         let c = shell.centre(hole).map(|v| v as f32 / 100.0);
         assert!(!covered(&tris, c[0], c[1]), "the hole");
         assert!(covered(&tris, 4.5, 0.3), "the far corner stands");
-        let whole = standing(&walls, &roof, &[], &[], None);
+        let whole = standing(&walls, &roof, &[], &[], &[], None);
         assert!(tris.len() > whole.len(), "sliced round the hole, so more triangles");
     }
 
@@ -444,13 +446,13 @@ mod tests {
         let walls: Vec<Tri> = [quad([0, 0, 0], [w, 0, 0], [w, h, 0], [0, h, 0]), quad([w, 0, 0], [w, 0, d], [w, h, d], [w, h, 0]), quad([w, 0, d], [0, 0, d], [0, h, d], [w, h, d]), quad([0, 0, d], [0, 0, 0], [0, h, 0], [0, h, d])].concat();
         let roof = quad([0, h, 0], [w, h, 0], [w, h, d], [0, h, d]).to_vec();
         let look = look_of(&walls, &roof);
-        let windows = openings_of(&look, look.buildings[0], 0);
+        let windows = openings_of(&look, look.buildings[0], 0, [0, 0]);
         let shell = Shell::new(&walls, &roof).unwrap();
         let mut removed = shell.untouched();
-        let polys: Vec<Poly> = cut_windows(walls.iter().map(poly_of).collect(), &windows, false).into_iter().chain(roof.iter().map(poly_of)).collect();
+        let polys: Vec<Poly> = cut_windows(walls.iter().map(poly_of).collect(), &windows, false, &[]).into_iter().chain(roof.iter().map(poly_of)).collect();
         for (n, at) in [[300, 150, 0], [1300, 400, 500], [700, 700, 450], [0, 200, 800], [650, 100, 900], [1000, 650, 0]].into_iter().enumerate() {
             shell.blast(&mut removed, at, 120 + 40 * n as i32);
-            let now = areas(&standing(&walls, &roof, &windows, &[], Some((&shell, &removed))));
+            let now = areas(&standing(&walls, &roof, &windows, &[], &[], Some((&shell, &removed))));
             let then = areas(&sliced_on_the_whole_grid(&polys, &shell, &removed));
             assert_eq!(now.keys().collect::<Vec<_>>(), then.keys().collect::<Vec<_>>(), "after blast {n}");
             for (side, area) in &now {

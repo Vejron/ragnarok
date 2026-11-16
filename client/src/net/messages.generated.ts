@@ -27,6 +27,7 @@ export const S_DUG = 15
 export const S_ARMOR = 16
 export const S_MARKS = 17
 export const S_BACKPACK = 18
+export const S_GATES = 19
 
 export interface BulletSpawn {
   id: number
@@ -229,6 +230,20 @@ export interface Built {
   fell: CubePos[]
 }
 
+export interface GateState {
+  col: number
+  row: number
+  index: number
+  door: number
+  open: boolean
+}
+
+export interface Gates {
+  type: 'gates'
+  live: boolean
+  gates: GateState[]
+}
+
 export interface CraterEntry {
   x: number
   z: number
@@ -302,7 +317,7 @@ export interface Rtc {
   json: string
 }
 
-export type ServerMessage = Welcome | Snapshot | Pong | Leave | Kill | Scores | Profiles | Notice | Destroyed | Damaged | Carved | Built | Cratered | Dug | Marks | Backpack | Armor | Hit | Rtc
+export type ServerMessage = Welcome | Snapshot | Pong | Leave | Kill | Scores | Profiles | Notice | Destroyed | Damaged | Carved | Built | Gates | Cratered | Dug | Marks | Backpack | Armor | Hit | Rtc
 
 function decodeBulletSpawn(r: unknown): BulletSpawn | undefined {
   if (!Array.isArray(r) || r.length !== 10) return undefined
@@ -419,6 +434,17 @@ function decodeCubePos(r: unknown): CubePos | undefined {
   const z = w.int(r[2])
   if (x === undefined || y === undefined || z === undefined) return undefined
   return { x, y, z }
+}
+
+function decodeGateState(r: unknown): GateState | undefined {
+  if (!Array.isArray(r) || r.length !== 5) return undefined
+  const col = w.int(r[0])
+  const row = w.int(r[1])
+  const index = w.int(r[2])
+  const door = w.int(r[3])
+  const open = w.bool(r[4])
+  if (col === undefined || row === undefined || index === undefined || door === undefined || open === undefined) return undefined
+  return { col, row, index, door, open }
 }
 
 function decodeCraterEntry(r: unknown): CraterEntry | undefined {
@@ -548,6 +574,14 @@ function decodeBuilt(r: readonly unknown[]): Built | undefined {
   return { type: 'built', live, placed, removed, fell }
 }
 
+function decodeGates(r: readonly unknown[]): Gates | undefined {
+  if (r.length !== 3) return undefined
+  const live = w.bool(r[1])
+  const gates = w.list(r[2], decodeGateState)
+  if (live === undefined || gates === undefined) return undefined
+  return { type: 'gates', live, gates }
+}
+
 function decodeCratered(r: readonly unknown[]): Cratered | undefined {
   if (r.length !== 3) return undefined
   const live = w.bool(r[1])
@@ -648,6 +682,8 @@ export function decodeMessage(r: readonly unknown[]): ServerMessage | undefined 
       return decodeCarved(r)
     case S_BUILT:
       return decodeBuilt(r)
+    case S_GATES:
+      return decodeGates(r)
     case S_CRATERED:
       return decodeCratered(r)
     case S_DUG:

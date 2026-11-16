@@ -24,7 +24,7 @@ function box(x0: number, vertexBase: number) {
 function house(): TileData {
   const a = box(0, 0)
   const building: Building = {
-    height: 6, base: 0, first: 0, walls: 8, roof: 2, roofKind: ROOF_FLAT, kind: 0, cells: null, paint: null,
+    height: 6, base: 0, first: 0, walls: 8, roof: 2, roofKind: ROOF_FLAT, kind: 0, front: [0, 0], cells: null, paint: null,
     footprint: [[0, -5], [10, -5], [10, 5], [0, 5]], look: { first: 0, walls: 8, roof: 2 },
   }
   const collision = { vertices: Float32Array.from(a.vertices.flat()), triangles: Uint32Array.from(a.triangles.flat()) }

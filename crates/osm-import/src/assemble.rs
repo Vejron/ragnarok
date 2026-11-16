@@ -10,7 +10,7 @@ use crate::trees::Planted;
 use crate::water::{Placed, STREAM_WIDTH};
 use shared::terrain::Ground;
 use shared::world::*;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 type P = [f64; 2];
 
@@ -152,21 +152,13 @@ const MAX_RISE: f64 = 4.0;
 /// Buildings that are taller than their footprint says.
 const TALL: [&str; 9] = ["church", "chapel", "cathedral", "mosque", "temple", "tower", "water_tower", "silo", "industrial"];
 
-/// What a building is (`BUILDING_*`): a church where it is mapped as a church or a chapel, or as a
-/// Christian place of worship.
-fn kind_of(way: &Way) -> u8 {
-    let tag = |key: &str| way.tags.get(key).map(String::as_str);
-    let church = matches!(tag("building"), Some("church" | "chapel" | "cathedral")) || (tag("amenity") == Some("place_of_worship") && tag("religion") == Some("christian"));
-    if church { BUILDING_CHURCH } else { BUILDING_PLAIN }
-}
-
 /// `[eaves, top]` in metres over the floor that an untagged house may reach, or `None` when it may
 /// be any height: it is tagged with a height, or as something tall, or big enough that its returns
 /// are mostly roof. A small house in an unclassified cloud is otherwise built from the crowns over it.
 fn cap(way: &Way, ring: &[P]) -> Option<[f64; 2]> {
     let area = signed_area(ring).abs();
     let tagged = ["height", "building:levels"].iter().any(|key| way.tags.contains_key(*key));
-    let tall = way.tags.get("building").is_some_and(|value| TALL.contains(&value.as_str())) || kind_of(way) == BUILDING_CHURCH;
+    let tall = way.tags.get("building").is_some_and(|value| TALL.contains(&value.as_str())) || crate::classify::is_church(&way.tags);
     if tagged || tall || area >= BIG_HOUSE {
         return None;
     }
@@ -307,6 +299,51 @@ impl Built {
     }
 }
 
+/// How far from its middle a building looks for the road it stands by, metres.
+const FRONT_REACH: f64 = 60.0;
+
+/// The stretches of the `roads` that are driven on (not paths), by the `FRONT_REACH` squares they
+/// pass through: where `front_of` looks for a building's road.
+fn streets(roads: &[(Vec<P>, f64, u8)]) -> HashMap<(i32, i32), Vec<[P; 2]>> {
+    let mut grid: HashMap<(i32, i32), Vec<[P; 2]>> = HashMap::new();
+    let cell = |v: f64| (v / FRONT_REACH).floor() as i32;
+    for (points, _, _) in roads.iter().filter(|(.., kind)| matches!(*kind, ROAD_MAJOR | ROAD_MINOR | ROAD_GRAVEL | ROAD_TRACK)) {
+        for pair in points.windows(2) {
+            let (a, b) = (pair[0], pair[1]);
+            for x in cell(a[0].min(b[0]))..=cell(a[0].max(b[0])) {
+                for z in cell(a[1].min(b[1]))..=cell(a[1].max(b[1])) {
+                    grid.entry((x, z)).or_default().push([a, b]);
+                }
+            }
+        }
+    }
+    grid
+}
+
+/// `Building::front` for a building whose middle is `mid`: the way to the nearest point of a road
+/// among `streets` within `FRONT_REACH`, or `[0, 0]` with none (or with a road through its middle).
+fn front_of(mid: P, streets: &HashMap<(i32, i32), Vec<[P; 2]>>) -> [i8; 2] {
+    let cell = |v: f64| (v / FRONT_REACH).floor() as i32;
+    let mut nearest: Option<(f64, P)> = None;
+    for x in cell(mid[0]) - 1..=cell(mid[0]) + 1 {
+        for z in cell(mid[1]) - 1..=cell(mid[1]) + 1 {
+            for [a, b] in streets.get(&(x, z)).into_iter().flatten() {
+                let (dx, dz) = (b[0] - a[0], b[1] - a[1]);
+                let t = if dx == 0.0 && dz == 0.0 { 0.0 } else { (((mid[0] - a[0]) * dx + (mid[1] - a[1]) * dz) / (dx * dx + dz * dz)).clamp(0.0, 1.0) };
+                let to = [a[0] + dx * t - mid[0], a[1] + dz * t - mid[1]];
+                let far = to[0].hypot(to[1]);
+                if far < nearest.map_or(FRONT_REACH, |(least, _)| least) {
+                    nearest = Some((far, to));
+                }
+            }
+        }
+    }
+    match nearest {
+        Some((far, to)) if far > 0.5 => [(to[0] / far * 127.0).round() as i8, (to[1] / far * 127.0).round() as i8],
+        _ => [0, 0],
+    }
+}
+
 /// A building to assemble: its footprint, its tagged height, its roof (if the laser gave one), its
 /// `[wall, roof]` colours (if the photo gave them), the most it may rise over its floor (`cap`) and
 /// what it is (`BUILDING_*`).
@@ -342,6 +379,7 @@ fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collecti
     };
     let mut tiles: BTreeMap<(u16, u16), Tile> = BTreeMap::new();
     let mut footprints = Vec::new();
+    let streets = streets(&roads);
     for (mut footprint, height, fitted, paint, ceiling, kind) in buildings {
         if footprint.len() > 1 && footprint.first() == footprint.last() {
             footprint.pop();
@@ -391,6 +429,7 @@ fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collecti
             roof: parts.roof,
             roof_kind,
             kind,
+            front: front_of(centre, &streets),
             cells: Default::default(),
             paint,
         });
@@ -698,11 +737,43 @@ pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::B
     let paint = |rings: &[&[P]]| photo.map(|photo| crate::paint::of(photo, rings, source));
     let squared = std::sync::atomic::AtomicUsize::new(0);
     let mut hints: Vec<Option<Category>> = Vec::new();
+    // What each building is, in the order of the ways: from its tags, the land use it stands in and what stands round it.
+    let kinds = {
+        let open = |mut ring: Vec<P>| {
+            if ring.len() > 1 && ring.first() == ring.last() {
+                ring.pop();
+            }
+            ring
+        };
+        let mut lands: Vec<(crate::classify::Land, Vec<P>)> = Vec::new();
+        for Area { tags, outer, .. } in &osm.areas {
+            if let Some(land) = crate::classify::Land::of(tags) {
+                lands.extend(join_rings(outer.iter().map(|w| line(w)).collect()).into_iter().map(|ring| (land, open(ring))));
+            }
+        }
+        for way in &osm.ways {
+            if let (Some(land), false) = (crate::classify::Land::of(&way.tags), is_building(way)) {
+                let ring = line(&way.geometry);
+                if ring.len() >= 4 && ring.first() == ring.last() {
+                    lands.push((land, open(ring)));
+                }
+            }
+        }
+        let rings: Vec<Vec<P>> = osm.ways.iter().filter(|way| is_building(way)).map(|way| open(line(&way.geometry))).collect();
+        let sites: Vec<(&crate::osm::Tags, &[P])> = osm.ways.iter().filter(|way| is_building(way)).zip(&rings).map(|(way, ring)| (&way.tags, ring.as_slice())).collect();
+        let nodes: Vec<(u8, P)> = osm.pois.iter().filter_map(|node| Some((crate::classify::by_use(&node.tags)?, frame.project(node.at.lat, node.at.lon)))).collect();
+        let (kinds, tally) = crate::classify::classify(&sites, &lands, &nodes);
+        let [plain, churches, barns, outbuildings, halls, shops, flats, public, cabins, old, villas, fire] = tally.kinds;
+        eprintln!("buildings: {plain} houses, {old} old houses, {villas} villas, {churches} churches, {barns} barns, {outbuildings} outbuildings, {halls} halls, {shops} shops, {flats} blocks of flats, {public} public, {fire} fire stations, {cabins} cabins; {} known by their tags, {} by a node in them, {} by the land they stand on, {} by their yard", tally.by_tags, tally.by_node, tally.by_land, tally.by_yard);
+        kinds
+    };
+    let mut kinds = kinds.into_iter();
     let outlines: Vec<Outline> = osm
         .ways
         .iter()
         .filter(|way| is_building(way))
         .flat_map(|way| {
+            let kind = kinds.next().unwrap_or(BUILDING_PLAIN);
             let drawn = line(&way.geometry);
             let open = if drawn.len() > 1 && drawn.first() == drawn.last() { &drawn[..drawn.len() - 1] } else { &drawn[..] };
             // Walls drawn nearly square are made square (`square`); a footprint cut on France's lattice is left as it is.
@@ -717,7 +788,6 @@ pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::B
             let ring = if points.len() > 1 && points.first() == points.last() { &points[..points.len() - 1] } else { &points[..] };
             let hint = way.tags.get("roof:shape").and_then(|tag| Category::of_tag(tag));
             // A classified cloud's building returns are roof, whatever stands round it.
-            let kind = kind_of(way);
             let cap = if measured { None } else { cap(way, ring) };
             let height = cap.map_or(building_height(way), |[eaves, _]| building_height(way).min(eaves));
             let ceiling = cap.map(|[_, top]| top);
@@ -2161,6 +2231,7 @@ mod tests {
         let osm = Osm {
             ways: vec![way(1, ("barrier", "fence"), -100.0, 100.0, 20.0), way(2, ("power", "minor_line"), -100.0, 100.0, -20.0), way(3, ("barrier", "wall"), -100.0, 100.0, 0.0)],
             areas: Vec::new(),
+            pois: Vec::new(),
         };
         let ground = Ground { origin: -15_000, cell: 500, side: 61, heights: vec![0; 61 * 61] };
         let built = from_osm(&place, 100.0, None, &osm, &[], ground, Placed::default(), None, None, None, &[], None, None, &[]);
@@ -2187,6 +2258,7 @@ mod tests {
                 way(4, ("leisure", "park"), &ring(-60.0, 80.0, 60.0, 130.0)),
             ],
             areas: Vec::new(),
+            pois: Vec::new(),
         };
         let ground = Ground { origin: -15_000, cell: 500, side: 61, heights: vec![250; 61 * 61] };
         let built = from_osm(&place, 100.0, None, &osm, &[], ground, Placed::default(), None, None, None, &[], None, None, &[]);
@@ -2281,6 +2353,17 @@ mod tests {
     }
 
     #[test]
+    fn a_buildings_front_is_towards_the_nearest_road_that_is_driven_on() {
+        // A street along z = 20, and a footpath along x = 5.
+        let streets = streets(&[(vec![[-50.0, 20.0], [50.0, 20.0]], 6.0, ROAD_MINOR), (vec![[5.0, -50.0], [5.0, 50.0]], 2.0, ROAD_PATH)]);
+        assert_eq!(front_of([0.0, 0.0], &streets), [0, 127], "the street, not the path beside it");
+        assert_eq!(front_of([0.0, 40.0], &streets), [0, -127]);
+        assert_eq!(front_of([70.0, 0.0], &streets), [-90, 90], "towards the street's end");
+        assert_eq!(front_of([0.0, 100.0], &streets), [0, 0], "80 m off is by no road");
+        assert_eq!(front_of([0.0, 20.2], &streets), [0, 0], "nor is a road through its middle");
+    }
+
+    #[test]
     fn bbox_is_a_square_of_the_asked_half_extent() {
         let [south, west, north, east] = bbox_around(63.832127, 20.168286, 1000.0);
         let origin = ((south + north) / 2.0, (west + east) / 2.0);
@@ -2329,16 +2412,6 @@ mod tests {
         assert_eq!(cap(&house, &square(17.0)), None);
     }
 
-    #[test]
-    fn a_church_is_known_by_its_building_tag_or_as_a_christian_place_of_worship() {
-        let way = |tags: &[(&str, &str)]| Way { id: 3, tags: tags.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(), geometry: vec![] };
-        for tags in [&[("building", "church")][..], &[("building", "chapel")], &[("building", "yes"), ("amenity", "place_of_worship"), ("religion", "christian")]] {
-            assert_eq!(kind_of(&way(tags)), BUILDING_CHURCH, "{tags:?}");
-        }
-        for tags in [&[("building", "yes")][..], &[("building", "house")], &[("building", "yes"), ("amenity", "place_of_worship"), ("religion", "muslim")], &[("building", "yes"), ("amenity", "place_of_worship")]] {
-            assert_eq!(kind_of(&way(tags)), BUILDING_PLAIN, "{tags:?}");
-        }
-    }
 
     #[test]
     fn the_trees_round_a_small_house_are_not_its_roof() {

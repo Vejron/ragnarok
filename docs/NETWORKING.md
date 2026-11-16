@@ -69,6 +69,7 @@ Each datagram repeats the newest 4 frames, so a single lost datagram loses nothi
 | 14 | `cratered` | reliable stream | `[14, live bool, [[x i32, z i32, radius i32, depth i32, age u16], …]]` |
 | 15 | `dug` | reliable stream | `[15, [[col u16, row u16, [skip, count, value…, …] i32s], …]]` |
 | 18 | `backpack` | reliable stream | `[18, x i32, z i32, radius u16, carrier u32, held u16]`, cm: in a world with the backpack ([BACKPACK.md](BACKPACK.md)), the circle it is somewhere inside, who carries it (0 when nobody) and their seconds with it. Sent to everyone when the circle moves or the backpack changes hands, once a second besides, and to a joiner |
+| 19 | `gates` | reliable stream | `[19, live bool, [[col u16, row u16, index u32, door u16, open bool], …]]`: gates opened or shut ([BUILDING-STYLES.md](BUILDING-STYLES.md)). `(col, row, index)` is the building's `ObjId` and `door` the gate's number among the building's openings (`windows::openings_of`). Sent to everyone when a gate changes (`live` true, so it moves), and to a joiner with every gate that stands open (`live` false). A gate never named is shut |
 
 - `baseline` is the `server_tick` of the snapshot this one is a change from, or 0 when it is not. Then every entity in range comes whole. Each `update` is one entity's components: see [Entities and components](#entities-and-components) and [Delta snapshots](#delta-snapshots-and-interest).
 - `ack` is the newest input `seq` of the receiving player already applied to this state. The client drops pending inputs up to `ack` and replays the rest.

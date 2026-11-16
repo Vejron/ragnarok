@@ -411,7 +411,7 @@ pub fn building_shape(world: &WorldFile, index: usize) -> Option<SharedShape> {
 /// merged into boxes. With its `floor` either way. `None` when nothing stands.
 pub fn building_solid(world: &WorldFile, index: usize, cut: Option<(&Shell, &[bool])>, floor: &[Tri]) -> Option<SharedShape> {
     match world.looks.get(index).filter(|look| !look.is_empty()) {
-        Some(look) => mesh_of(&shared::facade::standing(&look.walls, &look.roof, &look.windows, &look.inside, cut), floor),
+        Some(look) => mesh_of(&shared::facade::standing(&look.walls, &look.roof, &look.windows, &look.inside, &look.shut, cut), floor),
         None => {
             let (shell, removed) = cut?;
             solid_of(&shell.boxes(removed), floor)
