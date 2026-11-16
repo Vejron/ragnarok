@@ -28,7 +28,7 @@ export interface TouchContext {
 }
 
 /** Seats that aim down the middle of the screen with a sight or over the shoulder, as right mouse does. */
-const AIMS = new Set<Seat>(['gunner', 'roofgunner', 'strv', 'walker', 'titan', 'tupp', 'passenger', 'periscope'])
+const AIMS = new Set<Seat>(['gunner', 'roofgunner', 'coxswain', 'strv', 'walker', 'titan', 'tupp', 'passenger', 'periscope'])
 
 const jumpLabel = (seat: Seat) =>
   seat === 'driver' || seat === 'sled' ? 'BRAKE' : seat === 'helm' ? 'ANCHOR' : seat === 'roadster' ? 'HOP' : seat === 'hen' || seat === 'tupp' ? 'FLAP' : seat === 'titan' ? 'THRUST' : seat === 'aviator' ? 'FASTER' : seat === 'pilot' || seat === 'drone' || seat === 'captain' ? 'UP' : 'JUMP'

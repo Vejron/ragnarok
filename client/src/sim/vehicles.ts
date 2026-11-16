@@ -32,6 +32,8 @@ export interface VehicleDef {
   mountSeat: { seat: number; pivot: Triple; head: Triple } | null
   /** Its passengers (every seat but the driver's) fire the guns in their own hotbar. */
   crewGuns: boolean
+  /** The seats that work one of its mounts, whose hands are on it rather than their own guns. */
+  gunners: readonly number[]
   /** A hull on two spring legs, boarded from between its feet: a walker or a hen. */
   legged: boolean
   /** Tracked and heavy: turns on the spot, ruts soft ground, rumbles, and plows through trees. */
@@ -98,10 +100,10 @@ export const seatHead = (kind: number | undefined, index: number, gunYaw = 0): r
   return def.seatHeads[index] ?? null
 }
 
-/** Whether seat `index` of a `kind` fires its occupant's own guns: a car's passengers, but not a technical's gunner on its mount. Mirrors `crew_gun`. */
+/** Whether seat `index` of a `kind` fires its occupant's own guns: a car's passengers, but not whoever works one of its mounts. Mirrors `crew_gun`. */
 export const crewGun = (kind: number | undefined, index: number): boolean => {
   const def = vehicleDef(kind)
-  return def.crewGuns && index !== 0 && def.mountSeat?.seat !== index
+  return def.crewGuns && index !== 0 && !def.gunners.includes(index)
 }
 
 /** A walker or a hen: a hull on two spring legs, boarded from between its feet. */

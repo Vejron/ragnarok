@@ -40,6 +40,8 @@ export const STRF_DISTANCE = 15
 export const PBV_DISTANCE = 14
 /** Behind the AMV, which is longer than the Pbv 302 and taller. */
 export const AMV_DISTANCE = 15
+/** Behind the Stridsbåt 90, which is 16 m long: when not aiming its bow guns (`CB90_AIM_BACK` and `CB90_AIM_UP` when aiming). */
+export const CB90_DISTANCE = 22
 /** A plane's pilot looks where they fly, from behind and above, so the plane sits below the middle of the screen. */
 export const PLANE_DISTANCE = 12
 export const PLANE_CAMERA_HEIGHT = 2.4

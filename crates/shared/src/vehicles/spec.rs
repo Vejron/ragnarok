@@ -24,6 +24,10 @@ pub enum Lift {
     /// A pressure hull that floats on the surface or holds any depth below it, driven by its motor,
     /// steered by its rudder, and taken up or down by its captain.
     Dive,
+    /// A planing hull on waterjets that floats on open water: the jets drive it ahead and astern and
+    /// swing it round even standing still, it rises onto the plane at speed and banks into its turns.
+    /// Aground, nothing drives it.
+    Boat,
     /// A guided missile's motor and fins: always driving forward fast, turning towards the look.
     Missile,
     /// Nothing of its own: it is fixed to another vehicle (`Fitting`) and carried with it.
@@ -34,6 +38,12 @@ impl Lift {
     /// Whether the kind has a wheel controller to update.
     pub fn wheeled(self) -> bool {
         matches!(self, Lift::Wheels | Lift::Wing)
+    }
+
+    /// Whether the kind is a hull that only floats: a ship, a submarine or a boat. It starts on the
+    /// water, and a wreck fills and goes down where it is rather than being thrown.
+    pub fn afloat(self) -> bool {
+        matches!(self, Lift::Sail | Lift::Dive | Lift::Boat)
     }
 }
 

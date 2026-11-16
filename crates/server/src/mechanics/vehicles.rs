@@ -4,7 +4,7 @@ use super::Mechanic;
 use crate::game::{Burning, Died, Mounts, Player, Seat, Seats, Vehicle, World, Wreck};
 use sim::{CarCondition, CarControls, CarImpact, CarPose, Character, Obj, half_extents};
 use shared::consts::*;
-use shared::vehicles::{Lift, vehicle_def};
+use shared::vehicles::vehicle_def;
 use shared::protocol::{
     DAMAGE_FRONT, DAMAGE_LEFT, DAMAGE_REAR, DAMAGE_RIGHT, DAMAGE_WHEELS, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_TUPP, KIND_WALKER, ShotEvent, WEAPON_CRASH, is_drone,
     WEAPON_ROADKILL, WEAPON_SCRAPE, vehicle_hp,
@@ -197,11 +197,11 @@ pub(super) fn add_vehicle(world: &mut World, kind: u8, position: [f32; 3], yaw: 
 }
 
 /// Where a fresh vehicle of `kind` starts over `(x, z)`: its chassis centre `drop_height` over the
-/// ground, or over the water for a ship or a submarine, which only float (`None` where there is no
+/// ground, or over the water for a ship, a submarine or a boat, which only float (`None` where there is no
 /// open water). A seaplane starts afloat where there is open water and on its wheels where there is not.
 fn start_position(world: &World, kind: u8, x: f32, z: f32) -> Option<[f32; 3]> {
     let spec = &vehicle_def(kind).spec;
-    if matches!(spec.lift, shared::vehicles::Lift::Sail | shared::vehicles::Lift::Dive) {
+    if spec.lift.afloat() {
         return Some([x, world.physics.water_level(x, z)? + drop_height(kind), z]);
     }
     if let Some(floats) = spec.airframe.and_then(|airframe| airframe.floats)
@@ -679,7 +679,7 @@ fn knock_players(world: &mut World) {
         let Some(hit) = world.physics.car_hit(player.character.position) else { continue };
         // A drone is too light to throw anyone; it goes off instead (see `Drones`). A ship drifting
         // alongside only nudges a swimmer away, as the water would.
-        let slow_ship = world.entities.get::<Vehicle>(hit.car).is_some_and(|vehicle| matches!(vehicle_def(vehicle.kind).spec.lift, Lift::Sail | Lift::Dive)) && vec3::length(hit.velocity) < SHIP_KNOCK_SPEED;
+        let slow_ship = world.entities.get::<Vehicle>(hit.car).is_some_and(|vehicle| vehicle_def(vehicle.kind).spec.lift.afloat()) && vec3::length(hit.velocity) < SHIP_KNOCK_SPEED;
         if world.entities.get::<Vehicle>(hit.car).is_some_and(|vehicle| is_drone(vehicle.kind)) || slow_ship {
             continue;
         }

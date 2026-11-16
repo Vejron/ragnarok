@@ -66,7 +66,7 @@ import { BallCam } from './render/ballcam'
 import { ChaseCam } from './render/chase'
 import { PerfReadout } from './render/perf'
 import { LookWorker } from './render/lookworker'
-import { encodeHands, encodeRtc, KIND_AMV, KIND_MISSILE, KIND_PBV, KIND_STRF, KIND_STRV, KIND_SUBMARINE, KIND_TANK, LIMB_ALL, LIMB_ARMS, LIMB_LEGS, TURRET_ALT, TURRET_EMPTY } from './net/codec'
+import { encodeHands, encodeRtc, KIND_AMV, KIND_CB90, KIND_MISSILE, KIND_PBV, KIND_STRF, KIND_STRV, KIND_SUBMARINE, KIND_TANK, LIMB_ALL, LIMB_ARMS, LIMB_LEGS, TURRET_ALT, TURRET_EMPTY } from './net/codec'
 import { TankMusic } from './music'
 import { VoiceChat } from './voice'
 import { PlaneModel } from './render/plane'
@@ -188,7 +188,7 @@ const ROOM_ARM_EASE = 4
 const VR_DUCK = 0.25
 
 /** Seats that steer something along, which get a speedometer. */
-const MOVERS: ReadonlySet<SeatView['role']> = new Set(['driver', 'roadster', 'sled', 'helm', 'pilot', 'aviator', 'walker', 'titan', 'hen', 'tupp', 'strv', 'drone', 'loiter', 'captain', 'missile'] as const)
+const MOVERS: ReadonlySet<SeatView['role']> = new Set(['driver', 'roadster', 'sled', 'helm', 'pilot', 'aviator', 'walker', 'titan', 'hen', 'tupp', 'strv', 'drone', 'loiter', 'captain', 'missile', 'coxswain'] as const)
 
 /** What the local player is up to this frame: worked out once, read by the stages of the frame. */
 interface Moment {
@@ -1070,7 +1070,7 @@ export class Game {
 
     const seat = this.seat
     const view = seat ? seatView(seat.kind, seat.index) : null
-    this.music.want(seat !== null && this.player.alive && (seat.kind === KIND_TANK || seat.kind === KIND_STRV || seat.kind === KIND_STRF || seat.kind === KIND_PBV || seat.kind === KIND_AMV))
+    this.music.want(seat !== null && this.player.alive && (seat.kind === KIND_TANK || seat.kind === KIND_STRV || seat.kind === KIND_STRF || seat.kind === KIND_PBV || seat.kind === KIND_AMV || seat.kind === KIND_CB90))
     this.driven = this.driver?.pose(this.accumulator / TICK_MS, dt) ?? null
     // Everything replicated, sampled once at the render tick; each group of presenters draws its part.
     const sampled = this.store.sampleAll(renderTick)

@@ -25,6 +25,7 @@ use shared::armor::{Part, State, unpack};
 use shared::protocol::{DAMAGE_PARTS, DAMAGE_SLOTS, DAMAGE_WHEELS, THRUST_AIR, THRUST_BOOST, THRUST_GLIDE, THRUST_LIFT, WHEEL_GONE, is_drone, vehicle_hp};
 
 
+mod boat;
 mod dive;
 mod flight;
 mod floats;
@@ -34,6 +35,7 @@ mod spec;
 mod water;
 
 use flight::{LOITER_GLIDE, MISSILE_GLIDE, assist, boost, flap, fly, fly_drone, glide, jet, pull, on_runners, roll_plane, thrust, walk, wing};
+use boat::boat;
 use dive::dive;
 use floats::float;
 use sail::sail;
@@ -822,7 +824,7 @@ impl Physics {
     /// Applies the driver's controls to the wheels for the next [`Physics::step_cars`].
     pub fn drive_car(&mut self, id: u32, controls: CarControls, dt: f32) {
         let Some(car) = self.cars.get_mut(&id) else { return };
-        if matches!(car.spec.lift, Lift::Rotor | Lift::Walker | Lift::Drone | Lift::Loiter | Lift::Missile | Lift::Sail | Lift::Dive | Lift::Mounted) {
+        if matches!(car.spec.lift, Lift::Rotor | Lift::Walker | Lift::Drone | Lift::Loiter | Lift::Missile | Lift::Sail | Lift::Dive | Lift::Boat | Lift::Mounted) {
             car.flight = controls;
             return;
         }
@@ -1046,6 +1048,12 @@ impl Physics {
             let Some(body) = self.bodies.get_mut(car.body) else { continue };
             let water = water_under(&self.waters, waves, body, car.spec);
             dive(body, car.spec, car.flight, car.condition, water.as_ref(), dt);
+        }
+        // A boat floats, and its waterjets drive it while there is enough water under its keel.
+        for car in self.cars.values().filter(|car| car.spec.lift == Lift::Boat) {
+            let Some(body) = self.bodies.get_mut(car.body) else { continue };
+            let water = water_under(&self.waters, waves, body, car.spec);
+            boat(body, car.spec, car.flight, car.condition, water.as_ref(), dt);
         }
         for car in self.cars.values_mut().filter(|car| car.spec.lift.wheeled()) {
             // Wheel rays must not hit their own chassis, nor a fence, which the hull goes through, nor a

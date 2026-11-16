@@ -28,8 +28,8 @@ const PAINTS = [
 
 /** What differs between the tanks this model draws: where each seat's head shows and how the tracks turn the wheels. */
 export interface TankLayout {
-  /** The driver's head in the hull frame. */
-  driverHead: readonly [number, number, number]
+  /** The driver's head in the hull frame; none where the crew is drawn as soldiers (a boat's wheelhouse). */
+  driverHead: readonly [number, number, number] | null
   /** The gunner's head in the turret frame; none where the driver fires the gun. */
   gunnerHead: readonly [number, number, number] | null
   wheelRadius: number
@@ -127,7 +127,7 @@ export class TankModel implements VehicleModel {
       head.visible = false
       head.castShadow = true
       this.heads.push(head)
-      if (seat === 0) {
+      if (seat === 0 && layout.driverHead) {
         head.position.set(...layout.driverHead)
         this.root.add(head)
       } else if (seat === TANK_MG_SEAT) {

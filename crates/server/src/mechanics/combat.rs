@@ -473,14 +473,14 @@ fn wreck(world: &mut World, vid: u32) {
             wreck(world, fitting);
         }
     }
-    // A ship or a submarine is not thrown: it fills and goes down where it is (`sim`'s `sail` and
-    // `dive`). A gun fixed to a ship's deck has nothing in it to go up.
+    // A ship, a submarine or a boat is not thrown: it fills and goes down where it is (`sim`'s `sail`,
+    // `dive` and `boat`). A gun fixed to a ship's deck has nothing in it to go up.
     let lift = world.entities.get::<Vehicle>(vid).map(|vehicle| shared::vehicles::vehicle_def(vehicle.kind).spec.lift);
     if lift == Some(shared::vehicles::Lift::Mounted) {
         tracing::debug!(vid, "gun wrecked");
         return;
     }
-    if matches!(lift, Some(shared::vehicles::Lift::Sail | shared::vehicles::Lift::Dive)) {
+    if lift.is_some_and(shared::vehicles::Lift::afloat) {
         blast(world, Blast { point: pose.position, radius: WRECK_BLAST_RADIUS, damage: WRECK_BLAST_DAMAGE, knock: WRECK_BLAST_KNOCK, dir: [0.0, 1.0, 0.0], attacker, weapon: WEAPON_WRECK });
         tracing::debug!(vid, "ship wrecked");
         return;

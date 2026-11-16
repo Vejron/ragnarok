@@ -1603,3 +1603,96 @@ fn an_amvs_bomb_bursts_smaller_than_a_field_mortars() {
     assert!(amv.radius < mortar.radius && amv.damage < mortar.damage && amv.knock < mortar.knock);
     assert!(amv.radius > 0.75 * mortar.radius && amv.damage > 0.75 * mortar.damage, "but only a little");
 }
+
+/// A Stridsbåt 90 on dry ground with its driver and its gunner aboard, settled and both looking where
+/// the hull points.
+fn cb90_crewed() -> (Game, u32, u32, u32, u32) {
+    let mut game = game();
+    let (driver, inbox) = join(&mut game);
+    std::mem::forget(inbox);
+    let (gunner, inbox) = join(&mut game);
+    std::mem::forget(inbox);
+    let vid = crate::mechanics::vehicles::add_vehicle(&mut game.world, shared::protocol::KIND_CB90, [0.0, CB90_HALF_EXTENTS[1] + 0.2, 30.0], 0.0);
+    seat(&mut game, driver, vid, 0);
+    seat(&mut game, gunner, vid, 1);
+    let mut seq = 0;
+    let yaw = game.world.physics.car_pose(vid).unwrap().yaw();
+    for _ in 0..90 {
+        aim_and_hold(&mut game, driver, &mut seq, yaw, 0.0, 0, 1);
+        aim_and_hold(&mut game, gunner, &mut seq, yaw, 0.0, 0, 1);
+    }
+    (game, driver, gunner, vid, seq)
+}
+
+#[test]
+fn a_cb90s_cannon_turns_all_the_way_round_and_only_its_gunner_fires_it() {
+    let (mut game, driver, gunner, vid, mut seq) = cb90_crewed();
+    let hull = game.world.physics.car_pose(vid).unwrap().yaw();
+    // Round over the stern, and up.
+    aim_and_hold(&mut game, gunner, &mut seq, hull + 3.0, 0.3, 0, 150);
+    let gun = turret(&game, vid);
+    assert!(wrap_angle(gun.yaw - 3.0).abs() < 0.05 && (gun.pitch - 0.3).abs() < 0.05, "{gun:?}");
+    aim_and_hold(&mut game, gunner, &mut seq, hull + 3.0, 0.3, BUTTON_FIRE, 60);
+    let fired = turret(&game, vid).shots;
+    let expected = (60 / CB90_CANNON_COOLDOWN_TICKS) as u8;
+    assert!(fired.abs_diff(expected) <= 1, "{fired} rounds in a second, expected about {expected}");
+    assert_eq!(shown(&game, vid, Show::Pintle).shots, 0, "the gunner's trigger is not the driver's");
+    assert!(game.seen(vid).unwrap().turret.is_some());
+    // The driver's trigger fires the bow guns, not the cannon.
+    aim_and_hold(&mut game, driver, &mut seq, hull, 0.0, BUTTON_FIRE, 30);
+    assert_eq!(turret(&game, vid).shots, fired);
+    assert!(shown(&game, vid, Show::Pintle).shots >= 8, "the bow guns fire");
+    // Neither of the two at the guns has a hand free for their own; the riders on the after deck do.
+    let kind = shared::protocol::KIND_CB90;
+    assert!(!shared::vehicles::crew_gun(kind, 0) && !shared::vehicles::crew_gun(kind, 1));
+    assert!(shared::vehicles::crew_gun(kind, 2) && shared::vehicles::crew_gun(kind, 3));
+}
+
+#[test]
+fn a_cb90s_bow_guns_follow_the_drivers_look_within_their_arc_and_show_it() {
+    let (mut game, driver, _, vid, mut seq) = cb90_crewed();
+    let hull = game.world.physics.car_pose(vid).unwrap().yaw();
+    aim_and_hold(&mut game, driver, &mut seq, hull + 1.0, 0.2, 0, 90);
+    let guns = shown(&game, vid, Show::Pintle);
+    assert!((guns.yaw - 1.0).abs() < 0.05 && (guns.pitch - 0.2).abs() < 0.05, "{guns:?}");
+    let seen = game.seen(vid).unwrap().pintle.expect("the bow guns are replicated");
+    assert!((from_mrad(seen.yaw) - 1.0).abs() < 0.05, "their yaw is from the hull: {seen:?}");
+    // Straight astern is beyond them: they stop at the end of their arc, clear of the wheelhouse.
+    aim_and_hold(&mut game, driver, &mut seq, hull - 3.0, 0.0, 0, 120);
+    let guns = shown(&game, vid, Show::Pintle);
+    assert!((guns.yaw + CB90_MG_YAW_LIMIT).abs() < 0.02, "{guns:?}");
+    // The two barrels take turns.
+    aim_and_hold(&mut game, driver, &mut seq, hull, 0.0, BUTTON_FIRE, 60);
+    let fired = shown(&game, vid, Show::Pintle).shots;
+    let expected = (60 / CB90_MG_COOLDOWN_TICKS) as u8;
+    assert!(fired.abs_diff(expected) <= 1, "{fired} rounds in a second, expected about {expected}");
+}
+
+#[test]
+fn a_cb90s_bow_guns_jam_when_hot_and_clear() {
+    let (mut game, driver, _, vid, mut seq) = cb90_crewed();
+    let yaw = game.world.physics.car_pose(vid).unwrap().yaw();
+    let mut jammed_at = None;
+    for tick in 0..60 * 10 {
+        aim_and_hold(&mut game, driver, &mut seq, yaw, 0.0, BUTTON_FIRE, 1);
+        if shown(&game, vid, Show::Pintle).jammed {
+            jammed_at = Some(tick);
+            break;
+        }
+    }
+    let jammed_at = jammed_at.expect("the bow guns jam");
+    assert!((60 * 4..60 * 7).contains(&jammed_at), "after about five seconds: {jammed_at} ticks");
+    assert!(game.seen(vid).unwrap().pintle.unwrap().flags & shared::protocol::PINTLE_JAMMED != 0);
+    aim_and_hold(&mut game, driver, &mut seq, yaw, 0.0, 0, 60 * 5);
+    assert!(!shown(&game, vid, Show::Pintle).jammed, "cool again");
+}
+
+#[test]
+fn a_cb90s_bow_guns_point_at_what_the_drivers_reticle_is_on() {
+    let (mut game, driver, _, vid, mut seq) = cb90_crewed();
+    let hull = game.world.physics.car_pose(vid).unwrap().yaw();
+    aim_and_hold(&mut game, driver, &mut seq, hull + 0.4, -0.1, 0, 240);
+    let (miss, range) = reticle_miss(&game, vid, 1, driver, Eye { back: CB90_AIM_BACK, up: CB90_AIM_UP });
+    assert!(range < 150.0, "the reticle is on the ground ahead: {range} m");
+    assert!(miss < 0.3, "the bullets meet it: {miss} m off at {range} m");
+}

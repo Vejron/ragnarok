@@ -372,7 +372,11 @@ export class Cameras {
     }
   }
 
-  /** Behind a gun on a turret's roof, looking along its line, and kept within its travel of the turret, which pushes the look along when it swings away. */
+  /**
+   * Behind a gun on a turret's roof, looking along its line, and kept within its travel of the turret,
+   * which pushes the look along when it swings away; or, for a gun on the hull (a boat's bow guns), of
+   * the hull.
+   */
   private pintle(): RigImpl {
     let aimed = false
     return {
@@ -382,18 +386,19 @@ export class Cameras {
       frame: (c) => {
         const { ride, model, seat } = c
         const barrel = model instanceof TankModel ? model.pintleBarrel() : null
-        if (seat.rig.name !== 'pintle' || !barrel || !ride.turret) return this.rigs.drive.frame(c)
-        const turret = ride.yaw + ride.turret.yaw
+        if (seat.rig.name !== 'pintle' || !barrel || (!seat.rig.hull && !ride.turret)) return this.rigs.drive.frame(c)
+        const from = ride.yaw + (seat.rig.hull ? 0 : (ride.turret?.yaw ?? 0))
         if (!aimed && ride.pintle) {
           // Take the seat looking where the gun points.
-          this.input.yaw = turret + ride.pintle.yaw
+          this.input.yaw = from + ride.pintle.yaw
           this.input.pitch = ride.pintle.pitch
           aimed = true
         }
-        this.input.yaw = turret + clamp(wrapAngle(this.input.yaw - turret), -seat.rig.limit, seat.rig.limit)
+        this.input.yaw = from + clamp(wrapAngle(this.input.yaw - from), -seat.rig.limit, seat.rig.limit)
         this.input.clampPitch(seat.rig.pitch[0], seat.rig.pitch[1])
         const { origin } = barrel
-        this.scene.aimFrom([origin.x, origin.y, origin.z], this.input.yaw, this.input.pitch, ROOF_AIM_BACK, ROOF_AIM_UP)
+        const [back, up] = seat.rig.eye ?? [ROOF_AIM_BACK, ROOF_AIM_UP]
+        this.scene.aimFrom([origin.x, origin.y, origin.z], this.input.yaw, this.input.pitch, back, up)
       },
     }
   }

@@ -13,12 +13,13 @@ use crate::consts::*;
 use crate::mounts::{Aim, Ammo, Dial, Eye, Fire, MountDef, Muzzle, Need, Refill, Show};
 use crate::items::*;
 use crate::protocol::{
-    KIND_AMV, KIND_BUS, KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MISSILE, KIND_MORTAR, KIND_PAK, KIND_PBV, KIND_PLANE, KIND_ROADSTER, KIND_SEAPLANE, KIND_SHIP, KIND_SHIP_GUN, KIND_SNOWMOBILE, KIND_SNOWRACER, KIND_SPORTS, KIND_STRF, KIND_STRV, KIND_SUBMARINE, KIND_TANK, KIND_TECHNICAL, KIND_TITAN, KIND_TUPP, KIND_WALKER, PROJECTILE_AMV_BOMB, PROJECTILE_BALL, PROJECTILE_BOMB, PROJECTILE_CANNON, PROJECTILE_CANNON_AP,
+    KIND_AMV, KIND_BUS, KIND_CB90, KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MISSILE, KIND_MORTAR, KIND_PAK, KIND_PBV, KIND_PLANE, KIND_ROADSTER, KIND_SEAPLANE, KIND_SHIP, KIND_SHIP_GUN, KIND_SNOWMOBILE, KIND_SNOWRACER, KIND_SPORTS, KIND_STRF, KIND_STRV, KIND_SUBMARINE, KIND_TANK, KIND_TECHNICAL, KIND_TITAN, KIND_TUPP, KIND_WALKER, PROJECTILE_AMV_BOMB, PROJECTILE_BALL, PROJECTILE_BOMB, PROJECTILE_CANNON, PROJECTILE_CANNON_AP,
     PROJECTILE_EGG, PROJECTILE_HE, PROJECTILE_MORTAR, PROJECTILE_ROTARY, PROJECTILE_SHELL, WEAPON_AUTOCANNON, WEAPON_DRONE, WEAPON_LASER, WEAPON_LOITER, WEAPON_MG, WEAPON_MISSILE, WEAPON_ROCKET, WEAPON_SHELL,
 };
 
 pub mod amv;
 pub mod bus;
+pub mod cb90;
 pub mod drone;
 pub mod golf_cart;
 pub mod heli;
@@ -273,6 +274,7 @@ pub static VEHICLES: &[VehicleDef] = &[
     bus::BUS,
     pbv::PBV,
     amv::AMV,
+    cb90::CB90,
 ];
 
 /// Where each kind id's definition is in `VEHICLES`: 0, the jeep's, for ids that are not a vehicle.
@@ -316,10 +318,10 @@ pub fn crew_shows(kind: u8, index: usize) -> bool {
 }
 
 /// Whether seat `index` of a `kind` fires its occupant's own guns: a car's passengers, but not whoever
-/// works a gun on a turning mount (a technical's gunner).
+/// works one of its mounts (a technical's gunner, a Stridsbåt 90's).
 pub fn crew_gun(kind: u8, index: usize) -> bool {
     let def = vehicle_def(kind);
-    def.crew_guns && index != 0 && def.mount_seat.is_none_or(|seat| seat.seat != index)
+    def.crew_guns && index != 0 && def.mounts.iter().all(|mount| mount.seat != index)
 }
 
 /// What drone `kind` does: an FPV drone's for a kind that is not a drone.
@@ -354,7 +356,7 @@ mod tests {
     #[test]
     fn only_armed_kinds_have_a_gun_and_only_the_planes_and_the_hen_have_pilot_arms() {
         assert!(vehicle_def(KIND_PLANE).arms() && vehicle_def(KIND_SEAPLANE).arms() && vehicle_def(KIND_HEN).arms() && !vehicle_def(KIND_TANK).arms());
-        assert!(vehicle_def(KIND_TANK).gun() && vehicle_def(KIND_HELI).gun() && vehicle_def(KIND_PLANE).gun() && vehicle_def(KIND_SEAPLANE).gun() && vehicle_def(KIND_WALKER).gun() && vehicle_def(KIND_STRV).gun() && vehicle_def(KIND_STRF).gun() && vehicle_def(KIND_PBV).gun() && vehicle_def(KIND_AMV).gun());
+        assert!(vehicle_def(KIND_TANK).gun() && vehicle_def(KIND_HELI).gun() && vehicle_def(KIND_PLANE).gun() && vehicle_def(KIND_SEAPLANE).gun() && vehicle_def(KIND_WALKER).gun() && vehicle_def(KIND_STRV).gun() && vehicle_def(KIND_STRF).gun() && vehicle_def(KIND_PBV).gun() && vehicle_def(KIND_AMV).gun() && vehicle_def(KIND_CB90).gun());
         assert!(!vehicle_def(KIND_JEEP).gun() && !vehicle_def(KIND_SPORTS).gun() && !vehicle_def(KIND_ROADSTER).gun() && !vehicle_def(KIND_HEN).gun());
         assert!(vehicle_def(KIND_TUPP).gun() && !vehicle_def(KIND_TUPP).arms());
         assert!(vehicle_def(KIND_MORTAR).gun() && vehicle_def(KIND_PAK).gun());

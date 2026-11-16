@@ -210,7 +210,8 @@ pub enum Show {
     Guns,
     /// As the arms' bombs, and their rounds when there are no guns.
     Rack,
-    /// As the roof gun: aim from the turret, rounds, heat and jam.
+    /// As the roof gun: aim, rounds, heat and jam. Its aim is from the turret for an `Aim::Pintle` gun,
+    /// and from the hull for any other (a Stridsbåt 90's bow guns, beside its turret's cannon).
     Pintle,
 }
 

@@ -74,6 +74,8 @@ export const VEHICLE_KINDS: { kind: number; name: string; icon: string }[] = [
   { kind: 18, name: 'Pirate ship', icon: 'X' },
   // Only on open water deep enough to dive in.
   { kind: 25, name: 'Submarine', icon: 'B' },
+  // Only on open water.
+  { kind: 34, name: 'Stridsbåt 90', icon: 'L' },
 ]
 
 /** The `KIND_*` ids of crates/shared/src/consts.rs that are wild animals, and the herd each comes in by default. */

@@ -42,6 +42,8 @@ const HINTS: Record<Seat, (stats: Stats) => string> = {
     const state = jammed ? 'jammed!' : heat !== null ? (heat > 0.6 ? 'overheating' : 'firing') : loaded(reload)
     return `Mouse aim · Hold right mouse for the gun sight · Click or F fire${ammo ? ` · Q ${swapRound(ammo)}` : ''} · ${ammo ? `${ammo} ` : ''}${state}${canSwitchSeat ? SWITCH : ''}`
   },
+  coxswain: ({ jammed, heat, canSwitchSeat }) =>
+    `W/S ahead, then the buckets down to stop and go astern · A/D steer, even standing still · Mouse aim the bow guns · Click or F fire · ${jammed ? 'jammed!' : (heat ?? 0) > 0.6 ? 'overheating' : 'ready'}${LIGHTS}${canSwitchSeat ? SWITCH : ''}`,
   roofgunner: ({ jammed, heat, canSwitchSeat }) => `Mouse aim (within 90° of the cannon) · Click or F fire · ${jammed ? 'jammed!' : (heat ?? 0) > 0.6 ? 'overheating' : 'ready'}${canSwitchSeat ? SWITCH : ''}`,
 }
 
@@ -49,4 +51,4 @@ const HINTS: Record<Seat, (stats: Stats) => string> = {
 export const seatHint = (seat: HudStats['seat'], stats: Stats) => (seat ? HINTS[seat](stats) : null)
 
 /** Seats that aim at the middle of the screen, with a reticle while not looking down a sight. */
-export const aimsReticle = (seat: HudStats['seat']) => seat === 'gunner' || seat === 'roofgunner' || seat === 'walker' || seat === 'titan' || seat === 'tupp' || seat === 'strv' || seat === 'mortar'
+export const aimsReticle = (seat: HudStats['seat']) => seat === 'gunner' || seat === 'roofgunner' || seat === 'coxswain' || seat === 'walker' || seat === 'titan' || seat === 'tupp' || seat === 'strv' || seat === 'mortar'

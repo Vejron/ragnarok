@@ -3,6 +3,7 @@
 pub use crate::vehicles::amv::*;
 pub use crate::vehicles::drone::*;
 pub use crate::vehicles::bus::*;
+pub use crate::vehicles::cb90::*;
 pub use crate::vehicles::golf_cart::*;
 pub use crate::vehicles::heli::*;
 pub use crate::vehicles::hen::*;
@@ -108,6 +109,9 @@ pub const KIND_PBV: u8 = 32;
 /// The AMV XA-361: an eight-wheeled armoured mortar carrier, its turret's two 120 mm tubes lobbing a
 /// pair of bombs in quick succession before a reload.
 pub const KIND_AMV: u8 = 33;
+/// The Stridsbåt 90: a fast assault craft on waterjets, its driver working twin machine guns on the bow
+/// and its gunner a 25 mm automatic cannon in a turret on the wheelhouse roof.
+pub const KIND_CB90: u8 = 34;
 
 /// Fixed simulation rate, in ticks per second.
 pub const TICK_RATE: u32 = 60;

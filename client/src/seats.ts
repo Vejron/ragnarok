@@ -15,8 +15,12 @@ export type Rig =
   | { name: 'drive' }
   /** Behind a mounted gun along its line, its travel kept in the hull's frame. */
   | { name: 'gun'; hull: readonly [yawLimit: number, pitchMin: number, pitchMax: number] }
-  /** Behind a gun on a turret's roof, its travel kept within `limit` either side of the turret. */
-  | { name: 'pintle'; limit: number; pitch: readonly [number, number] }
+  /**
+   * Behind a gun on a turret's roof, its travel kept within `limit` either side of the turret; or, with
+   * `hull`, of the hull (a boat's bow guns, which its driver aims while they steer), the camera `eye`
+   * (back, up) behind it.
+   */
+  | { name: 'pintle'; limit: number; pitch: readonly [number, number]; hull?: true; eye?: readonly [back: number, up: number] }
   /** Through a drone's camera, flown from afar within `link` metres; a loitering drone also has one under its belly. */
   | { name: 'fpv'; pitch: readonly [number, number]; link: number; belly?: true }
   /** Behind a plane, following the mouse's aim at an easy pace. */

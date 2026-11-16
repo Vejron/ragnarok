@@ -1,5 +1,6 @@
 import { Vector3 } from '@ragnarok/engine'
 import { AmvModel } from '@/render/amv'
+import { Cb90Model } from '@/render/cb90'
 import { HeliModel } from '@/render/heli'
 import { AUTOCANNON, BEAM, BLACK_POWDER, CANNON, MORTAR, ROTARY, type MuzzleProfile } from '@/render/gunfire'
 import { LaserEyes } from '@/render/lasereyes'
@@ -16,7 +17,7 @@ import { TitanModel } from '@/render/titan'
 import { TuppModel } from '@/render/tupp'
 import { WalkerModel } from '@/render/walker'
 import { arcTime } from '@/render/rounds'
-import { AMV_BARREL_LENGTH, HELI_GUN_LENGTH, MORTAR_BARREL_LENGTH, PAK_BARREL_LENGTH, PBV_BARREL_LENGTH, PBV_CANNON_RANGE, SHIP_GUN_BARREL_LENGTH, PLANE_GUN_RANGE, STRF_BARREL_LENGTH, STRV_BARREL_LENGTH, TANK_BARREL_LENGTH, TANK_MG_LENGTH, TANK_MG_RANGE, TECHNICAL_MG_LENGTH, TECHNICAL_MG_RANGE, TECHNICAL_MG_SEAT, TITAN_GUN_LENGTH, WALKER_GUN_LENGTH } from '@/sim/consts'
+import { AMV_BARREL_LENGTH, CB90_CANNON_LENGTH, CB90_CANNON_RANGE, CB90_MG_LENGTH, CB90_MG_RANGE, HELI_GUN_LENGTH, MORTAR_BARREL_LENGTH, PAK_BARREL_LENGTH, PBV_BARREL_LENGTH, PBV_CANNON_RANGE, SHIP_GUN_BARREL_LENGTH, PLANE_GUN_RANGE, STRF_BARREL_LENGTH, STRV_BARREL_LENGTH, TANK_BARREL_LENGTH, TANK_MG_LENGTH, TANK_MG_RANGE, TECHNICAL_MG_LENGTH, TECHNICAL_MG_RANGE, TECHNICAL_MG_SEAT, TITAN_GUN_LENGTH, WALKER_GUN_LENGTH } from '@/sim/consts'
 import type { Frame, Presenter } from '../presenter'
 import type { Entity } from '../units'
 import type { VehicleWorld, Vehicles } from './vehicles'
@@ -46,6 +47,7 @@ function cannonOf(model: unknown): Cannon | null {
   if (model instanceof WalkerModel) return { length: WALKER_GUN_LENGTH, profile: BEAM, gunner: 0, heavy: false }
   if (model instanceof StrvModel) return { length: STRV_BARREL_LENGTH, profile: CANNON, gunner: 0, heavy: true }
   if (model instanceof StrfModel) return { length: STRF_BARREL_LENGTH, profile: AUTOCANNON, gunner: 1, heavy: false }
+  if (model instanceof Cb90Model) return { length: CB90_CANNON_LENGTH, profile: AUTOCANNON, gunner: 1, heavy: false, range: CB90_CANNON_RANGE }
   if (model instanceof PbvModel) return { length: PBV_BARREL_LENGTH, profile: AUTOCANNON, gunner: 1, heavy: false, range: PBV_CANNON_RANGE }
   if (model instanceof AmvModel) return { length: AMV_BARREL_LENGTH, profile: MORTAR, gunner: 1, heavy: false }
   if (model instanceof MortarModel) return { length: MORTAR_BARREL_LENGTH, profile: MORTAR, gunner: 0, heavy: false }
@@ -201,8 +203,9 @@ export class PlaneGuns implements Presenter<Frame> {
 }
 
 /**
- * A tank's roof gun (`pintle`): every new round on its counter is a bullet from its muzzle out to what
- * it meets, with a flash and the rattle. Only rounds that hit something come back from the server.
+ * A tank's roof gun or a Stridsbåt 90's bow guns (`pintle`): every new round on its counter is a bullet
+ * from its muzzle out to what it meets, with a flash and the rattle; the boat's two barrels take turns.
+ * Only rounds that hit something come back from the server.
  */
 export class RoofGuns implements Presenter<Frame> {
   /** The counter as last drawn, per tank. */
@@ -221,13 +224,19 @@ export class RoofGuns implements Presenter<Frame> {
     const before = this.shots.get(id)
     this.shots.set(id, shots)
     if (before === undefined || before === shots) return
-    const barrel = tank.pintleBarrel()
-    if (!barrel) return
     const rounds = Math.min(MAX_ROUNDS, (shots - before + 256) % 256)
-    const muzzle = barrel.origin.addScaledVector(barrel.direction, TANK_MG_LENGTH)
-    this.world.effects.muzzle(muzzle)
-    for (let k = 0; k < rounds; k++) fireRound(this.world, muzzle, barrel.direction, TANK_MG_RANGE)
-    this.world.sounds.machineGun([muzzle.x, muzzle.y, muzzle.z], rounds)
+    const [length, range] = tank instanceof Cb90Model ? [CB90_MG_LENGTH, CB90_MG_RANGE] : [TANK_MG_LENGTH, TANK_MG_RANGE]
+    let last: Vector3 | null = null
+    for (let k = 1; k <= rounds; k++) {
+      // The counter had gone up for each round: an even count left the left barrel, as the server takes turns.
+      const barrel = tank instanceof Cb90Model ? tank.bowGun((before + k - 1) % 2 === 0 ? -1 : 1) : tank.pintleBarrel()
+      if (!barrel) return
+      const muzzle = barrel.origin.addScaledVector(barrel.direction, length)
+      this.world.effects.muzzle(muzzle)
+      fireRound(this.world, muzzle, barrel.direction, range)
+      last = muzzle
+    }
+    if (last) this.world.sounds.machineGun([last.x, last.y, last.z], rounds)
   }
 
   remove(id: number) {
