@@ -9,7 +9,7 @@ export { COVER_COLORS, GRASS_COLOR } from './terrainmesh'
  * no canvas (tests), in which case the terrain stays plain grass. The tile worker paints the
  * same on an `OffscreenCanvas` instead (`tile.worker.ts`).
  */
-export function bakeTerrainTexture(tile: Pick<TileData, 'cover'>, x0: number, z0: number, size: number): Texture | null {
+export function bakeTerrainTexture(tile: Pick<TileData, 'cover'> & Partial<Pick<TileData, 'crops'>>, x0: number, z0: number, size: number): Texture | null {
   if (typeof document === 'undefined') return null
   const pixels = coverPixels(size)
   const canvas = document.createElement('canvas')

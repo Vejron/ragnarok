@@ -651,6 +651,9 @@ pub const DAY_SECONDS: f32 = 1800.0;
 pub const DAY_START_PHASE: f32 = 0.36;
 /// A prone soldier's eye is 0.2 m above its feet, so this is relative to the capsule centre.
 pub const PRONE_EYE_HEIGHT: f32 = 0.2 - PRONE_CENTRE;
+/// How high a field of wheat stands, metres (`Tile::crops`): over a crouched soldier's head and under
+/// a standing one's shoulders, so the first is hidden in it and the second is not.
+pub const CROP_HEIGHT: f32 = 1.3;
 
 /// The on-foot camera sits behind a pivot this far to the right of the capsule centre and this far
 /// above it. The server rebuilds the camera ray from it, so a shot lands where the crosshair is.

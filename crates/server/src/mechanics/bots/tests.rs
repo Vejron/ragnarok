@@ -881,6 +881,84 @@ fn it_takes_someone_in_slower_the_harder_they_are_to_see() {
     assert!(lamp < standing, "a lamp gives them away: {lamp} {standing}");
 }
 
+/// A flat 200 m square, one tile, with wheat over everything north of z = -20 m.
+fn game_with_a_field(theme: u8) -> Game {
+    let wheat = (0..100 * 100).map(|cell| if cell / 100 < 40 { shared::world::CROP_WHEAT } else { shared::world::CROP_NONE }).collect();
+    let map = WorldFile { version: WORLD_VERSION, half_extent: 10_000, tile_size: 20_000, spawns: vec![[-5_000, -5_000]], theme, crops: vec![(0, 0, wheat)], ..Default::default() };
+    let mut game = Game::new(map, 0).unwrap();
+    game.world.clear_pickups();
+    game
+}
+
+/// How many seconds a calm bot at `[0, from]`, facing -Z, takes to see someone at `[0, z]` holding
+/// `buttons` and walking if `forward` is not 0, in `game_with_a_field`; none within 10 s.
+fn time_to_see_in_wheat(theme: u8, from: f32, z: f32, buttons: u16, forward: i8) -> Option<f32> {
+    let mut game = game_with_a_field(theme);
+    let bot = guard(&mut game, 0.5);
+    put(&mut game, bot, [0.0, from]);
+    let human = join(&mut game);
+    put(&mut game, human, [0.0, z]);
+    game.world.entities.get_mut::<Player>(human).unwrap().character.chute = false;
+    (1..=10 * TICK_RATE).find_map(|step| {
+        game.handle(Command::Input(human, 0, vec![InputFrame { seq: step, buttons, forward, ..Default::default() }]));
+        game.step();
+        // Held where they are, at the height their stance has them.
+        {
+            let mut player = game.world.entities.get_mut::<Player>(human).unwrap();
+            (player.character.position[0], player.character.position[2]) = (0.0, z);
+        }
+        game.world.entities.of::<Bot>(bot).sight.sees.then_some(step as f32 / TICK_RATE as f32)
+    })
+}
+
+#[test]
+fn wheat_hides_someone_low_and_still_in_it_and_half_hides_someone_on_their_feet() {
+    use shared::world::THEME_PLAIN;
+    let open = time_to_see(0, false, 0).expect("standing in the open");
+    let standing = time_to_see_in_wheat(THEME_PLAIN, 0.0, -45.0, 0, 0).expect("standing in the wheat");
+    assert!(standing > open * 1.5, "head and shoulders show: {standing} {open}");
+    assert_eq!(time_to_see_in_wheat(THEME_PLAIN, 0.0, -45.0, BUTTON_CROUCH, 0), None, "crouched and still");
+    assert_eq!(time_to_see_in_wheat(THEME_PLAIN, 0.0, -45.0, BUTTON_PRONE, 0), None, "lying down");
+    assert_eq!(time_to_see_in_wheat(THEME_PLAIN, 0.0, -45.0, BUTTON_PRONE, 1), None, "crawling");
+    let sneaking = time_to_see_in_wheat(THEME_PLAIN, 0.0, -45.0, BUTTON_CROUCH, 1).expect("crouched and moving parts the wheat");
+    assert!(sneaking > standing * 2.0, "{sneaking} {standing}");
+}
+
+#[test]
+fn wheat_hides_no_one_at_its_edge_under_a_bots_nose_or_in_winter() {
+    use shared::world::{THEME_PLAIN, THEME_WINTER};
+    // The field ends at z = -20: a metre inside it there is none between them and the bot.
+    assert!(time_to_see_in_wheat(THEME_PLAIN, 0.0, -21.0, BUTTON_CROUCH, 0).is_some(), "at the field's edge");
+    assert!(time_to_see_in_wheat(THEME_PLAIN, -43.0, -45.0, BUTTON_CROUCH, 0).is_some(), "two metres off");
+    assert!(time_to_see_in_wheat(THEME_WINTER, 0.0, -45.0, BUTTON_CROUCH, 0).is_some(), "stubble hides no one");
+}
+
+#[test]
+fn someone_it_is_watching_is_lost_when_they_drop_into_the_wheat() {
+    let mut game = game_with_a_field(shared::world::THEME_PLAIN);
+    let bot = guard(&mut game, 0.5);
+    let human = join(&mut game);
+    put(&mut game, human, [0.0, -45.0]);
+    game.world.entities.get_mut::<Player>(human).unwrap().character.chute = false;
+    game.world.entities.get_mut::<Player>(human).unwrap().hands.hotbar = Default::default();
+    let mut seq = 0;
+    let mut hold = |game: &mut Game, buttons: u16, seconds: f32| {
+        for _ in 0..(seconds * TICK_RATE as f32) as u32 {
+            seq += 1;
+            game.handle(Command::Input(human, 0, vec![InputFrame { seq, buttons, ..Default::default() }]));
+            game.world.entities.get_mut::<crate::entities::Health>(human).unwrap().hp = PLAYER_MAX_HP;
+            game.step();
+            put(game, human, [0.0, -45.0]);
+        }
+    };
+    hold(&mut game, 0, 4.0);
+    assert!(game.world.entities.of::<Bot>(bot).sight.sees, "it saw them standing in the field");
+    hold(&mut game, BUTTON_CROUCH, 1.0);
+    let mind = game.world.entities.of::<Bot>(bot);
+    assert!(!mind.sight.sees, "they went down into the wheat");
+    assert_eq!(mind.mode, BotMode::Pursue, "and it goes to look where they were");
+}
+
 #[test]
 fn it_is_dark_at_midnight_and_light_at_noon() {
     assert_eq!(senses::darkness(MIDNIGHT), 1.0);

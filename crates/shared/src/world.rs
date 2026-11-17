@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::terrain::Ground;
 
-pub const WORLD_VERSION: u8 = 28;
+pub const WORLD_VERSION: u8 = 29;
 
 /// `Manifest::theme`: the world as it always was.
 pub const THEME_PLAIN: u8 = 0;
@@ -316,6 +316,11 @@ pub struct Tile {
     /// tile has none. The client draws it; it slows whoever crosses it.
     #[serde(deserialize_with = "bits", serialize_with = "bin")]
     pub stones: Vec<u8>,
+    /// Standing crops: for each cell of a square grid over the tile (laid out as `stones` is), what
+    /// grows there (`CROP_*`, `CROP_NONE` for nothing). Empty when the tile has none. The client draws
+    /// them, and they hide a soldier who is low enough in them from the bots (`CROP_HEIGHT`).
+    #[serde(deserialize_with = "bits", serialize_with = "bin")]
+    pub crops: Vec<u8>,
     /// The buildings' own walls and roofs: what the importer built before it cut them into cells
     /// (`voxels::bake`). Cells are what is blasted and what holds a building up; what is drawn and
     /// collided with is these, with the windows cut out and the pieces in blasted cells gone
@@ -378,6 +383,10 @@ impl BuildingLook {
 pub const STONES_DENSITY: u8 = 0x7f;
 /// `Tile::stones`: set where the stones are the angular blocks of a boulder field.
 pub const STONES_ANGULAR: u8 = 0x80;
+/// `Tile::crops`: nothing is grown in the cell.
+pub const CROP_NONE: u8 = 0;
+/// `Tile::crops`: wheat, standing `CROP_HEIGHT` high.
+pub const CROP_WHEAT: u8 = 1;
 
 fn bits<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Vec<u8>, D::Error> {
     Ok(Bits::deserialize(deserializer)?.0)
@@ -594,6 +603,10 @@ pub struct WorldFile {
     /// Filled by `assemble`.
     #[serde(skip)]
     pub stones: Vec<(u16, u16, Vec<u8>)>,
+    /// Each tile's standing crops (`Tile::crops`), by its `(col, row)`; tiles without any are left out.
+    /// Filled by `assemble`.
+    #[serde(skip)]
+    pub crops: Vec<(u16, u16, Vec<u8>)>,
     /// `buildings[i]`'s identity. Filled by `assemble`; empty for a world built by hand.
     #[serde(skip)]
     pub building_ids: Vec<ObjId>,
@@ -1317,6 +1330,9 @@ impl WorldFile {
             if !tile.stones.is_empty() {
                 world.stones.push((col, row, tile.stones.clone()));
             }
+            if !tile.crops.is_empty() {
+                world.crops.push((col, row, tile.crops.clone()));
+            }
             if n > 0 && tile.ground.len() == (n * n) as usize {
                 let ground = &mut world.ground;
                 let (i0, j0) = (col as u32 * (n - 1), row as u32 * (n - 1));
@@ -1519,18 +1535,19 @@ mod tests {
             ski: vec![SkiTrail { width: 400, points: vec![[0, 0], [900, 50]] }],
             lines: vec![Line { kind: LINE_POWER, points: vec![[0, 0], [5000, 0]], base: vec![120, 150], end: false }, Line { kind: LINE_WALL, points: vec![[0, 0], [300, 0]], base: vec![120, 125], end: true }],
             stones: vec![0, 40, STONES_ANGULAR | 90, 0],
+            crops: vec![CROP_NONE, CROP_WHEAT, CROP_WHEAT, CROP_NONE],
             look: Look { vertices: vec![[0, 0, 0], [100, 0, 0], [0, 300, 0]], triangles: vec![[0, 1, 2]], buildings: vec![[0, 1, 0], [0, 0, 0]] },
             graves: vec![Grave { x: 40, z: -60, base: 120, yaw: -1571, kind: GRAVE_CROSS }],
         };
         assert_eq!(Tile::decode(&tile.encode()).unwrap(), tile);
-        assert_eq!(tile.encode()[..3], [0xdc, 0, 17], "an array of all 17 fields");
+        assert_eq!(tile.encode()[..3], [0xdc, 0, 18], "an array of all 18 fields");
         // An empty tile is every field still, each empty.
         let empty = Tile::default().encode();
-        assert_eq!(empty[..3], [0xdc, 0, 17]);
+        assert_eq!(empty[..3], [0xdc, 0, 18]);
         assert_eq!(Tile::decode(&empty).unwrap(), Tile::default());
         // A tile without its last field, the tombstones (`[]`, its last byte), is refused.
         assert_eq!(empty[empty.len() - 1], 0x90);
-        let mut short = vec![0xdc, 0, 16];
+        let mut short = vec![0xdc, 0, 17];
         short.extend_from_slice(&empty[3..empty.len() - 1]);
         assert!(Tile::decode(&short).is_err());
         assert_eq!(manifest.tiles[0].path(), "tiles/1_0.msgpack");

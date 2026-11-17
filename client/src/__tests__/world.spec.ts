@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { encode } from '@msgpack/msgpack'
-import { BUILDING_BRIDGE, GRAVE_CROSS, GRAVE_KINDS, RAIL_TRAIN, RAIL_TRAM, ROOF_GABLE, WORLD_BASE, decodeManifest, decodeTile, worldHash } from '@/world'
+import { BUILDING_BRIDGE, CROP_NONE, CROP_WHEAT, GRAVE_CROSS, GRAVE_KINDS, RAIL_TRAIN, RAIL_TRAM, ROOF_GABLE, WORLD_BASE, decodeManifest, decodeTile, worldHash } from '@/world'
 import { buildingColors } from '@/render/buildingmesh'
 import { NO_CELLS } from './worlds'
 
@@ -94,7 +94,7 @@ describe('world files', () => {
 
   /** A tile file with every field empty, `fields` put in by index (`Tile` in `world.rs`). */
   const tileWith = (fields: Record<number, unknown>) =>
-    encode(Object.assign([[], [], [[], []], [2, new Uint8Array()], [], [], new Uint8Array(), new Uint8Array(), [], [], new Uint8Array(), [], [], [], new Uint8Array(), [[], [], []], []], fields))
+    encode(Object.assign([[], [], [[], []], [2, new Uint8Array()], [], [], new Uint8Array(), new Uint8Array(), [], [], new Uint8Array(), [], [], [], new Uint8Array(), new Uint8Array(), [[], [], []], []], fields))
 
   it('decodes ground written as residuals of a plane', () => {
     // The bytes `world.rs` pins (`ground_is_written_rounded_as_residuals_of_a_plane_through_its_neighbours`):
@@ -112,9 +112,15 @@ describe('world files', () => {
     expect(tile.rails).toEqual([{ gauge: 1.44, kind: RAIL_TRAIN, points: [[0, 0], [10, -2.5]] }])
   })
 
+  it('decodes a field\'s crops, and has none on a tile without', () => {
+    expect(decodeTile(tileWith({})).crops).toBeUndefined()
+    const tile = decodeTile(tileWith({ 15: new Uint8Array([CROP_NONE, CROP_WHEAT, CROP_WHEAT, CROP_NONE]) }))
+    expect(Array.from(tile.crops!)).toEqual([CROP_NONE, CROP_WHEAT, CROP_WHEAT, CROP_NONE])
+  })
+
   it('decodes tombstones, in metres and radians', () => {
     expect(decodeTile(tileWith({})).graves).toEqual([])
-    const tile = decodeTile(tileWith({ 16: [[1250, -300, 480, -1571, GRAVE_CROSS]] }))
+    const tile = decodeTile(tileWith({ 17: [[1250, -300, 480, -1571, GRAVE_CROSS]] }))
     expect(tile.graves).toEqual([{ x: 12.5, z: -3, base: 4.8, yaw: -1.571, kind: GRAVE_CROSS }])
   })
 

@@ -1,5 +1,6 @@
 import { Color, Geometry, Group, Mesh, ShaderMaterial } from '@ragnarok/engine'
-import { COVER_PARK, COVER_WOOD, STONES_DENSITY, type TileData, type TileRef } from '@/world'
+import { COVER_PARK, COVER_WOOD, CROP_NONE, STONES_DENSITY, type TileData, type TileRef } from '@/world'
+import { CROP_HEIGHT } from '@/sim/consts.generated'
 import { SURFACE_CELL } from '@/sim/surface'
 import type { TileGround } from '@/sim/terrain'
 import { COVER_COLORS, GRASS_COLOR } from './cover'
@@ -15,6 +16,10 @@ export { grassMask, type GrassMask }
  * Grass: short blades near the camera that lean with the wind, part around whoever walks or drives
  * through them, and are flattened by a blast's shock and spring back. It is all for show: nothing
  * on the server knows it is there, and it hides nothing.
+ *
+ * Crops are grown the same way (`WHEAT`), by a second `Grass` over the fields of `TileData.crops`.
+ * Those the server does know: wheat stands `CROP_HEIGHT` high and hides whoever is low in it, from
+ * the eye here and from the bots there (CROPS.md). What tells the two apart is their `Growth`.
  *
  * The blades are built on the CPU in square chunks around the camera, one merged mesh a chunk, and
  * all the movement is in the vertex shader, from a handful of uniforms: the wind, the nearest few
@@ -40,8 +45,6 @@ const BUILDS_PER_FRAME = 3
 const RESCAN_DISTANCE = 0.5
 /** Metres ahead of need a chunk is given more blades, so they are there before they show. */
 const LOOKAHEAD = 6
-/** Chunks holding at most this share of the blades are far enough off to draw each as one triangle. */
-const SIMPLE_SHARE = 1 / 8
 
 /** How much grass there is: the full field, or a thinner and nearer one for phones and tablets. */
 export interface GrassDensity {
@@ -55,6 +58,13 @@ export interface GrassDensity {
 
 export const GRASS_FULL: GrassDensity = { perMetre: 12, full: 20, far: 110 }
 export const GRASS_LITE: GrassDensity = { perMetre: 6, full: 13, far: 65 }
+/**
+ * A field of wheat, the same at every quality: it hides people, so a thinner field on a lower setting
+ * would be a way to see through it. Past `far` the field is the lid of `croplid.ts`.
+ */
+export const WHEAT_DENSITY: GrassDensity = { perMetre: 8, full: 25, far: 140 }
+/** A winter field's stubble: sparse, and only underfoot. */
+export const STUBBLE_DENSITY: GrassDensity = { perMetre: 5, full: 12, far: 45 }
 
 /** The share of the blades that shows at `distance` metres. */
 export function keptAt(density: GrassDensity, distance: number) {
@@ -105,8 +115,44 @@ export interface Blade {
   tone: number
   /** The ground's normal at the root, so the blade is lit as the slope it grows on. */
   normal: readonly [number, number, number]
-  /** Cottongrass: a white tuft at the top. */
-  cotton?: boolean
+  /** A head at the top, in the growth's `head` colour: cottongrass's white tuft, an ear of wheat. */
+  head?: boolean
+}
+
+/** What a draw of a blade grows into: its height, metres, whether it has a head and whether two shorter blades stand about it. */
+interface Planted {
+  height: number
+  head: boolean
+  tuft: boolean
+}
+
+/**
+ * What a `Grass` grows: a meadow's grass, a field's wheat or its stubble. Everything else (the chunks,
+ * the thinning with distance, the wind, the bending) is the same for all of them.
+ */
+export interface Growth {
+  /** The name of its node in the scene, which the GPU bench turns off by. */
+  name: string
+  /** A blade's colour for each value of the mask; entry 0 is never read. */
+  palette: readonly Color[]
+  /** The colour of a blade's head. */
+  head: Color
+  /** Whether a head takes the blade's own brightness, or is the plain colour. */
+  headToned: boolean
+  /** A blade's width at its root, metres. */
+  width: number
+  /** Chunks holding at most this share of the blades are far enough off to draw each as one triangle. */
+  simpleShare: number
+  /** How far up a blade each level under its tip is, and how much of the width is left there: full, and far-off chunks' one triangle. */
+  levels: readonly (readonly [number, number])[]
+  simpleLevels: readonly (readonly [number, number])[]
+  /** The same for a blade with a head. */
+  headLevels: readonly (readonly [number, number])[]
+  simpleHeadLevels: readonly (readonly [number, number])[]
+  /** Where it grows on a tile. */
+  mask(tile: TileData, x0: number, z0: number, size: number, ground: TileGround | null): GrassMask
+  /** The blade at `(x, z)` on ground of this `shade`, or null for none. `height` (0.3 to 0.7, mostly low), `tone` (0.85 to 1.15) and `chance` (0 to 1) are the blade's own draws. */
+  plant(x: number, z: number, shade: number, height: number, tone: number, chance: number): Planted | null
 }
 
 /**
@@ -114,7 +160,7 @@ export interface Blade {
  * the highs of the marsh's field, thinning to the pools' edges, with reeds round the bog's pools and the
  * odd cottongrass. `chance`, `height` and `pick` are the blade's own draws, 0 to 1.
  */
-function sedge(x: number, z: number, wet: number, chance: number, height: number, pick: number): { height: number; cotton: boolean } | null {
+function sedge(x: number, z: number, wet: number, chance: number, height: number, pick: number): Planted | null {
   const field = marshField(x, z)
   const level = marshPoolLevel(wet)
   if (field < level + 0.02) return null
@@ -122,9 +168,11 @@ function sedge(x: number, z: number, wet: number, chance: number, height: number
   const clump = t * t * (3 - 2 * t)
   if (chance > 0.15 + 0.85 * clump) return null
   // Reeds stand in the shallows at a bog pool's edge.
-  if (wet >= 1 && field < level + 0.09 && pick < 0.3) return { height: 1.3 + ((pick * 13) % 1) * 0.7, cotton: false }
-  if (wet > 0.5 && pick > 0.95 && clump > 0.3) return { height: 0.35 + height * 0.3, cotton: true }
-  return { height: height * 1.3 * (0.7 + 0.45 * clump), cotton: false }
+  if (wet >= 1 && field < level + 0.09 && pick < 0.3) return { height: 1.3 + ((pick * 13) % 1) * 0.7, head: false, tuft: false }
+  if (wet > 0.5 && pick > 0.95 && clump > 0.3) return { height: 0.35 + height * 0.3, head: true, tuft: false }
+  const grown = height * 1.3 * (0.7 + 0.45 * clump)
+  // Sedge grows in tufts, but for the reeds.
+  return { height: grown, head: false, tuft: grown < 1.2 }
 }
 
 /** Smooth noise in 0..1 on a lattice of unit cells. */
@@ -152,13 +200,84 @@ export function patchAt(x: number, z: number) {
   return t * t * (3 - 2 * t)
 }
 
+/** A meadow: grass in patches, and a marsh's sedge. */
+export const MEADOW: Growth = {
+  name: 'grass',
+  palette: PALETTE,
+  head: COTTON,
+  headToned: false,
+  width: 0.07,
+  simpleShare: 1 / 8,
+  levels: [[0, 1], [0.55, 0.7]],
+  simpleLevels: [[0, 1]],
+  // Cottongrass: a thin stalk under a white head, widest just below its top.
+  headLevels: [[0, 0.4], [0.82, 1.7]],
+  simpleHeadLevels: [[0, 0.5]],
+  mask: (tile, x0, z0, size, ground) => grassMask(tile, x0, z0, size, ground),
+  plant(x, z, shade, height, tone, chance) {
+    const wet = PALETTE_WET[shade] ?? 0
+    if (wet > 0) return sedge(x, z, wet, chance, height, (tone - 0.85) / 0.3)
+    const patch = patchAt(x, z)
+    // A few stray tufts grow between the patches.
+    if (chance > patch * 0.96 + 0.04) return null
+    // Taller in the thick of a patch, short at its edge.
+    return { height: height * (0.55 + 0.6 * patch), head: false, tuft: false }
+  },
+}
+
+/**
+ * Where a tile's crops stand (`TileData.crops`), on the surface grid a `Grass` reads: 1 where there
+ * are any. A tile without crops has a mask of no cells.
+ */
+export function cropMask(crops: Uint8Array | undefined, x0: number, z0: number, size: number): GrassMask {
+  if (!crops) return { x0, z0, side: 0, cells: new Uint8Array() }
+  const n = Math.round(Math.sqrt(crops.length))
+  const side = Math.max(1, Math.ceil(size / SURFACE_CELL))
+  const cells = new Uint8Array(side * side)
+  const under = (index: number) => Math.min(n - 1, Math.floor((((index + 0.5) * SURFACE_CELL) / size) * n))
+  for (let row = 0; row < side; row++) {
+    for (let column = 0; column < side; column++) cells[row * side + column] = crops[under(row) * n + under(column)] === CROP_NONE ? 0 : 1
+  }
+  return { x0, z0, side, cells }
+}
+
+/**
+ * A field of wheat: every stalk about `CROP_HEIGHT`, a broad leaf to near its top and an ear over it,
+ * even across the field with no bare patches, so that a line of sight through a few metres of it is shut.
+ */
+export const WHEAT: Growth = {
+  name: 'crops',
+  palette: [0, 0xd2bf64].map((hex) => Color.hex(hex)),
+  head: Color.hex(0xf6da7a),
+  headToned: true,
+  width: 0.14,
+  // A stalk is a plain shape, and a field is a great many of them: one triangle each from 35 m or so.
+  simpleShare: 1 / 2,
+  levels: [[0, 0.75], [0.72, 1]],
+  simpleLevels: [[0, 0.9]],
+  headLevels: [[0, 0.75], [0.72, 1]],
+  simpleHeadLevels: [[0, 0.9]],
+  mask: (tile, x0, z0, size) => cropMask(tile.crops, x0, z0, size),
+  plant: (_x, _z, _shade, _height, tone) => ({ height: CROP_HEIGHT * (0.9 + ((tone - 0.85) / 0.3) * 0.2), head: true, tuft: false }),
+}
+
+/** What a winter leaves of the wheat: short stubble through the snow, which hides no one. */
+export const STUBBLE: Growth = {
+  ...WHEAT,
+  palette: [0, 0xcfc28c].map((hex) => Color.hex(hex)),
+  width: 0.05,
+  levels: [[0, 1], [0.55, 0.8]],
+  simpleLevels: [[0, 1]],
+  plant: (_x, _z, _shade, height, _tone, chance) => (chance < 0.7 ? { height: 0.1 + (height - 0.3) * 0.35, head: false, tuft: false } : null),
+}
+
 /**
  * The blades of chunk `(cx, cz)`: `share` (0..1) of the `perMetre` a square metre a full chunk has.
  * A smaller share is the first blades of a larger one, so a chunk that is rebuilt with more keeps the
  * blades it had. `shadeAt` is the mask (0 where nothing grows), `heightAt` the ground (null where it is
  * not loaded).
  */
-export function chunkBlades(cx: number, cz: number, perMetre: number, share: number, shadeAt: (x: number, z: number) => number, heightAt: (x: number, z: number) => number | null): Blade[] {
+export function chunkBlades(cx: number, cz: number, perMetre: number, share: number, shadeAt: (x: number, z: number) => number, heightAt: (x: number, z: number) => number | null, growth: Growth = MEADOW): Blade[] {
   const next = random(Math.imul(cx, 0x9e3779b1) ^ Math.imul(cz, 0x85ebca77) ^ 0x2545f491)
   const total = Math.round(perMetre * GRASS_CHUNK * GRASS_CHUNK)
   const count = Math.min(total, Math.ceil(total * share))
@@ -173,27 +292,16 @@ export function chunkBlades(cx: number, cz: number, perMetre: number, share: num
     const chance = next()
     const shade = shadeAt(x, z)
     if (shade === 0) continue
-    const wet = PALETTE_WET[shade] ?? 0
-    let grown: number
-    let cotton = false
-    if (wet > 0) {
-      const marsh = sedge(x, z, wet, chance, height, (tone - 0.85) / 0.3)
-      if (!marsh) continue
-      grown = marsh.height
-      cotton = marsh.cotton
-    } else {
-      const patch = patchAt(x, z)
-      // A few stray tufts grow between the patches.
-      if (chance > patch * 0.96 + 0.04) continue
-      // Taller in the thick of a patch, short at its edge.
-      grown = height * (0.55 + 0.6 * patch)
-    }
+    const planted = growth.plant(x, z, shade, height, tone, chance)
+    if (!planted) continue
+    const grown = planted.height
     const y = heightAt(x, z)
     if (y === null) continue
     const normal = normalAt((nx, nz) => heightAt(nx, nz) ?? y, x, z, NORMAL_STEP)
-    blades.push({ x, z, y, height: grown, turn, rank: i / total, shade, tone, normal, ...(cotton ? { cotton } : {}) })
-    // Sedge grows in tufts: two more blades about the first, shorter and turned, at its rank.
-    if (wet > 0 && !cotton && grown < 1.2) {
+    blades.push({ x, z, y, height: grown, turn, rank: i / total, shade, tone, normal, ...(planted.head ? { head: true } : {}) })
+    // A tuft: two more blades about the first, shorter and turned, at its rank.
+    if (planted.tuft) {
+      const wet = PALETTE_WET[shade] ?? 0
       for (let k = 1; k <= 2; k++) {
         const angle = turn * 2 + k * 2.1
         const out = 0.05 + 0.05 * k
@@ -221,7 +329,7 @@ const MAX_BEND = 1.35
  * it and the blade's rank in `custom`, and the blade's full height (over `MAX_BLADE`) in the colour's alpha, for the
  * vertex shader to bend, thin and widen it about its root.
  */
-export function bladeGeometry(blades: readonly Blade[], simple = false): Geometry {
+export function bladeGeometry(blades: readonly Blade[], simple = false, growth: Growth = MEADOW): Geometry {
   const perBlade = simple ? 3 : 5
   const positions = new Float32Array(blades.length * perBlade * 3)
   const normals = new Float32Array(blades.length * perBlade * 3)
@@ -230,33 +338,32 @@ export function bladeGeometry(blades: readonly Blade[], simple = false): Geometr
   const triangles = simple ? 1 : 3
   const indices = new Uint32Array(blades.length * triangles * 3)
   // Base width and how much of it is left at each level up the blade.
-  const width = 0.07
-  const levels = simple ? [[0, 1]] : [[0, 1], [0.55, 0.7]]
-  // Cottongrass: a thin stalk under a white head, widest just below its top.
-  const cottonLevels = simple ? [[0, 0.5]] : [[0, 0.4], [0.82, 1.7]]
+  const width = growth.width
+  const levels = simple ? growth.simpleLevels : growth.levels
+  const headLevels = simple ? growth.simpleHeadLevels : growth.headLevels
   let v = 0
   let n = 0
   for (const b of blades) {
     const sx = Math.cos(b.turn) * width * 0.5
     const sz = Math.sin(b.turn) * width * 0.5
-    const stem = PALETTE[b.shade]!
+    const stem = growth.palette[b.shade]!
     const first = v
     const put = (x: number, y: number, z: number, along: number, light: number) => {
       positions.set([x, y, z], v * 3)
       normals.set(b.normal, v * 3)
       // Darker at the root, where it meets the ground's own colour, lighter toward the tip.
-      const head = b.cotton === true && along > b.height * 0.7
-      const color = head ? COTTON : stem
-      const k = head ? 1 : b.tone * light
+      const head = b.head === true && along > b.height * 0.7
+      const color = head ? growth.head : stem
+      const k = head ? (growth.headToned ? b.tone : 1) : b.tone * light
       colors.set([color.r * k, color.g * k, color.b * k, Math.min(1, b.height / MAX_BLADE)], v * 4)
       custom.set([b.x, b.z, along, b.rank], v * 4)
       v++
     }
-    for (const [at, keep] of b.cotton ? cottonLevels : levels) {
-      const y = b.y + at! * b.height
-      const light = 0.92 + at! * 0.35
-      put(b.x - sx * keep!, y, b.z - sz * keep!, at! * b.height, light)
-      put(b.x + sx * keep!, y, b.z + sz * keep!, at! * b.height, light)
+    for (const [at, keep] of b.head ? headLevels : levels) {
+      const y = b.y + at * b.height
+      const light = 0.92 + at * 0.35
+      put(b.x - sx * keep, y, b.z - sz * keep, at * b.height, light)
+      put(b.x + sx * keep, y, b.z + sz * keep, at * b.height, light)
     }
     put(b.x, b.y + b.height, b.z, b.height, 1.3)
     if (simple) indices.set([first, first + 1, first + 2], n)
@@ -445,7 +552,9 @@ export class Grass {
     private readonly halfExtent: number,
     private readonly tileSize: number,
     private readonly heightAt: (x: number, z: number) => number | null,
+    private growth: Growth = MEADOW,
   ) {
+    this.root.name = growth.name
     const uniforms: ShaderMaterial['uniforms'] = { wind: [0.8, 0.6, 0.18, 0], fade: [0, 0, 1, 0], wash: [0, 1] }
     for (let i = 0; i < BENDERS; i++) uniforms[`b${i}`] = [0, 0, 0, 0]
     for (let i = 0; i < BLASTS; i++) uniforms[`e${i}`] = [0, 0, -1000, 0]
@@ -462,7 +571,7 @@ export class Grass {
     const x0 = -this.halfExtent + ref.col * this.tileSize
     const z0 = -this.halfExtent + ref.row * this.tileSize
     this.rescan = true
-    this.masks.set(this.tileKey(ref.col, ref.row), mask ?? grassMask(tile, x0, z0, this.tileSize, ground))
+    this.masks.set(this.tileKey(ref.col, ref.row), mask ?? this.growth.mask(tile, x0, z0, this.tileSize, ground))
     const tileKey = this.tileKey(ref.col, ref.row)
     if (tile.stones) this.stones.set(tileKey, tile.stones)
     else this.stones.delete(tileKey)
@@ -585,6 +694,14 @@ export class Grass {
     if (!on) for (const [key, chunk] of this.chunks) this.drop(key, chunk)
   }
 
+  /** Grows something else where it grew, a field's stubble for its wheat: the tiles' masks are kept. */
+  setGrowth(growth: Growth) {
+    if (growth === this.growth) return
+    this.rescan = true
+    this.growth = growth
+    for (const [key, chunk] of this.chunks) this.drop(key, chunk)
+  }
+
   setDensity(density: GrassDensity) {
     if (density === this.density) return
     this.rescan = true
@@ -654,8 +771,8 @@ export class Grass {
     wanted.sort((a, b) => a.d - b.d)
     for (const { cx, cz, share } of wanted.slice(0, BUILDS_PER_FRAME)) {
       const key = chunkKey(cx, cz)
-      const blades = chunkBlades(cx, cz, density.perMetre, share, (bx, bz) => this.growsAt(bx, bz), this.heightAt)
-      const geometry = bladeGeometry(blades, share <= SIMPLE_SHARE)
+      const blades = chunkBlades(cx, cz, density.perMetre, share, (bx, bz) => this.growsAt(bx, bz), this.heightAt, this.growth)
+      const geometry = bladeGeometry(blades, share <= this.growth.simpleShare, this.growth)
       // A megabyte a chunk that nothing reads again: a chunk that changes is built anew.
       geometry.uploadOnce = true
       const mesh = new Mesh(geometry, this.material)

@@ -76,8 +76,8 @@ describe('marsh', () => {
     for (const blade of bog) expect(inMarshPool(blade.x, blade.z, 1)).toBe(false)
     expect(bog.some((blade) => blade.height > 1.2)).toBe(true)
     const marsh = chunkBlades(2, 5, 12, 1, () => 5, flat)
-    expect(marsh.some((blade) => blade.cotton)).toBe(true)
-    expect(chunkBlades(2, 5, 12, 1, () => 1, flat).some((blade) => blade.cotton)).toBe(false)
+    expect(marsh.some((blade) => blade.head)).toBe(true)
+    expect(chunkBlades(2, 5, 12, 1, () => 1, flat).some((blade) => blade.head)).toBe(false)
   })
 
   it('packs its wetness into the relief map, dry off the marsh and wet inside it', () => {

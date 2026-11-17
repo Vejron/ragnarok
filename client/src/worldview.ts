@@ -24,6 +24,7 @@ import type { Waters } from './sim/waters'
 import { CRATER_MAX_DEPTH } from './sim/consts.generated'
 import { digCrater, groundOf, type Terrain, type TileGround } from './sim/terrain'
 import type { Grass } from './render/grass'
+import type { CropLid } from './render/croplid'
 import type { Stones } from './render/stones'
 import { Smoulders } from './render/smoulder'
 import { lineKindDef, type TileData, type TileRef, type WorldData } from './world'
@@ -97,6 +98,9 @@ export class WorldView {
   backdrop: Mesh | null = null
   surfaces: Surfaces | null = null
   grass: Grass | null = null
+  /** The fields' wheat, a `Grass` of its own, and the lid that stands for it far off. */
+  crops: Grass | null = null
+  cropLid: CropLid | null = null
   stones: Stones | null = null
   waters: Waters | null = null
   /** What is solid to the local soldier and the vehicle it drives: the server's physics. */
@@ -465,6 +469,8 @@ export class WorldView {
       for (const crater of this.craters) if (reaches(ground, crater)) digInto(ground, loaded.tile.ground, crater)
       this.motor?.setTileGround({ col, row }, centimetres(ground.heights))
       this.grass?.regrowTile({ col, row })
+      this.crops?.regrowTile({ col, row })
+      this.cropLid?.regrowTile({ col, row })
       this.stones?.regrowTile({ col, row })
       this.reground(key)
     }
@@ -483,6 +489,8 @@ export class WorldView {
     for (const crater of craters) {
       this.marked.push(crater)
       this.grass?.dent(crater.x / 100, crater.z / 100, crater.radius / 100)
+      this.crops?.dent(crater.x / 100, crater.z / 100, crater.radius / 100)
+      this.cropLid?.dent(crater.x / 100, crater.z / 100, crater.radius / 100)
       this.stones?.dent(crater.x / 100, crater.z / 100, crater.radius / 100)
       // Marked on the ground by its shader (SCORCH.md), fading with its age.
       this.scene.craters.add(crater.x / 100, crater.z / 100, crater.radius / 100, crater.depth / 100, now - crater.age, crater)
@@ -584,8 +592,17 @@ export class WorldView {
     if (ground && this.backdrop) this.underTheGround(this.backdrop, ground)
     this.surfaces?.add(ref, tile, ground, prepared.surface)
     this.grass?.addTile(ref, tile, ground, prepared.grass)
+    this.crops?.addTile(ref, tile, ground)
+    this.cropLid?.addTile(ref, tile, ground)
     this.stones?.addTile(ref, tile, ground)
-    if (ground) for (const crater of this.marked) if (reaches(ground, crater)) this.grass?.dent(crater.x / 100, crater.z / 100, crater.radius / 100)
+    if (ground) {
+      for (const crater of this.marked) {
+        if (!reaches(ground, crater)) continue
+        this.grass?.dent(crater.x / 100, crater.z / 100, crater.radius / 100)
+        this.crops?.dent(crater.x / 100, crater.z / 100, crater.radius / 100)
+        this.cropLid?.dent(crater.x / 100, crater.z / 100, crater.radius / 100)
+      }
+    }
     this.waters?.set(ref, ground, tile.water, tile.reach)
     this.groups.set(key, group)
     if (fromWorker?.terrain) this.levels.set(key, prepared.level)
@@ -635,6 +652,8 @@ export class WorldView {
       this.terrain?.delete(ref)
       this.surfaces?.delete(ref)
       this.grass?.removeTile(ref)
+      this.crops?.removeTile(ref)
+      this.cropLid?.removeTile(ref)
       this.stones?.removeTile(ref)
       this.waters?.delete(ref)
       this.motor?.removeTile(ref)

@@ -318,6 +318,10 @@ fn spot_from_turret(world: &World, id: u32, vid: u32, eye: [f32; 3]) -> Option<(
         if distance > TANK_SIGHT || best.is_some_and(|(.., nearest)| distance >= nearest) {
             continue;
         }
+        // Someone a crop hides is not seen from a turret either, unless they are under its tracks.
+        if distance > CLOSE_IN && senses::crop_cover(world, player, eye) <= 0.0 {
+            continue;
+        }
         if clear_shot(world, eye, mark, vid, riding) {
             best = Some((other, mark, distance));
         }

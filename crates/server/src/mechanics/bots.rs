@@ -281,7 +281,8 @@ fn make_route(world: &mut World, home: [f32; 2]) -> Vec<[f32; 2]> {
 }
 
 /// The nearest living, standing player not on `id`'s team that it can see from `eye` looking along
-/// `yaw`, and where they stand. A calm bot only sees what is in front of it.
+/// `yaw`, and where they stand. A calm bot only sees what is in front of it, and none sees someone
+/// hidden in a crop (`senses::crop_cover`).
 fn spot(world: &World, id: u32, eye: [f32; 3], yaw: f32, alert: bool) -> Option<(u32, [f32; 3])> {
     let facing = [-yaw.sin(), -yaw.cos()];
     let mut best: Option<(u32, [f32; 3], f32)> = None;
@@ -299,6 +300,11 @@ fn spot(world: &World, id: u32, eye: [f32; 3], yaw: f32, alert: bool) -> Option<
             if cos < CALM_VIEW_COS {
                 continue;
             }
+        }
+        // Someone a crop hides is not there to be seen, even by a bot that was watching them: they are
+        // gone as if behind a wall, and it goes to look where they were. Close in it finds them.
+        if distance > CLOSE_IN && senses::crop_cover(world, player, eye) <= 0.0 {
+            continue;
         }
         if clear_line(world, eye, [at[0], at[1] + CHEST, at[2]]) {
             best = Some((other, at, distance));

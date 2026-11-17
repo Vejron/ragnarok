@@ -192,6 +192,11 @@ and how many objects it has of each symbol.
   `lines` (an empty `lines` is written to keep it in place) and left out when a tile has none, so a
   world without it is written as before. It slows soldiers on foot, and the client draws it. Only
   orienteering maps give it; [ORIENTEERING.md](ORIENTEERING.md) has how.
+- **Crops** go in the tiles' `crops` layer, after `stones`: a 2 m grid of what is grown in each cell
+  (`CROP_NONE`, `CROP_WHEAT`), left empty when a tile has none. Wheat stands on `landuse=farmland` and
+  an orienteering map's cultivated land where the cover is still farmland once the woods, parks, marsh
+  and water over it are painted, and not on a road, a track's ballast, a stream or deeper water, nor
+  under a building. The client draws it and it hides soldiers from the bots: [CROPS.md](CROPS.md).
 - **Not imported yet:** walls, and bridges, which stay OSM's.
 
 ## Which world, and when
@@ -391,7 +396,8 @@ marsh, by its `wetland` tag: `bog`, `swamp` and `fen` are `COVER_MARSH_DEEP`, `w
 `COVER_MARSH_FAINT` and the rest `COVER_MARSH` (docs/ORIENTEERING.md has how the client draws them). A
 major or minor road whose `surface` tag is unpaved (`gravel`, `dirt`, `compacted`, `unpaved` and so on) is
 `ROAD_GRAVEL`: drawn as gravel and driven as dirt rather than asphalt. A `landuse=cemetery` or an
-`amenity=grave_yard` is park cover with tombstones stood in it (docs/GRAVEYARDS.md). A bridge keeps its class, which
+`amenity=grave_yard` is park cover with tombstones stood in it (docs/GRAVEYARDS.md). `landuse=farmland` is
+farm cover with wheat grown on it (docs/CROPS.md); a farmyard, orchard, vineyard or nursery is the same cover, bare. A bridge keeps its class, which
 sets its deck's height. Overpass
 often answers 504; the importer tries every endpoint, four rounds, 15 s apart, for each square. A box larger than `--overpass-chunk` is fetched as a grid of squares; ways and relations that cross a border come back twice and are merged by id.
 

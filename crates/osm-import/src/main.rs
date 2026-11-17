@@ -693,6 +693,9 @@ fn main() -> Result<()> {
         graves[usize::from(grave.kind).min(graves.len() - 1)] += 1;
     }
     eprintln!("tombstones: {} headstones, {} crosses, {} low stones", graves[0], graves[1], graves[2]);
+    let wheat: usize = built.tiles.values().map(|tile| tile.crops.iter().filter(|&&cell| cell == shared::world::CROP_WHEAT).count()).sum();
+    let crops_cell = args.tile / (args.tile / 2.0).round().max(1.0);
+    eprintln!("crops: {:.1} ha of wheat", wheat as f64 * crops_cell * crops_cell / 1e4);
     let mut roofs = [0usize; 4];
     for building in built.tiles.values().flat_map(|tile| &tile.buildings) {
         roofs[usize::from(building.roof_kind).min(3)] += 1;

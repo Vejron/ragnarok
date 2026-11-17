@@ -65,7 +65,8 @@ import { saveLook, type Look } from './render/look'
 import { loadControls, saveControls, type Controls } from './controls'
 import { loadQuality, PRESETS, resolveQuality, saveQuality, type Quality } from './render/quality'
 import { AdaptiveScale } from './render/adaptive'
-import { Grass, GRASS_FULL, GRASS_LITE } from './render/grass'
+import { Grass, GRASS_FULL, GRASS_LITE, STUBBLE, STUBBLE_DENSITY, WHEAT, WHEAT_DENSITY } from './render/grass'
+import { CropLid } from './render/croplid'
 import { Stones } from './render/stones'
 import { AIM_DISTANCE_SCALE, DEFAULT_FOV, ON_FOOT_DISTANCE, ON_FOOT_HEIGHT, ON_FOOT_SHOULDER, Scene } from './render/scene'
 import { BallCam } from './render/ballcam'
@@ -282,6 +283,9 @@ export class Game {
   private terrain: Terrain | null = null
   private surfaces: Surfaces | null = null
   private grass: Grass | null = null
+  /** The wheat of the fields (`TileData.crops`), and the lid that stands for it past where its stalks are drawn. */
+  private crops: Grass | null = null
+  private cropLid: CropLid | null = null
   private stones: Stones | null = null
   private waters: Waters | null = null
   /** The waves' clock this frame, seconds into their loop (`waveTime`). */
@@ -591,6 +595,9 @@ export class Game {
     const terrain = this.terrain
     this.grass = this.view.grass = this.surroundings.grass = new Grass(world.halfExtent, world.tileSize, (x, z) => terrain.sample(x, z))
     this.scene.scene.add(this.grass.root)
+    this.crops = this.view.crops = this.surroundings.crops = new Grass(world.halfExtent, world.tileSize, (x, z) => terrain.sample(x, z), WHEAT)
+    this.cropLid = this.view.cropLid = new CropLid(world.halfExtent, world.tileSize)
+    this.scene.scene.add(this.crops.root, this.cropLid.root)
     this.stones = this.view.stones = new Stones(world.halfExtent, world.tileSize, (x, z) => terrain.sample(x, z))
     this.scene.scene.add(this.stones.root)
     this.applyGrass(this.scene.look)
@@ -1830,6 +1837,11 @@ export class Game {
   private applyGrass(look: Look) {
     this.grass?.setDensity(this.scene.quality.grass === 'full' ? GRASS_FULL : GRASS_LITE)
     this.grass?.setEnabled(look.grass && !winter)
+    // The fields are not a matter of taste or of quality: wheat hides people, so everyone has the same.
+    // A winter world's are stubble through the snow, which hides no one.
+    this.crops?.setGrowth(winter ? STUBBLE : WHEAT)
+    this.crops?.setDensity(winter ? STUBBLE_DENSITY : WHEAT_DENSITY)
+    this.cropLid?.setEnabled(!winter)
   }
 
   /** Puts the ears where the camera is, last frame's pose, and moving with the vehicle the player is in. */
@@ -1902,6 +1914,8 @@ export class Game {
     this.trails.dispose()
     this.damageNumbers.dispose()
     this.grass?.dispose()
+    this.crops?.dispose()
+    this.cropLid?.dispose()
     this.stones?.dispose()
     this.trajectory.dispose()
     this.mortarArc.dispose()

@@ -517,6 +517,7 @@ export class Events {
     if (at.y - ground < radius) {
       effects.shockwave({ x: at.x, y: ground + 0.25, z: at.z }, radius)
       surroundings.grass?.blast(at.x, at.z, radius)
+      surroundings.crops?.blast(at.x, at.z, radius)
     }
     const distance = at.distanceTo(scene.camera.position)
     if (distance < radius * 8) chase.kick(Math.min(0.6, (radius / 8) * (1 - distance / (radius * 8))))

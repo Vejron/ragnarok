@@ -45,6 +45,8 @@ const VIEWS = {
   vista: { phase: 0.45, yaw: 2.2, pitch: 0.12, place: 'hill' },
   // A shore, looking over water: the reflection pass.
   water: { phase: 0.55, yaw: null, pitch: 0.08, place: 'shore' },
+  // Standing in a field of wheat, looking across it: the stalks near, the lid over the far side.
+  field: { phase: 0.5, yaw: 0, pitch: 0.0, place: 'field' },
   // The spawn at night with the headlamp on: the lights, beams, stars.
   night: { phase: 0.02, yaw: 0.3, pitch: 0.0, place: null, lamp: true },
 }
@@ -60,6 +62,7 @@ const PARTS = [
   ['effects', `(() => { const hid = []; const walk = (n) => { if (n.prepare && n.draw && n.visible) { n.visible = false; hid.push(n) } n.children.forEach(walk) }; walk(e); return () => hid.forEach((n) => { n.visible = true }) })()`],
   ['trees', `(() => { const hid = []; const walk = (n) => { if (n.levels && n.visible) { n.visible = false; hid.push(n) } n.children.forEach(walk) }; walk(e); return () => hid.forEach((n) => { n.visible = true }) })()`],
   ['grass', `(() => { const hid = []; const walk = (n) => { if (n.visible && /grass/i.test(n.name ?? '')) { n.visible = false; hid.push(n) } n.children.forEach(walk) }; walk(e); return () => hid.forEach((n) => { n.visible = true }) })()`],
+  ['crops', `(() => { const hid = []; const walk = (n) => { if (n.visible && /crops/i.test(n.name ?? '')) { n.visible = false; hid.push(n) } n.children.forEach(walk) }; walk(e); return () => hid.forEach((n) => { n.visible = true }) })()`],
 ]
 
 /**
@@ -227,6 +230,22 @@ await evaluate(`(() => {
         }
         place(x, z, 4)
         yaw = Math.atan2(dx / l, dz / l)
+      } else if (v.place === 'field') {
+        // The nearest spot with wheat 25 m every way round it.
+        const sown = (x, z) => (g.crops?.shadeAt(x, z) ?? 0) > 0
+        const deep = (x, z) => sown(x, z) && [[25, 0], [-25, 0], [0, 25], [0, -25]].every(([dx, dz]) => sown(x + dx, z + dz))
+        let found = null
+        // Out from the spawn 250 m at a time, east and west by turns, as for a shore.
+        for (let step = 0; step <= 12 && !found; step++) {
+          if (step) { place(start[0] + (step % 2 ? 1 : -1) * Math.ceil(step / 2) * 250, start[1]); await sleep(2500) }
+          const p = state.position
+          for (let r = 0; r < 400 && !found; r += 10) for (let a = 0; a < 48 && !found; a++) {
+            const x = p[0] + Math.cos(a / 48 * 6.283) * r, z = p[2] + Math.sin(a / 48 * 6.283) * r
+            if (deep(x, z)) found = [x, z]
+          }
+        }
+        if (!found) return 'no field'
+        place(found[0], found[1])
       }
       g.input.yaw = yaw
       g.input.pitch = v.pitch

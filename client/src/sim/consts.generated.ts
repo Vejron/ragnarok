@@ -934,6 +934,12 @@ export const DAY_START_PHASE = 0.36
 export const PRONE_EYE_HEIGHT = 0.2 - PRONE_CENTRE
 
 /**
+ * How high a field of wheat stands, metres (`Tile::crops`): over a crouched soldier's head and under
+ * a standing one's shoulders, so the first is hidden in it and the second is not.
+ */
+export const CROP_HEIGHT = 1.3
+
+/**
  * The on-foot camera sits behind a pivot this far to the right of the capsule centre and this far
  * above it. The server rebuilds the camera ray from it, so a shot lands where the crosshair is.
  * Mirrors `ON_FOOT_SHOULDER` and `ON_FOOT_HEIGHT` in the client.

@@ -17,15 +17,15 @@ import { reliefPixels, terrainBuffers, TERRAIN_LOD_ERRORS, type Pixels, type Ter
  */
 
 /** What of a tile `prepareTile` reads: small enough to send to the worker (`tileParts`). */
-export type TileParts = Pick<TileData, 'cover' | 'detail' | 'roads' | 'rails' | 'ski' | 'water' | 'reach' | 'streams' | 'bridges' | 'collision' | 'look'> & {
+export type TileParts = Pick<TileData, 'cover' | 'crops' | 'detail' | 'roads' | 'rails' | 'ski' | 'water' | 'reach' | 'streams' | 'bridges' | 'collision' | 'look'> & {
   buildings: readonly Pick<Building, 'first' | 'walls' | 'roof' | 'roofKind' | 'kind' | 'cells' | 'footprint' | 'paint' | 'look'>[]
 }
 
 /** The parts of `tile` `prepareTile` reads, leaving out what the worker has no use for (trees, the file's bytes). */
 export function tileParts(tile: TileData): TileParts {
-  const { cover, detail, roads, rails, ski, water, reach, streams, bridges, collision, look } = tile
+  const { cover, crops, detail, roads, rails, ski, water, reach, streams, bridges, collision, look } = tile
   const buildings = tile.buildings.map(({ first, walls, roof, roofKind, kind, cells, footprint, paint, look }) => ({ first, walls, roof, roofKind, kind, cells, footprint, paint, look: look ?? null }))
-  return { cover, ...(detail ? { detail } : {}), roads, rails, ski, water, ...(reach ? { reach } : {}), streams, bridges, collision, ...(look ? { look } : {}), buildings }
+  return { cover, ...(crops ? { crops } : {}), ...(detail ? { detail } : {}), roads, rails, ski, water, ...(reach ? { reach } : {}), streams, bridges, collision, ...(look ? { look } : {}), buildings }
 }
 
 /** What `prepareTile` makes a tile from. */
@@ -62,7 +62,7 @@ export interface PreparedTile {
 }
 
 /** Paints a tile's cover, seen from above, into a bitmap, or null when there is no canvas. */
-export type CoverPainter = (tile: Pick<TileData, 'cover'>, ground: TileGround) => ImageBitmap | null
+export type CoverPainter = (tile: Pick<TileData, 'cover'> & Partial<Pick<TileData, 'crops'>>, ground: TileGround) => ImageBitmap | null
 
 /**
  * Turns a tile into arrays. `around` is the ground past its edge, so its relief and its roads near

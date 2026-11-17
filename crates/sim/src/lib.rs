@@ -22,8 +22,8 @@ use shared::terrain::Ground;
 use shared::world::{ObjId, SkiTrail, WorldFile};
 use std::collections::HashMap;
 
+pub mod cells;
 pub mod fences;
-pub mod stones;
 pub mod waters;
 mod ragdoll;
 mod stream;
@@ -139,8 +139,11 @@ pub struct Physics {
     /// Vehicles as solid stand-ins at their snapshot pose (`set_obstacle`), by id: what the client's
     /// prediction walks into. Empty on the server, which simulates the vehicles themselves.
     obstacles: std::collections::BTreeMap<u32, stream::Obstacle>,
-    /// Stony ground, which slows a soldier on foot (`stones`).
-    stones: stones::Stones,
+    /// Stony ground, which slows a soldier on foot (`walk_stones`).
+    stones: cells::TileCells,
+    /// Standing crops, which hide a soldier from the bots (`crop_at`). Empty in the client's prediction,
+    /// which has no use for them.
+    crops: cells::TileCells,
     /// Open water, which a light car planes over at speed and everything wheeled wades through (`waters`).
     waters: waters::Waters,
     /// The server tick the next step is, which the waves run on (`set_tick`); `step_cars` moves it on.
@@ -547,9 +550,13 @@ impl Physics {
     pub fn new(world: &WorldFile) -> Result<Self> {
         let mut physics = Self::built(world)?;
         physics.add_ski_trails(&world.ski);
-        physics.stones = stones::Stones::new(world.half_extent, world.tile_size);
+        physics.stones = cells::TileCells::new(world.half_extent, world.tile_size);
         for (col, row, stones) in &world.stones {
             physics.stones.set((*col, *row), stones.clone());
+        }
+        physics.crops = cells::TileCells::new(world.half_extent, world.tile_size);
+        for (col, row, crops) in &world.crops {
+            physics.crops.set((*col, *row), crops.clone());
         }
         physics.waters = waters::Waters::of_world(world);
         Ok(physics)
@@ -613,7 +620,8 @@ impl Physics {
             bound,
             tiles: HashMap::new(),
             obstacles: std::collections::BTreeMap::new(),
-            stones: stones::Stones::default(),
+            stones: cells::TileCells::default(),
+            crops: cells::TileCells::default(),
             waters: waters::Waters::default(),
             tick: 0,
         }
@@ -1092,6 +1100,11 @@ impl Physics {
             Some((height, normal)) if character.position[1] - height < SLOPE_MAX_CLEARANCE => slope_scale(wish_velocity(input), normal),
             _ => 1.0,
         }
+    }
+
+    /// What is grown at `(x, z)` (`CROP_*` of `shared::world`): `CROP_NONE` off the fields.
+    pub fn crop_at(&self, x: f32, z: f32) -> u8 {
+        self.crops.at(x, z)
     }
 
     /// What stony ground under a soldier does to their walking this tick (`stones_scale`): nothing off

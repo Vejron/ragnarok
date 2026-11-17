@@ -1,5 +1,6 @@
 import type { TileGround } from '@/sim/terrain'
 import {
+  CROP_NONE,
   COVER_FARM,
   COVER_INDUSTRIAL,
   COVER_MARSH,
@@ -21,6 +22,7 @@ import {
   DETAIL_SLOPE_SCALE,
   type TileData,
 } from '@/world'
+import { winter } from './season'
 import { CAVITY_RADIUS, heightSampler, ringMean, toneOf, type HeightSource } from './shade'
 
 /*
@@ -51,6 +53,13 @@ export const COVER_COLORS: Record<number, number> = {
   [COVER_GOLF_GREEN]: 0x62c457,
   [COVER_GOLF_BUNKER]: 0xf2e2b2,
 }
+
+/**
+ * The ground under standing crops (`TileData.crops`): straw, a shade under the ears' own colour, so
+ * that what shows between the stalks from above is more field and not pale earth, and the lid that
+ * stands for the field far off (`croplid.ts`) meets it without a line.
+ */
+export const CROP_GROUND_COLOR = 0xe2c86c
 
 /** Texels per metre of terrain. */
 const TEXELS_PER_METRE = 4
@@ -454,7 +463,7 @@ const css = (color: number) => `#${color.toString(16).padStart(6, '0')}`
  */
 export function paintCover(
   ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
-  tile: Pick<TileData, 'cover'>,
+  tile: Pick<TileData, 'cover'> & Partial<Pick<TileData, 'crops'>>,
   x0: number,
   z0: number,
   size: number,
@@ -466,13 +475,43 @@ export function paintCover(
   ctx.fillStyle = css(GRASS_COLOR)
   ctx.fillRect(0, 0, pixels, pixels)
 
-  for (const { kind, rings } of tile.cover) {
-    ctx.fillStyle = css(COVER_COLORS[kind] ?? GRASS_COLOR)
-    ctx.beginPath()
-    for (const ring of rings) {
-      ring.forEach((p, i) => (i === 0 ? ctx.moveTo(...at(p)) : ctx.lineTo(...at(p))))
-      ctx.closePath()
+  // Where crops stand, and a cell further every way: a field's ground is straw to the edge it was
+  // drawn with, not to the steps its cells make, so the farmland is painted again in straw inside this.
+  const crops = winter ? undefined : tile.crops
+  let sown: Path2D | null = null
+  if (crops && typeof Path2D !== 'undefined') {
+    sown = new Path2D()
+    const n = Math.round(Math.sqrt(crops.length))
+    const cell = pixels / n
+    for (let row = 0; row < n; row++) {
+      for (let column = 0; column < n; column++) {
+        if (crops[row * n + column] === CROP_NONE) continue
+        const from = column
+        while (column + 1 < n && crops[row * n + column + 1] !== CROP_NONE) column++
+        sown.rect((from - 1) * cell, (row - 1) * cell, (column + 3 - from) * cell, 3 * cell)
+      }
     }
+  }
+
+  for (const { kind, rings } of tile.cover) {
+    const outline = () => {
+      ctx.beginPath()
+      for (const ring of rings) {
+        ring.forEach((p, i) => (i === 0 ? ctx.moveTo(...at(p)) : ctx.lineTo(...at(p))))
+        ctx.closePath()
+      }
+    }
+    ctx.fillStyle = css(COVER_COLORS[kind] ?? GRASS_COLOR)
+    outline()
     ctx.fill('evenodd')
+    if (kind !== COVER_FARM || !sown) continue
+    // Straw under the crops (not in winter: the stubble stands in snow). The covers painted after
+    // this one, the woods and water over the field, still go over it.
+    ctx.save()
+    ctx.clip(sown)
+    ctx.fillStyle = css(CROP_GROUND_COLOR)
+    outline()
+    ctx.fill('evenodd')
+    ctx.restore()
   }
 }

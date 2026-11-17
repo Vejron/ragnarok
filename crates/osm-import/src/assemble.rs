@@ -756,6 +756,8 @@ pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::B
     let mut covers = Vec::new();
     // The graveyards, each its rings: tombstones are stood in them once the tiles are built (`graves::lay`).
     let mut yards: Vec<Vec<Vec<P>>> = Vec::new();
+    // The fields, each its rings: wheat is grown in them once the tiles are built (`lay_crops`).
+    let mut fields: Vec<Vec<Vec<P>>> = Vec::new();
     let line = |geometry: &[LatLon]| -> Vec<P> { geometry.iter().map(|g| frame.project(g.lat, g.lon)).collect() };
     for Area { tags, outer, inner, .. } in &osm.areas {
         let Some(kind) = cover_kind(tags) else { continue };
@@ -763,6 +765,9 @@ pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::B
         if !rings.is_empty() {
             if crate::osm::is_graveyard(tags) {
                 yards.push(rings.clone());
+            }
+            if is_field(tags) {
+                fields.push(rings.clone());
             }
             covers.push((kind, rings));
         }
@@ -872,6 +877,9 @@ pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::B
                 if crate::osm::is_graveyard(&way.tags) {
                     yards.push(vec![points[..points.len() - 1].to_vec()]);
                 }
+                if is_field(&way.tags) {
+                    fields.push(vec![points[..points.len() - 1].to_vec()]);
+                }
                 covers.push((kind, vec![points[..points.len() - 1].to_vec()]));
             }
         }
@@ -957,6 +965,8 @@ pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::B
         roads.extend(ocad.roads.iter().map(|(geometry, width, kind)| (line(geometry), *width, *kind)));
         covers = covers.into_iter().flat_map(|(kind, rings)| if is_golf_cover(kind) { vec![rings] } else { ocad.outside(&rings) }.into_iter().map(move |rings| (kind, rings))).collect();
         covers.extend(ocad.covers.iter().cloned());
+        // The map's cultivated land is its fields; OSM's inside its outline went with OSM's cover.
+        fields.extend(ocad.covers.iter().filter(|(kind, _)| *kind == COVER_FARM).map(|(_, rings)| rings.clone()));
         mapped.clone_from(&ocad.outline);
     }
     // After the map's own, which would cut them away where it covers the course.
@@ -1005,6 +1015,7 @@ pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::B
     if let Some(ocad) = ocad {
         lay_stones(&mut built, &ocad.stony_dots, &ocad.stony_areas, half, tile_size);
     }
+    lay_crops(&mut built, &fields, half, tile_size);
     built
 }
 
@@ -1073,6 +1084,127 @@ fn lay_stones(built: &mut Built, dots: &[(P, crate::ocad::isom::Stony)], areas: 
             .collect();
         if stones.iter().any(|&value| value != 0) {
             tile.stones = stones;
+        }
+    }
+}
+
+/// Side of a cell of a tile's `crops`, metres, about: the tile is cut into a whole number of them.
+const CROPS_CELL: f64 = 2.0;
+/// Water deeper than this over the ground, centimetres, grows nothing.
+const CROPS_WADING: i32 = 15;
+
+/// Calls `paint(row, column)` for every cell of an `n × n` grid of `cell` metres from `(x0, z0)` whose
+/// centre is inside `rings` (even-odd, so inner rings are holes).
+fn fill_cells(rings: &[Vec<P>], x0: f64, z0: f64, cell: f64, n: usize, mut paint: impl FnMut(usize, usize)) {
+    let mut crossings: Vec<f64> = Vec::new();
+    for row in 0..n {
+        let z = z0 + (row as f64 + 0.5) * cell;
+        crossings.clear();
+        for ring in rings.iter().filter(|ring| ring.len() > 2) {
+            let mut b = ring[ring.len() - 1];
+            for &a in ring {
+                if (a[1] > z) != (b[1] > z) {
+                    crossings.push(a[0] + (z - a[1]) / (b[1] - a[1]) * (b[0] - a[0]));
+                }
+                b = a;
+            }
+        }
+        crossings.sort_by(f64::total_cmp);
+        for pair in crossings.chunks_exact(2) {
+            let from = ((pair[0] - x0) / cell - 0.5).ceil().max(0.0) as usize;
+            let to = ((pair[1] - x0) / cell - 0.5).floor();
+            if to < 0.0 {
+                continue;
+            }
+            for column in from..=(to as usize).min(n - 1) {
+                paint(row, column);
+            }
+        }
+    }
+}
+
+/// Calls `paint(row, column)` for every cell of the grid whose centre is within `reach` metres of the
+/// line through `points`.
+fn stroke_cells(points: &[P], reach: f64, x0: f64, z0: f64, cell: f64, n: usize, mut paint: impl FnMut(usize, usize)) {
+    let span = |lo: f64, hi: f64, origin: f64| (((lo - reach - origin) / cell).floor().max(0.0) as usize, (((hi + reach - origin) / cell).ceil().max(0.0) as usize).min(n));
+    for pair in points.windows(2) {
+        let (a, b) = (pair[0], pair[1]);
+        let (i0, i1) = span(a[0].min(b[0]), a[0].max(b[0]), x0);
+        let (j0, j1) = span(a[1].min(b[1]), a[1].max(b[1]), z0);
+        for row in j0..j1 {
+            for column in i0..i1 {
+                let at = [x0 + (column as f64 + 0.5) * cell, z0 + (row as f64 + 0.5) * cell];
+                if distance_to_segment(at, a, b) <= reach {
+                    paint(row, column);
+                }
+            }
+        }
+    }
+}
+
+/// Fills each tile's `crops`: wheat on the farmland of `fields` (each a field's rings, metres) where
+/// the tile's cover is still farmland once the woods, parks, marshes and water over it are painted,
+/// and not on a road, a track's ballast, a stream or deeper water, nor under a building. The cover's
+/// farmyards, orchards and nurseries are in no field, and stay bare.
+fn lay_crops(built: &mut Built, fields: &[Vec<Vec<P>>], half: f64, tile_size: f64) {
+    if fields.is_empty() {
+        return;
+    }
+    let n = (tile_size / CROPS_CELL).round().max(1.0) as usize;
+    let cell = tile_size / n as f64;
+    let metres = |points: &[[i32; 2]]| -> Vec<P> { points.iter().map(|p| [f64::from(p[0]) / 100.0, f64::from(p[1]) / 100.0]).collect() };
+    let bounds: Vec<Option<[f64; 4]>> = fields.iter().map(|rings| crate::props::bounds(rings)).collect();
+    for (&(col, row), tile) in &mut built.tiles {
+        if !tile.cover.iter().any(|cover| cover.kind == COVER_FARM) {
+            continue;
+        }
+        let (x0, z0) = (-half + f64::from(col) * tile_size, -half + f64::from(row) * tile_size);
+        // The cover on top in each cell, as the client paints it: in the tile's order, the last over the rest.
+        let mut top = vec![u8::MAX; n * n];
+        for cover in &tile.cover {
+            let rings: Vec<Vec<P>> = cover.rings.iter().map(|ring| metres(ring)).collect();
+            fill_cells(&rings, x0, z0, cell, n, |j, i| top[j * n + i] = cover.kind);
+        }
+        let mut crops = vec![CROP_NONE; n * n];
+        for (rings, b) in fields.iter().zip(&bounds) {
+            let Some(b) = b else { continue };
+            if b[2] < x0 || b[0] > x0 + tile_size || b[3] < z0 || b[1] > z0 + tile_size {
+                continue;
+            }
+            fill_cells(rings, x0, z0, cell, n, |j, i| {
+                if top[j * n + i] == COVER_FARM {
+                    crops[j * n + i] = CROP_WHEAT;
+                }
+            });
+        }
+        for road in &tile.roads {
+            stroke_cells(&metres(&road.points), f64::from(road.width) / 200.0, x0, z0, cell, n, |j, i| crops[j * n + i] = CROP_NONE);
+        }
+        for rail in &tile.rails {
+            stroke_cells(&metres(&rail.points), ballast(f64::from(rail.gauge) / 100.0) / 2.0, x0, z0, cell, n, |j, i| crops[j * n + i] = CROP_NONE);
+        }
+        for stream in &tile.streams {
+            stroke_cells(&metres(&stream.points), f64::from(stream.width) / 200.0 + cell / 2.0, x0, z0, cell, n, |j, i| crops[j * n + i] = CROP_NONE);
+        }
+        for building in tile.buildings.iter().filter(|building| building.kind != BUILDING_BRIDGE) {
+            fill_cells(&[metres(&building.footprint)], x0, z0, cell, n, |j, i| crops[j * n + i] = CROP_NONE);
+        }
+        // Water is sampled where the ground is: the sample nearest a cell's centre speaks for it.
+        let samples = (tile.ground.len() as f64).sqrt().round() as usize;
+        if samples > 1 && tile.water.len() == tile.ground.len() {
+            let step = tile_size / (samples - 1) as f64;
+            for j in 0..n {
+                for i in 0..n {
+                    let nearest = |k: usize| ((((k as f64 + 0.5) * cell) / step).round() as usize).min(samples - 1);
+                    let at = nearest(j) * samples + nearest(i);
+                    if tile.water[at] != NO_WATER && tile.water[at] - tile.ground[at] > CROPS_WADING {
+                        crops[j * n + i] = CROP_NONE;
+                    }
+                }
+            }
+        }
+        if crops.iter().any(|&value| value != CROP_NONE) {
+            tile.crops = crops;
         }
     }
 }
@@ -1823,6 +1955,12 @@ fn cover_kind(tags: &std::collections::HashMap<String, String>) -> Option<u8> {
     }
 }
 
+/// Whether a way's or relation's tags make it a field under crops (`lay_crops`): farmland, and not the
+/// farmyards, orchards, vineyards and nurseries that are drawn as it is.
+fn is_field(tags: &std::collections::HashMap<String, String>) -> bool {
+    cover_kind(tags) == Some(COVER_FARM) && tags.get("landuse").is_some_and(|value| value == "farmland")
+}
+
 /// Draw order: ground uses first, then green, water and marsh on top. The client paints in list order.
 fn cover_rank(kind: u8) -> u8 {
     match kind {
@@ -1897,6 +2035,9 @@ fn clip_ring(ring: &[P], [x0, z0, x1, z1]: Rect) -> Vec<P> {
 
 const SYNTHETIC_PITCH: f64 = 58.0;
 const SYNTHETIC_STREET: f64 = 10.0;
+/// Which of the synthetic city's parks, in the order they are drawn, is a field of wheat instead: it
+/// keeps its fence and has no trees.
+const SYNTHETIC_FIELD: usize = 2;
 
 /// The water of `synthetic_city`: the last column of blocks is left to a pond and the stream
 /// that runs out of it, so the offline world has water to draw.
@@ -1925,6 +2066,8 @@ pub fn synthetic_city(half: f64, tile_size: f64, ground: Ground, water: Placed) 
     let mut covers = Vec::new();
     // Each park's corner and side, metres.
     let mut parks = Vec::new();
+    // The field's rings: wheat is grown in it once the tiles are built (`lay_crops`).
+    let mut fields: Vec<Vec<Vec<P>>> = Vec::new();
     let count = (half * 2.0 / PITCH).floor() as i32;
     let start = -(count as f64) * PITCH / 2.0;
     let mut seed: u64 = 0x2545_f491;
@@ -1945,8 +2088,14 @@ pub fn synthetic_city(half: f64, tile_size: f64, ground: Ground, water: Placed) 
             let (bx, bz) = (start + i as f64 * PITCH + STREET / 2.0 + 2.0, start + j as f64 * PITCH + STREET / 2.0 + 2.0);
             let size = PITCH - STREET - 4.0;
             if next() < 0.15 {
-                // A little park.
-                covers.push((COVER_PARK, vec![vec![[bx, bz], [bx + size, bz], [bx + size, bz + size], [bx, bz + size]]]));
+                // A little park, or the one field of wheat.
+                let ring = vec![[bx, bz], [bx + size, bz], [bx + size, bz + size], [bx, bz + size]];
+                if parks.len() == SYNTHETIC_FIELD {
+                    fields.push(vec![ring.clone()]);
+                    covers.push((COVER_FARM, vec![ring]));
+                } else {
+                    covers.push((COVER_PARK, vec![ring]));
+                }
                 parks.push(([bx, bz], size));
                 continue;
             }
@@ -1999,7 +2148,7 @@ pub fn synthetic_city(half: f64, tile_size: f64, ground: Ground, water: Placed) 
     }
     let ways: Vec<(Vec<P>, f64)> = roads.iter().map(|(points, width, _)| (points.clone(), *width)).collect();
     // A loose ring of trees in each park, round an open middle.
-    for (k, ([x, z], size)) in parks.into_iter().enumerate() {
+    for (k, ([x, z], size)) in parks.into_iter().enumerate().filter(|(k, _)| *k != SYNTHETIC_FIELD) {
         for (n, (u, v)) in [(0.2, 0.2), (0.5, 0.15), (0.8, 0.25), (0.85, 0.55), (0.75, 0.85), (0.45, 0.8), (0.15, 0.7), (0.2, 0.45)].into_iter().enumerate() {
             let kind = ((k + n) % 7) as u8;
             let (height, crown) = crate::trees::size(kind, (k * 10 + n) as u64, None);
@@ -2018,6 +2167,7 @@ pub fn synthetic_city(half: f64, tile_size: f64, ground: Ground, water: Placed) 
         lay_lines(&mut built, &lines, half, tile_size, &ground);
         crate::graves::lay(&mut built, &yards, &ways, half, &ground);
     }
+    lay_crops(&mut built, &fields, half, tile_size);
     built
 }
 
@@ -2071,6 +2221,56 @@ mod tests {
         assert_eq!(cover_kind(&tags(&[("natural", "wetland")])), Some(COVER_MARSH));
         assert_eq!(cover_kind(&tags(&[("natural", "wetland"), ("wetland", "bog")])), Some(COVER_MARSH_DEEP));
         assert_eq!(cover_kind(&tags(&[("natural", "wetland"), ("wetland", "wet_meadow")])), Some(COVER_MARSH_FAINT));
+    }
+
+    #[test]
+    fn farmland_grows_wheat_but_not_on_its_roads_buildings_or_under_woods() {
+        let manifest = Manifest { version: WORLD_VERSION, half_extent: cm(100.0), tile_size: cm(100.0), ..Default::default() };
+        let square = |x0: f64, z0: f64, x1: f64, z1: f64| vec![[x0, z0], [x1, z0], [x1, z1], [x0, z1]];
+        let cover = |kind: u8, ring: &[P]| Cover { kind, rings: vec![ring.iter().map(|&[x, z]| [cm(x), cm(z)]).collect()] };
+        // Tile (0, 0) spans -100..0 both ways. A field over its west half with a wood in one corner, a
+        // road across it and a barn in it; a farmyard, drawn as farmland is, in the east half.
+        let field = square(-100.0, -100.0, -50.0, 0.0);
+        let yard = square(-40.0, -100.0, 0.0, -60.0);
+        let barn = square(-90.0, -30.0, -80.0, -20.0);
+        let tile = Tile {
+            cover: vec![cover(COVER_FARM, &field), cover(COVER_FARM, &yard), cover(COVER_WOOD, &square(-100.0, -100.0, -80.0, -80.0))],
+            roads: vec![Road { width: cm(6.0), kind: ROAD_MINOR, carried: false, points: vec![[cm(-100.0), cm(-50.0)], [cm(0.0), cm(-50.0)]] }],
+            buildings: vec![Building { footprint: barn.iter().map(|&[x, z]| [cm(x), cm(z)]).collect(), ..Default::default() }],
+            ..Default::default()
+        };
+        let mut built = Built { manifest, tiles: [((0, 0), tile), ((1, 0), Tile::default())].into_iter().collect() };
+        lay_crops(&mut built, &[vec![field]], 100.0, 100.0);
+        let crops = &built.tiles[&(0, 0)].crops;
+        assert_eq!(crops.len(), 50 * 50);
+        let at = |x: f64, z: f64| crops[((z + 100.0) / 2.0) as usize * 50 + ((x + 100.0) / 2.0) as usize];
+        assert_eq!(at(-70.0, -70.0), CROP_WHEAT, "the open field");
+        assert_eq!(at(-90.0, -90.0), CROP_NONE, "under the wood painted over it");
+        assert_eq!(at(-70.0, -49.0), CROP_NONE, "on the road");
+        assert_eq!(at(-70.0, -45.0), CROP_WHEAT, "beside the road");
+        assert_eq!(at(-85.0, -25.0), CROP_NONE, "under the barn");
+        assert_eq!(at(-45.0, -70.0), CROP_NONE, "past the field's edge");
+        assert_eq!(at(-20.0, -80.0), CROP_NONE, "a farmyard is no field");
+        assert!(built.tiles[&(1, 0)].crops.is_empty(), "a tile without farmland has no grid");
+    }
+
+    #[test]
+    fn only_farmland_is_a_field() {
+        let tags = |pairs: &[(&str, &str)]| pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect::<std::collections::HashMap<_, _>>();
+        assert!(is_field(&tags(&[("landuse", "farmland")])));
+        for other in ["farmyard", "orchard", "vineyard", "plant_nursery", "meadow"] {
+            assert!(!is_field(&tags(&[("landuse", other)])), "{other}");
+        }
+        // Farmland that something else makes a wood is the wood.
+        assert!(!is_field(&tags(&[("landuse", "farmland"), ("natural", "wood")])));
+    }
+
+    #[test]
+    fn the_synthetic_city_has_a_field_of_wheat() {
+        let built = synthetic_city(300.0, 100.0, Ground::default(), Placed::default());
+        let wheat: usize = built.tiles.values().map(|tile| tile.crops.iter().filter(|&&cell| cell == CROP_WHEAT).count()).sum();
+        // One block of 44 m a side: 22 or 23 cells of 2 m each way, as their centres fall in it.
+        assert!((22 * 22..=23 * 23).contains(&wheat), "{wheat}");
     }
 
     #[test]
@@ -2312,6 +2512,36 @@ mod tests {
         let built = from_osm(&place, 100.0, None, &osm, &[], ground, Placed::default(), None, None, None, &[], None, None, &[]);
         let kinds: std::collections::BTreeSet<u8> = built.tiles.values().flat_map(|tile| &tile.lines).map(|line| line.kind).collect();
         assert_eq!(kinds, [LINE_FENCE, LINE_POWER, LINE_WALL].into());
+    }
+
+    #[test]
+    fn farmland_from_osm_is_sown_whether_drawn_as_a_way_or_a_relation_and_a_farmyard_is_not() {
+        let place = crate::region::Region::Sweden.around(63.82, 20.26, 150.0);
+        let latlon = |points: &[P]| -> Vec<LatLon> {
+            points.iter().map(|&[x, z]| { let (lat, lon) = place.frame.unproject(x, z); LatLon { lat, lon } }).collect()
+        };
+        let ring = |x0: f64, z0: f64, x1: f64, z1: f64| [[x0, z0], [x1, z0], [x1, z1], [x0, z1], [x0, z0]];
+        let tags = |value: &str| -> std::collections::HashMap<String, String> { [("landuse".to_string(), value.to_string())].into() };
+        let osm = Osm {
+            ways: vec![
+                crate::overpass::Way { id: 1, tags: tags("farmland"), geometry: latlon(&ring(-120.0, -120.0, -40.0, -40.0)) },
+                crate::overpass::Way { id: 2, tags: tags("farmyard"), geometry: latlon(&ring(40.0, -120.0, 120.0, -40.0)) },
+            ],
+            areas: vec![Area { id: 3, tags: tags("farmland"), outer: vec![latlon(&ring(-120.0, 40.0, -40.0, 120.0))], inner: Vec::new() }],
+            pois: Vec::new(),
+        };
+        let ground = Ground { origin: -15_000, cell: 500, side: 61, heights: vec![250; 61 * 61] };
+        let built = from_osm(&place, 100.0, None, &osm, &[], ground, Placed::default(), None, None, None, &[], None, None, &[]);
+        let wheat_at = |x: f64, z: f64| {
+            let (col, row) = (((x + 150.0) / 100.0) as u16, ((z + 150.0) / 100.0) as u16);
+            let crops = &built.tiles[&(col, row)].crops;
+            let cell = |v: f64| ((v + 150.0) % 100.0 / 2.0) as usize;
+            !crops.is_empty() && crops[cell(z) * 50 + cell(x)] == CROP_WHEAT
+        };
+        assert!(wheat_at(-80.0, -80.0), "a field drawn as a closed way");
+        assert!(wheat_at(-80.0, 80.0), "a field drawn as a relation");
+        assert!(!wheat_at(80.0, -80.0), "a farmyard");
+        assert!(!wheat_at(0.0, 0.0), "open ground");
     }
 
     #[test]

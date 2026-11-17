@@ -3,7 +3,7 @@ import tables from './sim/tables.generated.json'
 
 /** Mirrors `crates/shared/src/world.rs`. Coordinates are metres: +X east, +Z south, +Y up. */
 
-export const WORLD_VERSION = 28
+export const WORLD_VERSION = 29
 
 /** `Manifest::theme`, mirrors `crates/shared/src/world.rs`. */
 export const THEME_WINTER = 1
@@ -347,6 +347,9 @@ export const DETAIL_SLOPE_SCALE = 63.5
 export const STONES_DENSITY = 0x7f
 /** `TileData.stones`: a boulder field's blocks rather than cobbles (`STONES_ANGULAR`). */
 export const STONES_ANGULAR = 0x80
+/** `TileData.crops`: nothing grown in the cell, and wheat (`CROP_NONE`, `CROP_WHEAT` in `crates/shared`). */
+export const CROP_NONE = 0
+export const CROP_WHEAT = 1
 
 /** `Tile::water` entry (centimetres) for a ground sample with no water. */
 const NO_WATER_CM = -2147483648
@@ -488,6 +491,11 @@ export interface TileData {
    */
   stones?: Uint8Array
   /**
+   * Standing crops, a grid laid out as `stones` is: what grows in each cell (`CROP_*`). Absent when
+   * the tile has none.
+   */
+  crops?: Uint8Array
+  /**
    * The buildings' own walls and roofs, for drawing only (`Building.look` says whose are where),
    * wound as `collision` is. Absent when the world has none.
    */
@@ -613,7 +621,7 @@ function flatIndices(triangles: readonly number[][]): Uint32Array {
 }
 
 export function decodeTile(bytes: Uint8Array): TileData {
-  const [buildings, roads, [vertices, triangles], ground, cover, trees, water, reach, streams, bridges, detail, rails, ski, lines, stones, look, graves] = decode(bytes) as [
+  const [buildings, roads, [vertices, triangles], ground, cover, trees, water, reach, streams, bridges, detail, rails, ski, lines, stones, crops, look, graves] = decode(bytes) as [
     [number, number[][], number, number, number, number, number, number, [number, number], [number[], number[], Uint8Array, Uint8Array], [number, number] | null][],
     [number, number, boolean, number[][]][],
     [number[][], number[][]],
@@ -628,6 +636,7 @@ export function decodeTile(bytes: Uint8Array): TileData {
     [number, number, number[][]][],
     [number, number[][]][],
     [number, number[][], number[], boolean][],
+    Uint8Array,
     Uint8Array,
     [number[][], number[][], number[][]],
     [number, number, number, number, number][],
@@ -678,6 +687,7 @@ export function decodeTile(bytes: Uint8Array): TileData {
     lines: lines.map(([kind, points, base, end]) => ({ kind, points: points.map(point), base: base.map(metres), end })),
     graves: graves.map(([x, z, base, yaw, kind]) => ({ x: metres(x), z: metres(z), base: metres(base), yaw: yaw / 1000, kind })),
     ...(stones.length > 0 ? { stones: stones.slice() } : {}),
+    ...(crops.length > 0 ? { crops: crops.slice() } : {}),
     ...(look[1].length > 0 ? { look: { vertices: flatMetres(look[0]), triangles: flatIndices(look[1]) } } : {}),
     bytes,
   }

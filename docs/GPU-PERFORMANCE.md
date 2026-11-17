@@ -109,6 +109,10 @@ Kläppudden's shore view went from 5.08 to 4.05 ms at ratio 1.5, and the water l
 The breakdown at the shore before it: sky 1.27 (most of it the water's reflection of it), reflection
 0.33, effects 0.29, shadows 0.29, bloom 0.29, ink 0.19, grass 0.14.
 
+Wheat on the farmland (CROPS.md) is drawn by the same code as the grass, solid stalks near and an
+opaque lid far off. Standing in a field in `home` it is 0.15 ms of a 2.73 ms frame, and nothing away
+from one. The `field` view and the `crops` part measure it.
+
 ### 5. Solid trees further out, and impostors that look like them
 
 Trees changed to impostors at 40 m, and the pictures showed: wobbling outlines, spikes on the crowns,

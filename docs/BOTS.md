@@ -149,7 +149,7 @@ The marks are kept by `Blips` (`client/src/blips.ts`), and the board is split by
 | **Pursue** | While it sees the target it fights them (see [Fighting](#fighting)). Out of sight, it runs to where they were last seen, or to where it heard something (see [Hearing](#hearing)). While alert it sees all round. | It reaches the last-seen spot and finds no one there, or gets stuck (Search). It goes 150 m from its route (Patrol). |
 | **Search** | Stands where it lost them and turns slowly, for 6 s. | It sees someone, hears something or is hit (Pursue), or time runs out and it goes back to the nearest waypoint (Patrol). |
 
-- **Sight.** A bot looks 10 times a second, each bot on its own beat. It sees a living person on foot (or a drone pilot's kneeling body) when nothing solid stands between its eye and their chest: terrain, buildings, trees and vehicles all block sight. It picks the nearest enemy it can see. It does not see people inside vehicles.
+- **Sight.** A bot looks 10 times a second, each bot on its own beat. It sees a living person on foot (or a drone pilot's kneeling body) when nothing solid stands between its eye and their chest: terrain, buildings, trees and vehicles all block sight, and a field of wheat hides whoever is low in it (see [Awareness](#awareness)). It picks the nearest enemy it can see. It does not see people inside vehicles.
 - **Moving.** It turns at up to 6 rad/s and only walks once it is facing roughly where it is going. It walks on patrol and runs when pursuing. It walks the way it finds (see [Finding the way](#finding-the-way)), one corner at a time. If something the grid does not know about, such as a vehicle, is within 1.2 m ahead, it tries headings up to ±1.8 rad off. When it has not got 0.5 m closer to the next corner in 3 s, it gives up the goal: on patrol it moves on to the next waypoint, and in a pursuit it starts searching.
 - **Unarmed.** A bot with no gun runs at the target, stops 3 m away and faces them.
 - **Dying.** A bot dies, is scored and respawns like anyone else (after 3 s, at its home). It comes back on patrol, with whatever it was doing forgotten.
@@ -191,8 +191,11 @@ A bot does not see someone the moment a ray reaches them (`bots/senses.rs`). In 
 | Stance | crouched 0.6, lying 0.3 |
 | Moving | still 0.7, walking 1, running 1.3 |
 | Light | down to 0.35 at night, 1.2 with a lamp lit, day or night |
+| Wheat | standing in it 0.5; crouched and moving 0.15; crouched and still, or lying, not seen at all |
 
-Within 3 m it is instant, and a bot already alert fills it three times as fast. At 0.4 a patrolling bot stops and stares at the spot. The meter fades at 0.25 a second with no one in view. The server cannot see a client's `?time=` pin, so night here always follows the clock. Noises from over 15 m are heard 12 per cent of the distance off, a different way for each bot.
+Wheat (`Tile::crops`, [CROPS.md](CROPS.md)) only counts when it also stands 2 m from the person toward the bot, so at a field's near edge they are in plain view, and never in a winter world, whose fields are stubble. Someone it hides altogether is gone to a bot that was watching them too, as if behind a wall: it goes to where it last saw them. A tank's gunner is fooled the same way.
+
+Within 3 m it is instant, wheat or not, and a bot already alert fills it three times as fast. At 0.4 a patrolling bot stops and stares at the spot. The meter fades at 0.25 a second with no one in view. The server cannot see a client's `?time=` pin, so night here always follows the clock. Noises from over 15 m are heard 12 per cent of the distance off, a different way for each bot.
 
 ### Nerve and temper
 

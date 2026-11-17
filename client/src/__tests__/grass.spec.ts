@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { bladeGeometry, chunkBlades, GRASS_CHUNK, GRASS_FULL, grassMask, keptAt, patchAt, tierFor } from '@/render/grass'
-import { COVER_PARK, COVER_URBAN, COVER_WATER, ROAD_MINOR, type Building, type Point2 } from '@/world'
+import { bladeGeometry, chunkBlades, cropMask, GRASS_CHUNK, GRASS_FULL, grassMask, keptAt, patchAt, STUBBLE, tierFor, WHEAT, WHEAT_DENSITY } from '@/render/grass'
+import { CROP_HEIGHT } from '@/sim/consts.generated'
+import { COVER_PARK, COVER_URBAN, COVER_WATER, CROP_NONE, CROP_WHEAT, ROAD_MINOR, type Building, type Point2 } from '@/world'
 
 const square = (x0: number, z0: number, x1: number, z1: number): Point2[] => [[x0, z0], [x1, z0], [x1, z1], [x0, z1]]
 
@@ -73,6 +74,44 @@ describe('grass', () => {
     }
     expect(thick).toBeGreaterThan(2000)
     expect(bare).toBeGreaterThan(5000)
+  })
+
+  it('grows wheat evenly over a field, every stalk about as high as the crop and with an ear', () => {
+    const flat = () => 0
+    const wheat = chunkBlades(1, 1, WHEAT_DENSITY.perMetre, 1, () => 1, flat, WHEAT)
+    // No bare patches: every draw is a stalk.
+    expect(wheat.length).toBe(WHEAT_DENSITY.perMetre * GRASS_CHUNK * GRASS_CHUNK)
+    for (const stalk of wheat) {
+      expect(stalk.height).toBeGreaterThanOrEqual(CROP_HEIGHT * 0.9 - 1e-6)
+      expect(stalk.height).toBeLessThanOrEqual(CROP_HEIGHT * 1.1 + 1e-6)
+      expect(stalk.head).toBe(true)
+    }
+    // A smaller share is still the first stalks of the whole field, as with grass.
+    expect(chunkBlades(1, 1, WHEAT_DENSITY.perMetre, 0.25, () => 1, flat, WHEAT)).toEqual(wheat.filter((stalk) => stalk.rank < 0.25))
+    // Twice as wide as a blade of grass, and the ear is the ear's colour.
+    const one = wheat.slice(0, 1)
+    const stalk = bladeGeometry(one, false, WHEAT), blade = bladeGeometry(one, false)
+    const width = (g: typeof stalk) => Math.hypot(g.positions[3]! - g.positions[0]!, g.positions[5]! - g.positions[2]!)
+    expect(width(stalk)).toBeGreaterThan(width(blade) * 1.4)
+    const tip = 4
+    expect(stalk.colors![tip * 4]! / stalk.colors![0]!).toBeGreaterThan(1)
+  })
+
+  it('leaves a winter field short stubble, thinner than the wheat was', () => {
+    const flat = () => 0
+    const stubble = chunkBlades(1, 1, 8, 1, () => 1, flat, STUBBLE)
+    expect(stubble.length).toBeGreaterThan(0)
+    expect(stubble.length).toBeLessThan(8 * GRASS_CHUNK * GRASS_CHUNK)
+    for (const stalk of stubble) expect(stalk.height).toBeLessThan(0.3)
+  })
+
+  it('masks the cells of a tile where crops stand, and none of a tile without', () => {
+    // A 8 m tile of 4 × 4 crop cells, wheat in its western half.
+    const crops = Uint8Array.from({ length: 16 }, (_, k) => (k % 4 < 2 ? CROP_WHEAT : CROP_NONE))
+    const mask = cropMask(crops, 100, 200, 8)
+    expect([mask.x0, mask.z0, mask.side]).toEqual([100, 200, 4])
+    expect(Array.from(mask.cells)).toEqual([1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0])
+    expect(cropMask(undefined, 0, 0, 8).side).toBe(0)
   })
 
   it('holds enough blades in a chunk for what its distance shows', () => {

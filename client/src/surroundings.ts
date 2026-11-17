@@ -34,6 +34,8 @@ interface At {
 export class Surroundings {
   waters: Waters | null = null
   grass: Grass | null = null
+  /** The fields' wheat, parted and flattened as the grass is. */
+  crops: Grass | null = null
   private readonly wading = new Map<number, { wet: boolean; stride: number; x: number; z: number }>()
   private readonly benders: Bender[] = []
 
@@ -127,8 +129,7 @@ export class Surroundings {
    * tracks on it, and the downwash of anything with rotors low over it.
    */
   bendGrass(self: readonly number[] | null, others: readonly { x: number; z: number }[], cars: ReadonlyMap<number, Placed>) {
-    const grass = this.grass
-    if (!grass) return
+    if (!this.grass && !this.crops) return
     const benders = this.benders
     benders.length = 0
     if (self) benders.push({ x: self[0]!, z: self[2]!, radius: 0.7, strength: 1.1 })
@@ -145,6 +146,7 @@ export class Surroundings {
       }
     }
     const eye = this.scene.camera.position
-    grass.update(eye.x, eye.z, benders)
+    this.grass?.update(eye.x, eye.z, benders)
+    this.crops?.update(eye.x, eye.z, benders)
   }
 }
