@@ -170,7 +170,7 @@ mod tests {
         mesh.vertices.extend([[900, 100, 0], [1000, 100, 0], [900, 100, 100]]);
         mesh.triangles.push([at, at + 1, at + 2]);
         let b = house(&mut mesh, 2000);
-        let mut tile = Tile { buildings: vec![a, b], bridges: vec![Bridge { first: bridge_first, deck: 1, steel: 0 }], collision: mesh, ..Default::default() };
+        let mut tile = Tile { buildings: vec![a, b], bridges: vec![Bridge { first: bridge_first, steel: 1 }], collision: mesh, ..Default::default() };
         bake(&mut tile);
         let shell = Shell::from_cells(&tile.buildings[0].cells).unwrap();
         assert_eq!(shell.dims, [7, 5, 6]);

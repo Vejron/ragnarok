@@ -44,6 +44,7 @@ import { MarshMist, mistAt } from './render/marshmist'
 import { Bloodstains } from './render/bloodstains'
 import { Scorchmarks } from './render/scorchmarks'
 import { type FxWorld } from './render/tyres'
+import { splash } from './render/splash'
 import { Debris } from './render/debris'
 import { Gore } from './render/gore'
 import { Ragdolls } from './sim/ragdoll'
@@ -480,6 +481,11 @@ export class Game {
     this.scene.scene.add(this.debris.root)
     this.debris.groundAt = (x, z) => this.scene.groundAt(x, z)
     this.view.damage.groundAt = (x, z) => (this.terrain ? this.terrain.heightAt(x, z) : null)
+    this.view.damage.waterAt = (x, z) => {
+      const level = this.waters?.surfaceAt(x, z, this.waveClock) ?? NO_WATER
+      return level === NO_WATER ? null : level
+    }
+    this.view.damage.splashed = (x, y, z, size, speed) => splash(this.fxWorld, { x, y, z }, size, speed)
     this.view.damage.looks = LookWorker.create()
     this.scene.scene.add(this.view.waterRoot)
     this.transport = new Transport(

@@ -27,6 +27,9 @@ pub const MAX_CELLS: usize = 8_000_000;
 /// Health of one cell against bullets: a rifle needs a few rounds to break out a piece of wall.
 /// Blasts take cells outright.
 pub const CELL_HP: u8 = 40;
+/// Health of one cell of a bridge (`BUILDING_BRIDGE`): reinforced concrete, worn down only by what
+/// a blast has left over past what it shrugs off (`combat`), about a dozen 40 mm rounds a cell.
+pub const BRIDGE_CELL_HP: u8 = 250;
 
 /// A triangle: three corners `[x, y, z]`, centimetres, flattened.
 pub type Tri = [i32; 9];
@@ -354,6 +357,17 @@ impl Shell {
             }
         }
         self.anchored = (0..self.solid.len()).map(|i| self.solid[i] && (i < layer || !reached[i])).collect();
+    }
+
+    /// Holds the cells up where they rest on the ground instead of on the grid's lowest layer, for a
+    /// bridge (`BUILDING_BRIDGE`): a cell is an anchor when its bottom is within a cell of `ground`
+    /// (centimetres, asked at the middle `[x, z]` of the cell's column), so a deck stands on its piers
+    /// and on the banks at its ends, and a stretch of it that a blast cuts from them falls.
+    pub fn anchor_to_ground(&mut self, ground: impl Fn(i32, i32) -> i32) {
+        let [nx, _, nz] = self.dims;
+        let layer = nx * nz;
+        let floors: Vec<i32> = (0..layer).map(|column| ground(self.origin[0] + (column % nx) as i32 * self.cell + self.cell / 2, self.origin[2] + (column / nx) as i32 * self.cell + self.cell / 2)).collect();
+        self.anchored = (0..self.solid.len()).map(|i| self.solid[i] && self.origin[1] + (i / layer) as i32 * self.cell <= floors[i % layer] + self.cell).collect();
     }
 
     /// Takes the cells within `radius` centimetres of `at` out of `removed` (one flag per cell),
@@ -1105,6 +1119,64 @@ mod tests {
     fn roof(w: i32, d: i32, h: i32) -> Vec<Tri> {
         let (w, d, h) = (w * 100, d * 100, h * 100);
         vec![[0, h, 0, w, h, 0, w, h, d], [0, h, 0, w, h, d, 0, h, d]]
+    }
+
+    /// A closed box from `lo` to `hi`, centimetres: its six faces.
+    fn cuboid(lo: [i32; 3], hi: [i32; 3]) -> Vec<Tri> {
+        let c = |x: bool, y: bool, z: bool| [if x { hi[0] } else { lo[0] }, if y { hi[1] } else { lo[1] }, if z { hi[2] } else { lo[2] }];
+        let quad = |a: [i32; 3], b: [i32; 3], d: [i32; 3], e: [i32; 3]| -> [Tri; 2] {
+            [[a[0], a[1], a[2], b[0], b[1], b[2], d[0], d[1], d[2]], [a[0], a[1], a[2], d[0], d[1], d[2], e[0], e[1], e[2]]]
+        };
+        let mut out = Vec::new();
+        out.extend(quad(c(false, false, false), c(true, false, false), c(true, true, false), c(false, true, false)));
+        out.extend(quad(c(false, false, true), c(true, false, true), c(true, true, true), c(false, true, true)));
+        out.extend(quad(c(false, false, false), c(false, false, true), c(false, true, true), c(false, true, false)));
+        out.extend(quad(c(true, false, false), c(true, false, true), c(true, true, true), c(true, true, false)));
+        out.extend(quad(c(false, false, false), c(true, false, false), c(true, false, true), c(false, false, true)));
+        out.extend(quad(c(false, true, false), c(true, true, false), c(true, true, true), c(false, true, true)));
+        out
+    }
+
+    /// A bridge 12 m long and 2 m wide, its deck 5 m to 6 m up, on a pier at x 10 m to 11 m down to the
+    /// ground at 0 and on a bank at its start, where the ground is 3 m up (`bank_ground`).
+    fn little_bridge() -> Shell {
+        let mut walls = cuboid([0, 500, 0], [1200, 600, 200]);
+        walls.extend(cuboid([1000, 0, 0], [1100, 500, 200]));
+        walls.extend(cuboid([0, 300, 0], [200, 500, 200]));
+        Shell::new(&walls, &[]).unwrap()
+    }
+
+    fn bank_ground(x: i32, _z: i32) -> i32 {
+        if x < 200 { 300 } else { 0 }
+    }
+
+    #[test]
+    fn a_bridge_stands_on_the_ground_under_it_not_on_its_lowest_cells() {
+        // As a house: only the pier's foot holds it, so cutting the pier drops the deck and the bank.
+        let house = little_bridge();
+        let mut removed = house.untouched();
+        let cut = house.blast(&mut removed, [1050, 250, 100], 150);
+        assert!(cut.fell.len() > 50, "as a house the deck falls: {}", cut.fell.len());
+        // As a bridge: the bank at its start holds the deck up still.
+        let mut bridge = little_bridge();
+        bridge.anchor_to_ground(bank_ground);
+        let mut removed = bridge.untouched();
+        let cut = bridge.blast(&mut removed, [1050, 250, 100], 150);
+        assert!(!cut.blasted.is_empty() && cut.fell.is_empty(), "the bank holds it: {} fell", cut.fell.len());
+    }
+
+    #[test]
+    fn a_deck_cut_off_from_what_holds_it_falls() {
+        let mut bridge = little_bridge();
+        bridge.anchor_to_ground(bank_ground);
+        let mut removed = bridge.untouched();
+        // A cut across the deck between the bank and the pier leaves both halves held.
+        let cut = bridge.blast(&mut removed, [600, 550, 100], 150);
+        assert!(cut.fell.is_empty(), "{} fell", cut.fell.len());
+        // Then the pier goes: the stretch of deck on it has nothing left.
+        let cut = bridge.blast(&mut removed, [1050, 250, 100], 150);
+        assert!(cut.fell.len() > 30, "the deck on the pier falls: {}", cut.fell.len());
+        assert!(cut.fell.iter().all(|&id| bridge.centre(id)[0] > 600), "and only that");
     }
 
     /// The cells that fall are the ones the whole-grid search finds, blast after blast.

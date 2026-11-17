@@ -13,6 +13,7 @@ use shared::world::*;
 use std::collections::{BTreeMap, HashMap};
 
 type P = [f64; 2];
+type V3 = [f64; 3];
 
 use shared::world::METRES_PER_DEG_LAT;
 /// Buildings and spawns keep this far inside the boundary walls, metres.
@@ -364,6 +365,27 @@ type Outline = (Vec<P>, f64, Option<[u32; 2]>, Option<f64>, u8);
 /// track, stand too near a building (`thin::clear_of_walls`), or are thinned out of the woods
 /// (`thin::woods`) are dropped. A tree is solid (has a trunk collider) when it is planted, in the
 /// register, or stands within `SOLID_REACH` of a road, a track or a building.
+/// Puts triangles `tris` (metres) into `mesh` in centimetres, corners shared through `shared`, and
+/// returns how many went in: none that rounding to the centimetre made degenerate.
+fn push_triangles(mesh: &mut CollisionMesh, shared: &mut HashMap<[i32; 3], u32>, tris: &[[V3; 3]]) -> u32 {
+    let mut count = 0;
+    for tri in tris {
+        let mut index = [0u32; 3];
+        for (slot, v) in tri.iter().enumerate() {
+            let at = [cm(v[0]), cm(v[1]), cm(v[2])];
+            index[slot] = *shared.entry(at).or_insert_with(|| {
+                mesh.vertices.push(at);
+                mesh.vertices.len() as u32 - 1
+            });
+        }
+        if index[0] != index[1] && index[1] != index[2] && index[0] != index[2] {
+            mesh.triangles.push(index);
+            count += 1;
+        }
+    }
+    count
+}
+
 /// `rails` are `(centre line, gauge, RAIL_*)`; `rail_bridges` carry tracks and are built like road
 /// bridges, but draw no road. No rocks or shrubs are made up inside `mapped`, an orienteering map's outline.
 #[allow(clippy::too_many_arguments)]
@@ -482,37 +504,51 @@ fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collecti
             ways.into_iter().any(|(line, across)| line.windows(2).any(|pair| distance_to_segment(p, pair[0], pair[1]) < across / 2.0 + width * 0.55 + PIER_CLEAR))
         };
         pieces.retain(|piece| !piece.pier || !under(piece.at));
-        // Per tile: the deck pieces and the steel pieces that fall in it.
-        type TilePieces<'a> = (Vec<&'a bridge::Piece>, Vec<&'a bridge::Piece>);
-        let mut by_tile: BTreeMap<(u16, u16), TilePieces> = BTreeMap::new();
-        for piece in &pieces {
-            let entry = by_tile.entry(manifest.tile_at(cm(piece.at[0]), cm(piece.at[1]))).or_default();
-            if piece.steel { entry.1.push(piece) } else { entry.0.push(piece) }
+        // The concrete in sections, each a building of its own that blasts carve (`BUILDING_BRIDGE`), in
+        // the tile of its middle; the steel, which nothing breaks, per tile it lies in.
+        let concrete: Vec<&bridge::Piece> = pieces.iter().filter(|piece| !piece.steel).collect();
+        for section in bridge::sections(&concrete) {
+            let parts: Vec<&bridge::Piece> = section.iter().map(|&k| concrete[k]).collect();
+            let n = parts.len() as f64;
+            let middle = parts.iter().fold([0.0, 0.0], |sum, piece| [sum[0] + piece.at[0] / n, sum[1] + piece.at[1] / n]);
+            let corners: Vec<P> = parts.iter().flat_map(|piece| piece.tris.iter().flatten().map(|v| [v[0], v[2]])).collect();
+            let footprint = crate::ocad::convex_hull(corners);
+            let lowest = parts.iter().flat_map(|piece| piece.tris.iter().flatten().map(|v| v[1])).fold(f64::MAX, f64::min);
+            let top = parts.iter().flat_map(|piece| piece.tris.iter().flatten().map(|v| v[1])).fold(f64::MIN, f64::max);
+            // What falls from it lands on the ground or the river bed under it.
+            let base = parts.iter().map(|piece| ground.height_at(piece.at[0] as f32, piece.at[1] as f32) as f64).fold(lowest, f64::min);
+            // The faces that look up are its roof, the top of the deck: the rest its walls.
+            let (roof, walls): (Vec<[V3; 3]>, Vec<[V3; 3]>) = parts.iter().flat_map(|piece| piece.tris.iter().copied()).partition(|&tri| bridge::faces_up(tri));
+            let tile = tiles.entry(manifest.tile_at(cm(middle[0]), cm(middle[1]))).or_default();
+            let first = tile.collision.triangles.len() as u32;
+            let mut shared_vertices: HashMap<[i32; 3], u32> = HashMap::new();
+            let mut count = [0u32; 2];
+            for (group, list) in [&walls, &roof].into_iter().enumerate() {
+                count[group] = push_triangles(&mut tile.collision, &mut shared_vertices, list);
+            }
+            tile.buildings.push(Building {
+                height: cm(top - base),
+                footprint: footprint.iter().map(|&[x, z]| [cm(x), cm(z)]).collect(),
+                base: cm(base),
+                first,
+                walls: count[0],
+                roof: count[1],
+                roof_kind: ROOF_FLAT,
+                kind: BUILDING_BRIDGE,
+                front: [0, 0],
+                cells: Default::default(),
+                paint: Some([BRIDGE_CONCRETE, BRIDGE_CONCRETE]),
+            });
         }
-        for (key, (deck, steel)) in by_tile {
+        let mut steel_by_tile: BTreeMap<(u16, u16), Vec<[V3; 3]>> = BTreeMap::new();
+        for piece in pieces.iter().filter(|piece| piece.steel) {
+            steel_by_tile.entry(manifest.tile_at(cm(piece.at[0]), cm(piece.at[1]))).or_default().extend(piece.tris.iter().copied());
+        }
+        for (key, steel) in steel_by_tile {
             let tile = tiles.entry(key).or_default();
             let first = tile.collision.triangles.len() as u32;
-            let mut shared_vertices: std::collections::HashMap<[i32; 3], u32> = std::collections::HashMap::new();
-            let mut count = [0u32; 2];
-            for (group, list) in [&deck, &steel].into_iter().enumerate() {
-                for piece in list {
-                    for tri in &piece.tris {
-                        let mut index = [0u32; 3];
-                        for (slot, v) in tri.iter().enumerate() {
-                            let at = [cm(v[0]), cm(v[1]), cm(v[2])];
-                            index[slot] = *shared_vertices.entry(at).or_insert_with(|| {
-                                tile.collision.vertices.push(at);
-                                tile.collision.vertices.len() as u32 - 1
-                            });
-                        }
-                        if index[0] != index[1] && index[1] != index[2] && index[0] != index[2] {
-                            tile.collision.triangles.push(index);
-                            count[group] += 1;
-                        }
-                    }
-                }
-            }
-            tile.bridges.push(Bridge { first, deck: count[0], steel: count[1] });
+            let steel = push_triangles(&mut tile.collision, &mut HashMap::new(), &steel);
+            tile.bridges.push(Bridge { first, steel });
         }
     }
     // Cover is cut at tile borders like roads, so each tile's texture needs only its own file.
@@ -766,7 +802,7 @@ pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::B
         let sites: Vec<(&crate::osm::Tags, &[P])> = osm.ways.iter().filter(|way| is_building(way)).zip(&rings).map(|(way, ring)| (&way.tags, ring.as_slice())).collect();
         let nodes: Vec<(u8, P)> = osm.pois.iter().filter_map(|node| Some((crate::classify::by_use(&node.tags)?, frame.project(node.at.lat, node.at.lon)))).collect();
         let (kinds, tally) = crate::classify::classify(&sites, &lands, &nodes);
-        let [plain, churches, barns, outbuildings, halls, shops, flats, public, cabins, old, villas, fire] = tally.kinds;
+        let [plain, churches, barns, outbuildings, halls, shops, flats, public, cabins, old, villas, fire, _bridges] = tally.kinds;
         eprintln!("buildings: {plain} houses, {old} old houses, {villas} villas, {churches} churches, {barns} barns, {outbuildings} outbuildings, {halls} halls, {shops} shops, {flats} blocks of flats, {public} public, {fire} fire stations, {cabins} cabins; {} known by their tags, {} by a node in them, {} by the land they stand on, {} by their yard", tally.by_tags, tally.by_node, tally.by_land, tally.by_yard);
         kinds
     };
@@ -2044,6 +2080,42 @@ mod tests {
     }
 
     #[test]
+    fn bridge_sections_are_buildings_with_cells_and_a_look_and_no_windows() {
+        use crate::water::{Grid, Surface};
+        let map = synthetic_water(300.0);
+        let grid = Grid { origin: -30_000, cell: 500, side: 121 };
+        let surface = Surface::new(&map, grid, |_, _| Some(3.0));
+        let ground = Ground { origin: -30_000, cell: 500, side: 121, heights: vec![300i32; 121 * 121] };
+        let placed = Placed::new(&map, &surface, 0.0, &ground);
+        let mut built = synthetic_city(300.0, 100.0, ground, placed);
+        for tile in built.tiles.values_mut() {
+            crate::voxels::bake(tile);
+        }
+        let sections: Vec<&Building> = built.tiles.values().flat_map(|t| &t.buildings).filter(|b| b.kind == BUILDING_BRIDGE).collect();
+        assert!(sections.len() >= 2, "the bridge over the pond is in sections, got {}", sections.len());
+        assert!(sections.iter().all(|b| b.cells.dims.iter().all(|&d| d > 0) && b.paint == Some([BRIDGE_CONCRETE; 2]) && b.footprint.len() >= 3));
+        // Each section is closed: every edge of its look is shared by two of its faces at least, so no
+        // open end is left to be drawn as the rim of a hole.
+        for tile in built.tiles.values() {
+            for (building, range) in tile.buildings.iter().zip(&tile.look.buildings).filter(|(b, _)| b.kind == BUILDING_BRIDGE) {
+                let mut edges: HashMap<(u32, u32), u32> = HashMap::new();
+                for t in &tile.look.triangles[range[0] as usize..(range[0] + range[1] + range[2]) as usize] {
+                    for k in 0..3 {
+                        let (a, b) = (t[k], t[(k + 1) % 3]);
+                        *edges.entry((a.min(b), a.max(b))).or_default() += 1;
+                    }
+                }
+                let open = edges.values().filter(|&&n| n == 1).count();
+                assert_eq!(open, 0, "a section at {:?} has {open} open edges", building.centre());
+            }
+        }
+        let manifest = built.manifest.clone();
+        let world = WorldFile::assemble(&manifest, built.tiles.into_iter().map(|((col, row), tile)| (col, row, tile)));
+        let looks: Vec<&BuildingLook> = world.buildings.iter().zip(&world.looks).filter(|(b, _)| b.kind == BUILDING_BRIDGE).map(|(_, look)| look).collect();
+        assert!(looks.iter().all(|look| !look.walls.is_empty() && !look.roof.is_empty() && look.windows.is_empty() && look.inside.is_empty()));
+    }
+
+    #[test]
     fn the_synthetic_pond_and_stream_land_in_tiles() {
         use crate::water::{Grid, Surface};
         let map = synthetic_water(300.0);
@@ -2059,7 +2131,7 @@ mod tests {
         let samples = built.manifest.tile_samples() as usize;
         assert!(built.tiles.values().filter(|t| !t.water.is_empty()).all(|t| t.water.len() == samples * samples));
         assert!(built.tiles.values().any(|tile| !tile.streams.is_empty()));
-        assert!(built.tiles.values().flat_map(|t| &t.buildings).all(|b| b.footprint.iter().all(|p| p[0] < 25_000)), "the last column of blocks is left to the water");
+        assert!(built.tiles.values().flat_map(|t| &t.buildings).filter(|b| b.kind != BUILDING_BRIDGE).all(|b| b.footprint.iter().all(|p| p[0] < 25_000)), "the last column of blocks is left to the water");
     }
 
     #[test]

@@ -64,3 +64,6 @@ fn land(world: &mut World) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

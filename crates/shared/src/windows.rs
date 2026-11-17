@@ -188,6 +188,10 @@ struct Plane {
 /// longest; a church a row of tall windows along its long walls, and a door and a round window in an end;
 /// a barn, an outbuilding, a hall and a shop the doors and the one row of windows of their `Style`.
 pub fn openings_of(look: &Look, [first, walls, _]: [u32; 3], kind: u8, front: [i8; 2]) -> Vec<Window> {
+    // A bridge has no windows, no doors and so no inside.
+    if kind == crate::world::BUILDING_BRIDGE {
+        return Vec::new();
+    }
     // As the client reads them: centimetres to metres, held in 32-bit floats.
     let corner = |v: u32| -> [f64; 3] { look.vertices.get(v as usize).map_or([0.0; 3], |p| p.map(|c| (c as f64 / 100.0) as f32 as f64)) };
     let mut planes: Vec<Plane> = Vec::new();

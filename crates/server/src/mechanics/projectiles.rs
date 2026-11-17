@@ -455,7 +455,10 @@ fn set_off(world: &mut World, burst: Burst, owner: u32, point: [f32; 3], dir: [f
 fn punch(world: &mut World, point: [f32; 3], dir: [f32; 3], radius: f32) {
     let into = vec3::along(point, dir, shared::carve::CELL as f32 / 200.0);
     for object in world.physics.objects_near(into, radius) {
-        if let sim::Obj::Building(id) = object {
+        // A bridge is not holed by a solid shot: its charge wears it as any small blast does.
+        if let sim::Obj::Building(id) = object
+            && !world.is_bridge(id)
+        {
             world.carve(id, into, radius);
         }
     }

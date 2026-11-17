@@ -236,6 +236,7 @@ fn strike(world: &mut World, vid: u32, point: [f32; 3], radius: f32, velocity: [
     }
     for object in world.physics.objects_touching_ball(point, radius) {
         match object {
+            Obj::Building(id) if world.is_bridge(id) => super::combat::punch_bridge(world, id, point, radius, speed),
             Obj::Building(id) => super::combat::ram_building(world, id, point, speed, weight),
             Obj::Tree(_) | Obj::Line(_) => {
                 super::combat::damage_object(world, object, (speed * TREE_DAMAGE_PER_SPEED) as u16, point);

@@ -590,6 +590,6 @@ mod tests {
         let sites: Vec<(&Tags, &[P])> = vec![(&yes, &rings[0]), (&yes, &rings[1]), (&barn, &rings[2])];
         let (kinds, tally) = classify(&sites, &[], &[]);
         assert_eq!(kinds, [BUILDING_FARMHOUSE, BUILDING_OUTBUILDING, BUILDING_BARN]);
-        assert_eq!(tally, Tally { by_tags: 1, by_node: 0, by_land: 0, by_yard: 1, kinds: [0, 0, 1, 1, 0, 0, 0, 0, 0, 1, 0, 0] });
+        assert_eq!(tally, Tally { by_tags: 1, by_node: 0, by_land: 0, by_yard: 1, kinds: [0, 0, 1, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0] });
     }
 }

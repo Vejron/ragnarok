@@ -956,14 +956,33 @@ impl World {
         open
     }
 
-    /// Building `id` cut into cells, as `physics::building_shell`.
+    /// Building `id` cut into cells, as `physics::building_shell`. A bridge's section stands on the
+    /// ground under it (`Shell::anchor_to_ground`), and its cells are concrete (`BRIDGE_CELL_HP`).
     pub(super) fn cut_building(&self, id: ObjId) -> Option<Carving> {
         let index = *self.buildings_by_id.get(&id)?;
-        let (shell, floor) = sim::building_shell(&self.map, index)?;
+        let (mut shell, floor) = sim::building_shell(&self.map, index)?;
+        let bridge = self.is_bridge(id);
+        if bridge {
+            // The ground as the importer left it, so a crater dug at a pier's foot does not leave it
+            // standing on nothing: the nearest sample is near enough for a tolerance of a cell.
+            let ground = &self.map.ground;
+            let heights = if self.pristine.is_empty() { &ground.heights } else { &self.pristine };
+            let last = i64::from(ground.side.max(1)) - 1;
+            let at = |v: i32| (((i64::from(v) - i64::from(ground.origin)) as f64 / f64::from(ground.cell.max(1))).round() as i64).clamp(0, last);
+            shell.anchor_to_ground(|x, z| if ground.is_flat() { 0 } else { heights.get((at(z) * (last + 1) + at(x)) as usize).copied().unwrap_or(0) });
+        }
         let removed = shell.untouched();
-        let hp = shell.fresh_hp();
+        let mut hp = shell.fresh_hp();
+        if bridge {
+            hp.fill(shared::carve::BRIDGE_CELL_HP);
+        }
         let whole = shell.hold(&removed);
         Some(Carving { shell, removed, hp, floor, whole })
+    }
+
+    /// Whether building `id` is a section of a bridge (`BUILDING_BRIDGE`).
+    pub fn is_bridge(&self, id: ObjId) -> bool {
+        self.building(id).is_some_and(|building| building.kind == shared::world::BUILDING_BRIDGE)
     }
 
     /// The building `id` names.

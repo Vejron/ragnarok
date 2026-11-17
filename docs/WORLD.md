@@ -439,8 +439,10 @@ was found):
 - **No pier stands on a road** or a track that goes under the bridge.
 - **A ramp comes down to the deck's lip** over the ground (0.12 m), not to within 0.4 m of it.
 
-Triangles go into the tile of their position, listed in `Tile.bridges` as `(first, deck, steel)`
-ranges; trees within 4 m of a bridge's edge are dropped (over water they are the laser's reading of
+The concrete (deck, piers, parapets) is cut into sections, halfway between piers, and each section is
+a building of kind `BUILDING_BRIDGE` in the tile of its middle, carved by blasts as a house is but much
+tougher ([BRIDGES.md](BRIDGES.md)). The steel (pylon, stay cables) goes into the tile of its position,
+listed in `Tile.bridges` as `(first, steel)` ranges. Trees within 4 m of a bridge's edge are dropped (over water they are the laser's reading of
 the pylon and cables). Bridge roads never offer spawns. Deck heights over the Umeälven can be
 tuned by `clearance` in `bridge.rs`.
 
@@ -724,6 +726,7 @@ under the deck, and nobody spawns on it. A road that crosses under a bridge is n
 `WORLD_VERSION` 24 added each bus stop's sign to its line (`BusLine::signs`).
 `WORLD_VERSION` 25 added the graveyards' tombstones to each tile (`Tile::graves`, GRAVEYARDS.md).
 `WORLD_VERSION` 26 added which way each building's road lies (`Building::front`, BUILDING-STYLES.md).
+`WORLD_VERSION` 28 made a bridge's concrete into sections that are buildings (`BUILDING_BRIDGE`), leaving `Tile.bridges` only its steel (`Bridge { first, steel }`, BRIDGES.md).
 
 Both sides check `WORLD_VERSION` and read only the current layout: there is no reading of older
 worlds. When the layout changes, bump it in `crates/shared/src/world.rs` **and**

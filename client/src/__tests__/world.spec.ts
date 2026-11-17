@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { encode } from '@msgpack/msgpack'
-import { GRAVE_CROSS, GRAVE_KINDS, RAIL_TRAIN, RAIL_TRAM, ROOF_GABLE, WORLD_BASE, decodeManifest, decodeTile, worldHash } from '@/world'
+import { BUILDING_BRIDGE, GRAVE_CROSS, GRAVE_KINDS, RAIL_TRAIN, RAIL_TRAM, ROOF_GABLE, WORLD_BASE, decodeManifest, decodeTile, worldHash } from '@/world'
 import { buildingColors } from '@/render/buildingmesh'
 import { NO_CELLS } from './worlds'
 
@@ -73,11 +73,9 @@ describe('world files', () => {
       buildings += tile.buildings.length
       streams += tile.streams.length
       rails += tile.rails.length
-      for (const bridge of tile.bridges) {
-        // A bridge's triangles lie inside the tile's mesh.
-        expect(bridge.first + bridge.deck + bridge.steel).toBeLessThanOrEqual(tile.collision.triangles.length / 3)
-        bridges++
-      }
+      // A bridge's steel lies inside the tile's mesh; its concrete is in sections that are buildings.
+      for (const bridge of tile.bridges) expect(bridge.first + bridge.steel).toBeLessThanOrEqual(tile.collision.triangles.length / 3)
+      bridges += tile.buildings.filter((building) => building.kind === BUILDING_BRIDGE).length
       if (tile.water.length > 0) {
         watery++
         // Water comes with ground, sample for sample, and rises above the bed somewhere.

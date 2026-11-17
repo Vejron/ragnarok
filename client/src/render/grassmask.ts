@@ -1,4 +1,4 @@
-import { COVER_GOLF_BUNKER, COVER_GOLF_FAIRWAY, COVER_GOLF_GREEN, COVER_GOLF_TEE, COVER_INDUSTRIAL, COVER_PARK, COVER_ROCK, COVER_THICKET_FIGHT, COVER_THICKET_SLOW, COVER_THICKET_WALK, COVER_URBAN, COVER_WOOD, type Building, type Point2, type TileData } from '@/world'
+import { BUILDING_BRIDGE, COVER_GOLF_BUNKER, COVER_GOLF_FAIRWAY, COVER_GOLF_GREEN, COVER_GOLF_TEE, COVER_INDUSTRIAL, COVER_PARK, COVER_ROCK, COVER_THICKET_FIGHT, COVER_THICKET_SLOW, COVER_THICKET_WALK, COVER_URBAN, COVER_WOOD, type Building, type Point2, type TileData } from '@/world'
 import { rasterSurface, SURFACE_CELL, SURFACE_GRASS, SURFACE_MUD, SURFACE_MUD_DEEP, SURFACE_MUD_FAINT } from '@/sim/surface'
 import type { TileGround } from '@/sim/terrain'
 
@@ -61,7 +61,7 @@ function fillRings(rings: readonly Point2[][], x0: number, z0: number, side: num
  * terrain paints it grey, and its yards are full of houses. `surface` is the tile's `rasterSurface`,
  * when it has been worked out already.
  */
-export function grassMask(tile: Pick<TileData, 'cover' | 'roads' | 'water' | 'streams'> & Partial<Pick<TileData, 'rails'>> & { buildings: readonly Pick<Building, 'footprint'>[] }, x0: number, z0: number, size: number, ground: TileGround | null = null, surface = rasterSurface(tile, x0, z0, size, ground)): GrassMask {
+export function grassMask(tile: Pick<TileData, 'cover' | 'roads' | 'water' | 'streams'> & Partial<Pick<TileData, 'rails'>> & { buildings: readonly (Pick<Building, 'footprint'> & { kind?: number })[] }, x0: number, z0: number, size: number, ground: TileGround | null = null, surface = rasterSurface(tile, x0, z0, size, ground)): GrassMask {
   const { side } = surface
   const cells = new Uint8Array(side * side).fill(1)
   for (const cover of tile.cover) {
@@ -73,7 +73,8 @@ export function grassMask(tile: Pick<TileData, 'cover' | 'roads' | 'water' | 'st
     const under = surface.cells[i]!
     if (under !== SURFACE_GRASS) cells[i] = MARSH_SHADES[under] ?? 0
   }
-  for (const building of tile.buildings) fillRings([building.footprint], x0, z0, side, (row, column) => (cells[row * side + column] = 0))
+  // No grass inside a house; a bridge's deck is up over the ground, which keeps its grass.
+  for (const building of tile.buildings) if (building.kind !== BUILDING_BRIDGE) fillRings([building.footprint], x0, z0, side, (row, column) => (cells[row * side + column] = 0))
   // Streams are drawn as ribbons on the ground: keep the blades out of the water.
   for (const stream of tile.streams) {
     const half = stream.width / 2 + SURFACE_CELL / 2

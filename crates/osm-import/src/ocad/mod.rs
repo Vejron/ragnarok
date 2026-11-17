@@ -425,7 +425,7 @@ fn strip(line: &[P], width: f64) -> Vec<P> {
 }
 
 /// The convex hull, counter-clockwise when x runs right and z up (Andrew's monotone chain).
-fn convex_hull(mut points: Vec<P>) -> Vec<P> {
+pub(crate) fn convex_hull(mut points: Vec<P>) -> Vec<P> {
     points.sort_by(|a, b| a[0].total_cmp(&b[0]).then(a[1].total_cmp(&b[1])));
     points.dedup();
     if points.len() < 3 {

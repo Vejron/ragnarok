@@ -3,7 +3,7 @@ import tables from './sim/tables.generated.json'
 
 /** Mirrors `crates/shared/src/world.rs`. Coordinates are metres: +X east, +Z south, +Y up. */
 
-export const WORLD_VERSION = 27
+export const WORLD_VERSION = 28
 
 /** `Manifest::theme`, mirrors `crates/shared/src/world.rs`. */
 export const THEME_WINTER = 1
@@ -250,12 +250,11 @@ export interface Cells {
 }
 
 /**
- * One bridge's triangles in the tile's collision mesh: `deck` triangles of concrete (deck, piers,
- * parapets) from `first`, then `steel` triangles (pylon, stay cables).
+ * One bridge's steel in the tile's collision mesh: `steel` triangles (pylon, stay cables) from
+ * `first`. Its concrete is in sections that are buildings (`BUILDING_BRIDGE`).
  */
 export interface Bridge {
   first: number
-  deck: number
   steel: number
 }
 
@@ -297,6 +296,8 @@ export const BUILDING_CABIN = 8
 export const BUILDING_FARMHOUSE = 9
 export const BUILDING_VILLA = 10
 export const BUILDING_FIRE_STATION = 11
+/** A section of a bridge: drawn from its own concrete, carved by blasts, no windows and no inside. */
+export const BUILDING_BRIDGE = 12
 
 export interface Road {
   width: number
@@ -669,7 +670,7 @@ export function decodeTile(bytes: Uint8Array): TileData {
     water: inMetres(int32s(water), true),
     ...(reach.length > 0 ? { reach: reach.slice() } : {}),
     streams: streams.map(([width, points]) => ({ width: metres(width), points: points.map(point) })),
-    bridges: bridges.map(([first, deck, steel]) => ({ first, deck, steel })),
+    bridges: bridges.map(([first, steel]) => ({ first, steel })),
     // A copy of its own: a view would keep the whole file alive, and be cloned whole to the worker.
     detail: detail.length > 0 ? new Int8Array(detail.slice().buffer) : undefined,
     rails: rails.map(([gauge, kind, points]) => ({ gauge: metres(gauge), kind, points: points.map(point) })),

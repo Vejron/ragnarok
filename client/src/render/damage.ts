@@ -97,6 +97,8 @@ interface Falling {
   sinking?: number
   /** How far it sinks, metres: its height as it lies, and a little more. Measured once, as it no longer turns. */
   depth?: number
+  /** It has gone into the water, and splashed doing it. */
+  wet?: boolean
 }
 
 interface Drawn {
@@ -222,6 +224,10 @@ export class BuildingDamage {
    * known (no terrain), and then the building's floor is used.
    */
   groundAt: (x: number, z: number) => number | null = () => null
+  /** Height of the water's surface at `(x, z)`, metres; null where there is none. A piece falling into it splashes. */
+  waterAt: (x: number, z: number) => number | null = () => null
+  /** A piece `size` metres across went into the water at `(x, y, z)` (on its surface) at `speed` m/s. */
+  splashed: (x: number, y: number, z: number, size: number, speed: number) => void = () => {}
   /**
    * Where buildings with a look are redrawn when hurt, off the main thread; null to redraw them here
    * (tests, or no workers). A redraw is then a frame or two late, under the dust.
@@ -829,7 +835,15 @@ export class BuildingDamage {
       mesh.rotation.x += piece.spin.x * dt
       mesh.rotation.y += piece.spin.y * dt
       mesh.rotation.z += piece.spin.z * dt
-      const { low } = span(mesh)
+      const { low, wide } = span(mesh)
+      if (!piece.wet) {
+        // A bridge's deck falling into the river below it.
+        const level = this.waterAt(mesh.position.x, mesh.position.z)
+        if (level !== null && level > ground && low <= level) {
+          piece.wet = true
+          this.splashed(mesh.position.x, level, mesh.position.z, Math.max(0.4, wide), -piece.velocity.y)
+        }
+      }
       if (low > ground && piece.age < MAX_AIR_SECONDS) continue
       // Its lowest corner on the ground, not under it.
       mesh.position.y += ground - low

@@ -262,52 +262,54 @@ pub(crate) fn lift_colliders(lifts: &[shared::world::Lift]) -> Vec<Collider> {
 fn object_colliders(world: &WorldFile) -> Result<Vec<(Collider, Option<Obj>)>> {
     let mut colliders = Vec::new();
     let mesh = &world.collision;
-    if !mesh.triangles.is_empty() {
-        let vertex = |&[x, y, z]: &[i32; 3]| Vector::new(from_cm(x), from_cm(y), from_cm(z));
-        // Each building is its own collider so it can be taken out alone: its boxes and its floor
-        // (`building_shape`), or a trimesh of its own triangles when it has no cubes. Whatever no
-        // building claims (bridges, hand-built worlds) stays together in one trimesh.
-        let mut claimed = vec![false; mesh.triangles.len()];
-        let mut buildings = Vec::new();
-        for (index, &[start, end]) in world.building_triangles.iter().enumerate() {
-            let (start, end) = (start as usize, (end as usize).min(mesh.triangles.len()));
-            let Some(&id) = world.building_ids.get(index) else { break };
-            if start >= end {
-                continue;
-            }
-            claimed[start..end].iter_mut().for_each(|c| *c = true);
-            buildings.push((index, id, start, end));
+    let vertex = |&[x, y, z]: &[i32; 3]| Vector::new(from_cm(x), from_cm(y), from_cm(z));
+    // Each building is its own collider so it can be taken out alone: its boxes and its floor
+    // (`building_shape`), or a trimesh of its own triangles when it has no cubes. A building can have
+    // no triangles left in the mesh at all (a bridge's section, which has no floor) and still be solid
+    // from its look. Whatever no building claims (bridges' steel, hand-built worlds) stays together
+    // in one trimesh.
+    let mut claimed = vec![false; mesh.triangles.len()];
+    let mut buildings = Vec::new();
+    for (index, &[start, end]) in world.building_triangles.iter().enumerate() {
+        let (end, Some(&id)) = ((end as usize).min(mesh.triangles.len()), world.building_ids.get(index)) else { break };
+        let start = (start as usize).min(end);
+        claimed[start..end].iter_mut().for_each(|c| *c = true);
+        buildings.push((index, id, start, end));
+    }
+    // Making every building's faces is most of the loading: spread over the cores.
+    let built = in_parallel(&buildings, |&(index, _, start, end)| -> Result<Option<Collider>> {
+        if let Some(shape) = building_shape(world, index) {
+            return Ok(Some(ColliderBuilder::new(shape).build()));
         }
-        // Making every building's faces is most of the loading: spread over the cores.
-        let built = in_parallel(&buildings, |&(index, _, start, end)| -> Result<Collider> {
-            if let Some(shape) = building_shape(world, index) {
-                return Ok(ColliderBuilder::new(shape).build());
-            }
-            // Only this building's vertices, renumbered from zero.
-            let mut renumber: HashMap<u32, u32> = HashMap::new();
-            let mut vertices = Vec::new();
-            let triangles: Vec<[u32; 3]> = mesh.triangles[start..end]
-                .iter()
-                .map(|triangle| {
-                    triangle.map(|v| {
-                        *renumber.entry(v).or_insert_with(|| {
-                            vertices.push(vertex(&mesh.vertices[v as usize]));
-                            vertices.len() as u32 - 1
-                        })
+        if start >= end {
+            return Ok(None);
+        }
+        // Only this building's vertices, renumbered from zero.
+        let mut renumber: HashMap<u32, u32> = HashMap::new();
+        let mut vertices = Vec::new();
+        let triangles: Vec<[u32; 3]> = mesh.triangles[start..end]
+            .iter()
+            .map(|triangle| {
+                triangle.map(|v| {
+                    *renumber.entry(v).or_insert_with(|| {
+                        vertices.push(vertex(&mesh.vertices[v as usize]));
+                        vertices.len() as u32 - 1
                     })
                 })
-                .collect();
-            Ok(ColliderBuilder::trimesh(vertices, triangles).context("a building's collision mesh is invalid")?.build())
-        });
-        for (&(_, id, _, _), collider) in buildings.iter().zip(built) {
-            colliders.push((collider?, Some(Obj::Building(id))));
+            })
+            .collect();
+        Ok(Some(ColliderBuilder::trimesh(vertices, triangles).context("a building's collision mesh is invalid")?.build()))
+    });
+    for (&(_, id, _, _), collider) in buildings.iter().zip(built) {
+        if let Some(collider) = collider? {
+            colliders.push((collider, Some(Obj::Building(id))));
         }
-        let rest: Vec<[u32; 3]> = mesh.triangles.iter().zip(&claimed).filter(|&(_, &taken)| !taken).map(|(&t, _)| t).collect();
-        if !rest.is_empty() {
-            let vertices = mesh.vertices.iter().map(vertex).collect();
-            let trimesh = ColliderBuilder::trimesh(vertices, rest).context("world collision mesh is invalid")?;
-            colliders.push((trimesh.build(), None));
-        }
+    }
+    let rest: Vec<[u32; 3]> = mesh.triangles.iter().zip(&claimed).filter(|&(_, &taken)| !taken).map(|(&t, _)| t).collect();
+    if !rest.is_empty() {
+        let vertices = mesh.vertices.iter().map(vertex).collect();
+        let trimesh = ColliderBuilder::trimesh(vertices, rest).context("world collision mesh is invalid")?;
+        colliders.push((trimesh.build(), None));
     }
     // A tree is solid up to the crown: an upright cylinder on the ground at its foot.
     for (index, tree) in world.trees.iter().enumerate().filter(|(_, tree)| tree.solid) {

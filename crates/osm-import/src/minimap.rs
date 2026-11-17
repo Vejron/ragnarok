@@ -4,7 +4,7 @@
 //! North is up: pixel x grows with world X (east), pixel y with world Z (south), so the image
 //! maps the playable square `[-half, half]` onto `[0, size)` in both axes.
 
-use shared::world::{COVER_FARM, COVER_GOLF_BUNKER, COVER_GOLF_FAIRWAY, COVER_GOLF_GREEN, COVER_GOLF_TEE, COVER_INDUSTRIAL, COVER_MARSH, COVER_MARSH_DEEP, COVER_MARSH_FAINT, COVER_PARK, COVER_ROCK, COVER_SAND, COVER_THICKET_FIGHT, COVER_THICKET_SLOW, COVER_THICKET_WALK, COVER_URBAN, COVER_WATER, COVER_WOOD, Manifest, NO_WATER, RAIL_TRAM, ROAD_FAINT, ROAD_GRAVEL, ROAD_MAJOR, ROAD_MINOR, ROAD_TRACK, THEME_WINTER, Tile};
+use shared::world::{COVER_FARM, COVER_GOLF_BUNKER, COVER_GOLF_FAIRWAY, COVER_GOLF_GREEN, COVER_GOLF_TEE, COVER_INDUSTRIAL, COVER_MARSH, COVER_MARSH_DEEP, COVER_MARSH_FAINT, COVER_PARK, COVER_ROCK, COVER_SAND, COVER_THICKET_FIGHT, COVER_THICKET_SLOW, COVER_THICKET_WALK, COVER_URBAN, COVER_WATER, COVER_WOOD, Manifest, NO_WATER, RAIL_TRAM, ROAD_FAINT, ROAD_GRAVEL, ROAD_MAJOR, ROAD_MINOR, ROAD_TRACK, THEME_WINTER, Tile, BUILDING_BRIDGE};
 use std::collections::BTreeMap;
 
 /// Side of the image, pixels. 2048 px over 8.6 km is about 4 m a pixel.
@@ -245,7 +245,8 @@ pub fn render(manifest: &Manifest, tiles: &BTreeMap<(u16, u16), Tile>, overlay: 
         canvas.stroke(&ring(&canvas, &rail.points), width, RAIL_COLOR);
     }
 
-    for building in tiles.values().flat_map(|tile| &tile.buildings) {
+    // A bridge's sections are buildings to carve, not houses: its road is on the map already.
+    for building in tiles.values().flat_map(|tile| &tile.buildings).filter(|building| building.kind != BUILDING_BRIDGE) {
         let footprint = ring(&canvas, &building.footprint);
         canvas.fill(&[footprint], BUILDING);
     }

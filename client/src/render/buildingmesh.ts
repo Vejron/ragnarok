@@ -1,6 +1,6 @@
 import { Color } from '@ragnarok/engine'
 import type { Sphere } from '@ragnarok/engine'
-import { BUILDING_BARN, BUILDING_CABIN, BUILDING_CHURCH, BUILDING_FARMHOUSE, BUILDING_FIRE_STATION, BUILDING_FLATS, BUILDING_HALL, BUILDING_PLAIN, BUILDING_VILLA, BUILDING_OUTBUILDING, BUILDING_PUBLIC, BUILDING_SHOP, ROOF_FLAT, type Bridge, type Building, type TileData } from '@/world'
+import { BUILDING_BARN, BUILDING_BRIDGE, BUILDING_CABIN, BUILDING_CHURCH, BUILDING_FARMHOUSE, BUILDING_FIRE_STATION, BUILDING_FLATS, BUILDING_HALL, BUILDING_PLAIN, BUILDING_VILLA, BUILDING_OUTBUILDING, BUILDING_PUBLIC, BUILDING_SHOP, ROOF_FLAT, type Bridge, type Building, type TileData } from '@/world'
 import { shellOf } from '@/sim/carve'
 import { drawnOpenings, facing, openingQuads, openingTriangles, openingsFor, type Opening } from './windows'
 import { eaveQuads, eaveTriangles, eavesFor, type EaveStrip } from './eaves'
@@ -19,7 +19,6 @@ import { normalOf, type Poly } from './geom'
  * House colours as they are painted here: falu red, ochre, white, render greys, sage, beige and dark
  * stained wood. Picked per building so the palette stays stable between reloads.
  */
-const BRIDGE_DECK_COLOR = 0xb8b6ae
 const BRIDGE_STEEL_COLOR = 0x6d7a86
 const BUILDING_COLORS = [0xa8432f, 0xd9b45a, 0xeee9dc, 0xc9c4b8, 0xb5bda4, 0xd8c6a3, 0x6e5642, 0x8f3a2c, 0xe4dcc6, 0xa9a59c]
 
@@ -184,6 +183,8 @@ const SHINGLED = new Set([0x8d6e63])
  * is felt, the timber one wooden shingles, a red or slate one tiles and any other sheet metal.
  */
 export function buildingSurfaces(tile: Pick<BuildingTile, 'buildings'>, index: number, salt: number): { wall: Surface; roof: Surface } {
+  // A bridge is plain concrete, its deck and its sides alike.
+  if (tile.buildings[index]?.kind === BUILDING_BRIDGE) return { wall: Surface.Plain, roof: Surface.Plain }
   const { wall, roof } = buildingColors(tile, index, salt)
   const channels = (hex: number) => [(hex >> 16) & 255, (hex >> 8) & 255, hex & 255] as const
   const [wr, wg, wb] = channels(wall)
@@ -467,7 +468,7 @@ export function buildingBuffers(tile: BuildingTile, salt: number, destroyed: Rea
     else if (own) count += own.roof.length
     else if (own === null) count += building.walls + building.roof
   })
-  for (const bridge of tile.bridges) count += bridge.deck + bridge.steel
+  for (const bridge of tile.bridges) count += bridge.steel
   if (count === 0) return glass ? { ...new Soup(0).buffers(), ranges: new Uint32Array(tile.buildings.length * 2), glass } : null
   const soup = new Soup(count)
   const ranges = new Uint32Array(tile.buildings.length * 2)
@@ -523,12 +524,9 @@ export function buildingBuffers(tile: BuildingTile, salt: number, destroyed: Rea
     ranges[index * 2] = first
     ranges[index * 2 + 1] = soup.vertices - first
   })
-  // Bridges: concrete deck, piers and parapets, then steel pylon and cables.
-  const [deck, steel] = [Color.hex(BRIDGE_DECK_COLOR), Color.hex(BRIDGE_STEEL_COLOR)]
-  for (const bridge of tile.bridges) {
-    soup.collision(tile, bridge.first, bridge.deck, deck)
-    soup.collision(tile, bridge.first + bridge.deck, bridge.steel, steel)
-  }
+  // Bridges' steel pylons and cables: their concrete is in sections drawn as buildings.
+  const steel = Color.hex(BRIDGE_STEEL_COLOR)
+  for (const bridge of tile.bridges) soup.collision(tile, bridge.first, bridge.steel, steel)
   return { ...soup.buffers(ranges), ranges, ...(glass ? { glass } : {}) }
 }
 

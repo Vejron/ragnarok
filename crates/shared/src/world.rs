@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::terrain::Ground;
 
-pub const WORLD_VERSION: u8 = 27;
+pub const WORLD_VERSION: u8 = 28;
 
 /// `Manifest::theme`: the world as it always was.
 pub const THEME_PLAIN: u8 = 0;
@@ -294,8 +294,8 @@ pub struct Tile {
     pub reach: Vec<u8>,
     /// Streams: narrow watercourses drawn as ribbons draped on the ground, clipped to the tile.
     pub streams: Vec<Stream>,
-    /// Bridges: ranges of this tile's collision triangles (the importer builds them there, so
-    /// they are collided with and drawn from the same mesh).
+    /// Bridges' steel (pylons, stay cables): ranges of this tile's collision triangles, collided
+    /// with and drawn from the same mesh. Their concrete is in `buildings` (`BUILDING_BRIDGE`).
     pub bridges: Vec<Bridge>,
     /// Fine ground relief for the client's lighting: for each texel of a square grid over the tile
     /// (row-major, rows along +Z, `n × n` with `n = sqrt(len / 2)`), the slope `(dh/dx, dh/dz)` of the
@@ -508,13 +508,12 @@ pub fn line_pieces(lines: &[(u16, u16, Line)]) -> Vec<LinePiece> {
 /// Units per unit of slope in `Tile::detail`: a slope of 2 (63°) is 127.
 pub const DETAIL_SLOPE_SCALE: f32 = 63.5;
 
-/// One bridge's triangles in a tile's collision mesh: `deck` triangles of concrete (deck, piers,
-/// parapets) from `first`, then `steel` triangles (pylon, stay cables). A bridge crossing tile
-/// borders has one entry per tile it touches.
+/// One bridge's steel in a tile's collision mesh: `steel` triangles (pylon, stay cables) from
+/// `first`. Its concrete (deck, piers, parapets) is in sections that are buildings
+/// (`BUILDING_BRIDGE`). A bridge crossing tile borders has one entry per tile its steel touches.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Bridge {
     pub first: u32,
-    pub deck: u32,
     pub steel: u32,
 }
 
@@ -947,8 +946,15 @@ pub const BUILDING_VILLA: u8 = 10;
 /// A fire station: a row of garage doors for the engines in its front, a public building's windows
 /// round the rest, and one hall inside to drive into.
 pub const BUILDING_FIRE_STATION: u8 = 11;
+/// A section of a bridge: its deck, parapets and pier between two mid-spans (`osm-import`'s
+/// `bridge::sections`). Drawn and collided from its own concrete, carved by blasts as a house is but
+/// much harder to hurt (`combat`), standing on the ground under it rather than on its lowest cells;
+/// no windows, no inside, no colours of a house.
+pub const BUILDING_BRIDGE: u8 = 12;
+/// The colour of a bridge's concrete, `0xRRGGBB`: its sections' `paint`, walls and deck alike.
+pub const BRIDGE_CONCRETE: u32 = 0xb8b6ae;
 /// How many kinds of building there are.
-pub const BUILDING_KINDS: usize = 12;
+pub const BUILDING_KINDS: usize = 13;
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Road {
@@ -1422,7 +1428,7 @@ mod tests {
         let mesh = |triangles: usize| CollisionMesh { vertices: vec![[0, 0, 0]; 3], triangles: vec![[0, 1, 2]; triangles] };
         let a = Tile {
             buildings: vec![building(0), building(4)],
-            bridges: vec![Bridge { first: 6, deck: 2, steel: 0 }],
+            bridges: vec![Bridge { first: 6, steel: 2 }],
             collision: mesh(8),
             trees: vec![Tree::default(); 2],
             ..Default::default()
@@ -1507,7 +1513,7 @@ mod tests {
             water: vec![NO_WATER, 40, 40, NO_WATER],
             reach: vec![0, 50, 50, 0],
             streams: vec![Stream { width: 200, points: vec![[0, 0], [300, 100]] }],
-            bridges: vec![Bridge { first: 0, deck: 12, steel: 4 }],
+            bridges: vec![Bridge { first: 0, steel: 4 }],
             detail: vec![0, -3, 127, -127],
             rails: vec![Rail { gauge: 144, kind: RAIL_TRAIN, points: vec![[0, 0], [900, 50]] }],
             ski: vec![SkiTrail { width: 400, points: vec![[0, 0], [900, 50]] }],

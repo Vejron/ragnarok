@@ -1,4 +1,4 @@
-import type { CollisionMesh } from '@/world'
+import { BUILDING_BRIDGE, type CollisionMesh } from '@/world'
 import { add, centreOf, dot, keyOf, normalOf, splitPlane, sub, triangulate, unit, type P, type Poly, type RGB } from './geom'
 import { REVEAL, openingsFor, type LookRange, type Opening } from './windows'
 import { Part, insideFor, type InsidePiece } from '@/sim/interior'
@@ -55,8 +55,10 @@ export function facadeOf(look: CollisionMesh, range: LookRange): Facade {
     if (!o.door) walls = cutWindow(walls, o)
     else if (inside.length > 0) walls = cutWindow(walls, doorway(o))
   }
-  // A house with rooms has its ground floor among them, on its plinth.
-  return { walls, roof, floor: inside.length > 0 ? [] : floorOf(walls), inside }
+  // A house with rooms has its ground floor among them, on its plinth. A bridge is solid concrete
+  // with no floor in it: one at the foot of its walls would lie at every height its underside does,
+  // and be left in the air when it falls.
+  return { walls, roof, floor: inside.length > 0 || range.kind === BUILDING_BRIDGE ? [] : floorOf(walls), inside }
 }
 
 /** The hole door `o` is in a house with rooms: from under its foot to the height of a step over its top, as the server cuts it. */

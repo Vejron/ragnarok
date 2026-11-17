@@ -255,6 +255,13 @@ fn burst(world: &mut World, blast: Blast, direct: Option<Direct>, spare: Option<
             },
         };
         let falloff = (1.0 - distance / blast.radius).max(0.0);
+        // A bridge has no health of its own to lose: only what is bitten or worn out of it counts.
+        if let Obj::Building(id) = object
+            && world.is_bridge(id)
+        {
+            blast_bridge(world, id, &blast, falloff);
+            continue;
+        }
         damage_object(world, object, (blast.damage * falloff * scale).round().min(u16::MAX as f32) as u16, blast.point);
         if let Obj::Building(id) = object {
             bite_building(world, id, &blast, falloff);
@@ -269,6 +276,47 @@ fn burst(world: &mut World, blast: Blast, direct: Option<Direct>, spare: Option<
 pub(crate) const CARVE_REACH: f32 = 0.45;
 /// A bite smaller than this, metres, is not worth a collider: splash from far away.
 const CARVE_MIN_RADIUS: f32 = 0.8;
+
+/// How much of a blast's damage a bridge's concrete takes without a mark: past it, a blast too weak to
+/// bite (`BRIDGE_BITE_DAMAGE`) wears the cell nearest it down (`BRIDGE_CELL_HP`). A 40 mm HE round
+/// (42 at its middle) wears 22, so a dozen break one cell; small arms never reach a bridge at all.
+const BRIDGE_SHRUG: f32 = 20.0;
+/// The least damage, where it reaches a bridge, that bites a piece out of it: a tank's HE shell, a
+/// rocket or a mortar bomb, but not the 40 mm.
+const BRIDGE_BITE_DAMAGE: f32 = 60.0;
+/// How much of a blast's radius bites out of a bridge, where a house loses `CARVE_REACH` of it: a
+/// tank's HE shell takes 1.4 m of a deck that would have lost 3.2 m of a house's wall.
+const BRIDGE_CARVE_REACH: f32 = 0.2;
+
+/// What `blast` does to bridge section `id`, `falloff` (0..1) of its strength reaching it: a bite of
+/// it if strong enough (`BRIDGE_BITE_DAMAGE`), else wear on the cell nearest the blast.
+fn blast_bridge(world: &mut World, id: shared::world::ObjId, blast: &Blast, falloff: f32) {
+    let force = blast.damage * falloff;
+    let radius = blast.radius * BRIDGE_CARVE_REACH * (0.5 + 0.5 * falloff);
+    if force >= BRIDGE_BITE_DAMAGE && radius >= CARVE_MIN_RADIUS {
+        take_bite(world, id, blast.point, radius);
+    } else if force > BRIDGE_SHRUG {
+        chip_building(world, id, blast.point, (force - BRIDGE_SHRUG).min(255.0) as u8);
+    }
+}
+
+/// The least speed, m/s, at which a Titan's fist bites a bridge: a punch, not a foot coming down
+/// (`titans::STOMP_DV`, 6) nor a hand laid on it.
+const BRIDGE_PUNCH_SPEED: f32 = 10.0;
+/// The bite a Titan's fist takes of a bridge at `BRIDGE_PUNCH_SPEED`, metres, and how much more for
+/// each m/s past it, up to the fist's own size: 1.8 m at 30 m/s.
+const BRIDGE_PUNCH_BITE: f32 = 0.8;
+const BRIDGE_PUNCH_BITE_PER_SPEED: f32 = 0.05;
+
+/// A Titan's fist, `reach` metres round, hits bridge section `id` at `point` at `speed` m/s: what
+/// nothing that drives can do, it bites the concrete out (a slower knock does nothing).
+pub fn punch_bridge(world: &mut World, id: shared::world::ObjId, point: [f32; 3], reach: f32, speed: f32) {
+    if speed < BRIDGE_PUNCH_SPEED {
+        return;
+    }
+    let radius = (BRIDGE_PUNCH_BITE + (speed - BRIDGE_PUNCH_SPEED) * BRIDGE_PUNCH_BITE_PER_SPEED).min(reach);
+    take_bite(world, id, point, radius);
+}
 
 /// Takes a bite out of standing building `id` where `blast` landed. A blast that was weak by the time it reached the wall bites less.
 fn bite_building(world: &mut World, id: shared::world::ObjId, blast: &Blast, falloff: f32) {
@@ -292,6 +340,10 @@ fn take_bite(world: &mut World, id: shared::world::ObjId, point: [f32; 3], radiu
 /// A vehicle drives into standing building `id` at `point`, `dv` m/s of speed taken out of it in
 /// one step: the piece of wall it hit breaks out, and a hard enough hit takes a bite as well.
 pub fn ram_building(world: &mut World, id: shared::world::ObjId, point: [f32; 3], dv: f32, weight: f32) {
+    // Nothing that drives breaks a bridge; a Titan's fist does (`punch_bridge`).
+    if world.is_bridge(id) {
+        return;
+    }
     let dv = dv * weight;
     chip_building(world, id, point, (dv * RAM_CHIP_PER_DV).min(255.0) as u8);
     let radius = ((dv - RAM_BITE_MIN_DV) * RAM_BITE_PER_DV).min(RAM_BITE_MAX);
@@ -603,6 +655,12 @@ fn one_armed(world: &World, id: u32) -> bool {
 pub(super) fn hit_object(world: &mut World, origin: [f32; 3], dir: [f32; 3], reach: f32, damage: u8) {
     // The ray stops at the surface; look a hair past it to be inside the collider.
     if let Some((_, Some(object))) = world.physics.cast_ray_object(origin, dir, reach + 0.05) {
+        // A round does nothing to a bridge's concrete.
+        if let Obj::Building(id) = object
+            && world.is_bridge(id)
+        {
+            return;
+        }
         // Bullets only chip a wall: a third of what they do to a tree, and never nothing.
         let amount = match object {
             Obj::Tree(_) => damage as u16,

@@ -1,4 +1,4 @@
-import type { CollisionMesh } from '@/world'
+import { BUILDING_BRIDGE, type CollisionMesh } from '@/world'
 import { add, centreOf, dot, edgeKey, keyOf, lerp, normalOf, sub, unit, type P, type RGB } from './geom'
 import { FRAME_RGB, facing, type LookRange } from './windows'
 
@@ -60,6 +60,8 @@ interface Edge {
  * hanging below it (so not a step between roof parts, nor a flat roof, which keeps its edge).
  */
 export function eavesOf(look: CollisionMesh, range: LookRange): EaveStrip[] {
+  // A bridge's deck runs on at a grade, but it is no roof to overhang its sides.
+  if (range.kind === BUILDING_BRIDGE) return []
   const { vertices, triangles } = look
   const corner = (v: number): P => [vertices[v * 3]!, vertices[v * 3 + 1]!, vertices[v * 3 + 2]!]
   // Wound outwards: the look is wound inwards.

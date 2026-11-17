@@ -69,6 +69,8 @@ pub struct Piece {
     /// A pier under the deck, which is left out where it would stand on a road or a track that goes
     /// under the bridge (`assemble`): OSM does not say where a bridge's piers are.
     pub pier: bool,
+    /// How far along the bridge it stands, metres from the start of its ramp (`sections` cuts there).
+    pub arc: f64,
     pub tris: Vec<[V3; 3]>,
 }
 
@@ -157,6 +159,8 @@ pub(crate) fn resample(points: &[P], step: f64) -> Vec<P> {
 /// Collects triangles.
 struct Mesh {
     pieces: Vec<Piece>,
+    /// How far along the bridge the pieces being made stand, metres (`Piece::arc`).
+    arc: f64,
 }
 
 impl Mesh {
@@ -182,7 +186,7 @@ impl Mesh {
             let l = (k + 1) % 4;
             quad([a[k], a[l], b[l], b[k]]);
         }
-        self.pieces.push(Piece { at, steel, parapet: false, pier: false, tris });
+        self.pieces.push(Piece { at, steel, parapet: false, pier: false, arc: self.arc, tris });
     }
 
     /// A box from `from` to `to` with the cross section spanned by unit axes `u` and `v`.
@@ -392,12 +396,16 @@ pub fn build(points: &[P], width: f64, kind: u8, pylons: Pylons, measured: &[[f6
         let b = bottom(n);
         [at(1.0, n.y), at(-1.0, n.y), at(-1.0, b), at(1.0, b)]
     };
-    let mut mesh = Mesh { pieces: Vec::new() };
+    let mut mesh = Mesh { pieces: Vec::new(), arc: 0.0 };
     let last = nodes.len() - 1;
     let rings: Vec<[V3; 4]> = (0..nodes.len()).map(section).collect();
     for i in 0..last {
         let mid = [(nodes[i].p[0] + nodes[i + 1].p[0]) / 2.0, (nodes[i].p[1] + nodes[i + 1].p[1]) / 2.0];
-        mesh.hexa(mid, false, rings[i], rings[i + 1], i == 0, i + 1 == last);
+        mesh.arc = (nodes[i].arc + nodes[i + 1].arc) / 2.0;
+        // Capped at both ends, so a section cut from the bridge (`sections`) is a closed solid: an open
+        // end would be the edge of a hole to the client, drawn as a broken rim in the air once all
+        // round it is gone. The caps between two stretches are inside the concrete.
+        mesh.hexa(mid, false, rings[i], rings[i + 1], true, true);
         // Parapets where there is a drop beside the deck.
         if pylons != Pylons::Flush && nodes[i].y - nodes[i].g > 1.0 && nodes[i + 1].y - nodes[i + 1].g > 1.0 {
             for sign in [1.0, -1.0] {
@@ -425,6 +433,7 @@ pub fn build(points: &[P], width: f64, kind: u8, pylons: Pylons, measured: &[[f6
             let t = tangent(i);
             let top = [n.p[0], n.y - THICKNESS, n.p[1]];
             let foot = [n.p[0], n.g - 0.5, n.p[1]];
+            mesh.arc = n.arc;
             mesh.prism(n.p, false, top, foot, t, side(t), 0.9, hw * 0.55);
             if let Some(piece) = mesh.pieces.last_mut() {
                 piece.pier = true;
@@ -501,6 +510,47 @@ pub fn build(points: &[P], width: f64, kind: u8, pylons: Pylons, measured: &[[f6
     mesh.pieces
 }
 
+/// Longest section a bridge is cut into, metres: a long stretch without piers (a ramp, a deck on the
+/// ground) is cut more often, so no section's cells make too big a grid.
+pub const MAX_SECTION: f64 = 48.0;
+
+/// Groups a bridge's concrete `pieces` into the sections it is carved as (`BUILDING_BRIDGE`), as
+/// numbers into `pieces`: cut halfway between each pier and the next, so each section stands on one
+/// pier with half a span either side of it, and a stretch longer than `MAX_SECTION` cut evenly
+/// again. Sections in order along the bridge; none empty.
+pub fn sections(pieces: &[&Piece]) -> Vec<Vec<usize>> {
+    if pieces.is_empty() {
+        return Vec::new();
+    }
+    let (lo, hi) = pieces.iter().fold((f64::MAX, f64::MIN), |(lo, hi), piece| (lo.min(piece.arc), hi.max(piece.arc)));
+    let mut piers: Vec<f64> = pieces.iter().filter(|piece| piece.pier).map(|piece| piece.arc).collect();
+    piers.sort_by(f64::total_cmp);
+    piers.dedup();
+    let halfway: Vec<f64> = piers.windows(2).map(|pair| (pair[0] + pair[1]) / 2.0).collect();
+    let mut cuts = Vec::new();
+    let mut from = lo;
+    for to in halfway.into_iter().chain([hi]) {
+        let parts = ((to - from) / MAX_SECTION).ceil().max(1.0) as usize;
+        cuts.extend((1..parts).map(|k| from + (to - from) * k as f64 / parts as f64));
+        if to < hi {
+            cuts.push(to);
+        }
+        from = to;
+    }
+    let mut out: Vec<Vec<usize>> = vec![Vec::new(); cuts.len() + 1];
+    for (k, piece) in pieces.iter().enumerate() {
+        out[cuts.partition_point(|&cut| cut <= piece.arc)].push(k);
+    }
+    out.retain(|section| !section.is_empty());
+    out
+}
+
+/// Whether a bridge triangle faces up: the top of the deck or of a parapet, its roof for colour.
+pub fn faces_up(tri: [V3; 3]) -> bool {
+    let n = client_normal(tri);
+    n[1] > 0.7 * (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt()
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -568,6 +618,29 @@ mod tests {
         assert!(!pieces.is_empty());
         assert!(pieces.iter().all(|p| !p.steel));
         assert!(vertices(&pieces).all(|v| v[1] < 4.0));
+    }
+
+    #[test]
+    fn a_bridge_is_cut_into_sections_at_mid_span_each_with_one_pier() {
+        let (ground, levels) = river();
+        let pieces = build(&[[-150.0, 0.0], [150.0, 0.0]], 10.0, ROAD_MAJOR, Pylons::None, &[], &ground, &levels, 295.0);
+        let concrete: Vec<&Piece> = pieces.iter().filter(|p| !p.steel).collect();
+        let sections = sections(&concrete);
+        assert!(sections.len() >= 4, "a 300 m bridge is cut in several sections, got {}", sections.len());
+        assert_eq!(sections.iter().map(Vec::len).sum::<usize>(), concrete.len(), "every piece in one section");
+        for section in &sections {
+            let arcs: Vec<f64> = section.iter().map(|&k| concrete[k].arc).collect();
+            let (lo, hi) = arcs.iter().fold((f64::MAX, f64::MIN), |(lo, hi), &a| (lo.min(a), hi.max(a)));
+            assert!(hi - lo <= MAX_SECTION + STEP, "a section {} m long", hi - lo);
+            assert!(section.iter().filter(|&&k| concrete[k].pier).count() <= 1, "at most one pier a section");
+        }
+        // Over the water every section stands on a pier, with deck on both sides of it.
+        let piers: Vec<&Vec<usize>> = sections.iter().filter(|section| section.iter().any(|&k| concrete[k].pier)).collect();
+        assert!(piers.len() >= 3);
+        for section in piers {
+            let pier = section.iter().map(|&k| concrete[k]).find(|p| p.pier).unwrap().arc;
+            assert!(section.iter().any(|&k| concrete[k].arc < pier - 6.0) && section.iter().any(|&k| concrete[k].arc > pier + 6.0), "deck either side of the pier at {pier}");
+        }
     }
 
     #[test]

@@ -275,6 +275,26 @@ fn a_fist_fells_a_tree_and_takes_a_bite_out_of_a_house() {
 }
 
 #[test]
+fn a_fist_bites_a_bridge_that_a_foot_set_down_on_it_does_not() {
+    let (mut game, bridge) = with_house();
+    game.world.map.buildings[0].kind = shared::world::BUILDING_BRIDGE;
+    let vid = titan(&mut game);
+    let lost = |game: &Game| game.world.carves.get(&bridge).map_or(0, |carving| carving.removed.iter().filter(|&&gone| gone).count());
+    // A foot coming down on it, as a stomp does.
+    strike(&mut game.world, vid, [54.0, 3.0, 0.0], TITAN_FIST_RADIUS, [6.0, 0.0, 0.0], 80.0, None);
+    assert_eq!(lost(&game), 0, "a foot set down does nothing");
+    strike(&mut game.world, vid, [54.0, 3.0, 0.0], TITAN_FIST_RADIUS, [30.0, 0.0, 0.0], 80.0, None);
+    let punched = lost(&game);
+    assert!(punched > 0, "a punch knocks a hole in it");
+    // A house takes a bigger hole from the same punch.
+    let (mut game, house) = with_house();
+    let vid = titan(&mut game);
+    strike(&mut game.world, vid, [54.0, 3.0, 0.0], TITAN_FIST_RADIUS, [30.0, 0.0, 0.0], 80.0, None);
+    let holed = game.world.carves.get(&house).map_or(0, |carving| carving.removed.iter().filter(|&&gone| gone).count());
+    assert!(punched < holed, "a bridge {punched} cells, a house {holed}");
+}
+
+#[test]
 fn a_placed_titan_stands_is_boarded_from_between_its_feet_walks_and_sets_its_pilot_down() {
     use shared::world::PlacedVehicle;
     let map = WorldFile { version: WORLD_VERSION, half_extent: 40_000, spawns: vec![[30_000, 30_000]], placed_vehicles: vec![PlacedVehicle { kind: KIND_TITAN, at: [0, 0], yaw: 0.0 }], ..Default::default() };
