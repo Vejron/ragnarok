@@ -24,6 +24,7 @@ import { VehicleDriver, type DrivenPose, type Feet } from './sim/driver'
 import { Predictor } from './sim/predict'
 import type { Vec3 } from './sim/motor'
 import { Effects } from './render/effects'
+import { setTreeWind } from './render/trees'
 import { smallArmsOf } from './render/gunfire'
 import { CLIMB_SHARE, GunClimb, ScopeRecoil } from './render/recoil'
 import { GhostClouds } from './render/ghost'
@@ -1097,6 +1098,10 @@ export class Game {
       this.glow.blowing(seaWind.blowing)
       this.jetSpray.blowing(seaWind.blowing)
       this.trails.blowing(seaWind.blowing)
+      setTreeWind(seaWind.blowing)
+      this.grass?.blowing(seaWind.blowing)
+      this.crops?.blowing(seaWind.blowing)
+      this.cropLid?.blowing(seaWind.blowing)
       setWaterTime(this.waveClock)
     }
     const eye = this.scene.camera.position

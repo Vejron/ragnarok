@@ -34,8 +34,9 @@ The importer bakes where crops stand, so the client and the server agree on it.
   0.9 to 1.1 of `CROP_HEIGHT`. A field has no bare patches.
 - Its mask is the tile's `crops` grid (`cropMask`). The meadow's mask is unchanged, so no grass grows
   in a field.
-- Wind, the eight movers, blasts and craters work as for grass. Walking or driving through wheat
-  parts it, which gives whoever is in it away.
+- Wind, the eight movers, blasts and craters work as for grass. The wind is the game's own, as for
+  the grass and trees (`Grass.blowing`), and the lid's gusts follow it too (`CropLid.blowing`).
+  Walking or driving through wheat parts it, which gives whoever is in it away.
 - **The density is the same at every quality** (`WHEAT_DENSITY`: 8 stalks a square metre, all of them
   to 25 m, the last gone at 140 m), and the "grass" look does not turn it off. A thinner field on a
   lower setting would be a way to see through it.

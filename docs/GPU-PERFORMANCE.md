@@ -141,6 +141,48 @@ them hidden, timed alternately):
 `gpu-bench.mjs --parts solids,impostors,trees2x` draws the trees those ways, and `--quality low`
 runs the preset with one sample a pixel.
 
+### 6. Leafy crowns
+
+The deciduous trees' near solid became a crown of clumps and tufts (about 1,600 triangles, from about
+100), opaque, with softer, warmer and cooler shading in the foliage shader ([RENDERING.md](RENDERING.md)).
+Quality high (ratio 1.5, 2268 × 1258), the old and new code benched back to back, ms per frame with the
+trees' share:
+
+| world, view | before | after | trees before | trees after |
+|---|---|---|---|---|
+| home, forest | 2.99 | 3.16 | 0.41 | 0.65 |
+| home, vista | 2.72 | 2.84 | 0.43 | 0.53 |
+| vindeln, forest | 2.85 | 2.92 | 0.00 | 0.06 |
+| vindeln, vista | 2.37 | 2.48 | 0.26 | 0.36 |
+
+Then the pine and spruce, against the deciduous-only step, also back to back:
+
+| world, view | trees, deciduous leafy | trees, conifers too |
+|---|---|---|
+| vindeln, forest | 0.05 | 0.09 |
+| vindeln, vista | 0.34 | 0.42 |
+| home, forest | 0.65 | 0.68 |
+| home, vista | 0.56 | 0.65 |
+
+A pine's two leafy crowns were 3,160 triangles; at 7 clumps each they are about 2,000 (home's vista
+0.05 M triangles fewer, its trees' share within the noise). The spruce's tiers are 530.
+
+The bark pattern on near trunks cost nothing measurable (home: forest 3.19 and 3.19 ms, vista 2.92
+and 2.93, back to back): it is a few instructions on trunk pixels within 40 m. The birch's airier
+crown (2,350 triangles, from 1,600) with its bent trunk and new bark cost nothing measurable either
+(vindeln: forest 2.93 and 2.93 ms, vista 2.52 and 2.51). Swaying in the wind, a few lines of vertex
+code, cost nothing either (vindeln: forest 2.93 and 2.94 ms, vista 2.52 and 2.52).
+
+- **Leaf cards were not used.** Alpha-tested quads would have given finer leaves at the outline, but
+  they discard, which is what made the impostors dear (step 2). The tufts make the outline from
+  triangles instead.
+- **The impostor bake bins its triangles.** Finding the outline tested each step of it against every
+  triangle, and a leafy crown has thousands of both: the bake went from about 0.3 s to over 2 s. Each
+  picture now lists its facing triangles under the pixels their boxes touch, and the bake of all kinds
+  is about 0.6 s.
+- **A level without the tufts from 40 m was dropped**: timed alternately in `home`, it made no difference
+  in the forest (0.01 ms) and the vista was 0.07 ms dearer with it (it is a draw a kind more per tile).
+
 ## Smoke
 
 Smoke is cheap here because it is drawn at half resolution: 200 puffs 3 to 5 m wide across the whole

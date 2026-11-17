@@ -182,10 +182,17 @@ export function bakeImpostor(solid: Geometry, frame: ImpostorFrame, tile: number
   // Each triangle in the picture: whether it faces the viewer, and the box round it.
   const facing = new Uint8Array(triangles)
   const box = new Float32Array(triangles * 4)
+  // The triangles toward the viewer whose box reaches each pixel of the picture, so a point is tested
+  // against those alone: a leafy crown has thousands of triangles and its outline thousands of steps.
+  const binStart = new Int32Array(px * px + 1)
+  let binList = new Int32Array(0)
   /** Whether the point of the picture is on the tree: under a triangle that faces the viewer. */
   const covered = (x: number, y: number) => {
-    for (let t = 0; t < triangles; t++) {
-      if (!facing[t] || x < box[t * 4]! || x > box[t * 4 + 1]! || y < box[t * 4 + 2]! || y > box[t * 4 + 3]!) continue
+    if (x < 0 || y < 0 || x >= px || y >= px) return false
+    const cell = Math.floor(y) * px + Math.floor(x)
+    for (let k = binStart[cell]!; k < binStart[cell + 1]!; k++) {
+      const t = binList[k]!
+      if (x < box[t * 4]! || x > box[t * 4 + 1]! || y < box[t * 4 + 2]! || y > box[t * 4 + 3]!) continue
       const a = vertex(t * 3), b = vertex(t * 3 + 1), c = vertex(t * 3 + 2)
       const ax = sx[a]!, ay = sy[a]!, bx = sx[b]!, by = sy[b]!, qx = sx[c]!, qy = sy[c]!
       const area = (bx - ax) * (qy - ay) - (qx - ax) * (by - ay)
@@ -239,6 +246,25 @@ export function bakeImpostor(solid: Geometry, frame: ImpostorFrame, tile: number
             w[at * 3 + 2] = wc
           }
         }
+      }
+      // Each facing triangle listed under every pixel its box touches: counted, then placed.
+      binStart.fill(0)
+      const cells = (t: number) => [
+        Math.max(0, Math.floor(box[t * 4]!)), Math.min(px - 1, Math.floor(box[t * 4 + 1]!)),
+        Math.max(0, Math.floor(box[t * 4 + 2]!)), Math.min(px - 1, Math.floor(box[t * 4 + 3]!)),
+      ] as const
+      for (let t = 0; t < triangles; t++) {
+        if (!facing[t]) continue
+        const [c0, c1, r0, r1] = cells(t)
+        for (let row = r0; row <= r1; row++) for (let col = c0; col <= c1; col++) binStart[row * px + col + 1]!++
+      }
+      for (let at = 0; at < px * px; at++) binStart[at + 1]! += binStart[at]!
+      if (binList.length < binStart[px * px]!) binList = new Int32Array(binStart[px * px]!)
+      const fill = binStart.slice(0, px * px)
+      for (let t = 0; t < triangles; t++) {
+        if (!facing[t]) continue
+        const [c0, c1, r0, r1] = cells(t)
+        for (let row = r0; row <= r1; row++) for (let col = c0; col <= c1; col++) binList[fill[row * px + col]!++] = t
       }
       const [ox, oy] = frameOrigin(tile, i, j)
       const albedo = atlas.albedo, nd = atlas.normalDepth

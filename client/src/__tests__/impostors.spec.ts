@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { IMPOSTOR_ATLAS_PX, IMPOSTOR_FRAMES, IMPOSTOR_FRAME_PX, IMPOSTOR_SPREAD, bakeImpostor, decodeView, emptyAtlas, encodeView, frameBasis, frameExtent, frameOrigin, frameView } from '@/render/impostors'
-import { treeGeometries } from '@/render/trees'
+import { frameAround, plainShape } from '@/render/trees'
 import { TREE_SPRUCE } from '@/world'
 
 describe('impostor views', () => {
@@ -44,7 +44,9 @@ describe('impostor views', () => {
 
 describe('impostor bake', () => {
   const atlas = emptyAtlas()
-  const { full, frame } = treeGeometries(TREE_SPRUCE)
+  // The bake is tested on the spruce's plain cones, whose outline and normals are simple to reason about.
+  const full = plainShape(TREE_SPRUCE)
+  const frame = frameAround(full)
   bakeImpostor(full, frame, 4, atlas)
   /** The pixel at (u, v) of picture (i, j), each 0 to 1 across and down. */
   const at = (i: number, j: number, u: number, v: number) => {

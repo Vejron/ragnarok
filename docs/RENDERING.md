@@ -144,8 +144,54 @@ The style is flat, bright and few-banded, not physically based.
 - **Trees** are instanced: one `InstancedMesh` per archetype per tile (at most ten draw calls per
   tile), built from merged unit-space parts with vertex colours. The parts are low-poly: a crown
   sphere is a 42-vertex icosphere, a cone is twelve-sided, trunks have six sides. Normals are smoothed
-  per vertex, so the faces read as bold shapes rather than a faceted mesh. Trees have their own small shader (`FOLIAGE_WGSL` in `trees.ts`): the same four cel
-  bands, plus a 4×4 ordered dither that removes pixels within 2.5 m of the eye, so standing in a crown,
+  per vertex, so the faces read as bold shapes rather than a faceted mesh.
+  The deciduous kinds (birch, ornamental, broadleaf, columnar, low-wide; `LEAFY`) have a **leafy
+  crown** in their near solid instead (`leafyCrown`), about 1,600 triangles: a dark core, 7 to 12
+  lumpy clumps over it, and on each clump's outward side small tufts (flattened octahedra turned every
+  way, standing half out of it) whose points break the outline as leaves do, with a few branches from
+  the trunk into the lower clumps. It is built in metres at the kind's usual height over crown radius,
+  so the clumps are round on a tree of the usual size. Its light is painted rather than modelled: a
+  point's normal is mostly its clump's round one and partly the whole crown's (`CLUMP_SHADING`), and
+  its colour darkens toward the crown's middle and its underside, so the clumps read as soft balls with
+  shade between them. All of it is opaque, so it costs triangles and not discarded pixels. The
+  impostors are baked from it, so far trees show the same clumps. A crown's make is a `CrownStyle`. A
+  **birch**'s is airy: 16 smaller clumps over a smaller core, so its white branches (one into each of
+  the nine lowest clumps) and its leader, which runs on up to nine tenths of its height, show through
+  the gaps, and strands of twigs hang under each clump. Its trunk bows gently to one side
+  (`BIRCH_BOW`); about 2,350 triangles. A near tree's trunks and branches are `barkTube`s, each ring's
+  first point twice so its `uv.x` runs 0 to 1 round the tube. A pine makes both its flat crowns
+  leafy, 7 clumps each (about 2,000 triangles), a layered umbrella on its tall trunk. A **spruce**
+  (`spruceShape`, about 530 triangles) is six tiers of branches inside its cones' outline, each a
+  drooping skirt whose hem is cut into 14 branch tips (out and down) and notches (in and up), sagging
+  between hem and apex, with a dark underside; each tier is turned and its tips varied, and its normals
+  lean outward more than its slope so it shades as one soft skirt.
+  **Trees sway in the wind** (`sway` in the foliage's vertex code), along the same wind that carries
+  the smoke and leans the grass and wheat (`setTreeWind` and `Grass.blowing`, from `game.ts` each frame; solo, where the clock never syncs, its average
+  heading `WIND_HEADING`). A tree bends downwind, stiff at the foot and freest at the top, its treetop
+  leaning about `TREE_SWAY` (0.014) of its height at a middling gust: a gust rolling downwind across the
+  trees, each tree's own slower swing, and a little rock across the wind. The top dips as it leans, so
+  the trunk keeps about its length. Leaves (told by colour, as the fragment tells them) shiver up to
+  `LEAF_SHIVER` (3 cm) on top of that. An impostor's card sways the same, each corner by its height, so
+  the fade between solid and impostor holds. The bark's pattern is taken where a point stands still,
+  so it stays on the trunk. A felled tree does not sway, and shadows do not: the shadow pass runs no
+  vertex code.
+  **Bark** is drawn by the foliage shader (`bark`) on a near solid's trunk and branches, which
+  `treeGeometries` marks by their colour in `custom.w` (`BARK_FURROWED`, `BARK_BIRCH`; 0 is
+  everything else, an impostor's is above 0). The pattern goes round each tube by its `uv.x`, so it
+  follows a bent trunk or a leaning branch, and up it by the point's height in the tree's own frame,
+  metres from the foot, which the vertex shader hands the fragment, so it stays on a turned or felled
+  trunk. Furrowed
+  bark is ridges up the trunk, wandering side to side and broken across into plates of their own shade,
+  with dark furrows between. Birch is white, faintly banded where it peels, with lenticels across it
+  (dashes of many lengths in uneven rows, each row turned its own way), now and then a dark scar
+  drooping either side of where a branch was, and toward the foot dark, fissured bark breaking through
+  in patches that close over it at the ground. The shader mixes linear colour, so a mark meant to read as dark is mixed
+  nearly all the way to black. It fades out from 18 to 40 m (`BARK_NEAR`, `BARK_FAR`), before it is too
+  fine to draw cleanly. The impostor bake's own tests use
+  the spruce's plain cones (`plainShape`), whose outline is simple to reason about. Trees have their own small shader (`FOLIAGE_WGSL` in `trees.ts`): the same four cel
+  bands with their edges softened, and on leaves (told by their colour: green, not bark, snow or a
+  flag) the bands raised to a power for more between light and shade, a cool shadow side and a warm
+  lit one, and the sun glowing through a crown's edges when it is behind it; plus a 4×4 ordered dither that removes pixels within 2.5 m of the eye, so standing in a crown,
   or behind a felled one, you still see what you aim at. Trees take no shadow. A felled tree's instance
   is scaled to nothing in place.
   Each tree is culled on its own, and drawn as its solid near the camera and as an **impostor** from

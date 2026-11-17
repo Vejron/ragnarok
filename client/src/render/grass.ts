@@ -1,6 +1,7 @@
 import { Color, Geometry, Group, Mesh, ShaderMaterial } from '@ragnarok/engine'
 import { COVER_PARK, COVER_WOOD, CROP_NONE, STONES_DENSITY, type TileData, type TileRef } from '@/world'
 import { CROP_HEIGHT } from '@/sim/consts.generated'
+import { WIND_HEADING } from '@/sim/wind'
 import { SURFACE_CELL } from '@/sim/surface'
 import type { TileGround } from '@/sim/terrain'
 import { COVER_COLORS, GRASS_COLOR } from './cover'
@@ -557,7 +558,8 @@ export class Grass {
     private growth: Growth = MEADOW,
   ) {
     this.root.name = growth.name
-    const uniforms: ShaderMaterial['uniforms'] = { wind: [0.8, 0.6, 0.18, 0], fade: [0, 0, 1, 0], wash: [0, 1] }
+    // The wind's direction along x and z (its average heading until `blowing` says otherwise), and how far it leans a blade.
+    const uniforms: ShaderMaterial['uniforms'] = { wind: [Math.cos(WIND_HEADING), Math.sin(WIND_HEADING), 0.18, 0], fade: [0, 0, 1, 0], wash: [0, 1] }
     for (let i = 0; i < BENDERS; i++) uniforms[`b${i}`] = [0, 0, 0, 0]
     for (let i = 0; i < BLASTS; i++) uniforms[`e${i}`] = [0, 0, -1000, 0]
     this.material = new ShaderMaterial({ wgsl: GRASS_WGSL, vertex: GRASS_VERTEX_WGSL, uniforms, side: 'double', vertexColors: true, shadows: true })
@@ -687,6 +689,14 @@ export class Grass {
       if ((cx + 1) * GRASS_CHUNK < x - radius || cx * GRASS_CHUNK > x + radius || (cz + 1) * GRASS_CHUNK < z - radius || cz * GRASS_CHUNK > z + radius) continue
       chunk.stale = true
     }
+  }
+
+  /** Which way the wind blows, a unit `[x, z]`: the blades lean along it, the trees and the smoke alike. */
+  blowing(direction: readonly [number, number]) {
+    const wind = this.material.uniforms.wind as number[]
+    wind[0] = direction[0]
+    wind[1] = direction[1]
+    this.material.needsUpdate()
   }
 
   setEnabled(on: boolean) {

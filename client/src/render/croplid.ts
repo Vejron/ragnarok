@@ -1,6 +1,7 @@
 import { Color, Geometry, Group, Mesh, ShaderMaterial } from '@ragnarok/engine'
 import { CROP_NONE, type TileData, type TileRef } from '@/world'
 import { CROP_HEIGHT } from '@/sim/consts.generated'
+import { WIND_HEADING } from '@/sim/wind'
 import type { TileGround } from '@/sim/terrain'
 import { GROUND_LIGHT_WGSL } from './groundlight'
 import { WHEAT_DENSITY, type GrassDensity } from './grass'
@@ -213,7 +214,7 @@ fn surface(s: Surface) -> vec4f {
   let clumps = (lidNoise(at * 1.9) - 0.5) * (1.0 - smoothstep(60.0, 160.0, s.viewDepth));
   let patches = lidNoise(at * 0.13) - 0.5;
   // The gust the stalks lean with (grassLean): the ears it bends catch the light.
-  let gust = sin(dot(at, vec2f(0.8, 0.6)) * 0.09 - frame.fog.w * 1.3) * 0.5 + 0.5;
+  let gust = sin(dot(at, params.wind) * 0.09 - frame.fog.w * 1.3) * 0.5 + 0.5;
   let c = params.tint.rgb * (1.0 + clumps * 0.22 + patches * 0.12 + gust * 0.06);
   return vec4f(c / PI * lit, 1.0);
 }
@@ -251,7 +252,7 @@ export class CropLid {
     this.root.name = 'crops lid'
     const color = Color.hex(LID_COLOR)
     const tint: [number, number, number, number] = [color.r, color.g, color.b, 0]
-    this.material = new ShaderMaterial({ wgsl: LID_WGSL, vertex: LID_VERTEX_WGSL, uniforms: { band: [density.far * LID_RISE_FROM, density.far * LID_RISE_TO], tint }, side: 'double', shadows: true })
+    this.material = new ShaderMaterial({ wgsl: LID_WGSL, vertex: LID_VERTEX_WGSL, uniforms: { band: [density.far * LID_RISE_FROM, density.far * LID_RISE_TO], tint, wind: [Math.cos(WIND_HEADING), Math.sin(WIND_HEADING)] }, side: 'double', shadows: true })
   }
 
   private key(ref: Pick<TileRef, 'col' | 'row'>) {
@@ -321,6 +322,14 @@ export class CropLid {
   }
 
   /** A winter field is stubble, which has no lid. */
+  /** Which way the wind blows, a unit `[x, z]`: its gusts cross the lid as they cross the stalks. */
+  blowing(direction: readonly [number, number]) {
+    const wind = this.material.uniforms.wind as number[]
+    wind[0] = direction[0]
+    wind[1] = direction[1]
+    this.material.needsUpdate()
+  }
+
   setEnabled(on: boolean) {
     this.root.visible = on
   }

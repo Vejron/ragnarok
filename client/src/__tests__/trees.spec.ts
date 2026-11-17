@@ -36,7 +36,8 @@ describe('tree levels of detail', () => {
     for (const kind of KINDS) {
       const { full } = treeGeometries(kind)
       for (let i = 0; i < full.vertexCount; i++) {
-        expect(full.custom![i * 4 + 3], `kind ${kind}`).toBe(0)
+        // 0, or below it for bark: never an impostor's.
+        expect(full.custom![i * 4 + 3], `kind ${kind}`).toBeLessThanOrEqual(0)
         expect(full.custom![i * 4], `kind ${kind}`).toBeCloseTo(full.bounds.x)
         expect(full.custom![i * 4 + 1], `kind ${kind}`).toBeCloseTo(full.bounds.y)
         expect(full.custom![i * 4 + 2], `kind ${kind}`).toBeCloseTo(full.bounds.z)
