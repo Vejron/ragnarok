@@ -61,6 +61,62 @@ the muzzle each frame, **where the muzzle is that frame**, so the smoke follows 
 traverses: thick and quick with a lick of flame while the barrel is near its hottest, thinning to a
 curl. Not drawn past 120 m.
 
+## Small arms
+
+A rifle shot used to be one glare half a metre across, the same for a revolver as for the sniper,
+and no smoke. Now a soldier's gun and a vehicle's machine gun go off through `gunfire` like a cannon,
+with profiles of their own, and the flash is a shaped flare for every gun.
+
+| Profile | Guns | Smoke puffs | Hangs | Barrel smokes |
+|---|---|---|---|---|
+| `PISTOL` | revolver, flare gun | 2, 0.8 m | 1.2 s | no |
+| `RIFLE` | AK5 (and any hand gun not named) | 2, 0.9 m | 1.5 s | 2.5 s, only after a long burst (heat 0.08 a round) |
+| `SNIPER` | sniper, AT rifle | 5, 1.4 m, dust when fired low | 2.2 s | 2 s |
+| `SHOTGUN` | shotgun | 4, 1.2 m, a long tongue of fire | 1.6 s | 1.5 s |
+| `MACHINE_GUN` | a vehicle's MGs: technical, planes, roof guns, Stridsbåt | 1 a round | 1.4 s | no |
+
+`smallArmsOf(item)` picks a hand gun's profile. The smoke is pale haze (smokeless powder), not a
+cannon's grey.
+
+**The flare** (`Effects.muzzleFlare`, the start of every `gunfire`): a white-hot core glare inside a
+warm one, a cone of fire along the bore (a wide tongue and a hot core, both `FlashEffects` streaks
+that shoot a little further out as they go), and a star of four petals round it at a new roll every
+shot, each a thin streak over a short wide one so it tapers. All of it is gone in 0.04 to 0.06 s
+(a cannon's outer glare in 0.12 s).
+
+**One shot, drawn once.** `Events.soldierFired` is the one path: the flash and smoke, the light, and
+heat in the barrel. The local player's shot goes off when they fire it (`Game.fireFeedback`), so the
+server's bullet or hitscan event draws nothing more for it at the muzzle; everyone else's goes off
+when their bullet is first drawn (`bulletLeft`) or their hitscan shot arrives. `Events.smokeBarrels`
+lays the wisps at each soldier's muzzle every frame while their barrel is hot.
+
+**Down the scope** (`gunfire(…, scoped)`): no flare, which would fill the eye, a third of the smoke
+from just ahead of and below the eye, and no light.
+
+**Recoil** (`Recoil` on an `ItemDef` in `crates/shared/src/items.rs`; `client/src/render/recoil.ts`).
+Each shot lifts the shooter's aim `rise` radians and turns it `left` radians to the left, give or
+take `jitter`:
+
+| Gun | Up a shot | Left a shot | Give or take |
+|---|---|---|---|
+| AK5 | 0.004 rad | 0.0012 | 0.0008 |
+| Revolver | 0.014 | 0.003 | 0.002 |
+| Sniper | 0.035 | 0 | 0.008 |
+
+The climb goes into the aim itself (`GunClimb`, handed to `InputController.climb` over about
+0.075 s, so the aim rises rather than jumps), and the server is sent the raised aim: a burst walks
+up and left unless held down. A 30-round AK5 burst left alone climbs about 7°. The AK5's bloom
+was lowered for it, from 0.005 a shot up to 0.05 to 0.0035 up to 0.035.
+
+Down a scope, four fifths of the kick only throws the view (`ScopeRecoil`: up in 0.05 s, a
+critically damped settle back over about half a second), and a fifth (`CLIMB_SHARE`) goes into the
+aim, so the next shot needs a small pull back down. A light camera jolt goes with it.
+
+Gone: `Effects.muzzle` (the glare), the glare `Effects.tracer` drew at the muzzle, and
+`Effects.blast` as a shotgun's shot; it is the Carl Gustaf's `backblast` now and nothing else: a
+4.5 m cone of fire with a white-hot core, fourteen fireballs rolling back in it, burning grains, and
+a bank of smoke left 1 to 3.5 m behind the venturi.
+
 ## Shells in flight (`client/src/render/trails.ts`)
 
 - A tank's, a Pak's or a mortar's shell leaves a wake that lasts 3 s (it was 1.6 s), wider and more

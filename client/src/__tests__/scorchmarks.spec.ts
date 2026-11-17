@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Effects, type GunScene } from '@/render/effects'
-import { AUTOCANNON, CANNON } from '@/render/gunfire'
+import { AUTOCANNON, CANNON, PISTOL, RIFLE, SHOTGUN, SNIPER, smallArmsOf } from '@/render/gunfire'
+import { ITEM_AK5, ITEM_SNIPER } from '@/sim/items'
 import type { ParticleSpec } from '@/render/particles'
 import { Scorchmarks } from '@/render/scorchmarks'
 
@@ -77,9 +78,7 @@ describe('shot effects', () => {
 
   it('draws nothing round as a flash record: only streaks and rings go there', () => {
     const { effects } = pools()
-    effects.gunfire(at, ahead, CANNON, 1, scene())
     effects.barrelSmoke(at, ahead, 1, 0.5, CANNON, scene())
-    effects.blast(at, { x: 0, y: 0, z: 1 })
     effects.strike(at)
     effects.pelletStrike(at)
     effects.burst(at, 4)
@@ -88,8 +87,48 @@ describe('shot effects', () => {
     effects.deflect(at, { x: 0, y: 1, z: 0 })
     effects.impact(at, 'vehicle')
     effects.struck(at)
-    effects.muzzle(at)
     expect(effects.root.count).toBe(0)
+  })
+
+  it('a muzzle flare is a glare with a cone of fire and a star of petals round it, at a new roll each shot', () => {
+    const { effects, glow } = pools()
+    effects.gunfire(at, ahead, RIFLE, 1, scene())
+    expect(glow.filter((s) => s.shape === 'glare').length).toBeGreaterThanOrEqual(2)
+    // Two streaks down the bore and two to each of four petals.
+    expect(effects.root.count).toBe(10)
+  })
+
+  it('a launcher’s backblast is a cone of fire with fireballs in it, and leaves smoke', () => {
+    const { effects, smoke, glow } = pools()
+    effects.backblast(at, { x: 0, y: 0, z: -1 })
+    expect(effects.root.count).toBe(2)
+    expect(smoke.filter((s) => (s.glow ?? 0) > 0).length).toBeGreaterThanOrEqual(10)
+    expect(smoke.some((s) => s.hold)).toBe(true)
+    expect(glow.some((s) => s.shape === 'glare')).toBe(true)
+  })
+
+  it('a shot down its own scope has no flare and only a wisp of its smoke', () => {
+    const open = pools(), scoped = pools()
+    open.effects.gunfire(at, ahead, SNIPER, 1, scene())
+    scoped.effects.gunfire(at, ahead, SNIPER, 1, scene(), true)
+    expect(scoped.effects.root.count).toBe(0)
+    expect(scoped.glow.some((s) => s.shape === 'glare')).toBe(false)
+    const puffs = (smoke: ParticleSpec[]) => smoke.filter((s) => s.hold).length
+    expect(puffs(scoped.smoke)).toBeGreaterThan(0)
+    expect(puffs(scoped.smoke)).toBeLessThan(puffs(open.smoke) / 2)
+  })
+
+  it('small arms smoke too, a sniper more than a rifle and a rifle a little against a cannon', () => {
+    const puffs = (gun: typeof CANNON) => {
+      const { effects, smoke } = pools()
+      effects.gunfire(at, ahead, gun, 1, scene())
+      return smoke.filter((s) => s.hold).length
+    }
+    for (const gun of [PISTOL, RIFLE, SNIPER, SHOTGUN]) expect(puffs(gun)).toBeGreaterThan(0)
+    expect(puffs(SNIPER)).toBeGreaterThan(puffs(RIFLE))
+    expect(puffs(CANNON)).toBeGreaterThan(puffs(SNIPER) * 2)
+    expect(smallArmsOf(ITEM_SNIPER)).toBe(SNIPER)
+    expect(smallArmsOf(ITEM_AK5)).toBe(RIFLE)
   })
 
   it('a tank’s gun throws more smoke than an autocannon’s, with sparks that bounce and dust off the ground under it', () => {
@@ -117,8 +156,8 @@ describe('shot effects', () => {
     const { effects, smoke, glow } = pools()
     effects.gunfire(at, ahead, CANNON, 1, scene(300))
     expect(smoke).toEqual([])
-    expect(glow).toHaveLength(1)
-    expect(glow[0]!.shape).toBe('glare')
+    expect(glow.length).toBeGreaterThan(0)
+    expect(glow.every((s) => s.shape === 'glare')).toBe(true)
   })
 
   it('a gun makes less smoke at a distance, and when the air is already full of it', () => {

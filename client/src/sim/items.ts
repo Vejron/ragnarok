@@ -76,6 +76,10 @@ export interface ItemDef {
   /** How much wider each shot of held fire makes that cone, and the most it can, radians. Mirrors `Bloom`. */
   bloomPerShot: number
   bloomMax: number
+  /** How each shot climbs the shooter's aim: up, to the left, and give or take either way, radians. Mirrors `Recoil`. */
+  recoilRise: number
+  recoilLeft: number
+  recoilJitter: number
 }
 
 /** What the client adds to an item: how it is held and what it sounds like. Every item needs one. */

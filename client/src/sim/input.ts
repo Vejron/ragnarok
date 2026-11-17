@@ -210,6 +210,12 @@ export class InputController {
     this.pitch = Math.max(MIN_PITCH, Math.min(MAX_PITCH, this.pitch + pitch * this.lookScale))
   }
 
+  /** The gun's own climb after a shot, radians (+ yaw to the left, + pitch up): it moves the aim as it is, not scaled as the mouse is. */
+  climb(yaw: number, pitch: number) {
+    this.yaw += yaw
+    this.pitch = Math.max(MIN_PITCH, Math.min(MAX_PITCH, this.pitch + pitch))
+  }
+
   /** Whether the gyroscope steers the view right now, by the mode and what the player is doing. */
   get gyroActive() {
     if (this.gyroMode === 'off' || !this.locked || this.mapUp) return false

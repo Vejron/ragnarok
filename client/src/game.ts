@@ -24,6 +24,8 @@ import { VehicleDriver, type DrivenPose, type Feet } from './sim/driver'
 import { Predictor } from './sim/predict'
 import type { Vec3 } from './sim/motor'
 import { Effects } from './render/effects'
+import { smallArmsOf } from './render/gunfire'
+import { CLIMB_SHARE, GunClimb, ScopeRecoil } from './render/recoil'
 import { GhostClouds } from './render/ghost'
 import { Ghosts } from './entities/presenters/ghosts'
 import { TitanModel } from './render/titan'
@@ -155,6 +157,11 @@ const MAX_TICKS_PER_FRAME = 8
 const PING_INTERVAL_MS = 1000
 /** Mouse-look is this much slower down a scope, to match the narrower view. */
 const SCOPE_LOOK_SCALE = 0.3
+/** Down a scope, a shot leaves this far ahead of the eye and this far below it, metres: the soldier holding the gun is not drawn. */
+const SCOPED_MUZZLE_REACH = 1
+const SCOPED_MUZZLE_DROP = 0.08
+/** How hard a scoped shot jolts the view (`ChaseCam.kick`), on top of its recoil. */
+const SCOPE_JOLT = 0.2
 /** The crosshair's arms stand at least this far from its middle, px, however true the gun. */
 const MIN_CROSS_GAP = 3
 /** How long a golf strike's name stays over the meter, ms. */
@@ -357,6 +364,10 @@ export class Game {
   private crouching = false
   /** Looking down a scope this frame. */
   private scoped = false
+  /** The scope's view thrown up by the last shot down it, settling back. */
+  private readonly scopeRecoil = new ScopeRecoil()
+  /** The last shots' climb, on its way into the aim. */
+  private readonly climb = new GunClimb()
   /** Aiming a gun over the shoulder this frame, and how far the camera has eased in (0..1). */
   private aiming = false
   private aimBlend = 0
@@ -1109,6 +1120,7 @@ export class Game {
     this.events.play(renderTick)
     this.flying.run(sampled, entityFrame)
     this.events.drawBullets(renderTick)
+    this.events.smokeBarrels(dt)
     this.drawAims(moment)
     this.updateEffects(dt)
 
@@ -1342,6 +1354,10 @@ export class Game {
 
   /** Puts the camera where this frame wants it. */
   private aimCamera({ now, dt, seat, view, ride, position, distance, sighted, scoped, aiming, lookYaw, lookPitch, sitting, reading }: Moment) {
+    // The climb of the last shots reaches the aim: it shows from the next frame, and the next input sent carries it.
+    const climbed = this.climb.step(dt)
+    if (this.player.alive) this.input.climb(climbed.yaw, climbed.pitch)
+    else this.climb.reset()
     this.input.lookScale = sighted ? SIGHT_LOOK_SCALE : scoped ? SCOPE_LOOK_SCALE : aiming ? AIM_LOOK_SCALE : 1
     const chase = ride && view?.chase ? this.chase.update([ride.x, ride.y, ride.z], ride.yaw, dt, distance) : null
     if (!chase) this.chase.reset()
@@ -1359,8 +1375,11 @@ export class Game {
       return
     }
     this.cameras.leave(now)
-    if (scoped) this.scene.scopeFrom([position[0]!, position[1]! + this.eyeHeight(), position[2]!], lookYaw, lookPitch, shake)
-    else {
+    if (scoped) {
+      const recoil = this.scopeRecoil.step(dt)
+      this.scene.scopeFrom([position[0]!, position[1]! + this.eyeHeight(), position[2]!], lookYaw + recoil.yaw, lookPitch + recoil.pitch, shake)
+    } else {
+      this.scopeRecoil.reset()
       // Only the distance changes: the pivot is what the server's crosshair ray is built from.
       // Indoors both come in to keep the view in the room; the crosshair is then a little off the server's ray.
       const { arm, shoulder } = this.roomArm(position, lookYaw, lookPitch, ON_FOOT_DISTANCE * (1 - (1 - AIM_DISTANCE_SCALE) * this.aimBlend), dt)
@@ -1665,8 +1684,17 @@ export class Game {
     const direction = new Vector3(-Math.sin(yaw) * flat, Math.sin(pitch), -Math.cos(yaw) * flat)
     const me = this.avatars.local()
     me.fire()
-    const barrel = me.muzzle()
-    this.effects.muzzle(barrel ?? new Vector3(x, y + EYE_HEIGHT, z).addScaledVector(direction, 0.6))
+    // Down a scope the soldier is not drawn: the shot leaves just below the eye.
+    const barrel = me.muzzle() ?? new Vector3(x, y + this.eyeHeight() - (this.scoped ? SCOPED_MUZZLE_DROP : 0), z).addScaledVector(direction, this.scoped ? SCOPED_MUZZLE_REACH : 0.6)
+    this.events.soldierFired(this.localId ?? -1, barrel, direction, smallArmsOf(slot.item), this.scoped)
+    // The gun climbs: up and to the left. Down a scope most of it throws the view and settles back.
+    const rise = item.recoilRise
+    const left = item.recoilLeft + (Math.random() * 2 - 1) * item.recoilJitter
+    if (this.scoped && rise > 0) {
+      this.scopeRecoil.kick(rise * (1 - CLIMB_SHARE), left * (1 - CLIMB_SHARE))
+      this.climb.add(left * CLIMB_SHARE, rise * CLIMB_SHARE)
+      this.chase.kick(SCOPE_JOLT)
+    } else this.climb.add(left, rise)
   }
 
   /** Height of the local player's eye above the capsule centre, for the stance they are in. */

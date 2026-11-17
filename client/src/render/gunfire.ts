@@ -1,3 +1,5 @@
+import { ITEM_AK5, ITEM_AT_RIFLE, ITEM_FLARE, ITEM_REVOLVER, ITEM_SHOTGUN, ITEM_SNIPER } from '@/sim/items'
+
 /**
  * How a gun's shot looks at its muzzle, by the kind of gun: how big the flash and the flame, how much
  * smoke it blows out and how long that hangs, what a muzzle brake throws sideways, the burning grains,
@@ -80,3 +82,49 @@ export const BEAM: MuzzleProfile = {
   flash: 2.4, flame: 0, smoke: 0, puff: 0, tone: PALE, alpha: 0, hang: 0, brake: 0, sparks: 0, dust: 0,
   linger: 0, wisps: 0, heat: 0, light: { color: 0xffc060, intensity: 4, radius: 14, life: 0.09 },
 }
+
+/** Thin, pale smoke off smokeless powder. */
+const HAZE = [0xc4c2be, 0xb2b0ac, 0xa09e9a] as const
+
+/** A revolver or a flare gun: a short bright flash and a little puff that soon thins. */
+export const PISTOL: MuzzleProfile = {
+  flash: 0.7, flame: 0.25, smoke: 2, puff: 0.8, tone: HAZE, alpha: 0.32, hang: 1.2, brake: 0, sparks: 1, dust: 0,
+  linger: 0, wisps: 0, heat: 0, light: { color: 0xffd890, intensity: 1.6, radius: 6, life: 0.07 },
+}
+
+/** An assault rifle: a star of a flash, a puff of haze each round, and a barrel that wisps after a long burst. */
+export const RIFLE: MuzzleProfile = {
+  flash: 0.8, flame: 0.35, smoke: 2, puff: 0.9, tone: HAZE, alpha: 0.26, hang: 1.5, brake: 0, sparks: 1, dust: 0,
+  linger: 2.5, wisps: 6, heat: 0.08, light: { color: 0xffd890, intensity: 1.6, radius: 6, life: 0.06 },
+}
+
+/** A sniper's or an anti-tank rifle: a big flash, a cloud of haze that hangs, dust off the ground when fired low, and a smoking barrel. */
+export const SNIPER: MuzzleProfile = {
+  flash: 1.2, flame: 0.6, smoke: 5, puff: 1.4, tone: HAZE, alpha: 0.32, hang: 2.2, brake: 0, sparks: 2, dust: 1.6,
+  linger: 2, wisps: 6, heat: 1, light: { color: 0xffd890, intensity: 2.4, radius: 8, life: 0.08 },
+}
+
+/** A shotgun: a fat flash, a long tongue of fire and a puff of grey smoke. */
+export const SHOTGUN: MuzzleProfile = {
+  flash: 1.3, flame: 0.8, smoke: 4, puff: 1.2, tone: PALE, alpha: 0.32, hang: 1.6, brake: 0, sparks: 4, dust: 0,
+  linger: 1.5, wisps: 5, heat: 1, light: { color: 0xffc070, intensity: 2.2, radius: 7, life: 0.08 },
+}
+
+/** A vehicle's machine gun: a rifle's flash and a little haze each round. */
+export const MACHINE_GUN: MuzzleProfile = {
+  flash: 0.9, flame: 0.4, smoke: 1, puff: 1, tone: HAZE, alpha: 0.22, hang: 1.4, brake: 0, sparks: 1, dust: 0,
+  linger: 0, wisps: 0, heat: 0, light: { color: 0xffd890, intensity: 1.6, radius: 6, life: 0.05 },
+}
+
+/** How a hand-held gun goes off, by the item: the rifle's for any gun not named. */
+const SMALL_ARMS: ReadonlyMap<number, MuzzleProfile> = new Map([
+  [ITEM_REVOLVER, PISTOL],
+  [ITEM_FLARE, PISTOL],
+  [ITEM_AK5, RIFLE],
+  [ITEM_SNIPER, SNIPER],
+  [ITEM_AT_RIFLE, SNIPER],
+  [ITEM_SHOTGUN, SHOTGUN],
+])
+
+/** The profile a hand-held gun `item` goes off with. */
+export const smallArmsOf = (item: number): MuzzleProfile => SMALL_ARMS.get(item) ?? RIFLE

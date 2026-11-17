@@ -137,6 +137,21 @@ impl Bloom {
     }
 }
 
+/// How a gun climbs in its shooter's hands: each shot lifts their aim `rise` radians and turns it
+/// `left` radians to the left, give or take `jitter` radians either way. The client moves its own aim
+/// by it, so the next round goes where the gun was pushed; down a scope most of it only throws the
+/// view and settles back.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Recoil {
+    pub rise: f32,
+    pub left: f32,
+    pub jitter: f32,
+}
+
+impl Recoil {
+    pub const NONE: Recoil = Recoil { rise: 0.0, left: 0.0, jitter: 0.0 };
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct ItemDef {
     pub name: &'static str,
@@ -155,6 +170,8 @@ pub struct ItemDef {
     pub spread: f32,
     /// How held fire widens that cone, shot after shot.
     pub bloom: Bloom,
+    /// How each shot climbs the shooter's aim.
+    pub recoil: Recoil,
     /// Fires a round that flies (`PROJECTILE_BULLET`: speed `BULLET_SPEED`, a little drop) and hits when it arrives, instead of a hitscan.
     pub projectile: bool,
     /// Hitscan rays one trigger pull fires, each doing `damage`, each scattered on its own.
@@ -187,6 +204,8 @@ const REVOLVER: ItemDef = ItemDef {
     // A little wild from the hip; aiming tightens it.
     spread: 0.015,
     bloom: Bloom::NONE,
+    // A heavy kick up and a little to the left: the next shot wants pulling back down.
+    recoil: Recoil { rise: 0.014, left: 0.003, jitter: 0.002 },
     projectile: true,
     pellets: 1,
     falloff: Falloff { start: 30.0, end: 150.0, min: 0.6 },
@@ -208,7 +227,9 @@ const AK5: ItemDef = ItemDef {
     reload_ticks: 5 * TICK_RATE / 2,
     range: 200.0,
     spread: 0.02,
-    bloom: Bloom { per_shot: 0.005, max: 0.05 },
+    bloom: Bloom { per_shot: 0.0035, max: 0.035 },
+    // A burst walks up and drifts left unless held down.
+    recoil: Recoil { rise: 0.004, left: 0.0012, jitter: 0.0008 },
     projectile: true,
     pellets: 1,
     falloff: Falloff { start: 25.0, end: 200.0, min: 0.5 },
@@ -232,6 +253,7 @@ const SNIPER: ItemDef = ItemDef {
     // Wild from the hip; scoping removes it.
     spread: 0.05,
     bloom: Bloom::NONE,
+    recoil: Recoil { rise: 0.035, left: 0.0, jitter: 0.008 },
     projectile: true,
     pellets: 1,
     falloff: Falloff::NONE,
@@ -257,6 +279,7 @@ const SHOTGUN: ItemDef = ItemDef {
     // A wide cone from the hip; aiming tightens it.
     spread: 0.06,
     bloom: Bloom::NONE,
+    recoil: Recoil::NONE,
     projectile: false,
     pellets: 10,
     falloff: Falloff { start: 8.0, end: 40.0, min: 0.25 },
@@ -279,6 +302,7 @@ const GRENADE: ItemDef = ItemDef {
     range: 0.0,
     spread: 0.0,
     bloom: Bloom::NONE,
+    recoil: Recoil::NONE,
     projectile: false,
     pellets: 1,
     falloff: Falloff::NONE,
@@ -301,6 +325,7 @@ const BANDAGE: ItemDef = ItemDef {
     range: 0.0,
     spread: 0.0,
     bloom: Bloom::NONE,
+    recoil: Recoil::NONE,
     projectile: false,
     pellets: 1,
     falloff: Falloff::NONE,
@@ -324,6 +349,7 @@ const GOLDEN_EGG: ItemDef = ItemDef {
     range: 0.0,
     spread: 0.0,
     bloom: Bloom::NONE,
+    recoil: Recoil::NONE,
     projectile: false,
     pellets: 1,
     falloff: Falloff::NONE,
@@ -348,6 +374,7 @@ const DRONE: ItemDef = ItemDef {
     range: 0.0,
     spread: 0.0,
     bloom: Bloom::NONE,
+    recoil: Recoil::NONE,
     projectile: false,
     pellets: 1,
     falloff: Falloff::NONE,
@@ -371,6 +398,7 @@ const LOITER: ItemDef = ItemDef {
     range: 0.0,
     spread: 0.0,
     bloom: Bloom::NONE,
+    recoil: Recoil::NONE,
     projectile: false,
     pellets: 1,
     falloff: Falloff::NONE,
@@ -393,6 +421,7 @@ const FLARE: ItemDef = ItemDef {
     range: 0.0,
     spread: 0.0,
     bloom: Bloom::NONE,
+    recoil: Recoil::NONE,
     projectile: false,
     pellets: 1,
     falloff: Falloff::NONE,
@@ -417,6 +446,7 @@ const BRICKS: ItemDef = ItemDef {
     range: crate::consts::BUILD_REACH,
     spread: 0.0,
     bloom: Bloom::NONE,
+    recoil: Recoil::NONE,
     projectile: false,
     pellets: 1,
     falloff: Falloff::NONE,
@@ -444,6 +474,7 @@ const CARL_GUSTAF: ItemDef = ItemDef {
     // Off the shoulder from the hip it wanders; down the sight it goes true.
     spread: 0.03,
     bloom: Bloom::NONE,
+    recoil: Recoil::NONE,
     projectile: false,
     pellets: 1,
     falloff: Falloff::NONE,
@@ -469,6 +500,7 @@ const AT_RIFLE: ItemDef = ItemDef {
     // Long and heavy: wild from the hip, true once braced (aim held).
     spread: 0.06,
     bloom: Bloom::NONE,
+    recoil: Recoil::NONE,
     projectile: true,
     pellets: 1,
     falloff: Falloff::NONE,
@@ -494,6 +526,7 @@ const fn golf_club(name: &'static str) -> ItemDef {
         range: crate::consts::GOLF_REACH,
         spread: 0.0,
         bloom: Bloom::NONE,
+        recoil: Recoil::NONE,
         projectile: false,
         pellets: 1,
         falloff: Falloff::NONE,
@@ -674,8 +707,8 @@ mod tests {
                     ItemKind::Club => "club",
                 };
                 format!(
-                    "    {{\"id\": {id}, \"name\": \"{}\", \"kind\": \"{kind}\", \"auto\": {}, \"damage\": {}, \"cooldownTicks\": {}, \"mag\": {}, \"reloadTicks\": {}, \"range\": {}, \"aimSpeed\": {}, \"scope\": {}, \"stack\": {}, \"weapon\": {}, \"projectile\": {}, \"pellets\": {}, \"falloffStart\": {}, \"falloffEnd\": {}, \"falloffMin\": {}, \"spread\": {}, \"bloomPerShot\": {}, \"bloomMax\": {}}}",
-                    d.name, d.auto, d.damage, d.cooldown_ticks, d.mag, d.reload_ticks, d.range, d.aim_speed, d.scope, d.stack, d.weapon, d.projectile, d.pellets, d.falloff.start, d.falloff.end, d.falloff.min, d.spread, d.bloom.per_shot, d.bloom.max
+                    "    {{\"id\": {id}, \"name\": \"{}\", \"kind\": \"{kind}\", \"auto\": {}, \"damage\": {}, \"cooldownTicks\": {}, \"mag\": {}, \"reloadTicks\": {}, \"range\": {}, \"aimSpeed\": {}, \"scope\": {}, \"stack\": {}, \"weapon\": {}, \"projectile\": {}, \"pellets\": {}, \"falloffStart\": {}, \"falloffEnd\": {}, \"falloffMin\": {}, \"spread\": {}, \"bloomPerShot\": {}, \"bloomMax\": {}, \"recoilRise\": {}, \"recoilLeft\": {}, \"recoilJitter\": {}}}",
+                    d.name, d.auto, d.damage, d.cooldown_ticks, d.mag, d.reload_ticks, d.range, d.aim_speed, d.scope, d.stack, d.weapon, d.projectile, d.pellets, d.falloff.start, d.falloff.end, d.falloff.min, d.spread, d.bloom.per_shot, d.bloom.max, d.recoil.rise, d.recoil.left, d.recoil.jitter
                 )
             })
             .collect();

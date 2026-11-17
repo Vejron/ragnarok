@@ -47,6 +47,11 @@ const BEAM_CORE = new Color().set(7, 3.5, 2.6)
 const BEAM_HOT = new Color().set(4, 0.16, 0.05)
 const BEAM_HAZE = new Color().set(1.2, 0.02, 0.01)
 const FLARE = new Color().set(2.5, 0.5, 0.3)
+/** A muzzle flare's fire, HDR so that it blooms: the white-hot core and the orange of its tongue and petals. */
+const FLARE_CORE = new Color().set(6, 5, 3.4)
+const FLARE_FIRE = new Color().set(4, 1.9, 0.6)
+/** Petals of fire round a muzzle flare: a flash hider's star. */
+const PETALS = 4
 
 type Pool = Pick<Particles, 'spawn'>
 
@@ -76,15 +81,17 @@ export class Effects {
    * jets out of the sides of a muzzle brake, burning grains that arc away and bounce, and dust off the
    * ground under the blast. `fired` is how many rounds left since the last frame. Far off it is the
    * flash alone, and it thins when the air is already full of smoke. The shell is drawn in flight, the
-   * light by whoever fires, and the barrel's smoke afterwards by `barrelSmoke`.
+   * light by whoever fires, and the barrel's smoke afterwards by `barrelSmoke`. `scoped` is a shot seen
+   * down its own scope: no flash, which would fill the eye, and a third of the smoke, so the shooter
+   * still sees where the round went.
    */
-  gunfire(muzzle: V, direction: V, gun: MuzzleProfile, fired: number, scene: GunScene) {
+  gunfire(muzzle: V, direction: V, gun: MuzzleProfile, fired: number, scene: GunScene, scoped = false) {
     const d = norm(direction)
-    this.flash(add(muzzle, d, gun.flame * 0.25), gun.flash, 0.12, 0xffe9a0, 8)
+    if (!scoped) this.muzzleFlare(muzzle, d, gun)
     const far = len(sub(muzzle, scene.camera))
     if (far > GUN_RANGE) return
     const alive = scene.smoke.alive
-    const share = (far > GUN_THIN ? 0.5 : 1) * (alive > 1500 ? 0.4 : alive > 800 ? 0.65 : 1) * Math.min(Math.max(fired, 1), MAX_SHOTS)
+    const share = (scoped ? 0.3 : far > GUN_THIN ? 0.5 : 1) * (alive > 1500 ? 0.4 : alive > 800 ? 0.65 : 1) * Math.min(Math.max(fired, 1), MAX_SHOTS)
     const some = (count: number) => (count > 0 ? Math.max(1, Math.round(count * share)) : 0)
     const smoke = (at: V, velocity: readonly [number, number, number], life: number, size: number) => this.smoke.spawn({
       position: at, velocity, life, size: [size * 0.35, size], color: pick(gun.tone), colorEnd: gun.tone[0], alpha: gun.alpha * rand(0.8, 1), hold: true,
@@ -129,6 +136,34 @@ export class Effects {
   }
 
   /**
+   * The flash of a shot at `muzzle` along `d`, sized by the gun's `flash` and `flame`: a white-hot core in
+   * a warm glare, a cone of fire shooting out along the bore, and a star of petals round it at a roll
+   * of its own each shot, so no two flashes look alike. Gone in a few hundredths of a second.
+   */
+  private muzzleFlare(muzzle: V, d: V, gun: MuzzleProfile) {
+    const size = gun.flash
+    this.flash(add(muzzle, d, size * 0.08), size * 0.45, 0.035, 0xffffff, 10)
+    this.flash(add(muzzle, d, size * 0.2), size, 0.05 + 0.015 * size, 0xffc070, 6)
+    // The cone: a wide tongue and a hot core down the middle of it, both shooting a little further out as they go.
+    const reach = Math.max(gun.flame * 1.6, size * 0.8)
+    const jitter = rand(0.8, 1.2)
+    for (const [length, width, color, life] of [[reach * jitter, size * 0.13, FLARE_FIRE, 0.05], [reach * 0.6 * jitter, size * 0.05, FLARE_CORE, 0.035]] as const) {
+      this.root.spawn({ at: add(muzzle, d, length / 2), direction: d, along: length * 0.3, length, size: width, life, color, bright: true, soft: true, fade: 'late' })
+    }
+    // The petals, swept a little forward, each a long thin streak over a short wide one so it tapers.
+    const across = beside(d)
+    const up = { x: d.y * across.z - d.z * across.y, y: d.z * across.x - d.x * across.z, z: d.x * across.y - d.y * across.x }
+    const roll = rand(0, Math.PI * 2)
+    for (let k = 0; k < PETALS; k++) {
+      const angle = roll + (k * Math.PI * 2) / PETALS
+      const out = norm(add(add({ x: across.x * Math.cos(angle), y: across.y * Math.cos(angle), z: across.z * Math.cos(angle) }, up, Math.sin(angle)), d, 0.7))
+      const length = size * rand(0.4, 0.65)
+      this.root.spawn({ at: add(muzzle, out, length / 2), direction: out, length, size: size * 0.035, life: 0.04, color: FLARE_FIRE, bright: true, soft: true, fade: 'late' })
+      this.root.spawn({ at: add(muzzle, out, length / 4), direction: out, length: length / 2, size: size * 0.07, life: 0.035, color: FLARE_FIRE, opacity: 0.8, bright: true, soft: true, fade: 'late' })
+    }
+  }
+
+  /**
    * A barrel that has fired, for the `dt` seconds just passed: smoke out of the muzzle at `muzzle` along
    * `direction`, pouring thick with a lick of flame while its `heat` is near 1 and thinning to a curl as
    * that runs down to 0. It is laid where the muzzle is now, so it follows a gun that turns.
@@ -149,12 +184,11 @@ export class Effects {
     }
   }
 
-  /** A rifle shot: a short streak flies from the muzzle to `to` and, when it ended on something, sparks there. */
+  /** A rifle shot's round: a short streak flies from the muzzle to `to` and, when it ended on something, sparks there. The gun going off is `gunfire`. */
   tracer(from: V, to: V, hit: boolean) {
     const length = len(sub(to, from))
     if (length < 0.01) return
     const direction = norm(sub(to, from))
-    this.flash(add(from, direction, 0.6), 0.45, 0.06, 0xfff2b0, 6)
     // Thin, and a short segment on the move rather than a rod drawn the whole way: it reads as speed.
     const start = Math.min(1.5, length)
     const run = length - start
@@ -296,16 +330,40 @@ export class Effects {
     }
   }
 
-  /** A shotgun going off: a fat flash, flame thrown forward in a cone and a wisp of smoke. */
-  blast(muzzle: V, direction: V) {
+  /**
+   * A recoilless launcher's backblast out of its venturi at `vent`, along `direction`: a blinding flash,
+   * a long cone of fire roaring back several metres, rolling fireballs in it that cool to embers, a
+   * spray of burning grains and a bank of smoke left where it was.
+   */
+  backblast(vent: V, direction: V) {
     const d = norm(direction)
-    this.flash(add(muzzle, d, 0.5), 1.6, 0.1, 0xfff0b8, 8)
-    for (let i = 0; i < 6; i++) {
-      const jet = norm(add(d, spread(), 0.5))
-      const speed = rand(7, 16)
-      this.glow.spawn({ position: muzzle, velocity: [jet.x * speed, jet.y * speed, jet.z * speed], life: rand(0.1, 0.18), size: [rand(0.25, 0.45), 0.1], color: i % 2 ? 0xffb347 : 0xff7a1a, colorEnd: 0xff3a05, glow: 4, stretch: 0.02, alpha: 1, drag: 6 })
+    this.flash(add(vent, d, 0.6), 2.6, 0.12, 0xfff0b8, 9)
+    this.flash(add(vent, d, 1.8), 3.4, 0.2, 0xff9a3c, 6)
+    // The cone: a wide tongue and a white-hot core down its middle, shooting out as they go.
+    for (const [length, width, color, life] of [[4.5, 0.55, FLARE_FIRE, 0.12], [2.8, 0.22, FLARE_CORE, 0.08]] as const) {
+      this.root.spawn({ at: add(vent, d, length / 2), direction: d, along: length * 0.4, length, size: width, life, color, bright: true, soft: true, fade: 'late' })
     }
-    this.drift(add(muzzle, d, 0.8), [d.x * 2.4, d.y * 2.4 + 0.8, d.z * 2.4], rand(0.7, 1.1), [0.3, rand(1, 1.5)], 0x8a8a8a, 0.35)
+    // Fireballs, the nearest small and fast, the furthest swelling as they slow.
+    for (let i = 0; i < 14; i++) {
+      const lead = Math.random()
+      const jet = norm(add(d, spread(), 0.45))
+      const speed = rand(8, 20) * (0.5 + lead)
+      this.flame(add(vent, d, lead * 1.2), [jet.x * speed, jet.y * speed + 0.5, jet.z * speed], rand(0.2, 0.45), [rand(0.25, 0.4), rand(0.9, 1.6) * (0.6 + lead)], pick([0xffc060, 0xff9a30, 0xffe090, 0xff7a1a]))
+    }
+    for (let i = 0; i < 10; i++) {
+      const jet = norm(add(d, spread(), 0.6))
+      const speed = rand(7, 18)
+      this.glow.spawn({ position: vent, velocity: [jet.x * speed, jet.y * speed, jet.z * speed], life: rand(0.12, 0.25), size: [rand(0.3, 0.55), 0.1], color: i % 2 ? 0xffb347 : 0xff7a1a, colorEnd: 0xff3a05, glow: 5, stretch: 0.02, alpha: 1, drag: 6 })
+    }
+    for (let i = 0; i < 8; i++) {
+      const jet = norm(add(d, spread(), 0.7))
+      const speed = rand(10, 24)
+      this.spark(vent, [jet.x * speed, jet.y * speed + 1.5, jet.z * speed], rand(0.3, 0.7), rand(0.05, 0.09), i)
+    }
+    for (let i = 0; i < 5; i++) {
+      const out = rand(1, 3.5)
+      this.drift(add(add(vent, d, out), spread(), 0.5), [d.x * rand(1, 3), d.y * 2 + rand(0.4, 1), d.z * rand(1, 3)], rand(1.4, 2.4), [0.5, rand(1.8, 2.8)], pick([0x9a9895, 0x858380, 0x74726f]), 0.4, { hold: true, turbulence: 1 })
+    }
   }
 
   /** One shotgun pellet landing: a few sparks and a small puff of grit. */
@@ -400,11 +458,6 @@ export class Effects {
   /** A cloud of dust of about `size` metres across at `at`, swelling and rising as it thins. */
   dust(at: V, size: number) {
     dustCloud(this.smoke, at, size)
-  }
-
-  /** Just the muzzle flash: the local player's own shot before the server confirms it, or a machine gun's round. */
-  muzzle(at: V) {
-    this.flash(at, 0.5, 0.06, 0xfff2b0, 6)
   }
 
   update(dt: number) {

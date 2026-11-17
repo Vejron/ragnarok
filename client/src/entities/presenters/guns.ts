@@ -2,7 +2,7 @@ import { Vector3 } from '@ragnarok/engine'
 import { AmvModel } from '@/render/amv'
 import { Cb90Model } from '@/render/cb90'
 import { HeliModel } from '@/render/heli'
-import { AUTOCANNON, BEAM, BLACK_POWDER, CANNON, MORTAR, ROTARY, type MuzzleProfile } from '@/render/gunfire'
+import { AUTOCANNON, BEAM, BLACK_POWDER, CANNON, MACHINE_GUN, MORTAR, ROTARY, type MuzzleProfile } from '@/render/gunfire'
 import { LaserEyes } from '@/render/lasereyes'
 import { MortarModel } from '@/render/mortar'
 import { PakModel } from '@/render/pak'
@@ -144,7 +144,7 @@ export class Turrets implements Presenter<Frame> {
     const rounds = Math.min(MAX_ROUNDS, fired)
     const { direction } = plane.barrel()
     const muzzle = plane.muzzle()
-    this.world.effects.muzzle(muzzle)
+    machineGunFire(this.world, muzzle, direction, rounds)
     for (let k = 0; k < rounds; k++) fireRound(this.world, muzzle, direction, PLANE_GUN_RANGE)
     plane.recoilRing()
     this.world.sounds.machineGun([muzzle.x, muzzle.y, muzzle.z], rounds, true)
@@ -155,7 +155,7 @@ export class Turrets implements Presenter<Frame> {
     const rounds = Math.min(MAX_ROUNDS, fired)
     const { origin, direction } = truck.barrel()
     const muzzle = origin.addScaledVector(direction, TECHNICAL_MG_LENGTH)
-    this.world.effects.muzzle(muzzle)
+    machineGunFire(this.world, muzzle, direction, rounds)
     for (let k = 0; k < rounds; k++) fireRound(this.world, muzzle, direction, TECHNICAL_MG_RANGE)
     truck.recoil()
     this.world.sounds.machineGun([muzzle.x, muzzle.y, muzzle.z], rounds)
@@ -190,7 +190,7 @@ export class PlaneGuns implements Presenter<Frame> {
       const side = (before + k) % 2
       const { origin, direction } = plane.forwardGun(side)
       plane.recoil(side)
-      this.world.effects.muzzle(origin)
+      machineGunFire(this.world, origin, direction, 1)
       fireRound(this.world, origin, direction, PLANE_GUN_RANGE)
     }
     const { origin } = plane.forwardGun(0)
@@ -232,7 +232,7 @@ export class RoofGuns implements Presenter<Frame> {
       const barrel = tank instanceof Cb90Model ? tank.machineGun((before + k - 1) % 2 === 0 ? -1 : 1) : tank.pintleBarrel()
       if (!barrel) return
       const muzzle = barrel.origin.addScaledVector(barrel.direction, length)
-      this.world.effects.muzzle(muzzle)
+      machineGunFire(this.world, muzzle, barrel.direction, 1)
       fireRound(this.world, muzzle, barrel.direction, range)
       last = muzzle
     }
@@ -242,6 +242,12 @@ export class RoofGuns implements Presenter<Frame> {
   remove(id: number) {
     this.shots.delete(id)
   }
+}
+
+/** A machine gun going off at `muzzle` along `direction`, `rounds` of it since the last frame: the flash, a little haze and the light it throws. */
+function machineGunFire(world: VehicleWorld, muzzle: Vector3, direction: Vector3, rounds: number) {
+  world.effects.gunfire(muzzle, direction, MACHINE_GUN, rounds, world.fx())
+  world.lights.flash(muzzle.x, muzzle.y, muzzle.z, MACHINE_GUN.light)
 }
 
 /** Sends a round from `origin` along `direction`, falling as it goes, to the first thing it meets or the end of its `range`. */

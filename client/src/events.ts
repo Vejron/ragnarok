@@ -24,7 +24,7 @@ import type { Scorchmarks } from '@/render/scorchmarks'
 import type { Flinch } from '@/render/flinch'
 import { locate, type HullMarks, type MarkKind } from '@/render/hullmarks'
 import { BLASTS, explosion, type ExplosionProfile } from '@/render/explosion'
-import { LAUNCHER } from '@/render/gunfire'
+import { LAUNCHER, PISTOL, RIFLE, SHOTGUN, smallArmsOf, type MuzzleProfile } from '@/render/gunfire'
 import type { Rockets } from '@/render/rockets'
 import type { Rounds } from '@/render/rounds'
 import type { Scene } from '@/render/scene'
@@ -142,6 +142,8 @@ export class Events {
   private readonly bullets = new Map<number, LiveBullet>()
   /** Bullets already seen, with the tick they were fired on: a spawn is sent twice and must not start a second round. */
   private readonly seenBullets = new Map<number, number>()
+  /** Soldiers' barrels still smoking after their last shot, by player: how hot (1 at the most), the gun's profile and which way it last fired. */
+  private readonly hot = new Map<number, { heat: number; gun: MuzzleProfile; direction: Vector3 }>()
 
   constructor(private readonly world: EventWorld) {}
 
@@ -309,13 +311,14 @@ export class Events {
     this.marks = []
     this.bullets.clear()
     this.seenBullets.clear()
+    this.hot.clear()
   }
 
-  /** Where a player's rifle leaves: the end of the barrel it is drawn holding, else its eye. */
-  private muzzleOf(shooter: number): Vector3 | null {
+  /** Where a player's rifle leaves: the end of the barrel it is drawn holding, else its eye (unless `eye` is false). */
+  private muzzleOf(shooter: number, eye = true): Vector3 | null {
     const avatar = this.world.avatars.of(shooter)
     if (!avatar || !avatar.visible) return null
-    return avatar.muzzle() ?? avatar.position.clone().add(new Vector3(0, EYE_HEIGHT, 0))
+    return avatar.muzzle() ?? (eye ? avatar.position.clone().add(new Vector3(0, EYE_HEIGHT, 0)) : null)
   }
 
   private showShot(shot: ShotEvent) {
@@ -337,8 +340,7 @@ export class Events {
       // The flare itself is a projectile; this is the gun going off.
       avatars.of(shot.shooter)?.fire()
       const from = this.muzzleOf(shot.shooter) ?? to
-      effects.muzzle(from)
-      this.muzzleLight(from, 0xffa060, 2.5, 8)
+      this.soldierFired(shot.shooter, from, this.aim(from, to), PISTOL)
       sounds.gunshot([from.x, from.y, from.z], 'revolver')
     } else if (shot.weapon === WEAPON_LAUNCHER) {
       // A Carl Gustaf going off: the rocket is a projectile of its own; this is the flash at the
@@ -352,9 +354,9 @@ export class Events {
       const back = forward.clone().negate()
       const venturi = from.clone().addScaledVector(back, LAUNCHER_LENGTH)
       effects.gunfire(from, forward, LAUNCHER, 1, this.world.fx())
-      effects.blast(venturi, back)
+      effects.backblast(venturi, back)
       effects.dust(venturi.clone().addScaledVector(back, 1.5), 2.5)
-      this.muzzleLight(from, 0xffb060, 3, 10)
+      scene.scene.lights.flash(from.x, from.y, from.z, LAUNCHER.light)
       this.world.blips.fired(shot.shooter, from.x, from.z, performance.now())
       sounds.blast([from.x, from.y, from.z], 'small')
       if (shot.shooter === local) chase.kick(LAUNCHER_KICK)
@@ -384,7 +386,7 @@ export class Events {
       const onGround = to.y - scene.groundAt(to.x, to.z) < SCORCH_HEIGHT
       if (onGround) scorches.sweep(tupp.scorched, to, SCORCH_RADIUS)
       tupp.scorched = onGround ? to.clone() : null
-      this.muzzleLight(to, 0xff4020, 3, 10)
+      scene.scene.lights.flash(to.x, to.y, to.z, { color: 0xff4020, intensity: 3, radius: 10, life: 0.09 })
       sounds.laserSizzle([to.x, to.y, to.z])
       if (this.world.driving() === shot.shooter && !throughGlass) view.chipped(to.x, to.y, to.z, TUPP_LASER_DAMAGE)
     } else if (shot.weapon === WEAPON_MG) {
@@ -446,15 +448,15 @@ export class Events {
       if (from) {
         this.world.blips.fired(shot.shooter, from.x, from.z, performance.now())
         const landed = from.distanceTo(to) < gun.range - 1
+        // The local player's own shot went off when they fired it (`Game.fireFeedback`).
+        if (shot.shooter !== local) this.soldierFired(shot.shooter, from, this.aim(from, to), gun.pellets > 1 ? SHOTGUN : RIFLE)
         if (gun.pellets > 1) {
-          // No rays for a spread: a blast at the muzzle, then each pellet is drawn where it landed.
-          effects.blast(from, to.clone().sub(from).normalize())
+          // No rays for a spread: each pellet is drawn where it landed.
           if (landed && !surroundings.watery(to, 0.2)) effects.pelletStrike(to)
         } else {
           effects.tracer(from, to, landed)
           if (landed) surroundings.watery(to, 0.25)
         }
-        this.muzzleLight(from, 0xffd890, 1.6, 6)
       }
       const at = from ?? to
       sounds.gunshot([at.x, at.y, at.z], gun.sound)
@@ -462,9 +464,34 @@ export class Events {
     }
   }
 
-  /** A short flash of light at a gun's muzzle: it lights the barrel, the hull and the ground in front of it. */
-  private muzzleLight(at: Vector3, color: number, intensity: number, radius: number) {
-    this.world.scene.scene.lights.flash(at.x, at.y, at.z, { color, intensity, radius, life: 0.09 })
+  /**
+   * A soldier's gun going off at `muzzle` along `direction`, as its `gun` profile has it: the flash and
+   * smoke (`Effects.gunfire`), the light it throws on what is round it, and heat in the barrel, which
+   * smokes after a long burst. `scoped` is the local player's own shot down a scope.
+   */
+  soldierFired(shooter: number, muzzle: Vector3, direction: Vector3, gun: MuzzleProfile, scoped = false) {
+    const { effects, scene } = this.world
+    effects.gunfire(muzzle, direction, gun, 1, this.world.fx(), scoped)
+    if (!scoped) scene.scene.lights.flash(muzzle.x, muzzle.y, muzzle.z, gun.light)
+    if (gun.heat <= 0) return
+    const hot = this.hot.get(shooter)
+    this.hot.set(shooter, { heat: Math.min(1, (hot?.heat ?? 0) + gun.heat), gun, direction: direction.clone() })
+  }
+
+  /** Smoke out of the barrels of soldiers who have fired, for the `dt` seconds just passed, cooling as it goes; none from a gun not drawn. */
+  smokeBarrels(dt: number) {
+    for (const [shooter, hot] of this.hot) {
+      const muzzle = this.muzzleOf(shooter, false)
+      if (muzzle) this.world.effects.barrelSmoke(muzzle, hot.direction, hot.heat, dt, hot.gun, this.world.fx())
+      hot.heat -= dt / hot.gun.linger
+      if (hot.heat <= 0) this.hot.delete(shooter)
+    }
+  }
+
+  /** Which way a gun fired from `from` at `to`: along it, or straight up when `to` is too near to tell. */
+  private aim(from: Vector3, to: Vector3): Vector3 {
+    const along = to.clone().sub(from)
+    return along.lengthSq() > 1e-2 ? along.normalize() : new Vector3(0, 1, 0)
   }
 
   /**
@@ -516,7 +543,8 @@ export class Events {
     const muzzle = this.muzzleOf(shooter)
     if (muzzle) {
       bullet.offset = muzzle.clone().sub(new Vector3(at[0], at[1], at[2]))
-      this.world.effects.muzzle(muzzle)
+      // The local player's own shot went off when they fired it (`Game.fireFeedback`).
+      if (shooter !== this.world.localId()) this.soldierFired(shooter, muzzle, new Vector3(bullet.spawn.vx, bullet.spawn.vy, bullet.spawn.vz).normalize(), smallArmsOf(item))
     }
     const heard = muzzle ?? new Vector3(at[0], at[1], at[2])
     this.world.sounds.gunshot([heard.x, heard.y, heard.z], gun?.sound ?? 'rifle')
