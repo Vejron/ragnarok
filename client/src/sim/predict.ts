@@ -24,7 +24,14 @@ export class Predictor {
   state: CharacterState
   /** State one tick earlier, so rendering can blend between ticks. */
   previous: CharacterState
-  private pending: InputFrame[] = []
+  /** The inputs not yet acknowledged, each with the server tick it was first stepped at (null unknown). */
+  private pending: { input: InputFrame; tick: number | null }[] = []
+  /** The server tick `state` was stepped at, which the waves a swimmer floats on were at; null unknown. */
+  stateTick: number | null = null
+  /** The same for `previous`. */
+  previousTick: number | null = null
+  /** Sets the sim's clock before a step: the waves a swimmer floats on run on the server's tick. */
+  setTick: (tick: number) => void = () => {}
   /** Visual-only offset from corrections, decaying to zero. */
   readonly error: Vec3 = [0, 0, 0]
   /** Size of the last correction, metres, for the HUD. */
@@ -39,11 +46,14 @@ export class Predictor {
     this.previous = cloneState(initial)
   }
 
-  /** Applies one new input locally. */
-  apply(input: InputFrame) {
+  /** Applies one new input locally, at server tick `tick` (the server's tick about now), if known. */
+  apply(input: InputFrame, tick: number | null = null) {
     this.previous = this.state
+    this.previousTick = this.stateTick
+    if (tick !== null) this.setTick(tick)
     this.state = this.step(this.state, input, TICK_DT, this.speedScale(input), this.armed(input))
-    this.pending.push(input)
+    this.stateTick = tick
+    this.pending.push({ input, tick })
     if (this.pending.length > MAX_PENDING) this.pending.shift()
   }
 
@@ -52,14 +62,14 @@ export class Predictor {
    * not move. If the player steps out before the server's ack catches up, these inputs are
    * replayed over the state it reports.
    */
-  record(input: InputFrame) {
-    this.pending.push(input)
+  record(input: InputFrame, tick: number | null = null) {
+    this.pending.push({ input, tick })
     if (this.pending.length > MAX_PENDING) this.pending.shift()
   }
 
   /** Drops inputs the server has applied, without touching the simulated state. */
   acknowledge(ack: number) {
-    this.pending = this.pending.filter((input) => input.seq > ack)
+    this.pending = this.pending.filter(({ input }) => input.seq > ack)
   }
 
   /** Forgets unsent or unacknowledgeable inputs, e.g. those made while offline. */
@@ -71,15 +81,25 @@ export class Predictor {
     return this.pending.length
   }
 
-  /** Rewinds to the server's state as of input `ack`, then replays everything newer. */
-  reconcile(ack: number, authoritative: CharacterState) {
-    this.pending = this.pending.filter((input) => input.seq > ack)
+  /**
+   * Rewinds to the server's state as of input `ack`, at server tick `tick` if known, then replays
+   * everything newer, each input at the tick it was first stepped at, so a swimmer floats on the same
+   * waves as before rather than all on the snapshot's.
+   */
+  reconcile(ack: number, authoritative: CharacterState, tick: number | null = null) {
+    this.pending = this.pending.filter(({ input }) => input.seq > ack)
     const before = this.state.position
     let state = cloneState(authoritative)
     let previous = state
-    for (const input of this.pending) {
+    let stateTick = tick
+    let previousTick = tick
+    for (const { input, tick: at } of this.pending) {
       previous = state
+      previousTick = stateTick
+      const stepped = at ?? tick
+      if (stepped !== null) this.setTick(stepped)
       state = this.step(state, input, TICK_DT, this.speedScale(input), this.armed(input))
+      stateTick = stepped
     }
     const delta: Vec3 = [before[0] - state.position[0], before[1] - state.position[1], before[2] - state.position[2]]
     this.lastCorrection = Math.hypot(...delta)
@@ -91,6 +111,15 @@ export class Predictor {
     }
     this.state = state
     this.previous = previous
+    this.stateTick = stateTick
+    this.previousTick = previous === state ? stateTick : previousTick
+  }
+
+  /** The server tick of the position `renderPosition(alpha)` draws, blended as it is; null unknown. */
+  renderTick(alpha: number): number | null {
+    const a = this.previousTick ?? this.stateTick
+    const b = this.stateTick ?? a
+    return a === null || b === null ? null : a + (b - a) * alpha
   }
 
   /** Position to draw: blended between the last two ticks, plus the decaying correction offset. */

@@ -29,6 +29,7 @@ const PF_PUFF = 8u;
 const PF_DROP = 16u;
 const PF_GLARE = 32u;
 const PF_HOLD = 64u;
+const PF_SCATTER = 128u;
 `
 
 /**
@@ -427,6 +428,13 @@ fn fs(in: Out) -> @location(0) vec4f {
   // Soft particles: fade out where the billboard nears what is behind it instead of cutting into it.
   ${sceneDepth}
   alpha *= clamp((scene - in.viewDepth) / max(in.size * 0.5, 0.05), 0.0, 1.0);
+  if ((in.flags & PF_SCATTER) != 0u) {
+    // Water scatters sunlight forward (Henyey-Greenstein, g = 0.5, times 4 pi): about 0.5 seen from the
+    // side, 6 looking into the sun, so spray and mist blaze against the light and drops glint in it.
+    let toward = -in.sun.z;
+    let phase = 0.75 / pow(1.25 - toward, 1.5);
+    shine = shine * (1.0 + phase * 0.5) + phase * 0.25 * in.sun.w;
+  }
   var rgb = in.color.rgb * shade + in.lit * LIT * 0.08 + frame.sunColor.rgb * shine * 0.15;
   if ((in.flags & PF_NO_FOG) == 0u && frame.fog.z > 0.0) {
     let f = smoothstep(frame.fog.x, frame.fog.y, in.viewDepth);

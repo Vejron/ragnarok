@@ -27,6 +27,8 @@ export interface WaterBuffers {
   positions: Float32Array
   custom: Float32Array
   indices: Uint32Array
+  /** A lake's or river's surface rather than a stream's ribbon: the wave field moves it (`WaterRefine`). */
+  surface?: boolean
 }
 
 /**
@@ -73,7 +75,7 @@ export function surfaceBuffers(water: Float32Array, ground: TileGround, reach?: 
   if (indices.length === 0) return null
   const split = Math.ceil(cell / WAVE_CELL - 1e-6)
   if (split > 1) return subdivided(positions, depths, flows, Uint32Array.from(indices), side, cell, split)
-  return { positions, custom: surfaceCustom(depths, flows), indices: Uint32Array.from(indices) }
+  return { positions, custom: surfaceCustom(depths, flows), indices: Uint32Array.from(indices), surface: true }
 }
 
 /**
@@ -120,7 +122,7 @@ function subdivided(positions: Float32Array, depths: Float32Array, flows: Float3
       }
     }
   }
-  return { positions: out, custom: surfaceCustom(deep, flow), indices }
+  return { positions: out, custom: surfaceCustom(deep, flow), indices, surface: true }
 }
 
 /**

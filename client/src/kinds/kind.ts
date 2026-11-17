@@ -40,6 +40,11 @@ export interface KindFx {
   /** A hull that floats, with no wheels: it carves a wake through open water as it goes. */
   floats?: true
   /**
+   * Waterjets in its transom: a rooster tail of spray behind it under way, sheets off its bow at speed,
+   * and in a crash stop the reversed jets blasting water forward along its sides as its bow ploughs in.
+   */
+  jets?: true
+  /**
    * How far below its middle a seaplane's pontoons reach, metres: what meets the water is their
    * undersides, not its hull's, and afloat on them it is down as much as on its wheels.
    */

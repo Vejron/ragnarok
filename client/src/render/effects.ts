@@ -397,14 +397,6 @@ export class Effects {
     this.root.spawn({ at, ring: true, life: 0.8 + radius * 0.05, size: radius * 0.2, grow: radius * 4, length: radius * 1.6, color: 0xcbbf9f, opacity: 0.35 })
   }
 
-  /** Rings spreading over the water from a splash of about `size` metres at `at` (on the surface). */
-  ripple(at: V, size: number) {
-    const rings = size > 1.5 ? 3 : size > 0.4 ? 2 : 1
-    for (let i = 0; i < rings; i++) {
-      this.root.spawn({ at, ring: true, life: 0.9 + size * 0.1 + i * 0.25, size: size * 0.3 + i * size * 0.15, grow: 1.5 + size * 1.6, length: 0.12 + size * 0.06, color: 0xf0faff, opacity: 0.55 - i * 0.12 })
-    }
-  }
-
   /** A cloud of dust of about `size` metres across at `at`, swelling and rising as it thins. */
   dust(at: V, size: number) {
     dustCloud(this.smoke, at, size)

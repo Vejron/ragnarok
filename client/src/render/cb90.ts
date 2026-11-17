@@ -14,9 +14,9 @@ const PAINTS = [
   [0x858c80, 0x4b5648, 0x5c666c],
 ] as const
 /**
- * Its crew are soldiers, drawn sitting where they are (the driver and the gunner behind the
- * wheelhouse's glass, the riders on the after deck), so no heads are drawn in hatches. The 25 mm barrel
- * kicks back a short way.
+ * Its crew are soldiers, drawn where they are (the driver behind the cockpit's glass, the gunner standing
+ * in the ring, the riders on the after deck), so no heads are drawn in hatches. The 25 mm barrel kicks
+ * back a short way.
  */
 const LAYOUT: TankLayout = { driverHead: null, gunnerHead: null, wheelRadius: 1, trackHalf: 0, paints: PAINTS, recoilStroke: 0.12 }
 
@@ -34,8 +34,8 @@ export async function loadCb90Model(url = CB90_MODEL_URL) {
 }
 
 /**
- * The Stridsbåt 90: a `TankModel` with no wheels, its cannon's turret on the wheelhouse roof and its
- * twin bow guns as the "roof gun", which turn from the hull rather than from the turret (their node is
+ * The Stridsbåt 90: a `TankModel` with no wheels, its cannon on its pedestal in the ring as the turret,
+ * and the twin machine guns fixed on the cockpit as the "roof gun", which only elevate (their node is
  * the hull's, not the turret's).
  */
 export class Cb90Model extends TankModel {
@@ -43,8 +43,8 @@ export class Cb90Model extends TankModel {
     super(id, asset, LAYOUT)
   }
 
-  /** One of the two bow guns in world space as of the last `update`: `side` -1 the left, 1 the right. */
-  bowGun(side: number) {
+  /** One of the two machine guns in world space as of the last `update`: `side` -1 the left, 1 the right. */
+  machineGun(side: number) {
     const barrel = this.pintleBarrel()
     if (!barrel) return null
     // The barrels lie either side of the cradle, square to their line and level with it.

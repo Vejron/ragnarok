@@ -51,6 +51,26 @@ describe('Predictor', () => {
     expect(seen).toEqual([false, true, true])
   })
 
+  it('steps each input on the waves of the tick it was made at, and replays it on the same tick', () => {
+    const ticks: number[] = []
+    const predictor = new Predictor(flat, standing())
+    predictor.setTick = (tick) => ticks.push(tick)
+    predictor.apply(forward(1), 100)
+    predictor.apply(forward(2), 101)
+    predictor.apply(forward(3), 102)
+    expect(predictor.renderTick(0.25)).toBeCloseTo(101.25, 6)
+    ticks.length = 0
+    predictor.reconcile(1, serverRun([forward(1)]), 103)
+    expect(ticks).toEqual([101, 102])
+    expect([predictor.previousTick, predictor.stateTick]).toEqual([101, 102])
+  })
+
+  it('has no tick to show before the clock is known', () => {
+    const predictor = new Predictor(flat, standing())
+    predictor.apply(forward(1))
+    expect(predictor.renderTick(0.5)).toBeNull()
+  })
+
   it('inputs recorded in a car are replayed over the state after stepping out', () => {
     const predictor = new Predictor(flat, standing())
     predictor.apply(forward(1))

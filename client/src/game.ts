@@ -31,12 +31,13 @@ import { fistsFromHands } from './xr/hands'
 import { dayPhase } from './render/daynight'
 import { DamageNumbers } from './render/damagenumbers'
 import { Particles } from './render/particles'
-import { setWinter, winter } from './render/season'
+import { setIced, setWinter, winter } from './render/season'
 import { Skidmarks } from './render/skidmarks'
 import { SkiTracks } from './render/skitracks'
 import { Snowfall } from './render/snowfall'
 import { Rainfall } from './render/rainfall'
 import { SnowRoost } from './render/snowroost'
+import { JetSpray } from './render/jetspray'
 import { MarshMist, mistAt } from './render/marshmist'
 import { Bloodstains } from './render/bloodstains'
 import { Scorchmarks } from './render/scorchmarks'
@@ -84,8 +85,9 @@ import { loadAnimalModels } from './render/animal'
 import { VehicleSounds } from './vehicleaudio'
 import { ZombieVoices } from './zombievoices'
 import { HIT_DEALT, HIT_KILL, HIT_TAKEN, HitFeedback } from './feedback'
-import { freezeWater, setWaterTime, setWaterWakes } from './render/water'
-import { Wakes } from './render/wakes'
+import { freezeWater, setWaterTime } from './render/water'
+import { WaterWaves } from './render/waterwaves'
+import { WaterRefine } from './render/waterrefine'
 import { waveTime } from './sim/waves'
 import { pointOfSail, wind } from './sim/wind'
 import { seaWind } from './render/ship'
@@ -274,14 +276,18 @@ export class Game {
   private waters: Waters | null = null
   /** The waves' clock this frame, seconds into their loop (`waveTime`). */
   private waveClock = 0
-  /** What has passed through the water lately. */
-  private readonly wakes = new Wakes()
+  /** The water's waves from what moves through it. */
+  private readonly waves = new WaterWaves()
+  /** The water near the camera cut finer, for the waves to lift. */
+  private readonly waterRefine = new WaterRefine((...nodes) => this.scene.scene.add(...nodes))
   /** True from the welcome until the joiner's catch-up `destroyed` arrives: that one is state, not news. */
   private awaitingCatchUp = false
   private readonly damageNumbers = new DamageNumbers()
   /** Tyre smoke, dust, gravel and spray; sparks and flames glow on their own pool. */
   private readonly smoke = new Particles(4096, false, true)
   private readonly glow = new Particles(2048, true)
+  /** The water waterjet boats throw. */
+  private readonly jetSpray = new JetSpray(this.glow, this.waves)
   /** Blood has a pool of its own, so a firefight's spray never leaves smoke and dust without room. */
   private readonly blood = new Particles(1536)
   private readonly effects = new Effects({ smoke: this.smoke, glow: this.glow, blood: this.blood })
@@ -466,7 +472,7 @@ export class Game {
     this.scene.scene.add(this.rocketModels.root, this.trails.root)
     this.scene.scene.add(this.pickupModels.root, this.backpackModels.root)
     this.scene.scene.add(this.trajectory.root, this.mortarArc.root)
-    this.scene.scene.add(this.smoke.root, this.glow.root, this.blood.root, this.stains.root, this.scorches.root, this.skids.root)
+    this.scene.scene.add(this.waves.root, ...this.jetSpray.roots, this.smoke.root, this.glow.root, this.blood.root, this.stains.root, this.scorches.root, this.skids.root)
     this.smoke.groundAt = (x, z) => this.scene.groundAt(x, z)
     this.glow.groundAt = (x, z) => this.scene.groundAt(x, z)
     this.scene.scene.add(this.debris.root)
@@ -493,7 +499,7 @@ export class Game {
         if (distance < radius * 4) this.chase.kick(strength * (1 - distance / (radius * 4)))
       },
     }
-    this.surroundings = new Surroundings(this.scene, this.effects, () => this.fxWorld)
+    this.surroundings = new Surroundings(this.scene, () => this.fxWorld)
     this.vehicles = this.machines.add(new Vehicles(world, this.machines.add(new Seating())))
     this.wear = this.machines.add(new Wear(world, this.vehicles))
     this.events = new Events({
@@ -520,7 +526,7 @@ export class Game {
     this.flying.add(this.lying)
     this.flying.add(new Backpacks(this.backpackModels))
     const blobFoot = (x: number, y: number, z: number) => this.surroundings.blobFoot(x, y, z)
-    this.soldiers = this.people.add(new Soldiers({ avatars: this.avatars, blobFoot, wade: (id, x, y, z, speed, dt) => this.surroundings.wade(id, x, y, z, speed, dt), skiRun: (id, x, z, vx, vz, grounded, dt) => this.skiTracks?.run(id, x, z, vx, vz, grounded, dt), headlamp: (avatar) => this.shine(avatar), zombie: (id, x, y, z, clawing, dt) => this.zombieVoices.hear(id, x, y, z, clawing, dt) }))
+    this.soldiers = this.people.add(new Soldiers({ avatars: this.avatars, blobFoot, rewave: (x, z, tick) => this.rewave(x, z, tick), wade: (id, x, y, z, speed, dt) => this.surroundings.wade(id, x, y, z, speed, dt), skiRun: (id, x, z, vx, vz, grounded, dt) => this.skiTracks?.run(id, x, z, vx, vz, grounded, dt), headlamp: (avatar) => this.shine(avatar), zombie: (id, x, y, z, clawing, dt) => this.zombieVoices.hear(id, x, y, z, clawing, dt) }))
     this.riders = this.people.add(new Riders(this.avatars, this.vehicles))
     this.liftRiders = this.people.add(new LiftRiders(this.avatars, () => this.liftView, () => this.liftTick()))
     this.people.add(new Roosters({ root: this.scene.scene, listener: () => this.predictor?.state.position ?? [0, 0, 0], blobFoot }))
@@ -586,6 +592,7 @@ export class Game {
     this.predictor = new Predictor(motor.stepper, { position: [x, this.terrain.heightAt(x, z) + STANDING_Y, z], yaw: 0, vy: 0, grounded: true, knock: [0, 0], ride: 0, prone: false, chute: false, spent: 0, winded: false, lost: 0, down: 0, skis: false, skiStrain: 0, swimming: false })
     this.predictor.speedScale = (input) => aimSpeedScale(this.player.slot(input.slot).item, input.buttons) * (this.player.carrying ? BACKPACK_SPEED : 1)
     this.predictor.armed = (input) => fillsHands(this.player.slot(input.slot).item)
+    this.predictor.setTick = (tick) => motor.setTick(tick)
     this.avatars.local()
     if (this.disposed) return
     this.lastFrame = performance.now()
@@ -823,14 +830,12 @@ export class Game {
       // server just applies them to the car, or to their aim.
       this.predictor?.acknowledge(message.ack)
     } else if (own) {
-      // The replayed steps float a swimmer on the waves as they were then: near enough the snapshot's tick.
-      this.motor?.setTick(message.tick)
-      this.reconcile(own, message.ack, message.ride)
+      this.reconcile(own, message.ack, message.ride, message.tick)
     }
   }
 
   /** Puts the predicted soldier where their own entity says they are, on foot, as of input `ack`. */
-  private reconcile(own: Entity, ack: number, ride: number) {
+  private reconcile(own: Entity, ack: number, ride: number, tick: number) {
     if (!own.place || !own.flags || !this.predictor) return
     const { x, y, z } = own.place
     const { flags, stance } = own.flags
@@ -842,7 +847,7 @@ export class Game {
       knock: [own.motion?.knock_x ?? 0, own.motion?.knock_z ?? 0], ride, prone, chute: stance === STANCE_CHUTE,
       spent: own.vitals?.spent ?? 0, winded: own.vitals?.winded === 1, lost, down: own.vitals?.down ?? 0,
       skis: ((own.carry?.what ?? 0) & CARRY_SKIS) !== 0, skiStrain: own.vitals?.strain ?? 0, swimming: stance === STANCE_SWIM || stance === STANCE_DIVE,
-    })
+    }, tick)
   }
 
   private tick() {
@@ -864,13 +869,11 @@ export class Game {
     }
     // In a car the soldier does not walk, and nor does a dead one; the frame is kept for replay
     // in case it steps out or respawns.
-    if (this.seat || this.lifted || this.heldBy || !this.player.alive) this.predictor!.record(frame)
-    else {
-      // A swimmer floats on the waves, which run on the server's tick: the one it is about now.
-      const tick = Math.floor(this.clock.tickAt(performance.now()))
-      if (Number.isFinite(tick) && tick > 0) this.motor?.setTick(tick)
-      this.predictor!.apply(frame)
-    }
+    // A swimmer floats on the waves, which run on the server's tick: the one it is about now.
+    const now = Math.floor(this.clock.tickAt(performance.now()))
+    const tick = Number.isFinite(now) && now > 0 ? now : null
+    if (this.seat || this.lifted || this.heldBy || !this.player.alive) this.predictor!.record(frame, tick)
+    else this.predictor!.apply(frame, tick)
     if (this.localId !== null) {
       this.fireFeedback(frame)
       const onFoot = !this.seat && this.player.alive && itemDef(this.held().item)?.kind === 'build'
@@ -1056,11 +1059,13 @@ export class Game {
       seaWind.blowing = wind(this.clock.tickAt(now))
       this.smoke.blowing(seaWind.blowing)
       this.glow.blowing(seaWind.blowing)
+      this.jetSpray.blowing(seaWind.blowing)
       this.trails.blowing(seaWind.blowing)
       setWaterTime(this.waveClock)
     }
     const eye = this.scene.camera.position
-    if (this.wakes.update(dt, eye)) setWaterWakes(this.wakes.texture, this.wakes.area)
+    this.waves.update(dt, eye)
+    this.waterRefine.update(eye)
     this.view.update(dt, this.effects, this.cameraAt.set(eye.x, eye.y, eye.z), this.fxWorld)
     const ticks = this.runTicks(dt)
     const renderTick = this.clock.tickAt(now) - this.clock.interpDelay
@@ -1168,6 +1173,7 @@ export class Game {
     this.smoke.light.copy(this.scene.groundLight)
     this.blood.light.copy(this.scene.groundLight)
     this.snowRoost?.light.copy(this.scene.groundLight)
+    this.jetSpray.setLight(this.scene.groundLight)
   }
 
   /** Where the local player stands on the fist that holds them: on it as it is drawn, or where the server last had them. */
@@ -1185,7 +1191,12 @@ export class Game {
     // On a lift's chair the soldier is where the chair is now, as the server has them.
     const lifted = this.lifted
     const chairSeat = lifted && seat === null ? this.liftView?.seatOf(lifted.lift, lifted.chair, lifted.seat, this.liftTick(now)) : null
-    const position: Vec3 = chairSeat ? [chairSeat[0], chairSeat[1] + LIFT_RIDER_CENTRE, chairSeat[2]] : this.heldBy && seat === null ? this.inFist(this.heldBy) : this.ridden(predictor.renderPosition(this.accumulator / TICK_MS, dt), local.ride, renderTick)
+    const alpha = this.accumulator / TICK_MS
+    const position: Vec3 = chairSeat ? [chairSeat[0], chairSeat[1] + LIFT_RIDER_CENTRE, chairSeat[2]] : this.heldBy && seat === null ? this.inFist(this.heldBy) : this.ridden(predictor.renderPosition(alpha, dt), local.ride, renderTick)
+    // A swimmer was floated on the waves of the tick they were stepped at, a tick or two from the
+    // water's drawn now: carried by how much the water has risen since, they bob with it as drawn.
+    const stepped = predictor.renderTick(alpha)
+    if (local.swimming && seat === null && !chairSeat && !this.heldBy && stepped !== null) position[1] += this.rewave(position[0], position[2], stepped)
     this.localAt = position
     const velocity: [number, number] = [(local.position[0] - predictor.previous.position[0]) / (TICK_MS / 1000), (local.position[2] - predictor.previous.position[2]) / (TICK_MS / 1000)]
     const seated = seat !== null
@@ -1390,6 +1401,7 @@ export class Game {
     this.smoke.follow(eye.x, eye.z)
     this.glow.follow(eye.x, eye.z)
     this.smoke.update(dt)
+    this.jetSpray.update(dt)
     this.glow.update(dt)
     this.blood.update(dt)
     this.skids.update(dt)
@@ -1644,6 +1656,16 @@ export class Game {
     return EYE_HEIGHT - (this.crouching ? CROUCH_EYE_DROP : 0)
   }
 
+  /**
+   * How far the water at `(x, z)` has risen, metres, from server tick `tick` (fractional) to the drawn
+   * water's now: what carries a swimmer floated at `tick` onto the waves as they are drawn.
+   */
+  private rewave(x: number, z: number, tick: number): number {
+    if (!this.waters || !this.clock.synced) return 0
+    const now = this.waters.surfaceAt(x, z, this.waveClock)
+    return now === NO_WATER ? 0 : now - this.waters.surfaceAt(x, z, waveTime(tick))
+  }
+
   /** Whether the local soldier's eyes are under the water, waves and all, as the server's `Physics::submerged` has it. */
   private submerged(local: CharacterState): boolean {
     const level = this.waters?.surfaceAt(local.position[0], local.position[2], this.waveClock) ?? NO_WATER
@@ -1721,6 +1743,7 @@ export class Game {
   private startWinter(ice: boolean) {
     setWinter(true)
     snowOnBuildings()
+    setIced(ice)
     if (ice) freezeWater()
     this.scene.setLook(this.scene.look)
     this.snowfall = new Snowfall()
@@ -1783,10 +1806,10 @@ export class Game {
       groundAt: (x, z) => this.scene.groundAt(x, z),
       surfaceAt: (x, z) => this.surfaces?.at(x, z) ?? SURFACE_GRASS,
       waterAt: (x, z) => this.waters?.surfaceAt(x, z, this.waveClock) ?? NO_WATER,
-      ripple: (at, size) => this.effects.ripple(at, size),
-      wake: (x, z, strength) => this.wakes.drop(x, z, strength),
+      waves: this.waves,
       camera: this.scene.camera.position,
       roost: this.snowRoost,
+      jetSpray: this.jetSpray,
     }
     return this.fxWorldMade
   }
@@ -1808,6 +1831,8 @@ export class Game {
     this.crowd.dispose()
     this.effects.dispose()
     this.smoke.dispose()
+    this.jetSpray.dispose()
+    this.waterRefine.dispose()
     this.snowfall?.dispose()
     this.rainfall?.dispose()
     this.snowRoost?.dispose()

@@ -43,7 +43,7 @@ const HINTS: Record<Seat, (stats: Stats) => string> = {
     return `Mouse aim · Hold right mouse for the gun sight · Click or F fire${ammo ? ` · Q ${swapRound(ammo)}` : ''} · ${ammo ? `${ammo} ` : ''}${state}${canSwitchSeat ? SWITCH : ''}`
   },
   coxswain: ({ jammed, heat, canSwitchSeat }) =>
-    `W/S ahead, then the buckets down to stop and go astern · A/D steer, even standing still · Mouse aim the bow guns · Click or F fire · ${jammed ? 'jammed!' : (heat ?? 0) > 0.6 ? 'overheating' : 'ready'}${LIGHTS}${canSwitchSeat ? SWITCH : ''}`,
+    `W ahead · S buckets down: a crash stop, then astern · A/D steer, even standing still · Mouse look · The machine guns fire ahead: turn the boat to aim, the mouse tilts them · Click or F fire · ${jammed ? 'jammed!' : (heat ?? 0) > 0.6 ? 'overheating' : 'ready'}${LIGHTS}${canSwitchSeat ? SWITCH : ''}`,
   roofgunner: ({ jammed, heat, canSwitchSeat }) => `Mouse aim (within 90° of the cannon) · Click or F fire · ${jammed ? 'jammed!' : (heat ?? 0) > 0.6 ? 'overheating' : 'ready'}${canSwitchSeat ? SWITCH : ''}`,
 }
 

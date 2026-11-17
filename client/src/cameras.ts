@@ -17,6 +17,7 @@ import { isLobGun } from '@/render/mortar'
 import { PlaneModel } from '@/render/plane'
 import { CAMERA_HEIGHT, PLANE_CAMERA_HEIGHT, PLANE_DISTANCE, AIM_DISTANCE_SCALE, TITAN_AIM_UP, TITAN_PIVOT_UP, type Scene } from '@/render/scene'
 import { StrvModel } from '@/render/strvs'
+import { Cb90Model } from '@/render/cb90'
 import { headEye, headTurn, TitanModel } from '@/render/titan'
 import { TankModel } from '@/render/tank'
 import type { VehicleFx } from '@/render/tyres'
@@ -285,15 +286,19 @@ export class Cameras {
       enter: ({ ride }) => {
         this.input.yaw = ride.yaw
       },
-      frame: ({ ride, model, sighted, dt, distance }) => {
+      frame: ({ ride, model, seat, sighted, dt, distance }) => {
+        const rig: { pitch?: readonly [number, number]; eye?: readonly [number, number] } = seat.rig.name === 'tanker' ? seat.rig : {}
         if (!sighted) this.input.followYaw(ride.yaw, dt)
-        this.input.clampPitch(STRV_BARREL_MIN, STRV_BARREL_MAX)
-        if (model instanceof StrvModel) {
-          const { origin, direction } = model.barrel()
+        const [min, max] = rig.pitch ?? [STRV_BARREL_MIN, STRV_BARREL_MAX]
+        this.input.clampPitch(min, max)
+        const barrel = model instanceof StrvModel ? model.barrel() : model instanceof Cb90Model ? model.pintleBarrel() : null
+        if (barrel) {
+          const { origin, direction } = barrel
+          const [back, up] = rig.eye ?? [STRV_AIM_BACK, STRV_AIM_UP]
           // The hull aims the gun sideways, so the sight looks the way it points.
           if (sighted) this.input.yaw = Math.atan2(-direction.x, -direction.z)
           if (sighted) this.sightFrom(origin, this.input.yaw, this.input.pitch)
-          else this.scene.aimFrom([origin.x, origin.y, origin.z], this.input.yaw, this.input.pitch, STRV_AIM_BACK, STRV_AIM_UP)
+          else this.scene.aimFrom([origin.x, origin.y, origin.z], this.input.yaw, this.input.pitch, back, up)
         } else {
           this.scene.follow([ride.x, ride.y + 0.4, ride.z], this.input.yaw, this.input.pitch, distance, 0, CAMERA_HEIGHT)
         }
@@ -372,11 +377,7 @@ export class Cameras {
     }
   }
 
-  /**
-   * Behind a gun on a turret's roof, looking along its line, and kept within its travel of the turret,
-   * which pushes the look along when it swings away; or, for a gun on the hull (a boat's bow guns), of
-   * the hull.
-   */
+  /** Behind a gun on a turret's roof, looking along its line, and kept within its travel of the turret, which pushes the look along when it swings away. */
   private pintle(): RigImpl {
     let aimed = false
     return {
@@ -386,19 +387,18 @@ export class Cameras {
       frame: (c) => {
         const { ride, model, seat } = c
         const barrel = model instanceof TankModel ? model.pintleBarrel() : null
-        if (seat.rig.name !== 'pintle' || !barrel || (!seat.rig.hull && !ride.turret)) return this.rigs.drive.frame(c)
-        const from = ride.yaw + (seat.rig.hull ? 0 : (ride.turret?.yaw ?? 0))
+        if (seat.rig.name !== 'pintle' || !barrel || !ride.turret) return this.rigs.drive.frame(c)
+        const turret = ride.yaw + ride.turret.yaw
         if (!aimed && ride.pintle) {
           // Take the seat looking where the gun points.
-          this.input.yaw = from + ride.pintle.yaw
+          this.input.yaw = turret + ride.pintle.yaw
           this.input.pitch = ride.pintle.pitch
           aimed = true
         }
-        this.input.yaw = from + clamp(wrapAngle(this.input.yaw - from), -seat.rig.limit, seat.rig.limit)
+        this.input.yaw = turret + clamp(wrapAngle(this.input.yaw - turret), -seat.rig.limit, seat.rig.limit)
         this.input.clampPitch(seat.rig.pitch[0], seat.rig.pitch[1])
         const { origin } = barrel
-        const [back, up] = seat.rig.eye ?? [ROOF_AIM_BACK, ROOF_AIM_UP]
-        this.scene.aimFrom([origin.x, origin.y, origin.z], this.input.yaw, this.input.pitch, back, up)
+        this.scene.aimFrom([origin.x, origin.y, origin.z], this.input.yaw, this.input.pitch, ROOF_AIM_BACK, ROOF_AIM_UP)
       },
     }
   }

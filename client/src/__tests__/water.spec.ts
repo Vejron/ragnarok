@@ -3,7 +3,8 @@ import { describe, expect, it } from 'vitest'
 import { buildWater, disposeWater } from '@/render/water'
 import type { TileGround } from '@/sim/terrain'
 import { REACH_STEP } from '@/sim/waves'
-import { NO_WATER } from '@/world'
+import { NO_WATER, type TileData } from '@/world'
+import { tileParts } from '@/render/tileprep'
 
 /** 5 × 5 samples 5 m apart, flat at 2 m, with a pond of 3 × 3 samples bedded 1 m down. */
 function pond() {
@@ -54,6 +55,12 @@ describe('water', () => {
     const custom = mesh.geometry.custom!
     for (let i = 0; i < custom.length / 4; i++) expect(custom[i * 4 + 1]).toBeCloseTo(10 * REACH_STEP)
     disposeWater(group)
+  })
+
+  it('hands the tile worker the open water’s reach, so the surface it builds has the waves the sim floats things on', () => {
+    const reach = new Uint8Array([1, 2, 3])
+    const tile = { cover: [], roads: [], rails: [], ski: [], water: new Float32Array(3), reach, streams: [], bridges: [], collision: null, buildings: [] } as unknown as TileData
+    expect(tileParts(tile).reach).toBe(reach)
   })
 
   it('has no mesh for a tile without water', () => {

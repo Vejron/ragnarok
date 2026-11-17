@@ -19,7 +19,7 @@ export function dialMax(seat: HudStats['seat']): number {
     case 'captain':
       return 40
     case 'coxswain':
-      return 80
+      return 100
     case 'hen':
     case 'tupp':
     case 'walker':

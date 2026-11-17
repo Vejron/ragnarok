@@ -6,7 +6,7 @@ import { triangleCount } from './helpers'
 import { kindView } from '@/kinds'
 import { KIND_CB90 } from '@/net/codec'
 import { Cb90Model, parseCb90Model } from '@/render/cb90'
-import { CB90_MG_BARREL_X, CB90_MG_PIVOT, CB90_MG_YAW_LIMIT, CB90_SEATS, CB90_TURRET_PIVOT } from '@/sim/consts'
+import { CB90_CANNON_PIVOT, CB90_MG_BARREL_X, CB90_MG_PIVOT, CB90_SEATS } from '@/sim/consts'
 import { crewGun, seatHead, vehicleDef } from '@/sim/vehicles'
 
 const IDENTITY: [number, number, number, number] = [0, 0, 0, 1]
@@ -22,10 +22,10 @@ beforeAll(async () => {
 const named = (boat: Cb90Model, name: string) => boat.root.getObjectByName(name)!
 
 describe('Cb90Model', () => {
-  it('has its turret on the game’s ring and its bow guns on their post, on the hull', () => {
+  it('has its cannon on the game’s pivot and its machine guns on theirs, on the hull', () => {
     const boat = new Cb90Model(1)
     const turret = named(boat, 'turret')
-    CB90_TURRET_PIVOT.forEach((v, i) => expect(turret.position.toArray()[i]).toBeCloseTo(v, 4))
+    CB90_CANNON_PIVOT.forEach((v, i) => expect(turret.position.toArray()[i]).toBeCloseTo(v, 4))
     expect(named(boat, 'gun').parent).toBe(turret)
     const mg = named(boat, 'mg')
     CB90_MG_PIVOT.forEach((v, i) => expect(mg.position.toArray()[i]).toBeCloseTo(v, 4))
@@ -42,18 +42,18 @@ describe('Cb90Model', () => {
     boat.dispose()
   })
 
-  it('turns its bow guns from the hull, whatever the turret does, and fires them from either side', () => {
+  it('tilts its machine guns, whatever the cannon does, and fires them from either side', () => {
     const boat = new Cb90Model(1)
     boat.update([0, 0.2, 0], IDENTITY, 0, [0, 0, 0, 0], { ...LEVEL, yaw: Math.PI })
-    boat.setPintle({ yaw: 1, pitch: 0.2, shots: 0, heat: 0, flags: 0 })
+    boat.setPintle({ yaw: 0, pitch: 0.2, shots: 0, heat: 0, flags: 0 })
     const { direction, origin } = boat.pintleBarrel()!
-    expect(Math.atan2(-direction.x, -direction.z)).toBeCloseTo(1, 3)
+    expect(direction.x).toBeCloseTo(0, 4)
     expect(direction.y).toBeCloseTo(Math.sin(0.2), 3)
     expect(origin.z).toBeCloseTo(CB90_MG_PIVOT[2], 3)
     // Looking ahead, the left barrel is to the left of the right one, a barrel's spacing either side.
     boat.setPintle({ yaw: 0, pitch: 0, shots: 0, heat: 0, flags: 0 })
-    expect(boat.bowGun(-1)!.origin.x).toBeCloseTo(-CB90_MG_BARREL_X, 3)
-    expect(boat.bowGun(1)!.origin.x).toBeCloseTo(CB90_MG_BARREL_X, 3)
+    expect(boat.machineGun(-1)!.origin.x).toBeCloseTo(-CB90_MG_BARREL_X, 3)
+    expect(boat.machineGun(1)!.origin.x).toBeCloseTo(CB90_MG_BARREL_X, 3)
     boat.dispose()
   })
 
@@ -70,11 +70,12 @@ describe('Cb90Model', () => {
 })
 
 describe('the Stridsbåt 90 as a kind', () => {
-  it('seats a driver on the bow guns, a gunner on the cannon and two riders who fire their own guns', () => {
+  it('seats a driver on the machine guns, a gunner standing at the cannon and two riders who fire their own guns', () => {
     const { seats } = kindView(KIND_CB90).ride
     expect(seats).toHaveLength(CB90_SEATS)
     expect(seats.map((seat) => seat.role)).toEqual(['coxswain', 'gunner', 'passenger', 'passenger'])
-    expect(seats[0]!.rig).toMatchObject({ name: 'pintle', hull: true, limit: CB90_MG_YAW_LIMIT })
+    expect(seats[0]!.rig.name).toBe('tanker')
+    expect(seats[1]!.stand).toBe(true)
     expect(seats[0]!.gauges).toEqual(['pintle'])
     expect(seats[1]!.gauges).toEqual(['heat'])
     expect([0, 1, 2, 3].map((seat) => crewGun(KIND_CB90, seat))).toEqual([false, false, true, true])

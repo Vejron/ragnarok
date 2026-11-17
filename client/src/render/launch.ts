@@ -72,7 +72,7 @@ export function missileLaunch(world: FxWorld, mouth: V, up: V, surface: number |
       const o = off(rand(0.4, 2.5), rand(0, 0.4), rand(0, Math.PI * 2))
       world.smoke.spawn({ position: from(at, o), velocity: [o[0] * 2, rand(3, 9), o[2] * 2], life: rand(0.25, 0.5), size: [0.6, rand(1.4, 2.2)], color: pick(FIRE), colorEnd: 0x4a1405, glow: 3, alpha: 0.9, gravity: -2.5, drag: 3, spin: [-2, 2], shape: 'puff' })
     }
-    world.ripple?.(at, 4)
+    world.waves?.splash(at.x, at.z, 2, 0.6, 1)
     return
   }
 

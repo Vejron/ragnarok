@@ -1,14 +1,16 @@
 import { Vec3, Vector3 } from '@ragnarok/engine'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { kindView } from '@/kinds'
 import { tyreSlip } from '@/sim/slip'
 import { rasterSurface, Surfaces, SURFACE_ASPHALT, SURFACE_DIRT, SURFACE_GRASS, SURFACE_WATER } from '@/sim/surface'
 import { Skidmarks, SKID_LIFE } from '@/render/skidmarks'
 import { Particles } from '@/render/particles'
 import { VehicleFx, type FxWorld } from '@/render/tyres'
+import { JetSpray } from '@/render/jetspray'
 import { COVER_FARM, COVER_WATER, RAIL_TRAIN, RAIL_TRAM, ROAD_MINOR, ROAD_PATH, NO_WATER } from '@/world'
-import { KIND_HELI, KIND_JEEP, KIND_PLANE, KIND_SNOWMOBILE, KIND_SPORTS, KIND_TANK } from '@/net/codec'
-import { setWinter } from '@/render/season'
+import { KIND_CB90, KIND_HELI, KIND_JEEP, KIND_PLANE, KIND_SNOWMOBILE, KIND_SPORTS, KIND_TANK } from '@/net/codec'
+import { setIced, setWinter } from '@/render/season'
+import { JEEP_RIDE_HEIGHT, SNOWMOBILE_RIDE_HEIGHT, TANK_HALF_EXTENTS, TANK_RIDE_HEIGHT } from '@/sim/consts'
 import { SnowRoost } from '@/render/snowroost'
 
 describe('tyreSlip', () => {
@@ -232,6 +234,46 @@ describe('VehicleFx', () => {
   })
 })
 
+describe('a waterjet boat', () => {
+  /**
+   * A Stridsbåt 90 afloat heading -Z from `speed` m/s, changing speed at `accel` m/s², for a second: the
+   * water it has in the air at the end, all of it and the mist alone.
+   */
+  function run(speed: number, accel: number) {
+    const glow = new Particles(2000, true)
+    const jetSpray = new JetSpray(glow)
+    const w: FxWorld & { smoke: Particles; skids: Skidmarks } = {
+      smoke: new Particles(4000),
+      glow,
+      skids: new Skidmarks(500),
+      groundAt: () => -5,
+      surfaceAt: () => SURFACE_WATER,
+      waterAt: () => 0,
+      camera: new Vec3(0, 5, 10),
+      jetSpray,
+    }
+    const fx = new VehicleFx(1, KIND_CB90)
+    const dt = 1 / 60
+    for (let i = 0; i < 60; i++) {
+      const t = i * dt
+      fx.update(w, [0, 0.2, -(speed * t + 0.5 * accel * t * t)], [0, 0, 0, 1], 0, true, dt)
+      jetSpray.update(dt)
+    }
+    return { water: jetSpray.alive, mist: jetSpray.misty }
+  }
+
+  it('throws nothing lying still, a rooster tail of streaks, drops and mist under way, and a storm of it in a crash stop', () => {
+    expect(run(0, 0)).toEqual({ water: 0, mist: 0 })
+    const cruising = run(20, 0)
+    // About a thousand drops a second in the rooster tail and bow sheets, and a cloud behind.
+    expect(cruising.water).toBeGreaterThan(500)
+    expect(cruising.mist).toBeGreaterThan(20)
+    const stopping = run(20, -10)
+    expect(stopping.water).toBeGreaterThan(cruising.water * 2)
+    expect(stopping.mist).toBeGreaterThan(cruising.mist * 2)
+  })
+})
+
 describe('snow off the tracks', () => {
   function winterWorld(surface: number) {
     const glow = new Particles(500, true)
@@ -286,6 +328,7 @@ describe('snow off the tracks', () => {
 
   it('treats a frozen lake as ice: no spray and no marks', () => {
     setWinter(true)
+    setIced(true)
     try {
       const { w } = winterWorld(SURFACE_WATER)
       // Nobody at the wheel, so no exhaust: anything in the air would be spray.
@@ -294,6 +337,98 @@ describe('snow off the tracks', () => {
       expect(w.skids.laid).toBe(0)
     } finally {
       setWinter(false)
+      setIced(false)
     }
+  })
+})
+
+describe('skimming over the water', () => {
+  /** `kind` with its wheels' bottoms at the surface of deep water, at `speed` m/s for a second: the water it has in the air. */
+  function skim(kind: number, ride: number, speed: number) {
+    const glow = new Particles(2000, true)
+    const jetSpray = new JetSpray(glow)
+    const w: FxWorld = {
+      smoke: new Particles(2000), glow, skids: new Skidmarks(500),
+      groundAt: () => -5, surfaceAt: () => SURFACE_WATER, waterAt: () => 0,
+      camera: new Vec3(0, 5, 10), jetSpray,
+    }
+    const fx = new VehicleFx(1, kind)
+    const dt = 1 / 60
+    for (let i = 0; i < 60; i++) {
+      fx.update(w, [0, ride, -speed * i * dt], [0, 0, 0, 1], 0, true, dt)
+      jetSpray.update(dt)
+    }
+    return jetSpray.alive
+  }
+
+  it('throws spray off a car skimming fast, more the faster, and none off one not moving', () => {
+    expect(skim(KIND_JEEP, JEEP_RIDE_HEIGHT, 0)).toBe(0)
+    const fast = skim(KIND_JEEP, JEEP_RIDE_HEIGHT, 22)
+    expect(fast).toBeGreaterThan(100)
+    expect(fast).toBeGreaterThan(skim(KIND_JEEP, JEEP_RIDE_HEIGHT, 10))
+  })
+
+  it('throws a rooster tail off a snowmobile on a winter world\'s open water', () => {
+    setWinter(true)
+    try {
+      expect(skim(KIND_SNOWMOBILE, SNOWMOBILE_RIDE_HEIGHT, 15)).toBeGreaterThan(skim(KIND_JEEP, JEEP_RIDE_HEIGHT, 15))
+    } finally {
+      setWinter(false)
+    }
+  })
+})
+
+describe('anything going into the water', () => {
+  /** A world whose water, 0.8 m deep, starts 10 m north (-Z) of the origin, recording what stirs it. */
+  function lake() {
+    const splashes: { radius: number; depth: number }[] = []
+    const hulls: string[] = []
+    const inLake = (z: number) => z < -10
+    const w: FxWorld & { smoke: Particles } = {
+      smoke: new Particles(4000),
+      glow: new Particles(100, true),
+      skids: new Skidmarks(500),
+      groundAt: () => 0,
+      surfaceAt: (_x, z) => (inLake(z) ? SURFACE_WATER : SURFACE_GRASS),
+      waterAt: (_x, z) => (inLake(z) ? 0.8 : NO_WATER),
+      waves: { hull: (key) => hulls.push(key), splash: (_x, _z, radius, depth) => splashes.push({ radius, depth }) },
+      camera: new Vec3(0, 5, 10),
+    }
+    return { w, splashes, hulls }
+  }
+
+  /** `kind` driven north at `speed` m/s for two seconds from `z0`, at height `y` metres. */
+  function drive(w: FxWorld, kind: number, z0: number, y: number, speed: number) {
+    const fx = new VehicleFx(1, kind)
+    const dt = 1 / 60
+    for (let i = 0; i < 120; i++) fx.update(w, [0, y, z0 - speed * i * dt], [0, 0, 0, 1], 0, true, dt)
+  }
+
+  afterEach(() => vi.restoreAllMocks())
+
+  it('splashes once as big as the tank where it drives in, then pushes a wake and throws water off its bow', () => {
+    // Every chance of throwing water off the bow comes up.
+    vi.spyOn(Math, 'random').mockReturnValue(0.01)
+    const { w, splashes, hulls } = lake()
+    drive(w, KIND_TANK, 0, TANK_RIDE_HEIGHT, 8)
+    const big = splashes.filter((s) => s.radius >= TANK_HALF_EXTENTS[0])
+    expect(big).toHaveLength(1)
+    expect(big[0]!.depth).toBeGreaterThan(0.3)
+    expect(splashes.length).toBeGreaterThan(10)
+    expect(hulls).toContain('vehicle 1')
+  })
+
+  it('does not splash when first seen already in the water', () => {
+    const { w, splashes } = lake()
+    drive(w, KIND_TANK, -20, TANK_RIDE_HEIGHT, 4)
+    expect(splashes.filter((s) => s.radius >= TANK_HALF_EXTENTS[0])).toHaveLength(0)
+  })
+
+  it('splashes where a helicopter drops into it', () => {
+    const { w, splashes } = lake()
+    const fx = new VehicleFx(1, KIND_HELI)
+    const dt = 1 / 60
+    for (let i = 0; i < 60; i++) fx.update(w, [0, 6 - i * 0.12, -20], [0, 0, 0, 1], 0, false, dt)
+    expect(splashes.some((s) => s.radius >= 1 && s.depth > 0.3)).toBe(true)
   })
 })

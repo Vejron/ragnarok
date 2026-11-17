@@ -5,7 +5,44 @@ import type { HeightSource } from './shade'
 import { waterBuffers, type WaterBuffers } from './groundmesh'
 import { GROUND_LIGHT_WGSL } from './groundlight'
 import { WAVES_WGSL } from '@/sim/waves'
-import { WAKES_WGSL } from './wakes'
+
+/**
+ * `fn wake(p: vec2f) -> vec4f`: the moved water's height at `p` (metres), its slope `(dh/dx, dh/dz)`
+ * and how churned it is there (0 to 1), read from the material's `wakeMap` texture (`WaveField.texture`)
+ * over its `wakeArea`. It fades out towards the map's edge.
+ */
+const WAKES_WGSL = /* wgsl */ `
+// How far in from the refined square's edge the wakes' height fades in, metres (\`wakeLift\`).
+const WAKE_EDGE = 6.0;
+
+fn wake(p: vec2f) -> vec4f {
+  let uv = (p - params.wakeArea.xy) / params.wakeArea.z;
+  let edge = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
+  if (edge <= 0.0) {
+    return vec4f(0.0);
+  }
+  return textureSampleLevel(wakeMap, materialSampler, uv, 0.0) * smoothstep(0.0, 0.08, edge);
+}
+
+// How far inside the refined square \`p\` is, metres (negative outside it), while there is one.
+fn inRefine(p: vec2f) -> f32 {
+  if (params.refineArea.w < 0.5) {
+    return -1.0;
+  }
+  let q = p - params.refineArea.xy;
+  return min(min(q.x, params.refineArea.z - q.x), min(q.y, params.refineArea.z - q.y));
+}
+
+// The moved water's height at \`p\`, for a vertex of the refined mesh (\`WaterRefine\`, its uv's x is 1),
+// whose vertices are as close as the wave field's texels: none for the tiles' own coarser vertices,
+// which cannot carry it, and fading out towards the refined square's edge, so the two meet flat.
+fn wakeLift(p: vec2f) -> f32 {
+  if (vertexUv.x < 0.5) {
+    return 0.0;
+  }
+  return wake(p).x * smoothstep(0.0, WAKE_EDGE, inRefine(p));
+}
+`
 
 /**
  * Water: lakes and rivers are a surface mesh per tile at the importer's water level, streams are
@@ -15,7 +52,7 @@ import { WAKES_WGSL } from './wakes'
  * look needs no extra pass. Lakes and rivers carry the waves the sim rides vehicles on (`sim/waves.ts`):
  * the vertices rise and fall with them on the server's clock, they light the surface, and their crests
  * break white. They die away towards the shore; streams and ice have none. On top, whatever moves
- * through the water carves a wake into it (`wakes.ts`).
+ * through the water stirs it (`waterwaves.ts`).
  */
 
 /** Shore foam reaches this deep, metres. */
@@ -40,7 +77,7 @@ fn wakeShare(custom: vec4f) -> f32 {
 }
 
 fn displace(world: vec3f, custom: vec4f, color: vec4f) -> vec3f {
-  let lift = waves(world.xz, params.wave.x, custom.y).x * waveShare(custom) + wake(world.xz).x * wakeShare(custom);
+  let lift = waves(world.xz, params.wave.x, custom.y).x * waveShare(custom) + wakeLift(world.xz) * wakeShare(custom);
   return world + vec3f(0.0, lift, 0.0);
 }
 `
@@ -134,6 +171,11 @@ fn surface(s: Surface) -> vec4f {
   let flow = s.custom.yzw;
   let world = s.world.xz;
   let stream = flow.z > 0.5;
+  // A tile's own surface leaves the refined square to the refined mesh, which covers just its triangles
+  // there: the square is on the cells' lines and the water moves only up and down, so the two meet.
+  if (!stream && s.uv.x < 0.5 && inRefine(world) >= 0.0) {
+    discard;
+  }
   var p = world * 0.7;
   if (stream) {
     p = vec2f(flow.x - time * ${FLOW_SPEED.toFixed(2)}, flow.y * 3.0) * 2.2;
@@ -169,7 +211,7 @@ fn surface(s: Surface) -> vec4f {
   // The real waves' slope, with the small swell's ripples over it.
   let share = waveShare(s.custom);
   let big = waves(world, params.wave.x, s.custom.y) * share;
-  // And what has passed through it: the wakes' rings and trenches, and their churn.
+  // And what has moved through it: its bow waves, wakes and rings, and their churn.
   let churn = wake(world) * wakeShare(s.custom);
   var n = normalize(vec3f(-grad.x * 0.45 - big.y - churn.y, 1.0, -grad.y * 0.45 - big.z - churn.z));
   if (!s.front) {
@@ -225,9 +267,11 @@ fn surface(s: Surface) -> vec4f {
   let steep = length(big.yz);
   let cap = smoothstep(0.45, 0.9, big.x) * smoothstep(0.15, 0.4, steep) * smoothstep(0.2, 0.6, lace) * mix(0.5, 1.2, gust);
   color = mix(color, params.foam * ground, cap * 0.75);
-  // A wake churns white behind what made it, breaking up as it settles.
-  let wash = clamp(churn.w, 0.0, 1.0) * mix(0.5, 1.0, lace);
-  color = mix(color, params.foam * ground, wash * 0.8);
+  // A wake churns white behind what made it: solid where it is fresh, and as it thins it breaks up
+  // into lace and streaks, the thinnest of it surviving only in the froth noise's hollows.
+  let froth = vnoise(world * 3.1 + vec2f(time * 0.3, time * 0.2)).x * 0.5 + 0.5;
+  let wash = smoothstep(0.0, 0.25, churn.w - froth * 0.8) * mix(0.75, 1.0, lace);
+  color = mix(color, params.foam * ground, wash * 0.9);
 
   if (params.ice.x > 0.5) {
     // Wind-scoured ice under drifts of snow, with the odd long crack: still, and opaque.
@@ -246,8 +290,8 @@ fn surface(s: Surface) -> vec4f {
 /** What the water samples until the renderer's mirror is handed over: transparent, so it shows sky. */
 const blank = new Texture({ data: new Uint8Array(4), width: 1, height: 1 }, { srgb: false, wrap: 'clamp', mipmaps: false })
 
-/** A wake map with nothing on it. */
-const still = new Texture({ data: new Uint8Array([128, 128, 128, 0]), width: 1, height: 1 }, { srgb: false, wrap: 'clamp', mipmaps: false })
+/** A wake map with nothing on it: no height, no slope, no foam. */
+const still = new Texture({ data: new Uint8Array([0, 0, 0, 0]), width: 1, height: 1 }, { srgb: false, wrap: 'clamp', mipmaps: false })
 
 /** One shared material, so every tile draws with the same pipeline and a sky change reaches them all. */
 let shared: ShaderMaterial | null = null
@@ -269,10 +313,12 @@ function material(): ShaderMaterial {
       ice: [0, 0],
       // The waves' clock, seconds into their loop, and 1 while they run (not on ice).
       wave: [0, 1],
-      // Where the wake map's corner is (x, z) and how wide it is, metres (`Wakes.area`).
+      // Where the wake map's corner is (x, z) and how wide it is, metres (`WaveField.area`).
       wakeArea: [0, 0, 1, 0],
+      // The square the refined mesh covers (\`WaterRefine\`): its corner (x, z), its side, metres, and 1 while it is drawn.
+      refineArea: [0, 0, 0, 0],
     },
-    // Mid-grey until the wakes are handed over: no height, no slope.
+    // Still water until the wave field is handed over.
     textures: { reflection: blank, wakeMap: still, skyPanorama: blank },
     blend: 'alpha',
     // Written, so the ink (which reads depth) outlines the surface and not the bed seen through it.
@@ -286,6 +332,21 @@ function material(): ShaderMaterial {
   return shared
 }
 
+/** The lake and river surfaces drawn now, for the refined mesh to cut finer near the camera. */
+export const waterSurfaces = new Set<Mesh>()
+
+/** The water material, for the refined mesh to draw with. */
+export function waterMaterial(): ShaderMaterial {
+  return material()
+}
+
+/** Hands the water the square the refined mesh covers, or none. */
+export function setWaterRefine(area: Readonly<[number, number, number]> | null) {
+  const m = material()
+  ;(m.uniforms.refineArea as [number, number, number, number]).splice(0, 4, ...(area ?? [0, 0, 0]), area ? 1 : 0)
+  m.needsUpdate()
+}
+
 /** Freezes every lake, river and stream. */
 export function freezeWater() {
   ;(material().uniforms.ice as [number, number])[0] = 1
@@ -293,7 +354,7 @@ export function freezeWater() {
   material().needsUpdate()
 }
 
-/** Hands the water the wake map (`Wakes.texture`) and where it lies (`Wakes.area`), after it was drawn again. */
+/** Hands the water the wave field's map (`WaveField.texture`) and where it lies (`WaveField.area`). */
 export function setWaterWakes(map: Texture, area: Readonly<[number, number, number, number]>) {
   const m = material()
   m.textures.wakeMap = map
@@ -341,6 +402,7 @@ export function buildWater(tile: Pick<TileData, 'water' | 'reach' | 'streams'>, 
   const meshes = (prepared ?? waterBuffers(tile, ground, around)).map((buffers) => {
     const mesh = new Mesh(new Geometry(buffers), material())
     mesh.renderOrder = 1
+    if (buffers.surface) waterSurfaces.add(mesh)
     return mesh
   })
   if (meshes.length === 0) return null
@@ -352,7 +414,10 @@ export function buildWater(tile: Pick<TileData, 'water' | 'reach' | 'streams'>, 
 /** Frees a tile's water geometry. The material is shared and stays. */
 export function disposeWater(group: Group) {
   group.traverse((object) => {
-    if (object instanceof Mesh) object.geometry.dispose()
+    if (object instanceof Mesh) {
+      waterSurfaces.delete(object)
+      object.geometry.dispose()
+    }
   })
   group.removeFromParent()
 }

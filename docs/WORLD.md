@@ -492,6 +492,11 @@ half a metre, and water 360 m across or more, and the sea, carries the whole swe
 The client mirrors the numbers in `client/src/sim/waves.ts`, and `waves.spec.ts` holds the two
 together.
 
+The water's surface meshes are built in the tile worker, which is sent only the parts of a tile it
+reads (`tileParts`). `reach` must be among them. It was not at first: every surface was built with a
+reach of 0 and drew only the flat level, while the sim floated boats and swimmers on the full swell,
+so they rode waves nobody could see.
+
 ### Terrain (DTM)
 STAC finds the GeoTIFFs over the box; the importer reads only the 512 KiB blocks under the world
 with HTTP range requests, takes the mean over each 5 m cell and stores it as `i32` cm above the

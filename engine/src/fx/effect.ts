@@ -19,6 +19,12 @@ export interface EffectContext {
   /** Changes when the render targets are recreated (a resize): bind groups holding `depthView` must be rebuilt. */
   targetsVersion: number
   /**
+   * The geometry arena's vertex and index buffers (`GeometryArena`), for an effect that writes a mesh's
+   * vertices on the GPU (`MeshRefiner`): they are replaced when the arena grows, so take them each frame.
+   */
+  vertices: GPUBuffer
+  indices: GPUBuffer
+  /**
    * The frame's point lights as the scene shaders read them (`LIGHTS_WGSL`), for an effect's compute
    * pass: the records, the grid's cells, the grid's corner (world x, z), 1 / its cell size and how many
    * lights are listed. With none listed the buffers hold an earlier frame's.

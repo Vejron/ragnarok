@@ -25,6 +25,8 @@ export function splash(world: FxWorld, at: V, size: number, speed = 0) {
   const alive = world.smoke.alive
   const budget = alive > 1500 ? 0.4 : alive > 800 ? 0.65 : 1
   const rise = 2.5 + size * 2.5 + Math.min(speed, 20) * 0.3
+  // It knocks a hole in the water, which runs out as rings, and leaves foam.
+  world.waves?.splash(at.x, at.z, 0.3 + size * 0.5, 0.1 + size * 0.12 + Math.min(speed, 20) * 0.01, 0.8)
 
   const drops = Math.min(MAX_DROPS, Math.max(2, Math.round((5 + size * 9) * budget)))
   for (let i = 0; i < drops; i++) {
@@ -61,5 +63,4 @@ export function splash(world: FxWorld, at: V, size: number, speed = 0) {
     })
   }
 
-  world.ripple?.(at, size)
 }

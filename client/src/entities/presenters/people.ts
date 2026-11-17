@@ -24,6 +24,11 @@ export interface PeopleWorld {
   headlamp(avatar: Character): void
   /** A zombie at `(x, y, z)`, `clawing` or not, for its groans and the swish of its claws. */
   zombie(id: number, x: number, y: number, z: number, clawing: boolean, dt: number): void
+  /**
+   * How far the water at `(x, z)` has risen, metres, from server tick `tick` to the drawn water's now: a
+   * swimmer is shown as of the render tick, a little behind the water.
+   */
+  rewave(x: number, z: number, tick: number): number
   /** The grooves and spray of a skier at `(x, z)` going `(vx, vz)`. */
   skiRun(id: number, x: number, z: number, vx: number, vz: number, grounded: boolean, dt: number): void
 }
@@ -52,9 +57,12 @@ export class Soldiers implements Presenter<Frame> {
   }
 
   update(id: number, { entity, velocity }: Sampled, frame: Frame) {
-    const { x, y, z } = entity.place!
+    const { x, z } = entity.place!
     const { flags, stance } = entity.flags!
     const dead = (flags & FLAG_DEAD) !== 0
+    // A swimmer floats on the waves of the render tick; carried on to the water's now, they bob with it as drawn.
+    const swimming = !dead && (stance === STANCE_SWIM || stance === STANCE_DIVE)
+    const y = entity.place!.y + (swimming ? this.world.rewave(x, z, frame.tick) : 0)
     const grounded = (flags & FLAG_GROUNDED) !== 0
     const crouching = (flags & FLAG_CROUCHING) !== 0
     const knock = entity.motion ? Math.hypot(entity.motion.knock_x, entity.motion.knock_z) : 0

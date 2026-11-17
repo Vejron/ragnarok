@@ -16,8 +16,13 @@ looking down, and can hold their breath for 30 s. After that they drown, unless 
   - A floating swimmer is lifted with the swell's rise and bobs with it.
   - The waves die away towards the shore, so wading in and out is as before.
   - The client's prediction sets the sim's tick to its estimate of the server's before each step on
-    foot, and to the snapshot's before a replay. Waves change slowly, so being a tick or two off costs
-    nothing that shows.
+    foot, and keeps that tick with the input. A replay after a snapshot steps each input on its own tick
+    again, so it floats on the same waves as the first time (`Predictor.reconcile`).
+  - **Drawn on the water's clock.** The water is drawn at the server's tick now, but a swimmer is drawn
+    as of an earlier tick: the local one blended between the last two steps, everyone else at the render
+    tick, about 100 ms behind. On a swell rising at over 1 m/s that put the water visibly up or down the
+    body. So a swimmer is drawn carried by how much the water under them has risen since the tick they
+    were stepped at (`Game.rewave`), and bobs exactly with the water as drawn.
 - A swimmer floats with their capsule centre `SWIM_FLOAT` (0.45 m) under the surface. That puts the eye
   (`EYE_HEIGHT` over the centre) just out of the water, and leaves exactly `SWIM_DEPTH` over the feet.
 - Frozen (winter) water is not water to the sim, so nobody swims in it.
@@ -114,7 +119,7 @@ The client blends them in `Character.swimTargets` (`client/src/render/character.
 
 ## Effects
 
-- **Above:** the wake and ripples of `Surroundings.wade` follow a swimmer.
+- **Above:** a swimmer pushes a small wake into the wave field (`Surroundings.wade`, [WATER-WAVES.md](WATER-WAVES.md)). The old rings drawn as flat particles on the still level are gone: they lay at the wrong height on a swell, and the wave field's own rings replace them.
 - **Below:** a body whose centre is more than `DIVE_DEPTH` (1.2 m) under leaves the surface still.
 - **Camera:** the underwater fog was already there (`scene.setUnderwater`).
 

@@ -4,12 +4,13 @@ use super::*;
 
 /// The Stridsbåt 90 (`KIND_CB90`): the Swedish fast assault craft, true to size, 15.9 m long and 3.8 m
 /// across, pushed by two waterjets to 40 knots. It floats only on open water, planes at speed, banks
-/// into its turns and stops in a few lengths with its reversing buckets; run up a beach it sits there
-/// on its keel. The driver (seat 0) sits in the wheelhouse, steers it and works the twin Ksp 58 machine
-/// guns on the bow, which follow their look within `CB90_MG_YAW_LIMIT` of dead ahead; the gunner (seat 1)
-/// beside them lays the 25 mm automatic cannon in the turret on the wheelhouse roof, which goes all the
-/// way round. Two more (seats 2 and 3) ride on the open after deck, firing their own guns. Its bow tapers
-/// to a point over `CB90_BOW`.
+/// into its turns and stops in a few lengths with its reversing buckets. The driver (seat 0) sits in the
+/// low cockpit forward and works the twin Ksp 58 machine guns fixed on its front, which only elevate:
+/// the driver aims them sideways by turning the boat, as a Strv S's. Behind the cockpit the gunner
+/// (seat 1) stands in an open ring on the troop compartment's roof, out in the open, and turns the 25 mm
+/// automatic cannon all the way round. The troop compartment is down in the hull, its roof a little over
+/// the gunwale, and behind it two riders (seats 2 and 3) sit on the open after deck, firing their own
+/// guns. Its bow tapers to a point over `CB90_BOW`.
 pub const CB90_SEATS: usize = 4;
 /// Half the hull's box, metres: 3.8 m across, 2 m from the keel to the deck and 15.9 m long.
 pub const CB90_HALF_EXTENTS: [f32; 3] = [1.9, 1.0, 7.95];
@@ -18,16 +19,20 @@ pub const CB90_BOW: f32 = 4.5;
 /// How deep the hull floats at rest, metres: the deck stands this much less than its height out of the
 /// water.
 pub const CB90_DRAFT: f32 = 0.8;
-/// Top speed ahead on calm water, m/s (40 knots).
-pub const CB90_MAX_SPEED: f32 = 20.6;
-/// How hard the waterjets push it ahead from a standstill, m/s²: up to 30 knots in about eight seconds.
-pub const CB90_THRUST: f32 = 2.0;
-/// How hard the reversing buckets stop it while it still runs ahead, m/s²: from full speed in about
-/// two and a half lengths, as the real boat does.
-pub const CB90_BRAKE: f32 = 5.5;
+/// Top speed ahead on calm water, m/s (45 knots).
+pub const CB90_MAX_SPEED: f32 = 23.0;
+/// How hard the waterjets push it ahead from a standstill, m/s²: up to 30 knots in under five seconds.
+pub const CB90_THRUST: f32 = 3.6;
+/// How hard the reversing buckets stop it while it still runs ahead, m/s²: from full speed inside two
+/// lengths, as the real boat's crash stop does.
+pub const CB90_BRAKE: f32 = 10.0;
+/// In a crash stop its bow digs in, this far down, radians, and its hull squats this much deeper into
+/// the water, metres, both most from `CB90_PLANE_SPEED`'s top and gone by the time it has stopped.
+pub const CB90_BRAKE_DIP: f32 = 0.13;
+pub const CB90_BRAKE_SQUAT: f32 = 0.35;
 /// Top speed astern, m/s.
 pub const CB90_ASTERN_SPEED: f32 = 4.0;
-/// Yaw rate at full helm under way, rad/s: a turn about 90 m across at full speed.
+/// Yaw rate at full helm under way, rad/s: a turn about 100 m across at full speed.
 pub const CB90_TURN_RATE: f32 = 0.45;
 /// Yaw rate at full helm standing still, rad/s: the jets swing it round on the spot.
 pub const CB90_SPIN_RATE: f32 = 0.3;
@@ -44,23 +49,29 @@ pub const CB90_BANK: f32 = 0.022;
 pub const CB90_BANK_MAX: f32 = 0.2;
 /// The deck, in the hull frame.
 pub const CB90_DECK_Y: f32 = CB90_HALF_EXTENTS[1];
-/// The superstructure is one long, low house with leaning sides. Its fore part, the troop compartment
-/// under a roof 1 m over the deck: half its box, metres, and where its middle is.
-pub const CB90_CABIN_HALF: [f32; 3] = [1.5, 0.5, 2.3];
-pub const CB90_CABIN_AT: [f32; 3] = [0.0, 1.5, -1.7];
-/// Its after part, the wheelhouse, raised behind it: half its box, metres, and where its middle is. Its
-/// roof is 3.9 m over the keel.
-pub const CB90_WHEELHOUSE_HALF: [f32; 3] = [1.5, 0.95, 2.05];
-pub const CB90_WHEELHOUSE_AT: [f32; 3] = [0.0, 1.95, 2.35];
-/// The turret on the front of the wheelhouse roof: its ring (the middle of its solid), its radius and half its
+/// The cockpit, low and forward, where the driver sits: half its box, metres, and where its middle is.
+/// Its roof is 1.15 m over the deck.
+pub const CB90_COCKPIT_HALF: [f32; 3] = [1.4, 0.575, 1.45];
+pub const CB90_COCKPIT_AT: [f32; 3] = [0.0, 1.575, -3.15];
+/// The troop compartment's roof behind it, 0.35 m over the deck, down to the after deck: half its box,
+/// metres, and where its middle is.
+pub const CB90_TROOP_HALF: [f32; 3] = [1.6, 0.175, 2.15];
+pub const CB90_TROOP_AT: [f32; 3] = [0.0, 1.175, 0.45];
+/// The gunner's ring on that roof, just behind the cockpit: where its middle is, its radius and half its
 /// height, metres.
-pub const CB90_TURRET_PIVOT: [f32; 3] = [0.0, 3.2, 1.3];
-pub const CB90_TURRET_RADIUS: f32 = 0.6;
-pub const CB90_TURRET_HALF_HEIGHT: f32 = 0.3;
-/// The cannon: how far its muzzle is from the ring, metres, its elevation, radians (+ is up), which
-/// keeps its rounds over the bow guns, and how fast it follows the gunner's look, rad/s.
+pub const CB90_RING_AT: [f32; 3] = [0.0, 1.55, -0.9];
+pub const CB90_RING_RADIUS: f32 = 0.75;
+pub const CB90_RING_HALF_HEIGHT: f32 = 0.2;
+/// The cannon on its pedestal in the ring: where it turns and elevates, high enough to fire over the
+/// cockpit and its machine guns.
+pub const CB90_CANNON_PIVOT: [f32; 3] = [0.0, 2.75, -0.9];
+/// The gunner's head from the pivot, with the gun pointing ahead: standing in the ring's hatch behind the
+/// gun, on the troop compartment's floor.
+pub const CB90_GUNNER_HEAD: [f32; 3] = [0.0, -0.55, 0.7];
+/// The cannon: how far its muzzle is from the pivot, metres, its elevation, radians (+ is up), which
+/// keeps its rounds over the cockpit, and how fast it follows the gunner's look, rad/s.
 pub const CB90_CANNON_LENGTH: f32 = 2.3;
-pub const CB90_CANNON_PITCH_MIN: f32 = -0.1;
+pub const CB90_CANNON_PITCH_MIN: f32 = -0.08;
 pub const CB90_CANNON_PITCH_MAX: f32 = 0.9;
 pub const CB90_CANNON_SLEW: f32 = 1.8;
 /// Ticks between its rounds: seven and a half a second.
@@ -73,16 +84,15 @@ pub const CB90_CANNON_VEHICLE_DAMAGE: u8 = 12;
 pub const CB90_CANNON_PLANE_DAMAGE: u8 = 24;
 /// Heat a round puts in the barrel, of 255: about five seconds of holding the trigger jams it.
 pub const CB90_CANNON_HEAT: f32 = 15.0;
-/// The twin machine guns on their post at the front of the troop compartment's roof: where they turn,
-/// how far either side of it each barrel is, metres, how far round from dead ahead they go, radians
-/// (clear of the wheelhouse behind them), their elevation and how fast they follow the look, rad/s.
-pub const CB90_MG_PIVOT: [f32; 3] = [0.0, 2.45, -2.8];
+/// The twin machine guns fixed on the front of the cockpit's roof, firing ahead over the bow: where they
+/// elevate, how far either side of it each barrel is, metres, how far they tilt down and up, radians
+/// (+ is up), and how fast, rad/s. They do not turn: the boat aims them.
+pub const CB90_MG_PIVOT: [f32; 3] = [0.0, 2.4, -3.9];
 pub const CB90_MG_BARREL_X: f32 = 0.16;
 pub const CB90_MG_LENGTH: f32 = 1.1;
-pub const CB90_MG_YAW_LIMIT: f32 = 2.2;
-pub const CB90_MG_PITCH_MIN: f32 = -0.3;
-pub const CB90_MG_PITCH_MAX: f32 = 0.9;
-pub const CB90_MG_SLEW: f32 = 3.0;
+pub const CB90_MG_PITCH_MIN: f32 = -0.15;
+pub const CB90_MG_PITCH_MAX: f32 = 0.2;
+pub const CB90_MG_SLEW: f32 = 0.8;
 /// Ticks between rounds, the two barrels taking turns: twenty a second.
 pub const CB90_MG_COOLDOWN_TICKS: u32 = 3;
 pub const CB90_MG_SPREAD: f32 = 0.01;
@@ -93,32 +103,33 @@ pub const CB90_MG_VEHICLE_DAMAGE: u8 = 3;
 pub const CB90_MG_PLANE_DAMAGE: u8 = 6;
 /// Heat a round puts in the barrels, of 255: about five seconds of holding the trigger jams them.
 pub const CB90_MG_HEAT: f32 = 5.5;
-/// Where the driver's reticle camera sits behind and above the bow guns, metres: over the wheelhouse,
-/// looking down the boat.
-pub const CB90_AIM_BACK: f32 = 6.0;
-pub const CB90_AIM_UP: f32 = 2.2;
-/// The driver and the gunner side by side in the wheelhouse, then the two riders on the after deck.
-pub const CB90_SEAT_HEADS: [[f32; 3]; 4] = [[-0.55, 2.3, 1.6], [0.55, 2.3, 1.6], [-0.9, 2.3, 5.8], [0.9, 2.3, 5.8]];
-/// Where it is boarded from, on the after deck behind the wheelhouse, and where whoever leaves it stands
-/// (the middle of a standing soldier), a little further aft.
-pub const CB90_BOARD: [f32; 3] = [0.0, 1.0, 5.4];
-pub const CB90_EXIT: [f32; 3] = [0.0, CB90_DECK_Y + STAND_CENTRE + 0.05, 6.8];
+/// Where the driver's reticle camera sits behind and above the machine guns, metres: over the after
+/// deck, looking down the boat over the gunner's head.
+pub const CB90_AIM_BACK: f32 = 7.0;
+pub const CB90_AIM_UP: f32 = 2.3;
+/// The driver in the cockpit, the gunner as they stand with the cannon ahead (`CB90_CANNON_PIVOT` plus
+/// `CB90_GUNNER_HEAD`), then the two riders on the after deck.
+pub const CB90_SEAT_HEADS: [[f32; 3]; 4] = [[-0.5, 1.95, -2.9], [0.0, 2.2, -0.2], [-0.9, 2.3, 4.6], [0.9, 2.3, 4.6]];
+/// Where it is boarded from, on the after deck, and where whoever leaves it stands (the middle of a
+/// standing soldier), a little further aft.
+pub const CB90_BOARD: [f32; 3] = [0.0, 1.0, 5.6];
+pub const CB90_EXIT: [f32; 3] = [0.0, CB90_DECK_Y + STAND_CENTRE + 0.05, 6.5];
 
-/// Welded aluminium: proof against splinters, not against a rifle up close; the wheelhouse a little
-/// thicker. The two diesels are under the after deck with the fuel ahead of them, and the cannon's
-/// rounds in the hull under the turret.
+/// Welded aluminium: proof against splinters, not against a rifle up close; the cockpit and the ring a
+/// little thicker. The two diesels are under the after deck with the fuel ahead of them, and the cannon's
+/// rounds in the hull under the ring.
 const ARMOR: Armor = Armor {
     plates: &[
-        Plate::hull("turret", Zone::Side, 8.0).on(0).all_round().glances(70.0),
-        Plate::hull("wheelhouse", Zone::Side, 8.0).on(2).all_round().glances(75.0),
-        Plate::hull("troop compartment", Zone::Side, 6.0).on(1).all_round().glances(78.0),
+        Plate::hull("gun ring", Zone::Side, 8.0).on(0).all_round().glances(70.0),
+        Plate::hull("cockpit", Zone::Side, 8.0).on(1).all_round().glances(75.0),
+        Plate::hull("troop compartment", Zone::Side, 6.0).on(2).all_round().glances(78.0),
         Plate::hull("aluminium hull", Zone::Front, 5.0).all_round().glances(80.0),
     ],
     modules: &[
         Module::new(Part::Engine, [0.0, -0.1, 6.0], [1.2, 0.5, 1.3], 90),
         Module::new(Part::Fuel, [0.0, -0.5, 4.2], [1.0, 0.3, 0.6], 60),
-        Module::new(Part::Ammo, [0.0, 0.4, 1.3], [0.4, 0.3, 0.4], 50),
-        Module::new(Part::Breech, [0.0, 3.2, 0.9], [0.15, 0.15, 0.4], 50).in_turret(),
+        Module::new(Part::Ammo, [0.0, 0.3, -0.9], [0.4, 0.3, 0.4], 50),
+        Module::new(Part::Breech, [0.0, 2.75, -1.2], [0.12, 0.12, 0.4], 50),
     ],
     canvas: false,
 };
@@ -183,9 +194,9 @@ pub(super) const CB90: VehicleDef = VehicleDef {
         buttons: Buttons::Drive,
         aims: false,
         solids: &[
-            Solid { shape: Shape::Cylinder { half_height: CB90_TURRET_HALF_HEIGHT, radius: CB90_TURRET_RADIUS }, at: CB90_TURRET_PIVOT, role: Role::Turret },
-            Solid { shape: Shape::Cuboid(CB90_CABIN_HALF), at: CB90_CABIN_AT, role: Role::Part },
-            Solid { shape: Shape::Cuboid(CB90_WHEELHOUSE_HALF), at: CB90_WHEELHOUSE_AT, role: Role::Part },
+            Solid { shape: Shape::Cylinder { half_height: CB90_RING_HALF_HEIGHT, radius: CB90_RING_RADIUS }, at: CB90_RING_AT, role: Role::Part },
+            Solid { shape: Shape::Cuboid(CB90_COCKPIT_HALF), at: CB90_COCKPIT_AT, role: Role::Part },
+            Solid { shape: Shape::Cuboid(CB90_TROOP_HALF), at: CB90_TROOP_AT, role: Role::Part },
         ],
         tongue: 0.0,
         slide: 0.0,
@@ -205,19 +216,19 @@ pub(super) const CB90: VehicleDef = VehicleDef {
     },
     armor: ARMOR,
     drone: None,
-    mount_seat: None,
+    mount_seat: Some(MountSeat { seat: 1, pivot: CB90_CANNON_PIVOT, head: CB90_GUNNER_HEAD }),
     board: Some(CB90_BOARD),
     exit: Some(CB90_EXIT),
     fittings: &[],
 };
 
-/// The gunner's cannon in the roof turret, all the way round, and the driver's twin machine guns on the
-/// bow, which follow the driver's look as seen from the hull while they steer.
+/// The gunner's cannon in the ring, all the way round, and the driver's twin machine guns fixed on the
+/// cockpit, which only elevate: the driver aims them sideways by turning the boat.
 const MOUNTS: &[MountDef] = &[
     MountDef {
         seat: 1,
         aim: Aim::Mount { yaw_limit: None, pitch: (CB90_CANNON_PITCH_MIN, CB90_CANNON_PITCH_MAX), slew: CB90_CANNON_SLEW },
-        muzzle: Muzzle::One(CB90_TURRET_PIVOT),
+        muzzle: Muzzle::One(CB90_CANNON_PIVOT),
         fire: CANNON,
         trigger: BUTTON_FIRE,
         cooldown: CB90_CANNON_COOLDOWN_TICKS,
@@ -225,14 +236,14 @@ const MOUNTS: &[MountDef] = &[
         recoil: 0.0,
         heat: CB90_CANNON_HEAT,
         ammo: None,
-        needs: &[Need::Turret, Need::Breech],
+        needs: &[Need::Breech],
         show: Show::Turret,
         eye: Some(Eye { back: GUNNER_BACK, up: GUNNER_UP }),
-        sight: true,
+        sight: false,
     },
     MountDef {
         seat: 0,
-        aim: Aim::Mount { yaw_limit: Some(CB90_MG_YAW_LIMIT), pitch: (CB90_MG_PITCH_MIN, CB90_MG_PITCH_MAX), slew: CB90_MG_SLEW },
+        aim: Aim::Bore { pitch: (CB90_MG_PITCH_MIN, CB90_MG_PITCH_MAX), slew: CB90_MG_SLEW },
         muzzle: Muzzle::Twin { pivot: CB90_MG_PIVOT, x: CB90_MG_BARREL_X, drop: 0.0 },
         fire: MG,
         trigger: BUTTON_FIRE,

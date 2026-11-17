@@ -9,3 +9,10 @@ export let winter = false
 export function setWinter(on: boolean) {
   winter = on
 }
+
+/** Whether the lakes and rivers are frozen: a winter world, unless it keeps its open water (`frozen`). */
+export let iced = false
+
+export function setIced(on: boolean) {
+  iced = on
+}

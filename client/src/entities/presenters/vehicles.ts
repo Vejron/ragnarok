@@ -9,6 +9,7 @@ import { HenModel } from '@/render/hen'
 import { VehicleFx, slamDust, type FxWorld } from '@/render/tyres'
 import { kindView } from '@/kinds'
 import { missileLaunch, tubeSmoke } from '@/render/launch'
+import { splash } from '@/render/splash'
 import { SubmarineModel, TUBE_SMOKES, type SubView } from '@/render/submarine'
 import { TankModel } from '@/render/tank'
 import { TitanModel } from '@/render/titan'
@@ -33,6 +34,13 @@ const SLOT_REACH = 1.5
 
 /** How hard a Titan's footfall is heard: as a landing at this many m/s. */
 const TITAN_FOOTFALL = 12
+/** How far round a Titan's sole is in the water, metres: about half its 6.4 by 8.2 m. */
+const TITAN_SOLE = 3.5
+/** How fast a Titan's foot comes down into the water, m/s, for the height of its splash. */
+const TITAN_STOMP = 12
+/** How far round a walker's foot and a hen's are in the water, metres. */
+const WALKER_FOOT = 0.7
+const HEN_FOOT = 0.4
 
 /** Damage parts of a vehicle that is not hurt. */
 const UNHURT: readonly number[] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
@@ -114,7 +122,45 @@ export class Vehicles implements Presenter<Frame> {
   /** Ships' guns waiting to be drawn this frame, once their ships are. */
   private readonly guns: [number, Sampled][] = []
 
+  /** Where each Titan's soles were last frame, for how fast they swing through the water. */
+  private readonly soles = new Map<number, Vector3[]>()
+
   constructor(private readonly world: VehicleWorld, private readonly seating: Seating) {}
+
+  /**
+   * A foot coming down at `at` (its sole, metres) into water, if there is any over it: a splash of a
+   * foot `size` metres round coming down at `speed` m/s, and the ring it pushes out.
+   */
+  private stepIn(at: readonly [number, number, number], size: number, speed: number) {
+    const fx = this.world.fx()
+    const level = fx.waterAt?.(at[0], at[2])
+    if (level === undefined || !Number.isFinite(level) || level <= at[1]) return
+    splash(fx, { x: at[0], y: level, z: at[2] }, size, speed)
+    // How deep it plunges, up to its own size: a Titan's foot shoves a wall of water out.
+    fx.waves?.splash(at[0], at[2], size, Math.min(size * 0.4, level - at[1], 1.5), 1)
+  }
+
+  /**
+   * A Titan's feet wading: each sole under the surface is a hull pushed through the water as it swings,
+   * so a stride through a lake shoves a bow wave ahead of the foot and lifts the water as it comes out.
+   */
+  private wade(id: number, model: TitanModel, dt: number) {
+    const fx = this.world.fx()
+    const soles = model.soles()
+    const last = this.soles.get(id)
+    this.soles.set(id, soles)
+    if (!fx.waves || !last || dt <= 0) return
+    soles.forEach((sole, foot) => {
+      const level = fx.waterAt?.(sole.x, sole.z)
+      if (level === undefined || !Number.isFinite(level) || level <= sole.y) return
+      const before = last[foot]!
+      const velocity = [(sole.x - before.x) / dt, (sole.z - before.z) / dt] as const
+      fx.waves!.hull(`titan ${id} foot ${foot}`, {
+        x: sole.x, z: sole.z, ahead: [velocity[0], velocity[1]], halfWidth: TITAN_SOLE, halfLength: TITAN_SOLE,
+        depth: Math.min(1.5, level - sole.y), velocity, churn: 1,
+      })
+    })
+  }
 
   /** Vehicle `id`'s model, while it is drawn. */
   model(id: number): VehicleModel | undefined {
@@ -241,12 +287,23 @@ export class Vehicles implements Presenter<Frame> {
     }
     // A missile's motor lights what it flies over while it burns.
     if (kind === KIND_MISSILE && (seats[0] ?? 0) !== 0) this.world.lights.hold(x, y, z, { color: 0xff9a40, intensity: 3.5, radius: 22 })
-    if (model instanceof WalkerModel || model instanceof HenModel) for (const step of model.takeSteps()) this.world.sounds.footstep(step.at, step.weight)
+    if (model instanceof WalkerModel || model instanceof HenModel) {
+      for (const step of model.takeSteps()) {
+        this.world.sounds.footstep(step.at, step.weight)
+        this.stepIn(step.at, model instanceof WalkerModel ? WALKER_FOOT : HEN_FOOT, 2 + 3 * step.weight)
+      }
+    }
     // A Titan's foot comes down like something dropped from a height.
     if (model instanceof TitanModel) {
-      for (const step of model.takeSteps()) this.world.sounds.thud(step.at, TITAN_FOOTFALL)
+      for (const step of model.takeSteps()) {
+        this.world.sounds.thud(step.at, TITAN_FOOTFALL)
+        this.stepIn(step.at, TITAN_SOLE, TITAN_STOMP)
+      }
+      this.wade(id, model, frame.dt)
       // Come down hard out of the air, the ground goes up around it and everything near shakes.
       const slam = model.takeSlam()
+      // Come down in water, both feet throw it up and out.
+      if (slam) this.stepIn(slam.at, TITAN_SOLE * 2, slam.speed)
       if (slam && slam.speed >= TITAN_SLAM_SPEED) {
         const power = Math.min(1, (slam.speed - TITAN_SLAM_SPEED) / (TITAN_SLAM_FULL - TITAN_SLAM_SPEED))
         const radius = TITAN_SLAM_RADIUS + (TITAN_SLAM_RADIUS_FULL - TITAN_SLAM_RADIUS) * power
@@ -282,6 +339,7 @@ export class Vehicles implements Presenter<Frame> {
     this.models.delete(id)
     this.motion.get(id)?.lift(this.world.fx())
     this.motion.delete(id)
+    this.soles.delete(id)
     this.world.sounds.drop(id)
   }
 

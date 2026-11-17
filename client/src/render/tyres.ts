@@ -7,12 +7,13 @@ import { tyreSlip, type WheelLayout } from '@/sim/slip'
 import { SURFACE_ASPHALT, SURFACE_DIRT, SURFACE_GRASS, SURFACE_MUD, SURFACE_MUD_DEEP, SURFACE_MUD_FAINT, SURFACE_SAND, SURFACE_WATER, surfaceWetness } from '@/sim/surface'
 import { inMarshPool } from './marshnoise'
 import type { Particles } from './particles'
-import { winter } from './season'
+import { iced, winter } from './season'
 import type { SnowRoost } from './snowroost'
+import type { JetSpray } from './jetspray'
 import { splash } from './splash'
 import { missileExhaust } from './launch'
 import type { Skidmarks } from './skidmarks'
-import { type DropWake, WakeTrail } from './wakes'
+import type { Stir } from './waterwaves'
 
 /** What every vehicle's effects draw into and look things up in. */
 export interface FxWorld {
@@ -24,14 +25,14 @@ export interface FxWorld {
   surfaceAt(x: number, z: number): number
   /** The water surface height at a point, `NO_WATER` where there is none. */
   waterAt?(x: number, z: number): number
-  /** Rings running out over the water surface from `at`, for a splash of about `size` metres. */
-  ripple?(at: { x: number; y: number; z: number }, size: number): void
-  /** Carves a wake into the water (`Wakes.drop`). */
-  wake?: DropWake
+  /** Stirs the water: hulls and bodies pressed into its waves (`WaterWaves`). */
+  waves?: Stir
   /** Where the camera is, so far-away vehicles can skip the particles. */
   camera: Vec3
   /** The snow tracks throw up when they dig in: only in a winter world. */
   roost?: SnowRoost | null
+  /** The water a waterjet boat throws (`KindFx.jets`). */
+  jetSpray?: JetSpray | null
 }
 
 /** Particles are skipped for vehicles further from the camera than this, metres; marks reach a little further. */
@@ -43,8 +44,21 @@ const AIRBORNE = 0.3
 const SKIM_DRAFT = 0.3
 /** Slower than this, m/s, a hull on the water throws no spray. */
 const SKIM_SPEED = 5
+/** A hull whose top is this far under the surface, metres, no longer stirs it; it fades out on the way down. */
+const DIVED = 0.5
 /** Slower than this, m/s, a hull in the water carves no wake. */
 const WAKE_SPEED = 1
+/** Going into the water slower than this, m/s, throws no splash. */
+const ENTRY_SPEED = 1.5
+/** Out of the water at least this long, seconds, before going back in splashes again: not every wave a planing hull skips over. */
+const ENTRY_DRY = 0.25
+/** Faster than this, m/s, a hull ploughing through the water (not planing over it) throws water off its bow. */
+const PLOUGH_SPEED = 2.5
+/** A waterjet boat's crash stop starts to throw spray at this deceleration, m/s², and throws all of it at `CRASH_STOP_FULL`. */
+const CRASH_STOP_FROM = 3
+const CRASH_STOP_FULL = 8
+/** The speed a waterjet boat's rooster tail is at its biggest, m/s. */
+const JET_FULL_SPEED = 22
 /** How quickly the smoothed slips and acceleration follow, per second. */
 const SMOOTHING = 12
 
@@ -88,10 +102,16 @@ export class VehicleFx {
   private down = true
   /** Whether a wheel was in water last frame. */
   private wet = false
+  /** The lowest of its wheels' contacts in water this frame, metres up; null with none in water. */
+  private wetBottom: number | null = null
+  /** The lowest of all its wheels' contacts this frame, touching or not, metres up; null with no wheels. */
+  private lowest: number | null = null
+  /** Whether its bottom (hull or wheels) was in the water last frame; null before it has been seen. */
+  private soaked: boolean | null = null
+  /** How long it has been out of the water, seconds. */
+  private dryFor = 0
   /** Whether its hull rode on the water surface last frame. */
   private skimming = false
-  /** Where its wake was last carved. */
-  private readonly trail = new WakeTrail()
   private airTime = 0
   private fall = 0
   private landed = 0
@@ -161,6 +181,7 @@ export class VehicleFx {
       this.lift(world)
       this.lastPosition = null
       this.measured = false
+      this.soaked = null
       return
     }
     const here = new Vector3(...position)
@@ -186,13 +207,16 @@ export class VehicleFx {
     }
     if (distance > MARK_RANGE) {
       this.lift(world)
+      this.soaked = null
       return
     }
     const particles = distance < PARTICLE_RANGE
     const layout = this.fx.wheels
     if (!layout) {
-      if (this.fx.floats) this.skim(world, here, particles, dt)
-      else if (powered && particles) this.downwash(world, here, dt)
+      this.wetBottom = null
+      this.lowest = null
+      this.skim(world, here, particles, dt)
+      if (!this.fx.floats && powered && particles) this.downwash(world, here, dt)
       return
     }
     this.wheels(world, layout, steer, particles, dt)
@@ -225,6 +249,8 @@ export class VehicleFx {
     const upright = new Vector3(0, 1, 0).applyQuaternion(this.q).y > 0.5
     let touching = !upright
     const wet: Vector3[] = []
+    this.wetBottom = null
+    this.lowest = null
     layout.contacts.forEach((local, wheel) => {
       const contact = this.contact.set(local[0], local[1], local[2]).applyQuaternion(this.q).add(this.lastPosition!)
       const steered = wheel < layout.steered
@@ -240,6 +266,7 @@ export class VehicleFx {
       const slip = (this.slips[wheel] ?? 0) + (wanted - (this.slips[wheel] ?? 0)) * Math.min(1, dt * SMOOTHING)
       this.slips[wheel] = slip
 
+      this.lowest = Math.min(this.lowest ?? Infinity, contact.y)
       const ground = world.groundAt(contact.x, contact.z)
       const track = `${this.id}:${wheel}`
       if (contact.y - ground <= AIRBORNE) touching = true
@@ -252,8 +279,8 @@ export class VehicleFx {
       this.surface = surface
       const moving = Math.abs(this.speed)
       const wetness = surfaceWetness(surface)
-      // In winter the lakes and the marsh are frozen: ice takes no marks and throws nothing up.
-      if (winter && (surface === SURFACE_WATER || wetness > 0)) {
+      // In winter the marsh is frozen, and the lakes unless the world keeps its open water: ice takes no marks and throws nothing up.
+      if ((iced && surface === SURFACE_WATER) || (winter && wetness > 0)) {
         world.skids.lift(track)
         return
       }
@@ -261,6 +288,7 @@ export class VehicleFx {
       if (surface === SURFACE_WATER || (wetness > 0 && inMarshPool(contact.x, contact.z, wetness))) {
         world.skids.lift(track)
         wet.push(contact.clone())
+        this.wetBottom = Math.min(this.wetBottom ?? Infinity, contact.y)
         if (particles && moving > 3 && Math.random() < dt * moving * 1.2) this.spray(world, contact)
         return
       }
@@ -289,14 +317,6 @@ export class VehicleFx {
       if (Math.random() < dt * 22 * kick) this.cloud(world, contact, look.cloud, surface === SURFACE_GRASS ? 0.28 : 0.4, [0.7, 3.6], 2.0)
       if (surface !== SURFACE_GRASS && !winter && slip > 0.2 && Math.random() < dt * 60 * slip) this.gravel(world, contact)
     })
-    // The first wheel into water, or a drop into it, throws a splash that grows with the speed.
-    const wading = wet[0]
-    if (wading && !this.wet && particles) {
-      const level = world.waterAt?.(wading.x, wading.z)
-      const surface = level !== undefined && Number.isFinite(level) ? level : wading.y
-      const hard = Math.max(Math.abs(this.speed), -this.velocity.y)
-      if (hard > 2) splash(world, { x: wading.x, y: surface, z: wading.z }, Math.min(2.5, 0.6 + hard * 0.08), hard)
-    }
     this.wet = wet.length > 0
     // A landing is the first wheel touching after a real drop through the air.
     if (touching) {
@@ -369,7 +389,6 @@ export class VehicleFx {
     // The wheel's contact is the bed; the spray starts at the surface.
     const level = world.waterAt?.(at.x, at.z)
     const top = level !== undefined && Number.isFinite(level) ? level : at.y
-    if (Math.random() < 0.3) world.ripple?.({ x: at.x, y: top + 0.02, z: at.z }, 0.35)
     world.smoke.spawn({
       position: [at.x, top + 0.1, at.z],
       velocity: [this.side.x * rand(-2.5, 2.5) + this.velocity.x * 0.3, rand(2, 4.5), this.side.z * rand(-2.5, 2.5) + this.velocity.z * 0.3],
@@ -387,56 +406,111 @@ export class VehicleFx {
    * nothing out there, so it counts as on the ground.
    */
   private skim(world: FxWorld, here: Vector3, particles: boolean, dt: number) {
-    const level = winter ? undefined : world.waterAt?.(here.x, here.z)
+    const level = iced ? undefined : world.waterAt?.(here.x, here.z)
     const [hx, hull, hz] = halfExtentsOf(this.kind)
-    // What meets the water: the hull's underside, or a seaplane's pontoons under it.
+    // What meets the water: the hull's underside, or a seaplane's pontoons under it, or a car's wheels.
     const hy = this.fx.keel ?? hull
+    const meets = this.fx.keel === undefined && this.lowest !== null ? Math.min(here.y - hy, this.lowest) : here.y - hy
     const moving = Math.hypot(this.velocity.x, this.velocity.z)
     const afloat = level !== undefined && Number.isFinite(level)
-    const skimming = afloat && Math.abs(here.y - hy - level) < SKIM_DRAFT && moving > SKIM_SPEED
+    // Wheels or tracks on the bed under the water drive through it, not over it.
+    const skimming = afloat && this.wetBottom === null && Math.abs(meets - level) < SKIM_DRAFT && moving > SKIM_SPEED
     // A seaplane lying on its pontoons is down, moving or not.
     if (this.fx.keel !== undefined && afloat && here.y - hy < level && new Vector3(0, 1, 0).applyQuaternion(this.q).y > 0.5) {
       this.down = true
       this.airTime = 0
     }
-    // Anything wide in the water, and moving, carves a wake: hard on the surface, gently wading.
-    if (afloat && here.y - hy < level + SKIM_DRAFT && moving > WAKE_SPEED) {
-      const size = Math.min(2, hx / 0.55)
-      const strength = skimming ? Math.min(0.3, 0.08 + moving * 0.01) : Math.min(0.15, 0.03 + moving * 0.03)
-      this.trail.move(world.wake, here.x, here.z, strength * size)
-    } else {
-      this.trail.lift()
+    // Its bottom: the hull's underside, or lower, its wheels or tracks where they are in the water.
+    const bottom = Math.min(meets, this.wetBottom ?? Infinity)
+    // On dry land it is out of the water, for when it goes in.
+    this.splashIn(world, here, afloat ? level : -Infinity, bottom, hx, hz, particles, dt)
+    // Anything in the water and moving pushes the water aside, and the waves make its wake of that: a
+    // bow wave and a V behind. How deep it sits is how far its bottom is under the surface; a planing
+    // hull rides up out of it and pushes less, a crash stop digs the bow in.
+    const inWater = afloat && bottom < level + SKIM_DRAFT
+    if (inWater && moving > WAKE_SPEED && world.waves && here.y + hull > level - DIVED) {
+      const ahead = this.forward
+      const sunk = Math.min(1, Math.max(0.1, level - bottom))
+      // Only what breaks the surface pushes it aside: a dived submarine leaves it still.
+      const breaking = Math.min(1, Math.max(0, (here.y + hull - level + DIVED) / DIVED))
+      const stop = this.fx.jets ? this.crashStop() : 0
+      world.waves.hull(`vehicle ${this.id}`, {
+        x: here.x,
+        z: here.z,
+        ahead: [ahead.x, ahead.z],
+        halfWidth: hx,
+        halfLength: hz,
+        depth: (sunk * 0.6 + 0.35 * stop) * breaking,
+        velocity: [this.velocity.x, this.velocity.z],
+        churn: (skimming ? 1.5 : 0.6) + 3 * stop,
+      })
+    }
+    if (inWater && particles && this.fx.jets) this.jets(world, here, level, dt)
+    // Ploughing through rather than planing over: water heaps and is thrown off the bow.
+    if (inWater && !skimming && !this.fx.floats && particles && moving > PLOUGH_SPEED && bottom < level && Math.random() < dt * moving * 0.5) {
+      const bow = this.velocity.clone().setY(0).normalize().multiplyScalar(hz * 0.8).add(here)
+      splash(world, { x: bow.x, y: level, z: bow.z }, 0.3 + Math.min(hx, 2) * 0.3, moving)
     }
     if (skimming) {
-      if (!this.skimming && particles && this.fall > 2) splash(world, { x: here.x, y: level, z: here.z }, Math.min(2.5, 0.8 + this.fall * 0.1), this.fall)
       this.down = true
       this.airTime = 0
       this.fall = 0
-      if (particles) {
-        const tail = new Vector3(0, 0, hz).applyQuaternion(this.q).add(here)
-        const right = new Vector3(1, 0, 0).applyQuaternion(this.q)
-        const fast = Math.min(1, moving / 25)
-        if (Math.random() < dt * 30 * fast) this.wake(world, tail, level, right, 0, fast)
-        if (Math.random() < dt * 24 * fast) this.wake(world, tail, level, right, Math.random() < 0.5 ? -hx : hx, fast)
-        if (Math.random() < dt * 6) world.ripple?.({ x: tail.x, y: level + 0.02, z: tail.z }, 0.6 + hx)
+      // Its spray: fans off its back corners, a rooster tail off a snowmobile's track, a mist behind.
+      if (particles && !this.fx.jets) {
+        const right = new Vector3(1, 0, 0).applyQuaternion(this.q).setY(0).normalize()
+        const ahead = this.forward.clone().setY(0).normalize()
+        world.jetSpray?.skim({ at: here, right, ahead, velocity: this.velocity, speed: moving, level, halfBeam: hx, halfLength: hz, tail: this.fx.roost ? 1 : 0.3 }, dt)
       }
     }
     this.skimming = skimming
   }
 
-  /** One droplet of a skimming hull's wake from `tail`, `offset` metres to its right: straight up and back from the middle, out to the side from a corner. */
-  private wake(world: FxWorld, tail: Vector3, level: number, right: Vector3, offset: number, fast: number) {
-    const out = Math.sign(offset) * rand(1.5, 4) * fast
-    const rise = offset === 0 ? rand(3, 6) * fast : rand(1, 2.5) * fast
-    world.smoke.spawn({
-      position: [tail.x + right.x * offset, level + 0.1, tail.z + right.z * offset],
-      velocity: [this.velocity.x * 0.35 + right.x * out + rand(-0.6, 0.6), rise, this.velocity.z * 0.35 + right.z * out + rand(-0.6, 0.6)],
-      life: rand(0.5, 1.0),
-      size: offset === 0 ? [0.3, 1.4] : [0.2, 0.9],
-      color: 0xeaf5ff,
-      alpha: 0.7,
-      gravity: 9.8,
-    })
+  /**
+   * A splash where anything goes into the water: its bottom (`bottom`, metres up) coming under the surface
+   * at `level` after being out of it, driving in or dropping in. The faster it comes, the bigger the
+   * crown, and the water it pushes aside runs out as a ring as big as its hull (`hx`, `hz`, half its
+   * width and length, metres).
+   */
+  private splashIn(world: FxWorld, here: Vector3, level: number, bottom: number, hx: number, hz: number, particles: boolean, dt: number) {
+    const soaked = bottom < level
+    const was = this.soaked
+    this.soaked = soaked
+    if (!soaked) {
+      this.dryFor += dt
+      return
+    }
+    const dried = this.dryFor
+    this.dryFor = 0
+    // First seen already in the water is not going in, and nor is skipping over a wave.
+    if (was !== false || dried < ENTRY_DRY) return
+    const across = Math.hypot(this.velocity.x, this.velocity.z)
+    const hard = Math.max(across, -this.velocity.y)
+    if (hard < ENTRY_SPEED) return
+    // Driven in, the bow goes in first; dropped in, it lands flat.
+    const lead = across > -this.velocity.y ? hz * 0.7 : 0
+    const at = across > 0.1 ? this.velocity.clone().setY(0).normalize().multiplyScalar(lead).add(here) : here.clone()
+    const size = Math.min(Math.max(hx, 0.6) * 1.2, 0.5 + hard * 0.12)
+    if (particles) splash(world, { x: at.x, y: level, z: at.z }, size, hard)
+    // The water it shoves aside, as big as the hull, deeper the harder it came.
+    world.waves?.splash(here.x, here.z, Math.max(hx, Math.min(hz, hx * 2)), Math.min(1.2, 0.1 + hard * 0.05), 1)
+  }
+
+  /** How hard a waterjet boat is crash stopping, 0..1, from its deceleration while it still runs ahead. */
+  private crashStop() {
+    if (this.speed < 2) return 0
+    return Math.min(1, Math.max(0, (-this.accel - CRASH_STOP_FROM) / (CRASH_STOP_FULL - CRASH_STOP_FROM)))
+  }
+
+  /**
+   * A waterjet boat in the water: its spray (`JetSpray`), the rooster tail and bow sheets under way and
+   * the storm of water a crash stop throws; the waves it makes are the wave field's.
+   */
+  private jets(world: FxWorld, here: Vector3, level: number, dt: number) {
+    const [hx, , hz] = halfExtentsOf(this.kind)
+    const right = new Vector3(1, 0, 0).applyQuaternion(this.q).setY(0).normalize()
+    const ahead = this.forward.clone().setY(0).normalize()
+    const stop = this.crashStop()
+    world.jetSpray?.throw({ at: here, right, ahead, velocity: this.velocity, speed: this.speed, stop, level, halfBeam: hx, halfLength: hz, fullSpeed: JET_FULL_SPEED }, dt)
   }
 
   /** Exhaust puffs when the driver pulls away, and a backfire when a sports car lifts off hard. */

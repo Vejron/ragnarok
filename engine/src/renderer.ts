@@ -1286,6 +1286,8 @@ export class Renderer {
       colorFormat: HDR_FORMAT,
       depthFormat: DEPTH_FORMAT,
       targetsVersion: this.targetsVersion,
+      vertices: this.arena.vertexBuffer,
+      indices: this.arena.indexBuffer,
       lights: {
         records: this.lights.records,
         cells: this.lights.cells,

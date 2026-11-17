@@ -1409,12 +1409,13 @@ export const BUS_DOOR_EXIT = [2.1, -0.1, -4.6] as const
 /**
  * The Stridsbåt 90 (`KIND_CB90`): the Swedish fast assault craft, true to size, 15.9 m long and 3.8 m
  * across, pushed by two waterjets to 40 knots. It floats only on open water, planes at speed, banks
- * into its turns and stops in a few lengths with its reversing buckets; run up a beach it sits there
- * on its keel. The driver (seat 0) sits in the wheelhouse, steers it and works the twin Ksp 58 machine
- * guns on the bow, which follow their look within `CB90_MG_YAW_LIMIT` of dead ahead; the gunner (seat 1)
- * beside them lays the 25 mm automatic cannon in the turret on the wheelhouse roof, which goes all the
- * way round. Two more (seats 2 and 3) ride on the open after deck, firing their own guns. Its bow tapers
- * to a point over `CB90_BOW`.
+ * into its turns and stops in a few lengths with its reversing buckets. The driver (seat 0) sits in the
+ * low cockpit forward and works the twin Ksp 58 machine guns fixed on its front, which only elevate:
+ * the driver aims them sideways by turning the boat, as a Strv S's. Behind the cockpit the gunner
+ * (seat 1) stands in an open ring on the troop compartment's roof, out in the open, and turns the 25 mm
+ * automatic cannon all the way round. The troop compartment is down in the hull, its roof a little over
+ * the gunwale, and behind it two riders (seats 2 and 3) sit on the open after deck, firing their own
+ * guns. Its bow tapers to a point over `CB90_BOW`.
  */
 export const CB90_SEATS = 4
 
@@ -1430,22 +1431,29 @@ export const CB90_BOW = 4.5
  */
 export const CB90_DRAFT = 0.8
 
-/** Top speed ahead on calm water, m/s (40 knots). */
-export const CB90_MAX_SPEED = 20.6
+/** Top speed ahead on calm water, m/s (45 knots). */
+export const CB90_MAX_SPEED = 23.0
 
-/** How hard the waterjets push it ahead from a standstill, m/s²: up to 30 knots in about eight seconds. */
-export const CB90_THRUST = 2.0
+/** How hard the waterjets push it ahead from a standstill, m/s²: up to 30 knots in under five seconds. */
+export const CB90_THRUST = 3.6
 
 /**
- * How hard the reversing buckets stop it while it still runs ahead, m/s²: from full speed in about
- * two and a half lengths, as the real boat does.
+ * How hard the reversing buckets stop it while it still runs ahead, m/s²: from full speed inside two
+ * lengths, as the real boat's crash stop does.
  */
-export const CB90_BRAKE = 5.5
+export const CB90_BRAKE = 10.0
+
+/**
+ * In a crash stop its bow digs in, this far down, radians, and its hull squats this much deeper into
+ * the water, metres, both most from `CB90_PLANE_SPEED`'s top and gone by the time it has stopped.
+ */
+export const CB90_BRAKE_DIP = 0.13
+export const CB90_BRAKE_SQUAT = 0.35
 
 /** Top speed astern, m/s. */
 export const CB90_ASTERN_SPEED = 4.0
 
-/** Yaw rate at full helm under way, rad/s: a turn about 90 m across at full speed. */
+/** Yaw rate at full helm under way, rad/s: a turn about 100 m across at full speed. */
 export const CB90_TURN_RATE = 0.45
 
 /** Yaw rate at full helm standing still, rad/s: the jets swing it round on the spot. */
@@ -1473,33 +1481,45 @@ export const CB90_BANK_MAX = 0.2
 export const CB90_DECK_Y = CB90_HALF_EXTENTS[1]
 
 /**
- * The superstructure is one long, low house with leaning sides. Its fore part, the troop compartment
- * under a roof 1 m over the deck: half its box, metres, and where its middle is.
+ * The cockpit, low and forward, where the driver sits: half its box, metres, and where its middle is.
+ * Its roof is 1.15 m over the deck.
  */
-export const CB90_CABIN_HALF = [1.5, 0.5, 2.3] as const
-export const CB90_CABIN_AT = [0.0, 1.5, -1.7] as const
+export const CB90_COCKPIT_HALF = [1.4, 0.575, 1.45] as const
+export const CB90_COCKPIT_AT = [0.0, 1.575, -3.15] as const
 
 /**
- * Its after part, the wheelhouse, raised behind it: half its box, metres, and where its middle is. Its
- * roof is 3.9 m over the keel.
+ * The troop compartment's roof behind it, 0.35 m over the deck, down to the after deck: half its box,
+ * metres, and where its middle is.
  */
-export const CB90_WHEELHOUSE_HALF = [1.5, 0.95, 2.05] as const
-export const CB90_WHEELHOUSE_AT = [0.0, 1.95, 2.35] as const
+export const CB90_TROOP_HALF = [1.6, 0.175, 2.15] as const
+export const CB90_TROOP_AT = [0.0, 1.175, 0.45] as const
 
 /**
- * The turret on the front of the wheelhouse roof: its ring (the middle of its solid), its radius and half its
+ * The gunner's ring on that roof, just behind the cockpit: where its middle is, its radius and half its
  * height, metres.
  */
-export const CB90_TURRET_PIVOT = [0.0, 3.2, 1.3] as const
-export const CB90_TURRET_RADIUS = 0.6
-export const CB90_TURRET_HALF_HEIGHT = 0.3
+export const CB90_RING_AT = [0.0, 1.55, -0.9] as const
+export const CB90_RING_RADIUS = 0.75
+export const CB90_RING_HALF_HEIGHT = 0.2
 
 /**
- * The cannon: how far its muzzle is from the ring, metres, its elevation, radians (+ is up), which
- * keeps its rounds over the bow guns, and how fast it follows the gunner's look, rad/s.
+ * The cannon on its pedestal in the ring: where it turns and elevates, high enough to fire over the
+ * cockpit and its machine guns.
+ */
+export const CB90_CANNON_PIVOT = [0.0, 2.75, -0.9] as const
+
+/**
+ * The gunner's head from the pivot, with the gun pointing ahead: standing in the ring's hatch behind the
+ * gun, on the troop compartment's floor.
+ */
+export const CB90_GUNNER_HEAD = [0.0, -0.55, 0.7] as const
+
+/**
+ * The cannon: how far its muzzle is from the pivot, metres, its elevation, radians (+ is up), which
+ * keeps its rounds over the cockpit, and how fast it follows the gunner's look, rad/s.
  */
 export const CB90_CANNON_LENGTH = 2.3
-export const CB90_CANNON_PITCH_MIN = -0.1
+export const CB90_CANNON_PITCH_MIN = -0.08
 export const CB90_CANNON_PITCH_MAX = 0.9
 export const CB90_CANNON_SLEW = 1.8
 
@@ -1517,17 +1537,16 @@ export const CB90_CANNON_PLANE_DAMAGE = 24
 export const CB90_CANNON_HEAT = 15.0
 
 /**
- * The twin machine guns on their post at the front of the troop compartment's roof: where they turn,
- * how far either side of it each barrel is, metres, how far round from dead ahead they go, radians
- * (clear of the wheelhouse behind them), their elevation and how fast they follow the look, rad/s.
+ * The twin machine guns fixed on the front of the cockpit's roof, firing ahead over the bow: where they
+ * elevate, how far either side of it each barrel is, metres, how far they tilt down and up, radians
+ * (+ is up), and how fast, rad/s. They do not turn: the boat aims them.
  */
-export const CB90_MG_PIVOT = [0.0, 2.45, -2.8] as const
+export const CB90_MG_PIVOT = [0.0, 2.4, -3.9] as const
 export const CB90_MG_BARREL_X = 0.16
 export const CB90_MG_LENGTH = 1.1
-export const CB90_MG_YAW_LIMIT = 2.2
-export const CB90_MG_PITCH_MIN = -0.3
-export const CB90_MG_PITCH_MAX = 0.9
-export const CB90_MG_SLEW = 3.0
+export const CB90_MG_PITCH_MIN = -0.15
+export const CB90_MG_PITCH_MAX = 0.2
+export const CB90_MG_SLEW = 0.8
 
 /** Ticks between rounds, the two barrels taking turns: twenty a second. */
 export const CB90_MG_COOLDOWN_TICKS = 3
@@ -1543,21 +1562,24 @@ export const CB90_MG_PLANE_DAMAGE = 6
 export const CB90_MG_HEAT = 5.5
 
 /**
- * Where the driver's reticle camera sits behind and above the bow guns, metres: over the wheelhouse,
- * looking down the boat.
+ * Where the driver's reticle camera sits behind and above the machine guns, metres: over the after
+ * deck, looking down the boat over the gunner's head.
  */
-export const CB90_AIM_BACK = 6.0
-export const CB90_AIM_UP = 2.2
-
-/** The driver and the gunner side by side in the wheelhouse, then the two riders on the after deck. */
-export const CB90_SEAT_HEADS = [[-0.55, 2.3, 1.6], [0.55, 2.3, 1.6], [-0.9, 2.3, 5.8], [0.9, 2.3, 5.8]] as const
+export const CB90_AIM_BACK = 7.0
+export const CB90_AIM_UP = 2.3
 
 /**
- * Where it is boarded from, on the after deck behind the wheelhouse, and where whoever leaves it stands
- * (the middle of a standing soldier), a little further aft.
+ * The driver in the cockpit, the gunner as they stand with the cannon ahead (`CB90_CANNON_PIVOT` plus
+ * `CB90_GUNNER_HEAD`), then the two riders on the after deck.
  */
-export const CB90_BOARD = [0.0, 1.0, 5.4] as const
-export const CB90_EXIT = [0.0, CB90_DECK_Y + STAND_CENTRE + 0.05, 6.8] as const
+export const CB90_SEAT_HEADS = [[-0.5, 1.95, -2.9], [0.0, 2.2, -0.2], [-0.9, 2.3, 4.6], [0.9, 2.3, 4.6]] as const
+
+/**
+ * Where it is boarded from, on the after deck, and where whoever leaves it stands (the middle of a
+ * standing soldier), a little further aft.
+ */
+export const CB90_BOARD = [0.0, 1.0, 5.6] as const
+export const CB90_EXIT = [0.0, CB90_DECK_Y + STAND_CENTRE + 0.05, 6.5] as const
 
 /**
  * The FPV drone: a quadcopter the size of a dinner plate. It is flown by velocity: forward stick asks

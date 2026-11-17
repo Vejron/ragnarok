@@ -15,18 +15,17 @@ export type Rig =
   | { name: 'drive' }
   /** Behind a mounted gun along its line, its travel kept in the hull's frame. */
   | { name: 'gun'; hull: readonly [yawLimit: number, pitchMin: number, pitchMax: number] }
-  /**
-   * Behind a gun on a turret's roof, its travel kept within `limit` either side of the turret; or, with
-   * `hull`, of the hull (a boat's bow guns, which its driver aims while they steer), the camera `eye`
-   * (back, up) behind it.
-   */
-  | { name: 'pintle'; limit: number; pitch: readonly [number, number]; hull?: true; eye?: readonly [back: number, up: number] }
+  /** Behind a gun on a turret's roof, its travel kept within `limit` either side of the turret. */
+  | { name: 'pintle'; limit: number; pitch: readonly [number, number] }
   /** Through a drone's camera, flown from afar within `link` metres; a loitering drone also has one under its belly. */
   | { name: 'fpv'; pitch: readonly [number, number]; link: number; belly?: true }
   /** Behind a plane, following the mouse's aim at an easy pace. */
   | { name: 'aviator' }
-  /** Behind a Strv S's gun, which the hull aims. */
-  | { name: 'tanker' }
+  /**
+   * Behind a gun fixed in the hull, which the hull aims and which only elevates: a Strv S's, or with
+   * `pitch` and the camera's `eye` (back, up) a Stridsbåt 90's machine guns.
+   */
+  | { name: 'tanker'; pitch?: readonly [number, number]; eye?: readonly [back: number, up: number] }
   /** Behind a walker's guns or a tupp's eyes, which turn within its torso's or its head's travel. */
   | { name: 'walker' }
   /** Behind and above a Titan's shoulders, looking along the look, which its fists follow. */

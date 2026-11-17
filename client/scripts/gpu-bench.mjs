@@ -209,8 +209,9 @@ await evaluate(`(() => {
       } else if (v.place === 'shore') {
         const wet = (x, z) => { const w = g.fxWorld.waterAt?.(x, z); return typeof w === 'number' && w > g.terrain.heightAt(x, z) + 0.3 }
         let found = null
-        for (let step = 0; step <= 6 && !found; step++) {
-          if (step) { place(start[0] + step * 250, start[1]); await sleep(2500) }
+        // Out from the spawn 250 m at a time, east and west by turns.
+        for (let step = 0; step <= 8 && !found; step++) {
+          if (step) { place(start[0] + (step % 2 ? 1 : -1) * Math.ceil(step / 2) * 250, start[1]); await sleep(2500) }
           const p = state.position
           for (let r = 10; r < 400 && !found; r += 10) for (let a = 0; a < 48 && !found; a++) {
             const x = p[0] + Math.cos(a / 48 * 6.283) * r, z = p[2] + Math.sin(a / 48 * 6.283) * r

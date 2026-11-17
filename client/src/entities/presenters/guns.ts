@@ -203,7 +203,7 @@ export class PlaneGuns implements Presenter<Frame> {
 }
 
 /**
- * A tank's roof gun or a Stridsbåt 90's bow guns (`pintle`): every new round on its counter is a bullet
+ * A tank's roof gun or a Stridsbåt 90's machine guns (`pintle`): every new round on its counter is a bullet
  * from its muzzle out to what it meets, with a flash and the rattle; the boat's two barrels take turns.
  * Only rounds that hit something come back from the server.
  */
@@ -229,7 +229,7 @@ export class RoofGuns implements Presenter<Frame> {
     let last: Vector3 | null = null
     for (let k = 1; k <= rounds; k++) {
       // The counter had gone up for each round: an even count left the left barrel, as the server takes turns.
-      const barrel = tank instanceof Cb90Model ? tank.bowGun((before + k - 1) % 2 === 0 ? -1 : 1) : tank.pintleBarrel()
+      const barrel = tank instanceof Cb90Model ? tank.machineGun((before + k - 1) % 2 === 0 ? -1 : 1) : tank.pintleBarrel()
       if (!barrel) return
       const muzzle = barrel.origin.addScaledVector(barrel.direction, length)
       this.world.effects.muzzle(muzzle)

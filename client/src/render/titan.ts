@@ -289,6 +289,13 @@ export class TitanModel implements VehicleModel {
     return slammed
   }
 
+  /** Where the middle of each sole is in the world, left then right, where it was last placed. */
+  soles(): Vector3[] {
+    this.root.updateWorldMatrix(true, false)
+    const world = new Matrix4().fromArray(this.root.matrixWorld)
+    return this.foot.map((foot) => new Vector3(foot.position.x, foot.position.y, foot.position.z).applyMatrix4(world).add(new Vector3(0, -PAD, 0)))
+  }
+
   /** The thrusters firing for `flags` (`THRUST_*`), where it was last placed: one under each foot, blowing down. */
   jets(flags: number): { at: Vector3; direction: Vector3 }[] {
     if (!(flags & THRUST_LIFT)) return []

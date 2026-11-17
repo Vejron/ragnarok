@@ -34,6 +34,8 @@ export interface ParticleSpec {
   wind?: number
   /** `puff` gives smoke a billowy edge; `drop` is a bead of liquid that stays whole until it lands; `glare` is light with no edge at all. */
   shape?: 'round' | 'puff' | 'drop' | 'glare'
+  /** Water: glows with the sun behind it and its drops glint (spray, mist). */
+  scatter?: boolean
 }
 
 /** A burst: `count` particles from one spec, each rolled on the GPU from the ranges below. */
@@ -132,6 +134,7 @@ export class Particles {
       turbulence: spec.turbulence,
       wind: spec.wind,
       shape: spec.shape,
+      scatter: spec.scatter,
     }
     this.root.spawn(engine)
   }

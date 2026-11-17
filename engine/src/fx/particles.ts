@@ -46,6 +46,11 @@ export interface ParticleSpec {
    * is light rather than a thing: bright at its heart and falling away with no edge at all (flashes).
    */
   shape?: 'round' | 'puff' | 'drop' | 'glare'
+  /**
+   * Water rather than smoke: it scatters sunlight forward, so it glows when the sun is behind it and
+   * its drops glint, as spray and mist do against the light.
+   */
+  scatter?: boolean
 }
 
 /** A burst: `count` particles from one spec, each with its own random values, rolled on the GPU. */
@@ -76,6 +81,7 @@ const PF_PUFF = 8
 const PF_DROP = 16
 const PF_GLARE = 32
 const PF_HOLD = 64
+const PF_SCATTER = 128
 /** Frames between reads of the live count. */
 const COUNT_EVERY = 10
 
@@ -183,7 +189,7 @@ export class ParticleSystem extends Effect {
     w[o + 20] = count
     w[o + 21] = this.spawnCount
     w[o + 22] = this.seed = (this.seed * 1664525 + 1013904223) >>> 0
-    w[o + 23] = (spec.bounce ? PF_BOUNCE : 0) | (spec.blend === 'additive' ? PF_ADDITIVE : 0) | (spec.fog === false ? PF_NO_FOG : 0) | (spec.shape === 'puff' ? PF_PUFF : 0) | (spec.shape === 'drop' ? PF_DROP : 0) | (spec.shape === 'glare' ? PF_GLARE : 0) | (spec.hold ? PF_HOLD : 0)
+    w[o + 23] = (spec.bounce ? PF_BOUNCE : 0) | (spec.blend === 'additive' ? PF_ADDITIVE : 0) | (spec.fog === false ? PF_NO_FOG : 0) | (spec.shape === 'puff' ? PF_PUFF : 0) | (spec.shape === 'drop' ? PF_DROP : 0) | (spec.shape === 'glare' ? PF_GLARE : 0) | (spec.hold ? PF_HOLD : 0) | (spec.scatter ? PF_SCATTER : 0)
     const a = toLinear(spec.color, this.color)
     const b = toLinear(color2, this.color2)
     c[o + 24] = a.r; c[o + 25] = a.g; c[o + 26] = a.b

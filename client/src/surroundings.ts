@@ -1,10 +1,9 @@
 /**
  * What people and vehicles do to the ground and water around them, drawn for everyone alike: splashes
- * and wading ripples, the water plane mirrored near the camera, grass parted underfoot and flattened by
+ * and wading wakes, the water plane mirrored near the camera, grass parted underfoot and flattened by
  * rotors, and contact shadows.
  */
 
-import type { Effects } from '@/render/effects'
 import { inMarshPool } from '@/render/marshnoise'
 import type { Grass, Bender } from '@/render/grass'
 import type { Scene } from '@/render/scene'
@@ -17,14 +16,11 @@ import { halfExtentsOf } from '@/sim/kinds'
 import { surfaceWetness } from '@/sim/surface'
 import type { Waters } from '@/sim/waters'
 import { NO_WATER } from '@/world'
-import { WakeTrail } from '@/render/wakes'
 
 /** Feet this deep (metres) under the surface are in the water. */
 const WADE_DEPTH = 0.15
 /** A body whose centre is this deep (metres) under the surface is a diver, too far down to stir it. */
 const DIVE_DEPTH = 1.2
-/** Wading ripples are drawn within this many metres of the camera. */
-const WADE_RIPPLE_RANGE = 60
 /** Seconds between splashes of someone going through a marsh's pools: about a stride. */
 const MARSH_STRIDE = 0.32
 
@@ -38,12 +34,11 @@ interface At {
 export class Surroundings {
   waters: Waters | null = null
   grass: Grass | null = null
-  private readonly wading = new Map<number, { wet: boolean; ripple: number; trail: WakeTrail }>()
+  private readonly wading = new Map<number, { wet: boolean; stride: number; x: number; z: number }>()
   private readonly benders: Bender[] = []
 
   constructor(
     private readonly scene: Scene,
-    private readonly effects: Effects,
     private readonly fx: () => FxWorld,
   ) {}
 
@@ -70,7 +65,7 @@ export class Surroundings {
   }
 
   /**
-   * Splashes when person `key`'s feet go into water, and ripples while they wade; a small splash a stride
+   * Splashes when person `key`'s feet go into water, and a small wake while they wade; a small splash a stride
    * through a marsh's pools. `speed` is how fast they move, m/s.
    */
   wade(key: number, x: number, y: number, z: number, speed: number, dt: number) {
@@ -81,30 +76,27 @@ export class Surroundings {
     const was = this.wading.get(key)
     if (!was) {
       // First seen: already wet is not a splash.
-      this.wading.set(key, { wet, ripple: 0, trail: new WakeTrail(0.8) })
+      this.wading.set(key, { wet, stride: 0, x, z })
       return
     }
-    // Someone wading carves a small wake of their own.
-    if (wet && !deep && speed > 0.8) was.trail.move(this.fx().wake, x, z, Math.min(0.06, 0.02 + speed * 0.008))
-    else was.trail.lift()
+    // Someone wading pushes a small wake of their own.
+    if (wet && !deep && speed > 0.8 && dt > 0) {
+      const velocity = [(x - was.x) / dt, (z - was.z) / dt] as const
+      this.fx().waves?.hull(`wader ${key}`, { x, z, ahead: [velocity[0], velocity[1]], halfWidth: 0.3, halfLength: 0.3, depth: 0.25, velocity, churn: 0.4 })
+    }
+    was.x = x
+    was.z = z
     if (wet && !was.wet) splash(this.fx(), { x, y: level, z }, 0.45, 2 + Math.min(speed, 8))
     else if (!wet && was.wet && speed > 1) splash(this.fx(), { x, y: level === NO_WATER ? y : level, z }, 0.3, 1)
     if (!wet && speed > 1) {
       const fx = this.fx()
       const wetness = surfaceWetness(fx.surfaceAt(x, z))
       if (wetness > 0 && inMarshPool(x, z, wetness)) {
-        was.ripple -= dt
-        if (was.ripple <= 0) {
+        was.stride -= dt
+        if (was.stride <= 0) {
           splash(fx, { x, y: this.scene.groundAt(x, z), z }, 0.25, 1 + Math.min(speed, 6) * 0.5)
-          was.ripple = MARSH_STRIDE * (0.85 + Math.random() * 0.3)
+          was.stride = MARSH_STRIDE * (0.85 + Math.random() * 0.3)
         }
-      }
-    }
-    if (wet && !deep && speed > 1) {
-      was.ripple -= dt
-      if (was.ripple <= 0 && Math.hypot(this.scene.camera.position.x - x, this.scene.camera.position.z - z) < WADE_RIPPLE_RANGE) {
-        this.effects.ripple({ x, y: level + 0.02, z }, 0.3)
-        was.ripple = 0.35
       }
     }
     was.wet = wet
