@@ -39,7 +39,7 @@ The importer bakes where crops stand, so the client and the server agree on it.
 - **The density is the same at every quality** (`WHEAT_DENSITY`: 8 stalks a square metre, all of them
   to 25 m, the last gone at 140 m), and the "grass" look does not turn it off. A thinner field on a
   lower setting would be a way to see through it.
-- Past 35 m or so a stalk is one triangle (`Growth.simpleShare`).
+- Past 75 m or so a stalk is one triangle (`Growth.simpleShare`), as grass is. Nearer than that the change from the full stalk shows as a patch popping in.
 - In a winter world the same `Grass` grows `STUBBLE` instead: 0.1 to 0.25 m, sparse, to 45 m.
 
 ### Under it: straw
@@ -116,7 +116,7 @@ high, 2268 × 1258, ms per frame. The `field` view stands in a field looking acr
 | vista (no field near) | 2.70 | 0.00 | 0.02 |
 
 Memory, standing 60 m inside a field (`mem-bench.mjs --eval`, the arena's bytes with and without):
-the stalks hold 35 MB of vertices in 296 chunks (0.5 M vertices), the lids 1.5 MB, of 238 MB in all.
+the stalks hold 40 MB of vertices in 296 chunks (0.57 M vertices), the lids 1.5 MB, of 238 MB in all.
 Away from fields they hold nothing. Most of it is the full chunks within 40 m; fewer stalks a square
 metre (`WHEAT_DENSITY.perMetre`) is the lever, traded against how soon a line of sight is shut.
 

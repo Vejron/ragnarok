@@ -251,8 +251,10 @@ export const WHEAT: Growth = {
   head: Color.hex(0xf6da7a),
   headToned: true,
   width: 0.14,
-  // A stalk is a plain shape, and a field is a great many of them: one triangle each from 35 m or so.
-  simpleShare: 1 / 2,
+  // As far off as grass, some 75 m: a stalk's one triangle is narrower at the top and darker than its
+  // leaf and ear, so nearer than that a chunk changing from the one to the other shows as a patch
+  // of thicker crop popping in. It costs 5 MB of vertices in the middle of a field.
+  simpleShare: 1 / 8,
   levels: [[0, 0.75], [0.72, 1]],
   simpleLevels: [[0, 0.9]],
   headLevels: [[0, 0.75], [0.72, 1]],
