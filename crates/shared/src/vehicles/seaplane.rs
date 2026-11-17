@@ -124,6 +124,7 @@ pub(super) const SEAPLANE: VehicleDef = VehicleDef {
         slide: 0.0,
         roll: 0.0,
         nose: 0.0,
+        sweep: Spec::FLAT,
         steer_time: 0.0,
         steer_fade: STEER_FADE,
         skim: None,

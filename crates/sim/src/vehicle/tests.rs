@@ -78,10 +78,10 @@ const SCRIPTED_CHECKPOINTS: [(u8, u32, [f32; 3]); 16] = [
     (KIND_JEEP, 210, [2.5239, 0.8564, -22.4112]),
     (KIND_JEEP, 300, [30.9153, 0.8560, -23.3722]),
     (KIND_JEEP, 480, [64.3589, 0.8568, -59.5452]),
-    (KIND_SPORTS, 90, [-0.0019, 0.3975, -1.9154]),
-    (KIND_SPORTS, 210, [4.3494, 0.3961, -44.2191]),
-    (KIND_SPORTS, 300, [56.9594, 0.3953, -54.7882]),
-    (KIND_SPORTS, 480, [125.6157, 0.3959, -128.6126]),
+    (KIND_SPORTS, 90, [-0.0028, 0.3975, -1.9145]),
+    (KIND_SPORTS, 210, [4.3484, 0.3961, -44.2180]),
+    (KIND_SPORTS, 300, [56.9584, 0.3953, -54.7872]),
+    (KIND_SPORTS, 480, [125.6134, 0.3959, -128.6123]),
     (KIND_TANK, 90, [0.0, 1.1300, -0.9490]),
     (KIND_TANK, 210, [0.5937, 1.1300, -18.9117]),
     (KIND_TANK, 300, [12.0193, 1.1300, -31.0185]),
@@ -518,7 +518,7 @@ fn a_battered_engine_is_slower() {
 
 /// `(tick, position)` of a jeep with a bent front left wheel and no rear right one, driven by
 /// `scripted_controls`, mirrored in `vehicle.spec.ts`.
-const DAMAGED_CHECKPOINTS: [(u32, [f32; 3]); 3] = [(90, [0.1147, 0.7626, -0.3659]), (300, [9.1750, 0.7638, -15.2648]), (480, [13.0374, 0.7641, -30.9333])];
+const DAMAGED_CHECKPOINTS: [(u32, [f32; 3]); 3] = [(90, [0.1301, 0.7640, -0.3042]), (300, [8.7144, 0.7641, -14.3911]), (480, [12.9401, 0.7384, -28.2222])];
 const DAMAGED_CONDITION: CarCondition = CarCondition { power: 0.8, wheels: [180, 0, 0, WHEEL_GONE], ..CarCondition::NEW };
 
 #[test]
@@ -724,6 +724,78 @@ fn tracked_vehicles_climb_a_step_and_the_strv_and_strf_a_taller_one() {
     assert!(over_the_step(KIND_STRV, 1.1) > 100.0, "{}", over_the_step(KIND_STRV, 1.1));
     assert!(over_the_step(KIND_STRF, 1.1) > 100.0, "{}", over_the_step(KIND_STRF, 1.1));
     assert!(over_the_step(KIND_TANK, 1.1) < 0.0, "{}", over_the_step(KIND_TANK, 1.1));
+}
+
+/// The hardest contact a `kind` meets when it is sent at `speed` m/s under a light throttle, nose first
+/// or (`reversing`) tail first, at a `height` m kerb 20 m away and on over it, and how it ends up.
+fn onto_a_kerb(kind: u8, height: f32, reversing: bool, speed: f32) -> (Option<CarImpact>, CarPose) {
+    let mut physics = Physics::new(&world_with_step(height)).unwrap();
+    physics.add_car(1, kind, [0.0, 1.2, 0.0], if reversing { std::f32::consts::PI } else { 0.0 });
+    run(&mut physics, COAST, 120);
+    physics.set_car_velocity(1, [0.0, 0.0, -speed]);
+    let controls = CarControls { throttle: if reversing { -0.3 } else { 0.3 }, ..CarControls::IDLE };
+    let mut hardest = None::<CarImpact>;
+    // Until it is well up on the kerb, or has had the time to be.
+    for _ in 0..300 {
+        if physics.car_pose(1).unwrap().position[2] < -24.5 {
+            break;
+        }
+        physics.drive_car(1, controls, TICK_DT);
+        physics.step_cars(TICK_DT);
+        for impact in physics.car_impacts() {
+            if hardest.is_none_or(|known| impact.dv > known.dv) {
+                hardest = Some(impact);
+            }
+        }
+    }
+    (hardest, physics.car_pose(1).unwrap())
+}
+
+#[test]
+fn a_low_car_rides_up_a_kerb_forwards_and_in_reverse() {
+    // The kerbs are well over what a sports car or a golf cart clears (0.1 m), and under its bumper.
+    for kind in [KIND_SPORTS, KIND_ROADSTER, KIND_GOLF_CART] {
+        for height in [0.2, 0.3] {
+            for reversing in [false, true] {
+                let (hardest, pose) = onto_a_kerb(kind, height, reversing, 8.0);
+                assert!(pose.position[2] < -24.5 && pose.up_y > 0.8, "kind {kind} gets up onto a {height} m kerb: {pose:?}");
+                assert!(speed(&pose) > 2.0, "kind {kind} is not stopped by a {height} m kerb: {}", speed(&pose));
+                // What the kerb does to it is a knock from below, not a hit that stops it.
+                let hardest = hardest.unwrap();
+                assert!(hardest.dv < 5.0 && hardest.dv - hardest.lift < 1.0, "kind {kind}, {height} m: {hardest:?}");
+            }
+        }
+    }
+    // A kerb as high as its bumper is a wall to it.
+    let (hardest, pose) = onto_a_kerb(KIND_SPORTS, 0.5, false, 8.0);
+    assert!(pose.position[2] > -20.0, "{pose:?}");
+    assert!(hardest.unwrap().dv - hardest.unwrap().lift > 6.0, "{hardest:?}");
+}
+
+#[test]
+fn a_landing_pushes_a_car_up_and_a_wall_does_not() {
+    // Dropped six metres, it bottoms out on its belly: all of the blow is from below.
+    let mut physics = Physics::new(&flat()).unwrap();
+    physics.add_car(1, KIND_SPORTS, [0.0, 7.0, 0.0], 0.0);
+    let mut landing = None::<CarImpact>;
+    for _ in 0..180 {
+        physics.step_cars(TICK_DT);
+        landing = physics.car_impacts().into_iter().chain(landing).max_by(|a, b| a.dv.total_cmp(&b.dv));
+    }
+    let landing = landing.unwrap();
+    assert!(landing.dv > 6.0 && landing.lift > landing.dv * 0.95, "{landing:?}");
+    // Driven into a wall, almost none of it is.
+    let mut physics = Physics::new(&world_with_wall()).unwrap();
+    physics.add_car(1, KIND_SPORTS, [0.0, 1.0, 0.0], 0.0);
+    run(&mut physics, COAST, 120);
+    physics.set_car_velocity(1, [0.0, 0.0, -20.0]);
+    let mut crash = None::<CarImpact>;
+    for _ in 0..240 {
+        physics.step_cars(TICK_DT);
+        crash = physics.car_impacts().into_iter().chain(crash).max_by(|a, b| a.dv.total_cmp(&b.dv));
+    }
+    let crash = crash.unwrap();
+    assert!(crash.dv > 15.0 && crash.lift < crash.dv * 0.1, "{crash:?}");
 }
 
 #[test]
@@ -1638,10 +1710,10 @@ fn scripted_thrust(tick: u32) -> CarControls {
 
 /// `(tick, position, tank)` after `scripted_thrust`, mirrored in `vehicle.spec.ts`.
 const THRUST_CHECKPOINTS: [(u32, [f32; 3], f32); 4] = [
-    (120, [-0.0019, 0.3968, -8.9728], 1.0000),
-    (180, [-0.0019, 0.3992, -46.4509], 0.6700),
-    (240, [0.8576, 4.5892, -100.0672], 0.2742),
-    (420, [13.2106, 0.3972, -179.1133], 0.6742),
+    (120, [-0.0028, 0.3968, -8.9719], 1.0000),
+    (180, [-0.0028, 0.3992, -46.4499], 0.6700),
+    (240, [0.8566, 4.5892, -100.0662], 0.2742),
+    (420, [20.8949, 0.3971, -188.5134], 0.6808),
 ];
 
 #[test]

@@ -89,6 +89,7 @@ pub(super) const SNOWMOBILE: VehicleDef = VehicleDef {
         roll: 1.0,
         // The hood sweeps up from the front of the seat to over the ski tips, so it rides up a slope.
         nose: 0.6,
+        sweep: Spec::FLAT,
         // The skis answer at once; it is speed that calms them (`SNOWMOBILE_STEER_FADE`).
         steer_time: 0.0,
         steer_fade: SNOWMOBILE_STEER_FADE,

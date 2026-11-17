@@ -103,6 +103,10 @@ pub struct Spec {
     /// sled's does over its upturned skis: it rides up onto a slope instead of digging its nose in.
     /// 0 for a plain box.
     pub nose: f32,
+    /// How far in from each end its hull's underside starts to rise to half its height at the bumper,
+    /// metres, as a car's does past its axles: it rides up onto a kerb or a step, forwards or backwards,
+    /// instead of ramming it with its lower edge. `Spec::FLAT` (0) for a plain box.
+    pub sweep: f32,
     /// Seconds its steering takes to swing from straight to full lock, so that a key held down eases
     /// into a turn rather than snapping to it. 0 swings at the usual rate, which is all but at once.
     pub steer_time: f32,
@@ -142,6 +146,8 @@ impl Spec {
     pub const FRONT_STEER: usize = 1;
     /// The `profile` of a hull that is its plain box.
     pub const BOX: &'static [[f32; 2]] = &[];
+    /// The `sweep` of a hull whose underside is flat from end to end.
+    pub const FLAT: f32 = 0.0;
 
     /// How far axle `index` (front first, as `axles` lists them) is turned, as a share of the front
     /// axle's: 1 for the front one, less for each steered one behind it in proportion to its distance from

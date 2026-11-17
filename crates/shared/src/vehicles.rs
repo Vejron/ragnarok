@@ -218,6 +218,9 @@ pub struct Body {
     pub ram: f32,
     /// Crash damage it takes, against a car's 1.
     pub crash: f32,
+    /// Speed of a blow from below (m/s) that its wheels and underbody take without harm: a landing, a
+    /// bump it bottoms out on, a kerb under its sill. Only what is over this counts as a crash.
+    pub belly: f32,
     /// Flies: a tree it fells does not slow it.
     pub flies: bool,
     /// Nobody drives it: it rolls when towed, holds its brake when not, and can be hitched.
@@ -227,13 +230,14 @@ pub struct Body {
     pub tough: f32,
 }
 
-const CAR: Body = Body { drop_y: 1.0, legs: 0.0, heavy: false, ram: 1.0, crash: 1.0, flies: false, towed: false, tough: 1.0 };
+const CAR: Body = Body { drop_y: 1.0, legs: 0.0, heavy: false, ram: 1.0, crash: 1.0, belly: 4.0, flies: false, towed: false, tough: 1.0 };
 /// A tank's armour takes a fifth of what a car would, and it rams with three times a car's weight.
 const TRACKS: Body = Body { heavy: true, ram: 3.0, crash: 0.2, ..CAR };
-const ROTOR: Body = Body { flies: true, ..CAR };
+/// A helicopter's skids take nothing: setting it down hard hurts it.
+const ROTOR: Body = Body { belly: 0.0, flies: true, ..CAR };
 /// A plane is wood and canvas: it takes twice the crash damage, so flying it into anything at speed
-/// is the end of it.
-const WINGS: Body = Body { drop_y: 1.5, crash: 2.0, flies: true, ..CAR };
+/// is the end of it, and so is dropping it onto its wheels.
+const WINGS: Body = Body { drop_y: 1.5, crash: 2.0, belly: 0.0, flies: true, ..CAR };
 /// A walker's, a hen's or a tupp's hull starts as high as its legs hold it up.
 const LEGS: Body = Body { drop_y: WALKER_LEG_LENGTH + WALKER_HALF_EXTENTS[1], legs: WALKER_LEG_LENGTH, ..CAR };
 const TOWED: Body = Body { towed: true, ..CAR };
@@ -397,6 +401,17 @@ mod tests {
                 ([0.0, (z1 - z0) / len, -(y1 - y0) / len], [0.0, (y0 + y1) / 2.0, (z0 + z1) / 2.0])
             })
             .collect()
+    }
+
+    #[test]
+    fn only_the_wheeled_cars_have_a_swept_underside_and_it_leaves_a_flat_floor_between() {
+        for def in VEHICLES {
+            let swept = [KIND_JEEP, KIND_SPORTS, KIND_ROADSTER, KIND_GOLF_CART, KIND_TECHNICAL, KIND_BUS].contains(&def.kind);
+            assert_eq!(def.spec.sweep > 0.0, swept, "{}", def.name);
+            // A hull has one shape: a sweep goes with no outline, bow or nose of its own.
+            assert!(!swept || (def.spec.profile.is_empty() && def.spec.bow == 0.0 && def.spec.nose == 0.0), "{}", def.name);
+            assert!(def.spec.sweep < def.spec.half_extents[2], "{}", def.name);
+        }
     }
 
     #[test]

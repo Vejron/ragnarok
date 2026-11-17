@@ -91,6 +91,7 @@ pub(super) const SNOWRACER: VehicleDef = VehicleDef {
         roll: 1.0,
         // The ski's tip turns up, so it rides up onto a bump.
         nose: 0.75,
+        sweep: Spec::FLAT,
         // The ski answers at once; it is speed that calms it (`SNOWRACER_STEER_FADE`).
         steer_time: 0.0,
         steer_fade: SNOWRACER_STEER_FADE,

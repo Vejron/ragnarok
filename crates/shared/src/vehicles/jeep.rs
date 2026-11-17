@@ -74,6 +74,8 @@ pub(super) const JEEP: VehicleDef = VehicleDef {
         slide: 0.0,
         roll: 0.0,
         nose: 0.0,
+        // The underside rises from just outside each axle to the bumper.
+        sweep: 0.6,
         steer_time: 0.0,
         steer_fade: STEER_FADE,
         // Driven hard enough it skips over a lake, but only just, and a turn drops it in.

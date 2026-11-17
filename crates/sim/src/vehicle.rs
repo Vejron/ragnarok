@@ -288,6 +288,9 @@ pub struct CarImpact {
     pub dv: f32,
     /// The part of `dv` along the vehicle's nose: how much the contact stopped it, not lifted or turned it.
     pub stopped: f32,
+    /// The part of `dv` that pushed the vehicle up along its own up axis, m/s: a blow from below, on
+    /// its underside. 0 for a contact that pushed it down, as the ground does on a rolled car's roof.
+    pub lift: f32,
     /// Whether the other side was the ground.
     pub ground: bool,
 }
@@ -455,9 +458,9 @@ fn turned(spec: &Spec, steer: f32, speed: f32) -> f32 {
     if lock > 0.0 { steer.abs() / lock } else { 0.0 }
 }
 
-/// A vehicle's hull: its box, with the front of the underside swept up if it has a `nose`, or its
-/// sides tapered in to a stem if it has a `bow`. A kind with a `profile` (the tracked ones) has that
-/// outline instead, across its whole width: the glacis, the plates leaning back under the nose and the
+/// A vehicle's hull: its box, with the front of the underside swept up if it has a `nose`, both ends
+/// of it if it has a `sweep`, or its sides tapered in to a stem if it has a `bow`. A kind with a
+/// `profile` (the tracked ones) has that outline instead, across its whole width: the glacis, the plates leaning back under the nose and the
 /// tail, and the decks as they are, so it rides up onto a bump or a step rather than ramming it, and a
 /// round meets each plate at its real slope.
 pub(crate) fn hull(kind: u8) -> ColliderBuilder {
@@ -475,6 +478,12 @@ pub(crate) fn hull(kind: u8) -> ColliderBuilder {
             .map(Vector::from)
             .collect();
         return ColliderBuilder::convex_hull(&corners).expect("a hull with a bow is not flat");
+    }
+    if spec.sweep > 0.0 {
+        let flat = hz - spec.sweep;
+        let corners: Vec<Vector> =
+            [-hx, hx].into_iter().flat_map(|x| [[x, hy, -hz], [x, hy, hz], [x, 0.0, hz], [x, -hy, flat], [x, -hy, -flat], [x, 0.0, -hz]]).map(Vector::from).collect();
+        return ColliderBuilder::convex_hull(&corners).expect("a hull with a swept underside is not flat");
     }
     if spec.nose <= 0.0 {
         return ColliderBuilder::cuboid(hx, hy, hz);
@@ -589,8 +598,9 @@ impl Physics {
         let body = self.bodies.insert(body);
         // A tracked hull's belly slides over what it rests on rather than dragging on it.
         let mut chassis = hull(kind).friction(if heavy(kind) { TRACKED_HULL_FRICTION } else { 0.4 });
-        // A tracked hull keeps the mass and balance of its whole box, whatever its outline cuts away.
-        chassis = if spec.com_drop > 0.0 || heavy(kind) {
+        // A tracked hull or a swept one keeps the mass and balance of its whole box, whatever its
+        // outline cuts away.
+        chassis = if spec.com_drop > 0.0 || heavy(kind) || spec.sweep > 0.0 {
             // The box's own mass and inertia, with the centre of mass lowered.
             let mass = spec.density * 8.0 * hx * hy * hz;
             let inertia = Vector::new(hy * hy + hz * hz, hx * hx + hz * hz, hx * hx + hy * hy) * (mass / 3.0);
@@ -1228,6 +1238,10 @@ impl Physics {
                     }
                     let local = offset * (sum / count);
                     let forward = body.rotation() * Vector::new(0.0, 0.0, -1.0);
+                    // A manifold's normal points from the pair's first collider to its second, so the
+                    // push on the first is against it.
+                    let push = if ours { -pair.total_impulse() } else { pair.total_impulse() };
+                    let lift = push.dot(body.rotation() * Vector::Y).max(0.0) / body.mass();
                     let other_car = self.cars.iter().find(|(_, car)| car.owns(other)).map(|(&other, _)| other);
                     found.push(CarImpact {
                         car: id,
@@ -1238,6 +1252,7 @@ impl Physics {
                         point: (body.position() * local).into(),
                         dv: pair.total_impulse_magnitude() / body.mass(),
                         stopped: pair.total_impulse().dot(forward).abs() / body.mass(),
+                        lift,
                         ground: self.colliders.get(other).is_some_and(|collider| collider.shape().as_heightfield().is_some()),
                     });
                 }
@@ -1387,12 +1402,13 @@ impl Physics {
         let to_local = body.rotation().inverse();
         let solid = car.extra.iter().position(|&handle| handle == collider).and_then(|index| solid_index(car.spec, index));
         let point = Vector::from(origin) + Vector::from(dir) * hit.time_of_impact;
-        Some(Strike {
-            distance: hit.time_of_impact,
-            solid,
-            normal: (to_local * hit.normal).into(),
-            point: (to_local * (point - body.translation())).into(),
-        })
+        let mut normal = to_local * hit.normal;
+        // A hull's swept underside stands in for the upright bumper and sill it is cut from, so a round
+        // that meets it is judged as meeting that end square on, as it was on the box.
+        if solid.is_none() && car.spec.sweep > 0.0 && normal.y < -0.1 && normal.z.abs() > 0.1 {
+            normal = Vector::new(0.0, 0.0, normal.z.signum());
+        }
+        Some(Strike { distance: hit.time_of_impact, solid, normal: normal.into(), point: (to_local * (point - body.translation())).into() })
     }
 
     /// How far a ray travels before it hits the world, and which building or tree that was, if it

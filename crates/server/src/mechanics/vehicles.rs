@@ -504,6 +504,9 @@ pub const WHEEL_REACH: f32 = 1.8;
 const SHOT_WHEEL_PER_DAMAGE: f32 = 1.8;
 /// How near a bullet must land to a wheel to hurt it; a blast uses `WHEEL_REACH`.
 pub const BULLET_WHEEL_REACH: f32 = 1.0;
+/// The share of a contact's push that must be up along the vehicle's own up axis for it to be a blow
+/// from below: within about 40° of straight up through its floor.
+const FROM_BELOW: f32 = 0.75;
 /// A tree gives way, so hitting one hurts half as much.
 const TREE_CRASH_FACTOR: f32 = 0.5;
 /// A lighter contact than a crash throws sparks if the vehicle is this fast (m/s), at most every few ticks.
@@ -633,8 +636,18 @@ fn crash(world: &mut World, before: &BTreeMap<u32, CarPose>) {
 /// How hard `impact` hit a vehicle of `kind`, m/s. A sled (a kind whose hull has a swept `nose`) is
 /// built to be slammed up and down by the ground under its skis and belly, so only the part of a
 /// ground hit that stopped it counts: running fast onto a slope does not hurt it, into a bank does.
+/// For every other kind a blow from below (a landing, a bump or a kerb it bottomed out on) is taken
+/// by its wheels and underbody up to its `Body::belly`, and only what is over that counts. A ram into
+/// a wall or another vehicle, and a dive onto its nose, count in full.
 fn severity(kind: u8, impact: &CarImpact) -> f32 {
-    if impact.ground && vehicle_def(kind).spec.nose > 0.0 { impact.stopped } else { impact.dv }
+    let def = vehicle_def(kind);
+    if impact.ground && def.spec.nose > 0.0 {
+        return impact.stopped;
+    }
+    if impact.lift < impact.dv * FROM_BELOW {
+        return impact.dv;
+    }
+    (impact.dv - def.body.belly).max(0.0)
 }
 
 /// Runs down every living creature (a rooster) a car overlaps fast enough to run a soldier down, by the

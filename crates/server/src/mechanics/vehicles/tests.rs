@@ -942,3 +942,65 @@ fn a_snowracer_driven_nose_first_into_the_ground_comes_off_unhurt_where_a_jeep_w
     assert!(crashed, "the sled crashes too");
     assert_eq!((hp, damage), (vehicle_hp(KIND_SNOWRACER), [0; shared::protocol::DAMAGE_SLOTS]), "but takes no harm");
 }
+
+/// A `kind` let go level, `height` m over where it rests on flat ground: its health once it has
+/// landed, its wheels' damage, and whether the landing was a crash.
+fn dropped(kind: u8, height: f32) -> (u8, [u8; 4], bool) {
+    let mut game = game();
+    let vid = add_vehicle(&mut game.world, kind, [15.0, 2.0, 30.0], 0.0);
+    crash_events(&mut game, 120);
+    let rest = game.world.physics.car_pose(vid).unwrap().position[1];
+    game.world.physics.reset_car(vid, [15.0, rest + height, 30.0], 0.0);
+    let events = crash_events(&mut game, 300);
+    let wheels = std::array::from_fn(|wheel| game.world.entities.of::<Vehicle>(vid).damage[DAMAGE_WHEELS + wheel]);
+    (game.world.entities.of::<Health>(vid).hp, wheels, events.iter().any(|shot| shot.shooter == vid && shot.weapon == WEAPON_CRASH))
+}
+
+#[test]
+fn a_car_that_lands_hard_on_its_wheels_is_unhurt_and_a_long_fall_still_hurts_it() {
+    // Five metres down onto its belly: a jump off a bank, which its springs and underbody take.
+    for kind in [KIND_SPORTS, KIND_ROADSTER, KIND_GOLF_CART, KIND_JEEP, KIND_TECHNICAL, KIND_BUS] {
+        assert_eq!(dropped(kind, 5.0), (vehicle_hp(kind), [0; 4], false), "kind {kind}");
+    }
+    // Off a cliff, it does not.
+    let (hp, wheels, crashed) = dropped(KIND_SPORTS, 40.0);
+    assert!(crashed && hp < vehicle_hp(KIND_SPORTS) && wheels.iter().any(|&wheel| wheel > 0), "{hp} {wheels:?}");
+}
+
+#[test]
+fn a_plane_dropped_flat_onto_its_wheels_is_hurt_as_before() {
+    let (hp, _, crashed) = dropped(KIND_PLANE, 5.0);
+    assert!(crashed && hp < vehicle_hp(KIND_PLANE), "{hp}");
+}
+
+#[test]
+fn a_low_car_driven_fast_over_a_kerb_is_unhurt() {
+    use shared::world::CollisionMesh;
+    // A slab a quarter of a metre high across the way, 20 m deep: well over what a sports car clears.
+    let v = |x: f32, y: f32, z: f32| [(x * 100.0) as i32, (y * 100.0) as i32, (z * 100.0) as i32];
+    let vertices = vec![v(0.0, 0.0, -20.0), v(30.0, 0.0, -20.0), v(30.0, 0.0, 0.0), v(0.0, 0.0, 0.0), v(0.0, 0.25, -20.0), v(30.0, 0.25, -20.0), v(30.0, 0.25, 0.0), v(0.0, 0.25, 0.0)];
+    let triangles = vec![[0, 1, 5], [0, 5, 4], [1, 2, 6], [1, 6, 5], [2, 3, 7], [2, 7, 6], [3, 0, 4], [3, 4, 7], [4, 5, 6], [4, 6, 7], [0, 2, 1], [0, 3, 2]];
+    // Each at about the best it does on the flat.
+    for (kind, speed) in [(KIND_SPORTS, 20.0), (KIND_ROADSTER, 20.0), (KIND_GOLF_CART, 10.0)] {
+        let map = WorldFile {
+            version: WORLD_VERSION,
+            half_extent: 30_000,
+            spawns: (0..14).map(|i| [i * 2500 - 15_000, 20_000]).collect(),
+            collision: CollisionMesh { vertices: vertices.clone(), triangles: triangles.clone() },
+            ..Default::default()
+        };
+        let mut game = Game::new(map, 0).unwrap();
+        game.world.clear_pickups();
+        let vid = add_vehicle(&mut game.world, kind, [15.0, 1.0, 5.0], 0.0);
+        crash_events(&mut game, 60);
+        // Up onto it, where with nobody at the wheel it brakes to a stop.
+        game.world.physics.kick_car(vid, [0.0, 0.0, -speed]);
+        let events = crash_events(&mut game, 240);
+        let pose = game.world.physics.car_pose(vid).unwrap();
+        // The kerb's edge is at z = 0: at least its front wheels are up on it.
+        assert!(pose.position[2] < -0.5 && pose.position[1] > 0.45 && pose.up_y > 0.9, "kind {kind} got up onto it: {pose:?}");
+        assert!(!events.iter().any(|shot| shot.shooter == vid && shot.weapon == WEAPON_CRASH), "kind {kind} did not crash");
+        assert_eq!(game.world.entities.of::<Health>(vid).hp, vehicle_hp(kind), "kind {kind}");
+        assert_eq!(game.world.entities.of::<Vehicle>(vid).damage, [0; shared::protocol::DAMAGE_SLOTS], "kind {kind}");
+    }
+}

@@ -2641,6 +2641,9 @@ export const STEER_FADE = 20.0
 /** Only the front axle steers, as on a car. */
 export const FRONT_STEER = 1
 
+/** The `sweep` of a hull whose underside is flat from end to end. */
+export const FLAT = 0.0
+
 /**
  * The sports car (`KIND_SPORTS`): a low two-seater with small wheels and a big engine. Quick in a
  * straight line, with the chassis only about 12 cm off the ground.

@@ -99,6 +99,8 @@ pub(super) const BUS: VehicleDef = VehicleDef {
         slide: 0.0,
         roll: 0.0,
         nose: 0.0,
+        // The underside rises from each axle out to the bumper.
+        sweep: 3.0,
         steer_time: 0.0,
         steer_fade: STEER_FADE,
         // Far too heavy to skim: it sinks and wades along the bed.

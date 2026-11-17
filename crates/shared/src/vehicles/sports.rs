@@ -63,6 +63,8 @@ pub(super) const SPORTS: VehicleDef = VehicleDef {
         slide: 0.0,
         roll: 0.0,
         nose: 0.0,
+        // The underside rises from under each axle out to the bumper.
+        sweep: 0.8,
         steer_time: 0.0,
         steer_fade: STEER_FADE,
         // It skips over water flat out, and a turn drops it in.

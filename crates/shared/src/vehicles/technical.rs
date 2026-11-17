@@ -106,6 +106,8 @@ pub(super) const TECHNICAL: VehicleDef = VehicleDef {
         slide: 0.0,
         roll: 0.0,
         nose: 0.0,
+        // The underside rises from each axle out to the bumper.
+        sweep: 0.85,
         steer_time: 0.0,
         steer_fade: STEER_FADE,
         // Too heavy to skip over water: it sinks and wades along the bed.
