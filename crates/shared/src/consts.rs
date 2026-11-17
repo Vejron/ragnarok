@@ -31,7 +31,7 @@ pub use crate::vehicles::titan::*;
 pub use crate::vehicles::walker::*;
 
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
-pub const PROTOCOL_VERSION: u8 = 85;
+pub const PROTOCOL_VERSION: u8 = 86;
 
 /// Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
 /// `crate::vehicles`.
@@ -296,6 +296,12 @@ pub const STANCE_SWIM: u8 = 5;
 pub const STANCE_DIVE: u8 = 6;
 /// A zombie climbing out of the ground (`ZOMBIE_RISE_TICKS`): it neither moves nor claws until it is up.
 pub const STANCE_RISE: u8 = 7;
+/// A dead player come back as a ghost (GHOSTS.md): a shadowy cloud that flies through everything and
+/// can touch nothing, and nothing can touch it.
+pub const STANCE_GHOST: u8 = 8;
+/// A ghost taking shape again (`GHOST_FORM_TICKS`): a dark swirl sinking to the ground, still
+/// untouchable and unable to act, that stands up as the soldier.
+pub const STANCE_FORM: u8 = 9;
 /// A blast that throws a soldier at least this hard, m/s, knocks them down.
 pub const KNOCKDOWN_POWER: f32 = 7.0;
 /// Ticks they lie there once landed: this many at `KNOCKDOWN_POWER`, rising evenly to
@@ -592,6 +598,37 @@ pub const SKI_CLIP_SPEED: f32 = 2.0;
 pub const PLAYER_MAX_HP: u8 = 150;
 /// Ticks a dead player waits before respawning.
 pub const RESPAWN_TICKS: u32 = 3 * TICK_RATE;
+
+/// Ghosts (GHOSTS.md). A killed player comes back as a ghost after `RESPAWN_TICKS`, and stays one at
+/// most this many ticks (30 s): then it takes shape where it is, or drops at an entry point if it may not.
+pub const GHOST_TICKS: u32 = 1800;
+/// A ghost may choose to take shape only after this many ticks (5 s) as one.
+pub const GHOST_MIN_TICKS: u32 = 300;
+/// Ticks a ghost takes to take shape again (2 s), seen by everyone around it.
+pub const GHOST_FORM_TICKS: u32 = 120;
+/// A ghost may not take shape within this far of a living enemy, metres along the ground: nobody
+/// comes back right beside someone to shoot them in the back.
+pub const GHOST_KEEPOUT: f32 = 40.0;
+/// How fast a ghost flies where it looks, metres per second.
+pub const GHOST_SPEED: f32 = 20.0;
+/// How fast a ghost rises with jump held, or sinks with run held, metres per second.
+pub const GHOST_CLIMB: f32 = 10.0;
+/// How quickly a ghost comes up to the velocity it wants, m/s².
+pub const GHOST_ACCEL: f32 = 60.0;
+/// A ghost's centre is kept at least this far over the ground, metres: it goes through walls and
+/// roofs, but not under the earth.
+pub const GHOST_FLOOR: f32 = 0.6;
+/// And at most this far over it, metres, as high as a drone flies.
+pub const GHOST_CEILING: f32 = 150.0;
+/// How far over the body a ghost rises out of it, metres.
+pub const GHOST_RISE: f32 = 1.0;
+/// Why a ghost may not take shape where it is (`replicated::Vitals::block`): it may; it has not been one
+/// for `GHOST_MIN_TICKS` yet; a living enemy is within `GHOST_KEEPOUT`; or the ground under it is no place
+/// to stand (water, a building, outside the world).
+pub const GHOST_BLOCK_NONE: u8 = 0;
+pub const GHOST_BLOCK_SOON: u8 = 1;
+pub const GHOST_BLOCK_ENEMY: u8 = 2;
+pub const GHOST_BLOCK_GROUND: u8 = 3;
 /// Guns are hitscans fired from the eye along the look direction; their stats are in `items`.
 /// Height of a soldier's eye above its capsule centre, where a rifle shot leaves.
 pub const EYE_HEIGHT: f32 = 0.6;

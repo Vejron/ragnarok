@@ -11,6 +11,7 @@ use rapier3d::control::{CharacterAutostep, CharacterLength, KinematicCharacterCo
 use rapier3d::parry::utils::Array2;
 use rapier3d::prelude::*;
 use shared::carve::{Shell, Tri};
+use shared::ghost::ghost_velocity;
 use shared::consts::*;
 use shared::movement::{begin_slide, decay_knock, desired_translation, knockdown_ticks, settle_vertical, slope_scale, spend_stamina, steer_chute, stones_scale, toggle_chute, wish_velocity};
 use shared::protocol::{InputFrame, LIMB_LEGS};
@@ -69,6 +70,9 @@ pub struct Character {
     pub ski_strain: u8,
     /// Swimming in deep water (`shared::swim::swims`): no gravity, no gun, and `vy` is the stroke's.
     pub swimming: bool,
+    /// A ghost (GHOSTS.md): it flies where it looks through everything, `knock` and `vy` its velocity,
+    /// kept between `GHOST_FLOOR` and `GHOST_CEILING` over the ground. The server sets it.
+    pub ghost: bool,
 }
 
 pub struct Physics {
@@ -827,6 +831,10 @@ impl Physics {
     /// `move_character` with walking speed multiplied by `speed_scale` (aiming a gun slows you), and
     /// `armed` for a gun in hand, which on skis leaves only the legs to push (`ski_step`).
     pub fn move_character_scaled(&self, character: &mut Character, input: &InputFrame, dt: f32, speed_scale: f32, armed: bool) {
+        if character.ghost {
+            self.fly_ghost(character, input, dt);
+            return;
+        }
         // Knocked down, the player's input is nothing at all, facing as they were.
         let still = InputFrame { strafe: 0, forward: 0, buttons: 0, yaw: shared::quant::to_mrad(character.yaw), ..*input };
         let input = if character.down > 0 { &still } else { input };
@@ -989,6 +997,46 @@ impl Physics {
         character.grounded = vertical.grounded && vy <= 0.0;
         character.vy = settle_vertical(vy, desired[1], end.y - start.y, character.grounded);
         character.yaw = shared::quant::from_mrad(input.yaw);
+    }
+
+    /// One tick of a ghost (`Character::ghost`): it flies at `ghost_velocity` through buildings,
+    /// trees, vehicles and water, kept inside the playable square and between `GHOST_FLOOR` and
+    /// `GHOST_CEILING` over the ground under it. Where no ground is known (a tile not streamed in yet)
+    /// it is not held to any.
+    fn fly_ghost(&self, character: &mut Character, input: &InputFrame, dt: f32) {
+        let [vx, vy, vz] = ghost_velocity([character.knock[0], character.vy, character.knock[1]], input, dt);
+        let [x, y, z] = character.position;
+        let edge = self.bound - 1.0;
+        let (x, z) = ((x + vx * dt).clamp(-edge, edge), (z + vz * dt).clamp(-edge, edge));
+        let mut y = y + vy * dt;
+        let mut vy = vy;
+        if let Some(ground) = self.ground_under([x, y, z]) {
+            let (low, high) = (ground + GHOST_FLOOR, ground + GHOST_CEILING);
+            if y < low || y > high {
+                y = y.clamp(low, high);
+                vy = 0.0;
+            }
+        }
+        character.position = [x, y, z];
+        character.knock = [vx, vz];
+        character.vy = vy;
+        character.yaw = shared::quant::from_mrad(input.yaw);
+        character.grounded = false;
+        character.prone = false;
+        character.chute = false;
+        character.swimming = false;
+        character.ride = 0;
+        character.down = 0;
+    }
+
+    /// The height of the bare ground under `[x, _, z]`, metres: the terrain or the slab, never a
+    /// building, tree, placed cube or vehicle on it. `None` where nothing is under it.
+    pub fn ground_under(&self, [x, _, z]: [f32; 3]) -> Option<f32> {
+        let top = 10_000.0;
+        let bare = |handle: ColliderHandle, _: &Collider| !self.objects.contains_key(&handle) && !self.construct_chunks.contains_key(&handle);
+        let filter = QueryFilter::only_fixed().predicate(&bare);
+        let queries = self.broad_phase.as_query_pipeline(self.narrow_phase.query_dispatcher(), &self.bodies, &self.colliders, filter);
+        queries.cast_ray(&Ray::new(Vector::new(x, top, z), Vector::new(0.0, -1.0, 0.0)), 2.0 * top, true).map(|(_, distance)| top - distance)
     }
 
     /// How deep the water is over a soldier's feet, waves and all, metres, or `None` where it is dry.

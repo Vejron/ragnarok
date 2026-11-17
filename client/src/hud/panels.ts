@@ -3,6 +3,7 @@ import { BACKPACK_NAME, type BackpackView } from '@/backpack'
 import { WEAPON_AP, WEAPON_AUTOCANNON, WEAPON_ROTARY, WEAPON_BALL, WEAPON_BOMB, WEAPON_DROWN, WEAPON_EGG, WEAPON_GRENADE, WEAPON_REVOLVER, WEAPON_ROCKET, WEAPON_SHELL, WEAPON_WRECK } from '@/net/codec'
 import { colorFor, isBot, isZombie, nameFor } from '@/profile'
 import { seatHint } from '@/seathints'
+import { GHOST_BLOCK_ENEMY, GHOST_BLOCK_GROUND, GHOST_BLOCK_SOON, GHOST_KEEPOUT } from '@/sim/consts'
 import { miniBottom, miniSize } from './map'
 import { GREEN_CSS, INK_CSS as INK, MARGIN, RED, TEAL, TEXT, type Painter, type TextStyle } from './paint'
 
@@ -112,9 +113,10 @@ export class Panels {
       p.label(text, p.width / 2, y + 18, style, 'center')
     }
     this.hint(p, s, now)
-    if (s.dead && !s.notices.outcome) {
+    if (s.ghost && !s.notices.outcome) ghostTitle(p, s.ghost, s.touch)
+    else if (s.dead && !s.notices.outcome) {
       p.rect(0, 0, p.width, p.height, 0x961414, 0.35)
-      title(p, 'ELIMINATED', `Respawning in ${Math.ceil(s.respawnIn)}`)
+      title(p, 'ELIMINATED', `Rising as a ghost in ${Math.ceil(s.respawnIn)}`)
     }
     this.scenario(p, s, now, pillsBottom + 10)
     if (s.notices.outcome) {
@@ -173,6 +175,30 @@ export class Panels {
     }
     for (const text of s.notices.messages) put(text, { size: 14, weight: 700, color: INK }, 0xffffff, 0.85, null)
   }
+}
+
+/**
+ * A ghost's title, high on the screen so the world shows under it: the seconds it has left, and the
+ * keys, with why it may not take shape here when it may not. Taking shape, only that.
+ */
+function ghostTitle(p: Painter, ghost: NonNullable<HudStats['ghost']>, touch: boolean) {
+  p.rect(0, 0, p.width, p.height, 0x1a0f2e, 0.25)
+  const size = Math.max(28, Math.min(56, p.width * 0.06))
+  const y = p.height * 0.2
+  const heading = ghost.forming ? 'TAKING SHAPE' : `GHOST · ${ghost.left}`
+  p.label(heading, p.width / 2, y, { size, weight: 800, color: '#e6dcff', shadow: true, tracking: 0.08 }, 'center')
+  if (ghost.forming) return
+  const [use, chute] = touch ? ['Use', 'Chute'] : ['E', 'G']
+  const why = GHOST_WHY[ghost.block]
+  const line = why ? `${why} · ${chute}: drop at your entry point` : `${use}: take shape here · ${chute}: drop at your entry point`
+  p.label(line, p.width / 2, y + size * 0.8, { size: 18, weight: 700, color: why ? '#ffb4b4' : '#fff', shadow: true }, 'center')
+}
+
+/** Why a ghost may not take shape, by `GHOST_BLOCK_*`. */
+const GHOST_WHY: Record<number, string> = {
+  [GHOST_BLOCK_SOON]: 'Gathering yourself…',
+  [GHOST_BLOCK_ENEMY]: `An enemy is within ${GHOST_KEEPOUT} m`,
+  [GHOST_BLOCK_GROUND]: 'No ground to stand on here',
 }
 
 function title(p: Painter, heading: string, line: string) {

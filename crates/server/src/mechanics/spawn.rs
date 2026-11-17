@@ -14,7 +14,7 @@ pub struct Spawn;
 /// How many of the most central spawn points new players are spread over.
 const NEARBY_SPAWNS: usize = 6;
 /// Bots spawn slightly above ground so they never start intersecting it.
-const SPAWN_DROP: f32 = 0.5;
+pub(super) const SPAWN_DROP: f32 = 0.5;
 /// A chosen spawn point must be at least this far from any wall, centimetres.
 const WALL_CLEARANCE: i32 = 100;
 

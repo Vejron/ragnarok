@@ -1078,8 +1078,13 @@ impl Mechanic for Combat {
         let ids = world.entities.ids::<With<Player>>();
         for id in ids {
             let alive = world.entities.alive(id);
-            // `Life` counts a dead player's `Respawn` down; at zero they come back here, at a spawn point.
-            let due = !alive && world.entities.get::<Respawn>(id).is_some_and(|respawn| respawn.left == 0);
+            // `Life` counts a dead player's `Respawn` down; at zero they come back here: a player as a
+            // ghost (`Ghosts` sees to the rest), anyone else at a spawn point. A ghost is not due again.
+            let due = !alive && world.entities.get::<Respawn>(id).is_some_and(|respawn| respawn.left == 0) && !world.entities.has::<super::Ghost>(id);
+            if due && super::ghosts::haunts(world, id) {
+                super::ghosts::rise(world, id);
+                continue;
+            }
             let Some(mut player) = world.entities.get_mut::<Player>(id) else { continue };
             player.hands.fire_cooldown = player.hands.fire_cooldown.saturating_sub(1);
             // Held fire keeps a gun's bloom; let go, the cone closes again.

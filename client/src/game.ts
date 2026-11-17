@@ -7,7 +7,7 @@ import { RttEstimator, ServerClock } from './net/clock'
 import { Transport } from './net/transport'
 import {
   BUTTON_ALT, BUTTON_CHUTE, BUTTON_CROUCH, BUTTON_FIRE, BUTTON_JUMP, BUTTON_LAMP, BUTTON_RELOAD, BUTTON_RUN, CROUCH_EYE_DROP, PRONE_EYE_HEIGHT, SLIDE_MIN_SPEED, EYE_HEIGHT, INPUT_REDUNDANCY, PLAYER_MAX_HP, PROTOCOL_VERSION,
-  SHELL_COOLDOWN_TICKS, STANDING_Y, STANCE_CHUTE, STANCE_DIVE, STANCE_DOWN, STANCE_PRONE, STANCE_SWIM,
+  SHELL_COOLDOWN_TICKS, STANDING_Y, STANCE_CHUTE, STANCE_DIVE, STANCE_DOWN, STANCE_PRONE, STANCE_SWIM, STANCE_GHOST,
   TICK_MS, TICK_RATE, TITAN_FIST_RADIUS, TITAN_REACH, LIFT_RIDER_CENTRE, BLOOM_RECOVER, STAMINA_FULL, ONE_ARM_SWAY, BACKPACK_SPEED, CARRY_SKIS, SUB_LAUNCH_DEPTH } from './sim/consts'
 import { easeSway, sway, swayAmplitude } from './sway'
 import { mayPlace } from './sim/bricks'
@@ -24,6 +24,8 @@ import { VehicleDriver, type DrivenPose, type Feet } from './sim/driver'
 import { Predictor } from './sim/predict'
 import type { Vec3 } from './sim/motor'
 import { Effects } from './render/effects'
+import { GhostClouds } from './render/ghost'
+import { Ghosts } from './entities/presenters/ghosts'
 import { TitanModel } from './render/titan'
 import { TitanHands } from './titanhands'
 import { Headset, type HeadsetFrame } from './xr/headset'
@@ -531,6 +533,14 @@ export class Game {
     this.liftRiders = this.people.add(new LiftRiders(this.avatars, () => this.liftView, () => this.liftTick()))
     this.people.add(new Roosters({ root: this.scene.scene, listener: () => this.predictor?.state.position ?? [0, 0, 0], blobFoot }))
     this.people.add(new Animals({ root: this.scene.scene, blobFoot, gore: this.gore }))
+    this.people.add(new Ghosts({
+      draw: new GhostClouds(this.smoke, this.glow),
+      own: () => {
+        const state = this.predictor?.state
+        return state ? { at: state.position, velocity: [state.knock[0], state.vy, state.knock[1]], yaw: state.yaw } : null
+      },
+      ownBlock: () => this.player.ghostBlock,
+    }))
     // Dev-only handle for poking at the game from the console or a test driver.
     if (import.meta.env.DEV) (window as unknown as { __game?: Game }).__game = this
   }
@@ -589,7 +599,7 @@ export class Game {
     const [x, z] = world.spawns[0] ?? [0, 0]
     this.view.focus(x, z)
     await this.tiles.prime(x, z)
-    this.predictor = new Predictor(motor.stepper, { position: [x, this.terrain.heightAt(x, z) + STANDING_Y, z], yaw: 0, vy: 0, grounded: true, knock: [0, 0], ride: 0, prone: false, chute: false, spent: 0, winded: false, lost: 0, down: 0, skis: false, skiStrain: 0, swimming: false })
+    this.predictor = new Predictor(motor.stepper, { position: [x, this.terrain.heightAt(x, z) + STANDING_Y, z], yaw: 0, vy: 0, grounded: true, knock: [0, 0], ride: 0, prone: false, chute: false, spent: 0, winded: false, lost: 0, down: 0, skis: false, skiStrain: 0, swimming: false, ghost: false })
     this.predictor.speedScale = (input) => aimSpeedScale(this.player.slot(input.slot).item, input.buttons) * (this.player.carrying ? BACKPACK_SPEED : 1)
     this.predictor.armed = (input) => fillsHands(this.player.slot(input.slot).item)
     this.predictor.setTick = (tick) => motor.setTick(tick)
@@ -847,6 +857,7 @@ export class Game {
       knock: [own.motion?.knock_x ?? 0, own.motion?.knock_z ?? 0], ride, prone, chute: stance === STANCE_CHUTE,
       spent: own.vitals?.spent ?? 0, winded: own.vitals?.winded === 1, lost, down: own.vitals?.down ?? 0,
       skis: ((own.carry?.what ?? 0) & CARRY_SKIS) !== 0, skiStrain: own.vitals?.strain ?? 0, swimming: stance === STANCE_SWIM || stance === STANCE_DIVE,
+      ghost: stance === STANCE_GHOST,
     }, tick)
   }
 
@@ -872,7 +883,8 @@ export class Game {
     // A swimmer floats on the waves, which run on the server's tick: the one it is about now.
     const now = Math.floor(this.clock.tickAt(performance.now()))
     const tick = Number.isFinite(now) && now > 0 ? now : null
-    if (this.seat || this.lifted || this.heldBy || !this.player.alive) this.predictor!.record(frame, tick)
+    // A ghost is dead, but flies.
+    if (this.seat || this.lifted || this.heldBy || !(this.player.alive || this.player.ghost)) this.predictor!.record(frame, tick)
     else this.predictor!.apply(frame, tick)
     if (this.localId !== null) {
       this.fireFeedback(frame)
@@ -1247,7 +1259,8 @@ export class Game {
     const me = this.avatars.local()
     // Reading the map the view is at the eyes, inside the head.
     // A missile is flown from a submarine's seat: the body stays sealed in its hull, not kneeling anywhere.
-    me.hidden = (seated && !flying && !sitting) || (flying && view !== null && this.seat?.kind === KIND_MISSILE) || scoped || reading > 0.4
+    // A ghost, or one taking shape, is a cloud (`Ghosts`), not a body.
+    me.hidden = (seated && !flying && !sitting) || (flying && view !== null && this.seat?.kind === KIND_MISSILE) || scoped || reading > 0.4 || this.player.ghost || this.player.forming
     me.dead = !this.player.alive
     me.held = local.swimming && !seated ? ITEM_NONE : this.player.slot(this.input.heldSlot).item
     me.swim = !local.swimming || seated || !this.player.alive ? 0 : this.submerged(local) ? 2 : 1
@@ -1466,7 +1479,8 @@ export class Game {
       locked: this.input.locked,
       touch: this.input.coarse,
       warning: this.warning,
-      prompt: this.localId === null ? null : prompt({
+      // A ghost's keys are on its title.
+      prompt: this.localId === null || player.ghost || player.forming ? null : prompt({
         position, ground: this.terrain?.heightAt(position[0]!, position[2]!) ?? 0, alive: player.alive, grounded: local.grounded, chute: local.chute, seat,
         lift: this.lifted ? 'off' : player.alive && !seated && this.liftView?.boardable(position, (x, z) => this.terrain?.heightAt(x, z) ?? 0, STANDING_Y, this.liftTick(now)) ? 'ride' : null,
       }, this.lying.lying, cars),
@@ -1504,6 +1518,7 @@ export class Game {
       maxHp: PLAYER_MAX_HP,
       dead: !player.alive,
       respawnIn: player.respawnIn(now),
+      ghost: player.ghost || player.forming ? { left: player.ghostLeft, block: player.ghostBlock, forming: player.forming } : null,
       sight: sighted,
       scoped: this.scoped,
       periscope: view?.rig.name === 'periscope' && player.alive,

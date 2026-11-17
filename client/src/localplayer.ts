@@ -1,6 +1,6 @@
 import type { Entity } from './entities/units'
 import type { HudStats } from './hud'
-import { CARRY_BACKPACK, CARRY_LAMP, CARRY_SKIS, HEAD_HP, LIMB_HP, PLAYER_MAX_HP, RESPAWN_TICKS, TICK_MS } from './sim/consts'
+import { CARRY_BACKPACK, CARRY_LAMP, CARRY_SKIS, GHOST_BLOCK_NONE, HEAD_HP, LIMB_HP, PLAYER_MAX_HP, RESPAWN_TICKS, STANCE_FORM, STANCE_GHOST, TICK_MS } from './sim/consts'
 import { emptyHotbar, HOTBAR_SLOTS, ITEM_NONE, type ItemSlot } from './sim/items'
 import { bleedingOf, lostOf } from './sim/limbs'
 
@@ -30,6 +30,14 @@ export class LocalPlayer {
   lamp = false
   /** Air left, 0..1 (`Vitals::breath`): less than 1 under the water and while getting it back. */
   breath = 1
+  /** Whole seconds left as a ghost (`Vitals::ghost`), 0 when they are not one (GHOSTS.md). */
+  ghostLeft = 0
+  /** Why the ghost may not take shape here and now (`GHOST_BLOCK_*`). */
+  ghostBlock = GHOST_BLOCK_NONE
+  /** Flying as a ghost, as their own stance says. */
+  ghost = false
+  /** A ghost taking shape again, as their own stance says. */
+  forming = false
 
   get alive() {
     return this.hp > 0
@@ -46,6 +54,10 @@ export class LocalPlayer {
     this.onSkis = false
     this.lamp = false
     this.breath = 1
+    this.ghostLeft = 0
+    this.ghostBlock = GHOST_BLOCK_NONE
+    this.ghost = false
+    this.forming = false
   }
 
   /** Takes what their own entity says now. */
@@ -55,7 +67,11 @@ export class LocalPlayer {
       this.progress = own.vitals.progress
       this.parts = own.vitals.parts
       this.breath = own.vitals.breath / 255
+      this.ghostLeft = own.vitals.ghost
+      this.ghostBlock = own.vitals.block
     }
+    this.ghost = own.flags?.stance === STANCE_GHOST
+    this.forming = own.flags?.stance === STANCE_FORM
     if (own.hotbar) this.hotbar = [...own.hotbar.slots, ...emptyHotbar()].slice(0, HOTBAR_SLOTS)
     this.limbs = own.limbs?.lost ?? 0
     const worn = own.carry?.what ?? 0

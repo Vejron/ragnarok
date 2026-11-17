@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { Presenters, type Frame } from '@/entities/presenter'
 import { Pickups } from '@/entities/presenters/pickups'
 import { Soldiers } from '@/entities/presenters/people'
+import { Ghosts } from '@/entities/presenters/ghosts'
+import { GHOST_BLOCK_ENEMY, GHOST_FORM_TICKS, STANCE_FORM, STANCE_GHOST, TICK_MS } from '@/sim/consts'
 import { Projectiles, type ProjectileWorld } from '@/entities/presenters/projectiles'
 import { EntityStore } from '@/entities/store'
 import type { Components } from '@/net/components.generated'
@@ -83,5 +85,28 @@ describe('the soldiers presenter', () => {
     expect(bodies.get(3)!.pose).toEqual([[1, 0.9, 0], 0.5, 0, 0, true, 1 / 60, 0, true, true, true, false, 0])
     expect(bodies.get(4)!.dead).toBe(true)
     expect(shadows).toEqual([[1, 0.9, 0]])
+  })
+})
+
+describe('the ghosts presenter', () => {
+  it('draws a ghost as a cloud and not as a soldier, the local one from its prediction, and one taking shape as a swirl', () => {
+    const log: string[] = []
+    const presenters = new Presenters<Frame>()
+    const soldiers = presenters.add(new Soldiers({ avatars: { draw: () => ({ update() {} }) } as never, blobFoot: () => {}, rewave: () => 0, wade: () => {}, skiRun: () => {}, headlamp: () => {}, zombie: () => {} }))
+    presenters.add(new Ghosts({
+      draw: {
+        flying: ([x], _velocity, _yaw, own, blocked) => log.push(`fly ${x} ${own ? 'own' : 'other'}${blocked ? ' blocked' : ''}`),
+        forming: ([x], done) => log.push(`form ${x} ${done.toFixed(2)}`),
+      },
+      own: () => ({ at: [9, 2, 0], velocity: [0, 0, 0], yaw: 0 }),
+      ownBlock: () => GHOST_BLOCK_ENEMY,
+    }))
+    const ghost = (x: number, stance: number): Components => ({ kind: { kind: 0 }, place: { x: x * 100, y: 300, z: 0 }, heading: { yaw: 0 }, flags: { flags: 2, stance }, motion: { vy: 0, knock_x: 0, knock_z: 0 } })
+    const store = new EntityStore()
+    store.push(10, new Map([[3, ghost(1, STANCE_GHOST)], [4, ghost(2, STANCE_FORM)], [5, ghost(3, STANCE_GHOST)]]), true)
+    presenters.run(store.sampleAll(10), { ...frame(10), localId: 5, now: 1000 })
+    expect(soldiers.inView).toEqual([])
+    presenters.run(store.sampleAll(10), { ...frame(10), localId: 5, now: 1000 + (GHOST_FORM_TICKS * TICK_MS) / 2 })
+    expect(log).toEqual(['fly 1 other', 'form 2 0.00', 'fly 9 own blocked', 'fly 1 other', 'form 2 0.50', 'fly 9 own blocked'])
   })
 })

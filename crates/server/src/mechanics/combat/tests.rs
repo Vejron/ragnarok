@@ -234,7 +234,11 @@ fn dead_players_do_not_fire_and_cannot_be_hit_until_they_respawn() {
     assert_eq!(game.world.entities.of::<Player>(target).score.deaths, 1);
     assert_eq!(game.world.entities.of::<Player>(shooter).score.kills, 1);
 
-    hold(&mut game, target, &mut seq_t, 0.0, 0, RESPAWN_TICKS);
+    // Back as a ghost, which gives itself up for a drop at an entry point.
+    hold(&mut game, target, &mut seq_t, 0.0, 0, RESPAWN_TICKS + 1);
+    assert!(!game.world.entities.alive(target), "a ghost is still dead");
+    hold(&mut game, target, &mut seq_t, 0.0, BUTTON_CHUTE, 1);
+    hold(&mut game, target, &mut seq_t, 0.0, 0, 2);
     assert!(game.world.entities.alive(target));
     assert_eq!(game.world.entities.of::<Health>(target).hp, PLAYER_MAX_HP);
 }
@@ -746,11 +750,13 @@ fn being_hit_spoils_a_bandage_and_full_health_does_not_start_one() {
 }
 
 #[test]
-fn a_new_life_starts_with_the_standard_loadout() {
+fn a_drop_at_an_entry_point_starts_with_the_standard_loadout() {
     let (mut game, shooter, target, mut seq, mut seq_t) = duel();
     give(&mut game, target, 4, ITEM_BANDAGE, 2);
     damage_entity(&mut game.world, target, Harm::new(PLAYER_MAX_HP, Some(shooter), WEAPON_RIFLE));
-    hold(&mut game, target, &mut seq_t, 0.0, 0, RESPAWN_TICKS);
+    hold(&mut game, target, &mut seq_t, 0.0, 0, RESPAWN_TICKS + 1);
+    hold(&mut game, target, &mut seq_t, 0.0, BUTTON_CHUTE, 1);
+    hold(&mut game, target, &mut seq_t, 0.0, 0, 2);
     assert!(game.world.entities.alive(target));
     let hotbar = game.world.entities.of::<Player>(target).hands.hotbar;
     assert_eq!(hotbar, starting_hotbar());
@@ -761,7 +767,7 @@ fn a_new_life_starts_with_the_standard_loadout() {
     let _ = &mut seq;
 }
 #[test]
-fn a_chosen_loadout_is_held_on_joining_and_again_after_every_death() {
+fn a_chosen_loadout_is_held_on_joining_and_again_after_a_drop_at_an_entry_point() {
     let mut game = game();
     let (outbox, _inbox) = mpsc::channel(4096);
     let (reply, mut id) = tokio::sync::oneshot::channel();
@@ -777,7 +783,9 @@ fn a_chosen_loadout_is_held_on_joining_and_again_after_every_death() {
 
     damage_entity(&mut game.world, id, Harm::new(PLAYER_MAX_HP, None, WEAPON_RIFLE));
     let mut seq = 0;
-    hold(&mut game, id, &mut seq, 0.0, 0, RESPAWN_TICKS);
+    hold(&mut game, id, &mut seq, 0.0, 0, RESPAWN_TICKS + 1);
+    hold(&mut game, id, &mut seq, 0.0, BUTTON_CHUTE, 1);
+    hold(&mut game, id, &mut seq, 0.0, 0, 2);
     assert!(game.world.entities.alive(id));
     assert_eq!(carried(&game), fresh);
 }
@@ -1683,6 +1691,9 @@ fn a_new_life_has_every_limb() {
     damage_entity(&mut game.world, target, Harm::new(LIMB_HP, Some(shooter), WEAPON_SNIPER).limb(Some(LIMB_LEG_L)));
     damage_entity(&mut game.world, target, Harm::new(PLAYER_MAX_HP, Some(shooter), WEAPON_RIFLE));
     hold(&mut game, target, &mut seq, 0.0, 0, RESPAWN_TICKS + 1);
+    assert_eq!(wounds_of(&game, target), Default::default(), "the ghost is whole");
+    hold(&mut game, target, &mut seq, 0.0, BUTTON_CHUTE, 1);
+    hold(&mut game, target, &mut seq, 0.0, 0, 2);
     assert!(game.world.entities.alive(target));
     assert_eq!(wounds_of(&game, target), Default::default());
     assert_eq!(game.world.entities.of::<Player>(target).character.lost, 0);

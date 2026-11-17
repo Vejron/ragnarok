@@ -2,6 +2,7 @@ import type { Character } from '@/render/character'
 import { FLAG_CLAWING, FLAG_CROUCHING, FLAG_DEAD, FLAG_GROUNDED, FLAG_HELD_MASK, FLAG_HELD_SHIFT, KIND_SOLDIER, KIND_ZOMBIE } from '@/net/codec'
 import { CARRY_BACKPACK, CARRY_LAMP, CARRY_POLING, CARRY_SKIS, SLIDE_MIN_SPEED, STANCE_CHUTE, STANCE_DIVE, STANCE_DOWN, STANCE_PRONE, STANCE_RISE, STANCE_SURRENDER, STANCE_SWIM } from '@/sim/consts'
 import type { Avatars } from '../avatars'
+import { ghostly } from './ghosts'
 import type { Frame, Presenter } from '../presenter'
 import type { Sampled } from '../store'
 import type { Entity } from '../units'
@@ -36,7 +37,7 @@ export interface PeopleWorld {
 /**
  * Everyone else on foot: their soldier, running, crouching, lying down or hanging from a parachute as
  * their flags say, holding what they hold. A zombie is a soldier too, drawn in rags and clawing when
- * its flags say so. The local player is drawn from their prediction instead,
+ * its flags say so. A ghost is drawn by `Ghosts` instead. The local player is drawn from their prediction instead,
  * riders by `Riders`, in their seats, and those on a ski lift by `LiftRiders`, on its chairs.
  */
 export class Soldiers implements Presenter<Frame> {
@@ -48,7 +49,7 @@ export class Soldiers implements Presenter<Frame> {
   constructor(private readonly world: PeopleWorld) {}
 
   wants(entity: Entity, id: number, frame: Frame) {
-    return id !== frame.localId && (entity.kind?.kind === KIND_SOLDIER || entity.kind?.kind === KIND_ZOMBIE) && entity.orientation === undefined && entity.place !== undefined && entity.flags !== undefined && entity.lifted === undefined
+    return id !== frame.localId && (entity.kind?.kind === KIND_SOLDIER || entity.kind?.kind === KIND_ZOMBIE) && entity.orientation === undefined && entity.place !== undefined && entity.flags !== undefined && entity.lifted === undefined && !ghostly(entity.flags.stance)
   }
 
   begin() {

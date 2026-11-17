@@ -32,13 +32,13 @@ impl Mechanic for Movement {
             let switch_skis = skis && !player.ski_held;
             player.ski_held = skis;
             // A lift's rider is carried by `Lifts`, and one in a Titan's fist by `Titans`, which ran before this.
-            if player.seat.is_some() || player.lift.is_some() || player.held.is_some() || !alive {
+            if player.seat.is_some() || player.lift.is_some() || player.held.is_some() || !(alive || player.character.ghost) {
                 continue;
             }
             let character = &mut player.character;
             character.lost = lost;
             character.skis &= lost & LIMB_LEGS == 0;
-            if switch_skis && winter && lost & LIMB_LEGS == 0 && character.knock[0].hypot(character.knock[1]) < SKI_CLIP_SPEED {
+            if switch_skis && winter && !character.ghost && lost & LIMB_LEGS == 0 && character.knock[0].hypot(character.knock[1]) < SKI_CLIP_SPEED {
                 character.skis = !character.skis;
                 character.knock = [0.0, 0.0];
             }

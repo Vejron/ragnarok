@@ -1216,3 +1216,30 @@ fn a_floating_swimmer_bobs_with_the_waves() {
     }
     assert!(high - low > 0.1, "it bobs: {low}..{high}");
 }
+
+#[test]
+fn a_ghost_flies_through_a_building_and_keeps_over_the_hills() {
+    // The box of `world_with_wall` as a building, on a hill rising 1 m for every 10 m along X.
+    let mut world = world_with_wall();
+    world.building_ids = vec![ObjId { col: 0, row: 0, index: 0 }];
+    world.building_triangles = vec![[0, 12]];
+    world.ground = terrain_world(|x, _| (x * 0.1).max(0.0)).ground;
+    let physics = Physics::new(&world).unwrap();
+    let mut ghost = Character { position: [0.0, 1.0, 0.0], ghost: true, ..Default::default() };
+    // Yaw -π/2 faces +X, through the building and on up the hill, looking a little down.
+    let ahead = InputFrame { forward: 127, yaw: -1571, pitch: -200, ..Default::default() };
+    for _ in 0..TICK_RATE * 2 {
+        physics.move_character(&mut ghost, &ahead, TICK_DT);
+    }
+    let [x, y, _] = ghost.position;
+    assert!(x > 30.0, "went straight through the building: {x}");
+    assert!((y - (x * 0.1 + GHOST_FLOOR)).abs() < 0.2, "skimming the hill at the floor: {x} {y}");
+    assert!(!ghost.grounded);
+
+    // Jump held, it climbs as far as the ceiling and no further.
+    let up = InputFrame { buttons: BUTTON_JUMP, ..Default::default() };
+    for _ in 0..TICK_RATE * 20 {
+        physics.move_character(&mut ghost, &up, TICK_DT);
+    }
+    assert!((ghost.position[1] - (ghost.position[0] * 0.1 + GHOST_CEILING)).abs() < 0.2, "{:?}", ghost.position);
+}

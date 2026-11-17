@@ -2,7 +2,7 @@
 // change the Rust and run `npm run gen:consts`. Client-only constants live in consts.ts.
 
 /** Wire schema version. Bumped on any incompatible protocol or world-format change. */
-export const PROTOCOL_VERSION = 85
+export const PROTOCOL_VERSION = 86
 
 /**
  * Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
@@ -414,6 +414,18 @@ export const STANCE_DIVE = 6
 
 /** A zombie climbing out of the ground (`ZOMBIE_RISE_TICKS`): it neither moves nor claws until it is up. */
 export const STANCE_RISE = 7
+
+/**
+ * A dead player come back as a ghost (GHOSTS.md): a shadowy cloud that flies through everything and
+ * can touch nothing, and nothing can touch it.
+ */
+export const STANCE_GHOST = 8
+
+/**
+ * A ghost taking shape again (`GHOST_FORM_TICKS`): a dark swirl sinking to the ground, still
+ * untouchable and unable to act, that stands up as the soldier.
+ */
+export const STANCE_FORM = 9
 
 /** A blast that throws a soldier at least this hard, m/s, knocks them down. */
 export const KNOCKDOWN_POWER = 7.0
@@ -835,6 +847,55 @@ export const PLAYER_MAX_HP = 150
 
 /** Ticks a dead player waits before respawning. */
 export const RESPAWN_TICKS = 3 * TICK_RATE
+
+/**
+ * Ghosts (GHOSTS.md). A killed player comes back as a ghost after `RESPAWN_TICKS`, and stays one at
+ * most this many ticks (30 s): then it takes shape where it is, or drops at an entry point if it may not.
+ */
+export const GHOST_TICKS = 1800
+
+/** A ghost may choose to take shape only after this many ticks (5 s) as one. */
+export const GHOST_MIN_TICKS = 300
+
+/** Ticks a ghost takes to take shape again (2 s), seen by everyone around it. */
+export const GHOST_FORM_TICKS = 120
+
+/**
+ * A ghost may not take shape within this far of a living enemy, metres along the ground: nobody
+ * comes back right beside someone to shoot them in the back.
+ */
+export const GHOST_KEEPOUT = 40.0
+
+/** How fast a ghost flies where it looks, metres per second. */
+export const GHOST_SPEED = 20.0
+
+/** How fast a ghost rises with jump held, or sinks with run held, metres per second. */
+export const GHOST_CLIMB = 10.0
+
+/** How quickly a ghost comes up to the velocity it wants, m/s². */
+export const GHOST_ACCEL = 60.0
+
+/**
+ * A ghost's centre is kept at least this far over the ground, metres: it goes through walls and
+ * roofs, but not under the earth.
+ */
+export const GHOST_FLOOR = 0.6
+
+/** And at most this far over it, metres, as high as a drone flies. */
+export const GHOST_CEILING = 150.0
+
+/** How far over the body a ghost rises out of it, metres. */
+export const GHOST_RISE = 1.0
+
+/**
+ * Why a ghost may not take shape where it is (`replicated::Vitals::block`): it may; it has not been one
+ * for `GHOST_MIN_TICKS` yet; a living enemy is within `GHOST_KEEPOUT`; or the ground under it is no place
+ * to stand (water, a building, outside the world).
+ */
+export const GHOST_BLOCK_NONE = 0
+export const GHOST_BLOCK_SOON = 1
+export const GHOST_BLOCK_ENEMY = 2
+export const GHOST_BLOCK_GROUND = 3
 
 /**
  * Guns are hitscans fired from the eye along the look direction; their stats are in `items`.

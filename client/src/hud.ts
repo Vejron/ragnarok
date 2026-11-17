@@ -89,6 +89,11 @@ export interface HudStats {
   dead: boolean
   /** Seconds until respawn while dead. */
   respawnIn: number
+  /**
+   * A ghost (GHOSTS.md): whole seconds it has left as one, why it may not take shape here (`GHOST_BLOCK_*`)
+   * and whether it is taking shape now; null while not one.
+   */
+  ghost: { left: number; block: number; forming: boolean } | null
   /** Looking down a gun sight: the reticle is drawn in the scene, and the on-screen aim marks are hidden. */
   sight: boolean
   /** Looking down a scope: the scope overlay replaces the crosshair. */

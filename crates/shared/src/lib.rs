@@ -10,6 +10,7 @@ pub mod carve;
 pub mod consts;
 pub mod construct;
 pub mod facade;
+pub mod ghost;
 pub mod golf;
 pub mod interior;
 pub mod items;

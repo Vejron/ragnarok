@@ -49,8 +49,13 @@ impl Game {
                     flags.stance = STANCE_RISE;
                 }
             }
+            let ghost = crate::mechanics::ghost_shown(&self.world, id);
+            if let (Some((stance, _, _)), Some(flags)) = (ghost, &mut shown.flags) {
+                flags.stance = stance;
+            }
+            let (_, ghost, block) = ghost.unwrap_or_default();
             let hp = self.world.entities.get::<Health>(id).map_or(0, |health| health.hp);
-            (id, Replicated { vitals: Some(wire::Vitals { hp, progress: progress(player, one_arm), spent: player.character.spent, winded: player.character.winded.into(), parts, down: player.character.down, strain: player.character.ski_strain, breath: breath_byte(player.breath) }), hotbar: Some(wire::Hotbar { slots: player.hands.hotbar }), ..shown })
+            (id, Replicated { vitals: Some(wire::Vitals { hp, progress: progress(player, one_arm), spent: player.character.spent, winded: player.character.winded.into(), parts, down: player.character.down, strain: player.character.ski_strain, breath: breath_byte(player.breath), ghost, block }), hotbar: Some(wire::Hotbar { slots: player.hands.hotbar }), ..shown })
         }));
         scene.extend(self.creatures());
         scene.extend(self.world.entities.all::<Vehicle>().filter_map(|(id, vehicle)| Some((id, self.vehicle(id, vehicle)?))));
