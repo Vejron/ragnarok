@@ -510,7 +510,7 @@ fn wreck(world: &mut World, vid: u32) {
         damage_entity(world, id, Harm::new(PLAYER_MAX_HP, attacker, WEAPON_WRECK).unsparing());
     }
     let [x, y, z] = pose.position.map(to_cm);
-    world.shots.push(ShotEvent { shooter: attacker.unwrap_or(0), weapon: WEAPON_WRECK, x, y, z });
+    world.shots.push(ShotEvent { shooter: attacker.unwrap_or(0), weapon: WEAPON_WRECK, x, y, z, yaw: SHOT_NO_YAW, dip: SHOT_NO_DIP });
     // A ship's guns go down with her, whoever fired the shot.
     for fitting in world.physics.fittings_of(vid) {
         let alive = world.entities.get_mut::<Health>(fitting).is_some_and(|mut health| {
@@ -572,7 +572,7 @@ fn fire_rocket(world: &mut World, id: u32, launcher: u8) {
     let reach = world.physics.cast_ray(eye, dir, ROCKET_MUZZLE, 0);
     let start: [f32; 3] = vec3::along(eye, dir, reach.unwrap_or(ROCKET_MUZZLE));
     let [x, y, z] = start.map(to_cm);
-    world.shots.push(ShotEvent { shooter: id, weapon: item.weapon, x, y, z });
+    world.shots.push(ShotEvent { shooter: id, weapon: item.weapon, x, y, z, yaw: SHOT_NO_YAW, dip: SHOT_NO_DIP });
     make_noise(world, eye, Some(id), HEAR_BLAST);
     if reach.is_some() {
         projectiles::burst_at(world, PROJECTILE_ROCKET, launcher, id, start, dir);
@@ -765,7 +765,7 @@ fn fire_gun(world: &mut World, id: u32, item: &ItemDef) {
         let (end, _) = hitscan(world, id, origin, ray, &round, vehicle, back);
         let point: [i32; 3] = std::array::from_fn(|i| to_cm(origin[i] + ray[i] * end));
         let weapon = if pellet == 0 { item.weapon } else { WEAPON_PELLET };
-        world.shots.push(ShotEvent { shooter: id, weapon, x: point[0], y: point[1], z: point[2] });
+        world.shots.push(ShotEvent { shooter: id, weapon, x: point[0], y: point[1], z: point[2], yaw: SHOT_NO_YAW, dip: SHOT_NO_DIP });
     }
 }
 
@@ -818,7 +818,7 @@ pub(super) fn break_glass(world: &mut World, shooter: u32, origin: [f32; 3], dir
         panes.extend(shared::windows::crossed(&look.windows, origin, dir, reach));
     }
     for [x, y, z] in panes {
-        world.shots.push(ShotEvent { shooter, weapon: WEAPON_GLASS, x: to_cm(x), y: to_cm(y), z: to_cm(z) });
+        world.shots.push(ShotEvent { shooter, weapon: WEAPON_GLASS, x: to_cm(x), y: to_cm(y), z: to_cm(z), yaw: SHOT_NO_YAW, dip: SHOT_NO_DIP });
     }
 }
 
@@ -978,7 +978,7 @@ fn throw_grenade(world: &mut World, id: u32) {
 fn fire_flare(world: &mut World, id: u32) {
     let Some((position, dir)) = lob(world, id, FLARE_LOFT, FLARE_MUZZLE, FLARE_RADIUS) else { return };
     let [x, y, z] = position.map(to_cm);
-    world.shots.push(ShotEvent { shooter: id, weapon: WEAPON_FLARE, x, y, z });
+    world.shots.push(ShotEvent { shooter: id, weapon: WEAPON_FLARE, x, y, z, yaw: SHOT_NO_YAW, dip: SHOT_NO_DIP });
     world.launch(Flying::new(PROJECTILE_FLARE, id, position, dir.map(|v| v * FLARE_SPEED), FLARE_BURN_TICKS));
 }
 

@@ -326,7 +326,9 @@ export class Events {
     // A round that ended on a window breaks its pane, whoever fired (the shot is told to everyone), and marks nothing on the wall round it.
     const throughGlass = !blast && breaksGlass(shot.weapon) && view.glassStruck(shot.x, shot.y, shot.z)
     if (blast) {
-      this.blast(to, blast.radius, blast.profile)
+      // The way the shell was flying over the ground, as long as the share of its flight that lay along it.
+      const along = 1 - shot.dip
+      this.blast(to, blast.radius, blast.profile, [-Math.sin(shot.yaw) * along, -Math.cos(shot.yaw) * along])
       this.scorchNear(to, blast.radius)
       const at: [number, number, number] = [to.x, to.y, to.z]
       if (blast.sound === 'explosion') sounds.explosion(at)
@@ -419,7 +421,7 @@ export class Events {
       sounds.ricochet([to.x, to.y, to.z])
     } else if (shot.weapon === WEAPON_TURRET) {
       this.world.wear.shedTurret(shot.shooter)
-      this.blast(to, CANNON_RADIUS, BLASTS.cannon)
+      this.blast(to, CANNON_RADIUS, BLASTS.cannon, [0, 0])
       sounds.turretOff([to.x, to.y, to.z])
     } else if (shot.weapon === WEAPON_CRASH) {
       const car = vehicles.model(shot.shooter)
@@ -465,8 +467,11 @@ export class Events {
     this.world.scene.scene.lights.flash(at.x, at.y, at.z, { color, intensity, radius, life: 0.09 })
   }
 
-  /** A heavy blast: the layered fire, sparks, dust and debris, a flash, and a shove of the camera if it is close. */
-  private blast(at: Vector3, radius: number, profile: ExplosionProfile) {
+  /**
+   * A heavy blast: the layered fire, sparks, dust and debris, a flash, and a shove of the camera if it is
+   * close. `lean` is the way its shell was flying over the ground (`explosion`), which its earth is thrown along.
+   */
+  private blast(at: Vector3, radius: number, profile: ExplosionProfile, lean: readonly [number, number]) {
     const { scene, effects, chase, surroundings } = this.world
     // The windows near it go first, over water too: a house on the shore still loses its glass.
     this.world.view.glassBlast([at.x, at.y, at.z], radius)
@@ -477,7 +482,7 @@ export class Events {
       return
     }
     effects.burst(at, radius)
-    explosion(this.world.fx(), this.world.debris, at, radius, profile)
+    explosion(this.world.fx(), this.world.debris, at, radius, profile, lean)
     // A flash that lights the ground and what stands on it, and a shockwave racing out over the ground.
     const reach = Math.min(2, Math.max(0.6, radius / 5))
     scene.scene.lights.flash(at.x, at.y + 1.5, at.z, { color: 0xffa040, intensity: 5 * reach, radius: radius * 8, life: 0.6 })

@@ -39,10 +39,14 @@ ${WET_WGSL}
 
 // The craters' marks (linear colours): bare earth in the bowl, char, and the soil thrown out round the rim.
 const CRATER_EARTH = vec3f(0.22, 0.14, 0.075);
+// The same earth freshly turned up: dark and damp, until it dries.
+const CRATER_EARTH_DAMP = vec3f(0.115, 0.07, 0.04);
 const CRATER_CHAR = vec3f(0.03, 0.026, 0.022);
 const CRATER_SOIL = vec3f(0.3, 0.22, 0.14);
 // A fresh crater's embers, bright enough to bloom.
 const CRATER_EMBER = vec3f(3.0, 0.8, 0.15);
+// The light the embers throw on the bowl round them: too faint to see in daylight, plain in the dark.
+const CRATER_GLOW = vec3f(0.1, 0.028, 0.006);
 // How much deeper than they are craters are drawn (their slope and shadow), and how dark a rim's ink line is.
 const CRATER_SLOPE = 1.4;
 const CRATER_INK = 0.35;
@@ -97,10 +101,10 @@ fn fs(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4f {
     }
     rgb = asphalt.rgb;
   }
-  var marks = CraterMark(vec2f(0.0), 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0);
+  var marks = CraterMark(vec2f(0.0), 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0);
   if ((flags & MAT_CRATERS) != 0u) {
     marks = craterMarks(in.world.xz, pixel, CRATER_SLOPE);
-    rgb = mix(rgb, CRATER_EARTH, marks.earth);
+    rgb = mix(rgb, mix(CRATER_EARTH, CRATER_EARTH_DAMP, marks.damp), marks.earth);
     rgb = mix(rgb, CRATER_SOIL, marks.soil * 0.5);
     rgb = mix(rgb, CRATER_CHAR, marks.char);
   }
@@ -203,7 +207,7 @@ fn fs(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4f {
       rgb += marshShine(n, in.world, marsh.pool, marsh.sheen, shadow);
     }
   }
-  rgb = rgb * (1.0 - marks.ink * CRATER_INK) + CRATER_EMBER * marks.heat + scar.heat;
+  rgb = rgb * (1.0 - marks.ink * CRATER_INK) + CRATER_EMBER * marks.heat + CRATER_GLOW * marks.glow + scar.heat;
   return vec4f(applyFog(rgb, flags, in.viewDepth, in.world), in.color.a * texel.a);
 }
 `

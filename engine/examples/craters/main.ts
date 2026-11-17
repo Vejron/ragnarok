@@ -1,4 +1,4 @@
-import { CRATER_FADE, Material, Mesh, planeGeometry, Ramp, Scene, Texture } from '../../src'
+import { CRATER_FADE, type CraterStrike, Material, Mesh, planeGeometry, Ramp, Scene, Texture } from '../../src'
 import { orbit, setup, statsOverlay } from '../common'
 import { SKY } from '../shared/layout'
 
@@ -47,6 +47,20 @@ for (let i = 0; i < 6; i++) scene.craters.add(-25 + Math.cos(i * 2.1) * 6, 25 + 
 scene.craters.add(20, 15.5, ...SHELL, now() - 60)
 // Fresh: its embers glow for CRATER_EMBER_LIFE seconds after the page opens.
 scene.craters.add(10, 40, ...MORTAR, now())
+// How the shell struck (`CraterStrike`), near the camera: from above, at 45° and skimming in, each flying
+// toward +X; then the same shell burst half in the ground and well above it; then a solid shot skimming in.
+const east = -Math.PI / 2
+const STRIKES = [
+  { yaw: 0, dip: 1, contact: 1, solid: false },
+  { yaw: east, dip: 0.3, contact: 1, solid: false },
+  { yaw: east, dip: 0.03, contact: 1, solid: false },
+  { yaw: east, dip: 0.3, contact: 0.5, solid: false },
+  { yaw: east, dip: 0.3, contact: 0.1, solid: false },
+  { yaw: east, dip: 0.03, contact: 1, solid: true },
+]
+STRIKES.forEach((strike, i) => scene.craters.add(-50 + i * 17, 62, ...SHELL, params.has('hot') ? now() : now() - 60, strike))
+// Weathered: an hour's worth of rain on it, its soot thin and the grass coming in from the rim.
+scene.craters.add(-45, 5, ...MORTAR, now() - CRATER_FADE * 0.6, STRIKES[1])
 // Old: its marks half faded (they go over the last 30% of CRATER_FADE).
 scene.craters.add(-45, 30, ...MORTAR, now() - CRATER_FADE * 0.85)
 
@@ -54,12 +68,18 @@ scene.craters.add(-45, 30, ...MORTAR, now() - CRATER_FADE * 0.85)
 // glowing; `?off`: kept but hidden, as the scorch look turned off).
 let seed = 7
 const random = () => ((seed = (seed * 16807) % 2147483647) - 1) / 2147483646
+// Drawn apart from the places, so the craters lie where they did before they had strikes.
+let struck = 11
+const chance = () => ((struck = (struck * 16807) % 2147483647) - 1) / 2147483646
+/** A shell from anywhere, at any angle, mostly into the ground. */
+const anyStrike = (): CraterStrike => ({ yaw: chance() * Math.PI * 2, dip: chance(), contact: Math.min(1, chance() * 1.6), solid: chance() < 0.15 })
 for (let i = 0; i < Number(params.get('n') ?? 0); i++) {
   const [radius, depth] = [SHELL, MORTAR, BOMB][Math.floor(random() * 3)]!
-  scene.craters.add((random() - 0.5) * 150, (random() - 0.5) * 150, radius, depth, params.has('hot') ? now() : now() - 60)
+  scene.craters.add((random() - 0.5) * 150, (random() - 0.5) * 150, radius, depth, params.has('hot') ? now() : now() - 60, anyStrike())
 }
 scene.craters.visible = !params.has('off')
-Object.assign(window, { renderer })
+// For timing from outside (`?bench` leaves the drawing to whoever is timing).
+Object.assign(window, { renderer, scene, camera })
 
 const tick = statsOverlay(renderer, () => `craters ${scene.craters.count}`)
 const move = orbit(canvas, camera, 70, 45)
@@ -67,12 +87,12 @@ let next = 2
 const frame = () => {
   if (now() > next && !params.has('still')) {
     const [radius, depth] = [SHELL, MORTAR, BOMB][Math.floor(random() * 3)]!
-    scene.craters.add((random() - 0.5) * 120, (random() - 0.5) * 120, radius, depth, now())
+    scene.craters.add((random() - 0.5) * 120, (random() - 0.5) * 120, radius, depth, now(), anyStrike())
     next = now() + 2
   }
   move(params.has('still') ? 0 : 0.0015)
   renderer.render(scene, camera)
   tick()
-  requestAnimationFrame(frame)
+  if (!params.has('bench')) requestAnimationFrame(frame)
 }
 requestAnimationFrame(frame)

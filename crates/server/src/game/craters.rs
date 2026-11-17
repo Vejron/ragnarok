@@ -7,19 +7,65 @@ use super::*;
 use shared::protocol::{CraterEntry, DugTile};
 use shared::world::NO_WATER;
 
+/// How a burst struck where it dug: what its crater's marks are painted from (`CraterEntry`'s `yaw`,
+/// `dip`, `contact` and `solid`). The hole it digs is the same however it struck.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Strike {
+    /// The way the shell was going. Straight up or down leaves a round mark with no heading.
+    pub dir: [f32; 3],
+    /// Whether it struck a vehicle and burst on that, not on the ground.
+    pub direct: bool,
+    /// Whether it was a solid shot (`Burst::solid`).
+    pub solid: bool,
+}
+
+impl Strike {
+    /// A charge that went off where it lay or fell straight down: a round, burnt mark.
+    pub const DOWN: Strike = Strike { dir: [0.0, -1.0, 0.0], direct: false, solid: false };
+
+    /// A shell going along `dir`, as the wire says it (`CraterEntry`, `ShotEvent`): the `yaw` of its
+    /// heading over the ground (`look`'s convention: 0 faces -Z) and its `dip`, the share of its way
+    /// that did not lie along the ground: 0 skimming it, 255 straight up or down, which has no heading.
+    pub fn heading(dir: [f32; 3]) -> (i16, u8) {
+        let [dx, dy, dz] = dir;
+        let along = dx.hypot(dz) / (dx.hypot(dz).hypot(dy)).max(1e-6);
+        let yaw = if along > 1e-3 { to_mrad((-dx).atan2(-dz)) } else { 0 };
+        (yaw, to_byte(1.0 - along))
+    }
+}
+
+/// A share 0 to 1 as a wire byte (`u8 as byte`).
+fn to_byte(share: f32) -> u8 {
+    (share.clamp(0.0, 1.0) * 255.0).round() as u8
+}
+
 impl World {
     /// Digs a crater `radius` metres across and `depth` metres deep where a shell burst at `point`, if it
     /// burst on the terrain: within `CRATER_REACH` of the ground, and not over water. Whatever was
-    /// standing on the ground there is told it moved. Returns whether the ground changed.
-    pub fn dig_crater(&mut self, point: [f32; 3], radius: f32, depth: f32) -> bool {
+    /// standing on the ground there is told it moved. `strike` is how it arrived, for the crater's
+    /// marks only. Returns whether the ground changed.
+    pub fn dig_crater(&mut self, point: [f32; 3], radius: f32, depth: f32, strike: Strike) -> bool {
         let ground = &self.map.ground;
-        if ground.is_flat() || radius <= 0.0 || depth <= 0.0 || point[1] > ground.height_at(point[0], point[2]) + CRATER_REACH {
+        let above = point[1] - ground.height_at(point[0], point[2]);
+        if ground.is_flat() || radius <= 0.0 || depth <= 0.0 || above > CRATER_REACH {
             return false;
         }
         if self.over_water(point[0], point[2]) {
             return false;
         }
-        let crater = CraterEntry { x: to_cm(point[0]), z: to_cm(point[2]), radius: to_cm(radius), depth: to_cm(depth), age: 0 };
+        let (yaw, dip) = Strike::heading(strike.dir);
+        let contact = (1.0 - above / CRATER_REACH) * if strike.direct { CRATER_DIRECT_CONTACT } else { 1.0 };
+        let crater = CraterEntry {
+            x: to_cm(point[0]),
+            z: to_cm(point[2]),
+            radius: to_cm(radius),
+            depth: to_cm(depth),
+            yaw,
+            dip,
+            contact: to_byte(contact),
+            solid: strike.solid,
+            age: 0,
+        };
         if !self.apply_crater(crater) {
             return false;
         }

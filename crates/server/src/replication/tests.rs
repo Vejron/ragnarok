@@ -188,8 +188,8 @@ fn only_the_nearest_items_on_the_ground_are_listed() {
 #[test]
 fn effects_out_of_range_are_not_sent() {
     let mut replica = Replica::default();
-    let near = ShotEvent { shooter: 3, weapon: WEAPON_RIFLE, x: 500, y: 90, z: 0 };
-    let far = ShotEvent { shooter: 3, weapon: WEAPON_RIFLE, x: 90_000, y: 90, z: 0 };
+    let near = ShotEvent { shooter: 3, weapon: WEAPON_RIFLE, x: 500, y: 90, z: 0, yaw: SHOT_NO_YAW, dip: SHOT_NO_DIP };
+    let far = ShotEvent { shooter: 3, weapon: WEAPON_RIFLE, x: 90_000, y: 90, z: 0, yaw: SHOT_NO_YAW, dip: SHOT_NO_DIP };
     let world = Everything { scene: &[], shots: &[near, far], bullets: &[] };
     let bytes = replica.snapshot([0.0, 0.0], &world, Own { tick: 2, ..Default::default() });
     let snap: Snapshot = decode(&bytes).unwrap();

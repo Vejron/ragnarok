@@ -83,6 +83,19 @@ describe('Craters', () => {
     expect(craters.listed(bucketAt(80, 0))).not.toContain(2)
   })
 
+  it('keeps how the shell struck: a lean the way it flew, none for one from above, and its contact', () => {
+    const craters = new Craters()
+    /** Crater `slot`'s lean (x, z) and contact, rounded. */
+    const strike = (slot: number) => [...craters.data.subarray(slot * 8 + 5, slot * 8 + 8)].map((v) => +v.toFixed(4) + 0)
+    craters.add(0, 0, 5, 1, 0)
+    expect(strike(0)).toEqual([0, 0, 1])
+    // Flying toward -X, a quarter of its way downward; then a solid shot toward -Z, skimming, burst above the ground.
+    craters.add(40, 0, 5, 1, 0, { yaw: Math.PI / 2, dip: 0.25, contact: 1, solid: false })
+    craters.add(80, 0, 5, 1, 0, { yaw: 0, dip: 0, contact: 0.25, solid: true })
+    expect(strike(1)).toEqual([-0.75, 0, 1])
+    expect(strike(2)).toEqual([0, -1, 2.25])
+  })
+
   it('clears to nothing, and says the whole of it changed', () => {
     const craters = new Craters()
     craters.add(0, 0, 5, 1, 0)

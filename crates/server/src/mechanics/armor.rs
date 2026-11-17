@@ -236,7 +236,7 @@ pub fn damage_turret(world: &mut World, vid: u32, damage: u8, attacker: Option<u
     if let Some(pose) = world.physics.car_pose(vid) {
         let at = pose.world_point(TANK_TURRET_PIVOT);
         let [x, y, z] = at.map(to_cm);
-        world.shots.push(ShotEvent { shooter: vid, weapon: WEAPON_TURRET, x, y, z });
+        world.shots.push(ShotEvent { shooter: vid, weapon: WEAPON_TURRET, x, y, z, yaw: SHOT_NO_YAW, dip: SHOT_NO_DIP });
         for id in gunners {
             if let Some(mut player) = world.entities.get_mut::<Player>(id) {
                 player.seat = None;

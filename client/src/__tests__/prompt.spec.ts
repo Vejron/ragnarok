@@ -69,7 +69,7 @@ describe('bullets', () => {
   it('start once though each is sent twice, and end where the server says it struck', () => {
     const { log, events: e } = events()
     e.receive(100, [], [spawn])
-    e.receive(102, [{ shooter: 4, weapon: WEAPON_BULLET, x: 0, y: 1.5, z: -20 }], [spawn])
+    e.receive(102, [{ shooter: 4, weapon: WEAPON_BULLET, x: 0, y: 1.5, z: -20, yaw: 0, dip: 1 }], [spawn])
     e.drawBullets(101)
     e.play(102)
     e.drawBullets(103)

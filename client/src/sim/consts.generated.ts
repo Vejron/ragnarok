@@ -2,7 +2,7 @@
 // change the Rust and run `npm run gen:consts`. Client-only constants live in consts.ts.
 
 /** Wire schema version. Bumped on any incompatible protocol or world-format change. */
-export const PROTOCOL_VERSION = 86
+export const PROTOCOL_VERSION = 88
 
 /**
  * Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
@@ -582,6 +582,16 @@ export const CRATER_EGG_DEPTH = 0.9
 
 /** A shell digs only if it bursts within this far above the terrain, metres: not on a roof or in the air. */
 export const CRATER_REACH = 1.5
+
+/** A `ShotEvent`'s `yaw` and `dip` when what went off had no heading: straight down. */
+export const SHOT_NO_YAW = 0
+export const SHOT_NO_DIP = 255
+
+/**
+ * How much of its contact with the ground a burst keeps when its shell struck a vehicle and not the
+ * ground itself (`CraterEntry::contact`): the crater is marked as one blown from above.
+ */
+export const CRATER_DIRECT_CONTACT = 0.5
 
 /** However many craters land on a place, the ground goes no lower than this under what it was, metres. */
 export const CRATER_MAX_DEPTH = 4.0

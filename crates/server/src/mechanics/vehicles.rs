@@ -617,7 +617,7 @@ fn crash(world: &mut World, before: &BTreeMap<u32, CarPose>) {
             let speed = before.get(&vid).map_or(0.0, |pose| vec3::length(pose.velocity));
             if dv > SCRAPE_MIN_DV && speed > SCRAPE_SPEED && vehicle.scrape_in == 0 {
                 vehicle.scrape_in = SCRAPE_EVERY;
-                world.shots.push(ShotEvent { shooter: vid, weapon: WEAPON_SCRAPE, x, y, z });
+                world.shots.push(ShotEvent { shooter: vid, weapon: WEAPON_SCRAPE, x, y, z, yaw: SHOT_NO_YAW, dip: SHOT_NO_DIP });
             }
             continue;
         }
@@ -628,7 +628,7 @@ fn crash(world: &mut World, before: &BTreeMap<u32, CarPose>) {
         dent(vehicle.kind, &mut vehicle.damage, impact.local, over);
         // Whoever drove the other vehicle into it is to blame, should it go up.
         let attacker = impact.other_car.and_then(|other| world.entities.get::<Seats>(other)?.rider(0));
-        world.shots.push(ShotEvent { shooter: vid, weapon: WEAPON_CRASH, x, y, z });
+        world.shots.push(ShotEvent { shooter: vid, weapon: WEAPON_CRASH, x, y, z, yaw: SHOT_NO_YAW, dip: SHOT_NO_DIP });
         super::combat::damage_vehicle(world, vid, (over * CRASH_HP_PER_DV).round().min(255.0) as u8, attacker);
     }
 }

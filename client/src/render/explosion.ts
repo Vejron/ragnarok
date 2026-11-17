@@ -52,8 +52,13 @@ const chunkGeometry = boxGeometry(1, 1, 1)
  * A blast of `radius` metres at `at`, in layers: a fireball, sparks and embers on ballistic arcs, a
  * ring of dust along the ground, dirt (or metal, for a wreck) thrown up, and smoke that stands
  * after the fire is gone. Everything is particles or `debris`, so there is nothing to clean up.
+ *
+ * `lean` is the way the shell was flying over the ground (x, z), as long as the share of its flight
+ * that lay along the ground: nothing for one from straight above, which throws evenly all round and
+ * high; a unit for one skimming in, which throws its earth and sparks low and far ahead of it and
+ * hardly any back the way it came.
  */
-export function explosion(world: FxWorld, debris: Debris, at: Vector3, radius: number, profile: ExplosionProfile) {
+export function explosion(world: FxWorld, debris: Debris, at: Vector3, radius: number, profile: ExplosionProfile, lean: readonly [number, number]) {
   const distance = world.camera.distanceTo(at)
   if (distance > FAR) return
   // A crowded room thins its blasts before the pools start evicting each other. Smoke is drawn blended and
@@ -62,6 +67,9 @@ export function explosion(world: FxWorld, debris: Debris, at: Vector3, radius: n
   const budget = alive > 1500 ? 0.4 : alive > 800 ? 0.65 : 1
   const count = (n: number, weight: number) => Math.max(1, Math.round(n * weight * budget))
   const scale = radius / 5
+  const low = Math.hypot(lean[0], lean[1])
+  /** How far ahead of the shell `heading` points: -1 back the way it came, 1 the way it was going, 0 for a shell from above. */
+  const ahead = (heading: number) => Math.cos(heading) * lean[0] + Math.sin(heading) * lean[1]
   const surface = world.surfaceAt(at.x, at.z)
   const water = surface === SURFACE_WATER
   const earth = profile.wreck ? 0x2b2b2b : water ? 0xdfeaf0 : DIRT[surface] ?? 0x5a4a30
@@ -73,7 +81,7 @@ export function explosion(world: FxWorld, debris: Debris, at: Vector3, radius: n
     const out = rand(0, radius * 0.5)
     world.smoke.spawn({
       position: [at.x + Math.cos(heading) * out * 0.4, at.y + rand(0, 0.5), at.z + Math.sin(heading) * out * 0.4],
-      velocity: [Math.cos(heading) * out * 1.2, rand(1.5, 5) * scale, Math.sin(heading) * out * 1.2],
+      velocity: [Math.cos(heading) * out * 1.2 + lean[0] * radius * 0.8, rand(1.5, 5) * scale, Math.sin(heading) * out * 1.2 + lean[1] * radius * 0.8],
       life: rand(0.5, 0.95),
       size: [radius * 0.3, radius * rand(0.9, 1.5)],
       color: i % 3 === 0 ? 0xffeaa0 : i % 3 === 1 ? 0xffb347 : 0xff8a2a,
@@ -107,7 +115,8 @@ export function explosion(world: FxWorld, debris: Debris, at: Vector3, radius: n
     const lift = rand(0.2, 1)
     world.glow.spawn({
       position: at,
-      velocity: [Math.cos(heading) * speed * (1 - lift * 0.5), speed * lift, Math.sin(heading) * speed * (1 - lift * 0.5)],
+      // Carried on the way the shell was going, so most of them shower ahead of it.
+      velocity: [Math.cos(heading) * speed * (1 - lift * 0.5) + lean[0] * speed * 0.9, speed * lift, Math.sin(heading) * speed * (1 - lift * 0.5) + lean[1] * speed * 0.9],
       life: rand(0.4, 1.3),
       size: [rand(0.07, 0.13), 0.02],
       color: i % 4 === 0 ? 0xffffff : i % 4 === 1 ? 0xffe08a : i % 4 === 2 ? 0xffa23a : 0xff6a1a,
@@ -140,7 +149,8 @@ export function explosion(world: FxWorld, debris: Debris, at: Vector3, radius: n
   // Dust ring: low puffs thrown out along the ground, tinted by what it is.
   for (let i = 0; i < count(12, profile.dirt); i++) {
     const heading = (i / 12) * Math.PI * 2 + rand(-0.2, 0.2)
-    const speed = rand(4, 9) * Math.sqrt(scale)
+    // The ring is pushed out furthest ahead of the shell and hardly at all behind it.
+    const speed = rand(4, 9) * Math.sqrt(scale) * (1 + 0.9 * ahead(heading))
     world.smoke.spawn({
       position: [at.x, world.groundAt(at.x, at.z) + 0.3, at.z],
       velocity: [Math.cos(heading) * speed, rand(0.2, 1.2), Math.sin(heading) * speed],
@@ -159,9 +169,11 @@ export function explosion(world: FxWorld, debris: Debris, at: Vector3, radius: n
   for (let i = 0; i < count(10, profile.dirt); i++) {
     const heading = rand(0, Math.PI * 2)
     const out = rand(1, 7) * Math.sqrt(scale)
+    // A shell from above throws its dirt high; one skimming in sprays it low and far ahead.
+    const on = rand(4, 12) * Math.sqrt(scale)
     world.smoke.spawn({
       position: at,
-      velocity: [Math.cos(heading) * out, rand(5, 14) * Math.sqrt(scale), Math.sin(heading) * out],
+      velocity: [Math.cos(heading) * out + lean[0] * on, rand(5, 14) * Math.sqrt(scale) * (1 - 0.45 * low), Math.sin(heading) * out + lean[1] * on],
       life: rand(1.5, 3),
       size: [rand(0.12, 0.28), 0.1],
       color: i % 3 === 0 && !profile.wreck ? 0x3d3022 : earth,
@@ -196,6 +208,7 @@ export function explosion(world: FxWorld, debris: Debris, at: Vector3, radius: n
   for (let i = 0; i < count(3, profile.chunks); i++) {
     const heading = rand(0, Math.PI * 2)
     const out = rand(2, 7) * Math.sqrt(scale)
+    const on = rand(3, 9) * Math.sqrt(scale)
     const size = rand(0.12, 0.35)
     const material = toonMaterial({ color: profile.wreck && i % 2 ? 0x555a60 : earth })
     const chunk = new Mesh(chunkGeometry, material)
@@ -203,7 +216,7 @@ export function explosion(world: FxWorld, debris: Debris, at: Vector3, radius: n
     chunk.position.copy(at)
     debris.throw(
       chunk,
-      new Vector3(Math.cos(heading) * out, rand(6, 13) * Math.sqrt(scale), Math.sin(heading) * out),
+      new Vector3(Math.cos(heading) * out + lean[0] * on, rand(6, 13) * Math.sqrt(scale) * (1 - 0.4 * low), Math.sin(heading) * out + lean[1] * on),
       new Vector3(rand(-8, 8), rand(-8, 8), rand(-8, 8)),
       size * 0.4,
       // They lie a while, then sink into the ground from 6 s on, gone at 10 s.

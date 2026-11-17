@@ -59,7 +59,7 @@ fn fire(world: &mut World, vid: u32, id: u32) -> bool {
         return false;
     }
     if mouth[1] < level {
-        world.shots.push(ShotEvent { shooter: id, weapon: WEAPON_SPLASH, x: to_cm(mouth[0]), y: to_cm(level), z: to_cm(mouth[2]) });
+        world.shots.push(ShotEvent { shooter: id, weapon: WEAPON_SPLASH, x: to_cm(mouth[0]), y: to_cm(level), z: to_cm(mouth[2]), yaw: SHOT_NO_YAW, dip: SHOT_NO_DIP });
     }
     if let Some(mut sub) = world.entities.get_mut::<Sub>(vid) {
         sub.reload[tube] = SUB_TUBE_RELOAD;

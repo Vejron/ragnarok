@@ -99,6 +99,8 @@ export interface ShotEvent {
   x: number
   y: number
   z: number
+  yaw: number
+  dip: number
 }
 
 export interface Snapshot {
@@ -249,6 +251,10 @@ export interface CraterEntry {
   z: number
   radius: number
   depth: number
+  yaw: number
+  dip: number
+  contact: number
+  solid: boolean
   age: number
 }
 
@@ -350,14 +356,16 @@ function decodeHullMark(r: unknown): HullMark | undefined {
 }
 
 function decodeShotEvent(r: unknown): ShotEvent | undefined {
-  if (!Array.isArray(r) || r.length !== 5) return undefined
+  if (!Array.isArray(r) || r.length !== 7) return undefined
   const shooter = w.int(r[0])
   const weapon = w.int(r[1])
   const x = w.int(r[2])
   const y = w.int(r[3])
   const z = w.int(r[4])
-  if (shooter === undefined || weapon === undefined || x === undefined || y === undefined || z === undefined) return undefined
-  return { shooter, weapon, x: x / 100, y: y / 100, z: z / 100 }
+  const yaw = w.int(r[5])
+  const dip = w.int(r[6])
+  if (shooter === undefined || weapon === undefined || x === undefined || y === undefined || z === undefined || yaw === undefined || dip === undefined) return undefined
+  return { shooter, weapon, x: x / 100, y: y / 100, z: z / 100, yaw: yaw / 1000, dip: dip / 255 }
 }
 
 function decodeScore(r: unknown): Score | undefined {
@@ -448,14 +456,18 @@ function decodeGateState(r: unknown): GateState | undefined {
 }
 
 function decodeCraterEntry(r: unknown): CraterEntry | undefined {
-  if (!Array.isArray(r) || r.length !== 5) return undefined
+  if (!Array.isArray(r) || r.length !== 9) return undefined
   const x = w.int(r[0])
   const z = w.int(r[1])
   const radius = w.int(r[2])
   const depth = w.int(r[3])
-  const age = w.int(r[4])
-  if (x === undefined || z === undefined || radius === undefined || depth === undefined || age === undefined) return undefined
-  return { x, z, radius, depth, age }
+  const yaw = w.int(r[4])
+  const dip = w.int(r[5])
+  const contact = w.int(r[6])
+  const solid = w.bool(r[7])
+  const age = w.int(r[8])
+  if (x === undefined || z === undefined || radius === undefined || depth === undefined || yaw === undefined || dip === undefined || contact === undefined || solid === undefined || age === undefined) return undefined
+  return { x, z, radius, depth, yaw: yaw / 1000, dip: dip / 255, contact: contact / 255, solid, age }
 }
 
 function decodeDugTile(r: unknown): DugTile | undefined {

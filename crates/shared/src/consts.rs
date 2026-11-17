@@ -31,7 +31,7 @@ pub use crate::vehicles::titan::*;
 pub use crate::vehicles::walker::*;
 
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
-pub const PROTOCOL_VERSION: u8 = 86;
+pub const PROTOCOL_VERSION: u8 = 88;
 
 /// Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
 /// `crate::vehicles`.
@@ -417,6 +417,12 @@ pub const CRATER_EGG_RADIUS: f32 = 5.0;
 pub const CRATER_EGG_DEPTH: f32 = 0.9;
 /// A shell digs only if it bursts within this far above the terrain, metres: not on a roof or in the air.
 pub const CRATER_REACH: f32 = 1.5;
+/// A `ShotEvent`'s `yaw` and `dip` when what went off had no heading: straight down.
+pub const SHOT_NO_YAW: i16 = 0;
+pub const SHOT_NO_DIP: u8 = 255;
+/// How much of its contact with the ground a burst keeps when its shell struck a vehicle and not the
+/// ground itself (`CraterEntry::contact`): the crater is marked as one blown from above.
+pub const CRATER_DIRECT_CONTACT: f32 = 0.5;
 /// However many craters land on a place, the ground goes no lower than this under what it was, metres.
 pub const CRATER_MAX_DEPTH: f32 = 4.0;
 /// The most craters whose marks a joiner is sent (the oldest are dropped first). Their heights are sent whole, in `Dug`.

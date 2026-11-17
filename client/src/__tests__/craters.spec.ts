@@ -27,7 +27,7 @@ function city() {
 }
 
 /** A crater centred on `(x, z)` metres, in the server's whole centimetres. */
-const crater = (x: number, z: number, radius = 600, depth = 150, age = 0) => ({ x: Math.round(x * 100), z: Math.round(z * 100), radius, depth, age })
+const crater = (x: number, z: number, radius = 600, depth = 150, age = 0) => ({ x: Math.round(x * 100), z: Math.round(z * 100), radius, depth, yaw: 0, dip: 1, contact: 1, solid: false, age })
 
 /** What the server sends a joiner of `view`'s ground (`Dug`): each dug tile's difference from its file, as runs. */
 function dugOf(view: WorldView, tiles: Map<TileRef, TileData>) {
@@ -75,6 +75,18 @@ describe('craters', () => {
     // And it is handed to the ground's shader to be marked (SCORCH.md), in metres.
     expect(scene.craters.count).toBe(1)
     expect([...scene.craters.data.subarray(0, 4)]).toEqual([x, z, 6, 1.5])
+  })
+
+  it('tell the shader how the shell struck: which way it flew, how low, and how much in the ground', () => {
+    const { view, tiles, scene } = city()
+    for (const [ref, tile] of tiles) view.attachTile(ref, tile)
+    // A solid shot skimming in toward +X (a quarter turn right of -Z), half of its burst in the ground.
+    view.cratered([{ ...crater(-50, 20), yaw: -Math.PI / 2, dip: 0.2, contact: 0.5, solid: true }], true)
+    const [leanX, leanZ, contact] = scene.craters.data.subarray(5, 8)
+    expect(leanX).toBeCloseTo(0.8)
+    expect(leanZ).toBeCloseTo(0)
+    // Its contact, and 2 on top for the solid shot.
+    expect(contact).toBeCloseTo(2.5)
   })
 
   it('are dug into a tile that streams in after them, as if it had been here', () => {

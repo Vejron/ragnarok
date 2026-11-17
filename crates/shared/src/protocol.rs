@@ -381,8 +381,12 @@ messages! {
     #[derive(Copy, Eq)]
     [] HullMark { vehicle: u32, style: u8, x: i16 as cm, y: i16 as cm, z: i16 as cm, dx: i8, dy: i8, dz: i8 }
 
+    /// Something that went off since the previous snapshot, and where it ended. A burst also says the
+    /// way its shell was flying, as a crater does (`CraterEntry`): `yaw` its heading over the ground
+    /// and `dip` how steeply it came in, for the earth it throws ahead of it. Everything else is sent
+    /// with `SHOT_NO_YAW` and `SHOT_NO_DIP`: no heading.
     #[derive(Copy, Eq)]
-    [] ShotEvent { shooter: u32, weapon: u8, x: i32 as cm, y: i32 as cm, z: i32 as cm }
+    [] ShotEvent { shooter: u32, weapon: u8, x: i32 as cm, y: i32 as cm, z: i32 as cm, yaw: i16 as mrad, dip: u8 as byte }
 
     /// Sent as a datagram. `baseline` is the tick of the snapshot the updates are relative to, or 0
     /// when they are not (every entity in range then comes whole). Each update is one entity's
@@ -495,9 +499,13 @@ messages! {
 
     /// A crater a blast dug: where it is centred on the ground plane, how wide it is and how deep at the
     /// middle, all in whole centimetres (`terrain::Ground::dig`, which the client mirrors sample for
-    /// sample), and how long ago it was dug, seconds (0 when live).
+    /// sample), and how long ago it was dug, seconds (0 when live). Then how the shell struck, which
+    /// only the marks painted on the ground read (SCORCH.md): `yaw` the heading it flew along over the
+    /// ground (`look`'s convention: 0 faces -Z), `dip` how steeply (0 skimming the ground, 1 straight
+    /// down or with no heading at all), `contact` how squarely it burst on the ground (1 in it, towards
+    /// 0 as it burst above it or on a vehicle), and `solid` for a solid shot, which burns nothing.
     #[derive(Copy, Eq)]
-    [] CraterEntry { x: i32, z: i32, radius: i32, depth: i32, age: u16 }
+    [] CraterEntry { x: i32, z: i32, radius: i32, depth: i32, yaw: i16 as mrad, dip: u8 as byte, contact: u8 as byte, solid: bool, age: u16 }
 
     /// Sent on a reliable stream: to everyone when blasts dig craters, to be dug into the ground and
     /// marked; and to a player who just joined with the craters of the last `CRATER_FADE_SECONDS`, in

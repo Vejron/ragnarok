@@ -25,6 +25,7 @@ mod catch_up;
 mod construct;
 mod craters;
 pub use construct::{HALF_CUBE, cube_centre};
+pub use craters::Strike;
 pub(crate) mod feedback;
 mod replicate;
 mod snapshot;
@@ -612,16 +613,16 @@ mod tests {
         drain(&mut first);
         let ground = game.world.map.ground.clone();
         // In the air, on a roof's height, nothing happens.
-        assert!(!game.world.dig_crater([0.0, 3.0 + CRATER_REACH + 1.0, 0.0], 5.0, 1.0));
+        assert!(!game.world.dig_crater([0.0, 3.0 + CRATER_REACH + 1.0, 0.0], 5.0, 1.0, Strike::DOWN));
         assert_eq!(game.world.map.ground, ground);
-        assert!(game.world.dig_crater([0.0, 3.2, 0.0], 5.6, 1.0));
+        assert!(game.world.dig_crater([0.0, 3.2, 0.0], 5.6, 1.0, Strike::DOWN));
         assert_eq!(game.world.map.ground.height_at(0.0, 0.0), 2.0, "a metre down in the middle");
         assert_eq!(game.world.map.ground.height_at(20.0, 20.0), 3.0, "far away it is as it was");
         game.step();
         let told = cratered(drain(&mut first));
         assert_eq!(told.len(), 1);
         assert!(told[0].0, "news to the ones already here");
-        assert_eq!(told[0].1, vec![CraterEntry { x: 0, z: 0, radius: 560, depth: 100, age: 0 }]);
+        assert_eq!(told[0].1, vec![CraterEntry { x: 0, z: 0, radius: 560, depth: 100, yaw: 0, dip: 255, contact: 221, solid: false, age: 0 }]);
         // Nothing is told twice.
         game.step();
         assert!(cratered(drain(&mut first)).is_empty());
@@ -654,7 +655,7 @@ mod tests {
         };
         for _ in 0..CRATER_MAX_KEPT + 300 {
             let (x, z) = (random(), random());
-            game.world.dig_crater([x, game.world.map.ground.height_at(x, z), z], 3.5, 0.5);
+            game.world.dig_crater([x, game.world.map.ground.height_at(x, z), z], 3.5, 0.5, Strike::DOWN);
         }
         let (_, mut late) = join(&mut game);
         let told = drain(&mut late);
@@ -688,7 +689,7 @@ mod tests {
         let map = WorldFile { version: WORLD_VERSION, half_extent: 10_000, spawns: vec![[0, 0]], tile_size: 10_000, ground, ..Default::default() };
         let mut game = Game::new(map, 0).unwrap();
         // On the seam x = 0 between tiles (0, 0) and (1, 0).
-        assert!(game.world.dig_crater([0.0, 3.0, -30.0], 5.6, 1.0));
+        assert!(game.world.dig_crater([0.0, 3.0, -30.0], 5.6, 1.0, Strike::DOWN));
         assert_eq!(game.world.dug_tiles.iter().copied().collect::<Vec<_>>(), vec![(0, 0), (1, 0)]);
         assert_eq!(game.world.dug_ground().iter().map(|t| (t.col, t.row)).collect::<Vec<_>>(), vec![(0, 0), (1, 0)]);
     }
@@ -697,9 +698,25 @@ mod tests {
     fn craters_pile_up_to_a_depth_and_no_further() {
         let mut game = hilly_game();
         for _ in 0..20 {
-            game.world.dig_crater([0.0, game.world.map.ground.height_at(0.0, 0.0), 0.0], 5.6, 1.0);
+            game.world.dig_crater([0.0, game.world.map.ground.height_at(0.0, 0.0), 0.0], 5.6, 1.0, Strike::DOWN);
         }
         assert_eq!(game.world.map.ground.height_at(0.0, 0.0), 0.0f32.max(3.0 - CRATER_MAX_DEPTH));
+    }
+
+    #[test]
+    fn a_burst_above_the_ground_or_on_a_vehicle_marks_a_crater_less_in_the_ground() {
+        let mut game = hilly_game();
+        let strike = Strike { dir: [1.0, -1.0, 0.0], direct: false, solid: false };
+        assert!(game.world.dig_crater([0.0, 3.0, 0.0], 5.6, 1.0, strike));
+        assert!(game.world.dig_crater([40.0, 3.0 + CRATER_REACH / 2.0, 0.0], 5.6, 1.0, strike));
+        assert!(game.world.dig_crater([-40.0, 3.0, 0.0], 5.6, 1.0, Strike { direct: true, ..strike }));
+        // Under the surface counts as in it.
+        assert!(game.world.dig_crater([0.0, 2.5, 40.0], 5.6, 1.0, strike));
+        let contact: Vec<u8> = game.world.craters.iter().map(|&(_, crater)| crater.contact).collect();
+        assert_eq!(contact, vec![255, 128, 128, 255]);
+        // The hole is the same however it was dug.
+        let depth: Vec<i32> = game.world.craters.iter().map(|&(_, crater)| crater.depth).collect();
+        assert_eq!(depth, vec![100; 4]);
     }
 
     #[test]
@@ -1023,7 +1040,7 @@ mod tests {
                 let (x, z) = (((k * 97) % 1400) as f32 - 700.0 + if k % 5 == 0 { 256.0 - ((k * 97) % 1400) as f32 % 256.0 } else { 0.0 }, ((k * 53) % 1400) as f32 - 700.0);
                 let y = game.world.map.ground.height_at(x, z);
                 let started = Instant::now();
-                game.world.dig_crater([x, y, z], 8.8, 1.6);
+                game.world.dig_crater([x, y, z], 8.8, 1.6, Strike::DOWN);
                 dig += started.elapsed();
                 let started = Instant::now();
                 game.world.physics.step_cars(TICK_DT);

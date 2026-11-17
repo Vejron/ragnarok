@@ -2,7 +2,7 @@ use super::Mechanic;
 use super::combat::{Blast, blast, look};
 use super::vehicles::add_vehicle;
 use crate::entities::{HurtBy, With};
-use crate::game::{Drone, Player, Seat, Seats, Vehicle, World};
+use crate::game::{Drone, Player, Seat, Seats, Strike, Vehicle, World};
 use shared::consts::*;
 use shared::protocol::{KIND_DRONE, ShotEvent};
 use shared::vehicles::{DroneDef, Launch, drone_def};
@@ -128,10 +128,10 @@ fn burst(world: &mut World, vid: u32, attacker: Option<u32>, shown_as: u8, def: 
     let Some(pose) = world.physics.car_pose(vid) else { return };
     remove(world, vid);
     let [x, y, z] = pose.position.map(to_cm);
-    world.shots.push(ShotEvent { shooter: attacker.unwrap_or(0), weapon: shown_as, x, y, z });
+    world.shots.push(ShotEvent { shooter: attacker.unwrap_or(0), weapon: shown_as, x, y, z, yaw: SHOT_NO_YAW, dip: SHOT_NO_DIP });
     blast(world, Blast { point: pose.position, radius, damage, knock, dir: [0.0, 1.0, 0.0], attacker, weapon: def.weapon });
     // After the blast, as a shell's, so a building it bit has stood on the old ground when it fell.
-    world.dig_crater(pose.position, crater[0], crater[1]);
+    world.dig_crater(pose.position, crater[0], crater[1], Strike::DOWN);
 }
 
 /// What becomes of drone `vid` this tick.

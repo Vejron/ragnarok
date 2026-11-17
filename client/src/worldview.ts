@@ -485,7 +485,7 @@ export class WorldView {
       this.grass?.dent(crater.x / 100, crater.z / 100, crater.radius / 100)
       this.stones?.dent(crater.x / 100, crater.z / 100, crater.radius / 100)
       // Marked on the ground by its shader (SCORCH.md), fading with its age.
-      this.scene.craters.add(crater.x / 100, crater.z / 100, crater.radius / 100, crater.depth / 100, now - crater.age)
+      this.scene.craters.add(crater.x / 100, crater.z / 100, crater.radius / 100, crater.depth / 100, now - crater.age, crater)
       if (live) {
         this.craters.push(crater)
         this.groundEdits++
@@ -497,7 +497,8 @@ export class WorldView {
         const [x, z] = [crater.x / 100, crater.z / 100]
         const y = this.terrain?.heightAt(x, z) ?? 0
         this.dusted.push([x, y + 0.5, z])
-        if (this.scorch) this.smoulders.add(x, y, z, crater.radius / 100, now)
+        // A solid shot burns nothing, so its crater does not smoke.
+        if (this.scorch && !crater.solid) this.smoulders.add(x, y, z, crater.radius / 100, now)
       }
     }
     for (const key of dented) {

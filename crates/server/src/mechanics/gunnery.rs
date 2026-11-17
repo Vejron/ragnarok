@@ -399,7 +399,7 @@ fn shoot(world: &mut World, vid: u32, def: &MountDef, mount: &Mount, occupant: u
             // Always announced, hit or miss: the beam is drawn to where it ended.
             let (end, _) = beam(world, occupant, muzzle, dir, &round, vid, back, radius);
             let [x, y, z] = end.map(to_cm);
-            world.shots.push(ShotEvent { shooter: vid, weapon, x, y, z });
+            world.shots.push(ShotEvent { shooter: vid, weapon, x, y, z, yaw: SHOT_NO_YAW, dip: SHOT_NO_DIP });
         }
         Fire::Drop { kind, toss, ttl } => {
             let toss = pose.world_dir(toss);

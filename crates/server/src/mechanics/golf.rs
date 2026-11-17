@@ -113,7 +113,7 @@ fn hole_out(world: &mut World) {
         let card = world.entities.get::<Card>(id).copied().unwrap_or(Card { hole: None, strokes: 0 });
         world.entities.despawn(id);
         let [x, y, z] = [hole.cup[0], at[1], hole.cup[1]].map(to_cm);
-        world.shots.push(ShotEvent { shooter: owner, weapon: WEAPON_CUP, x, y, z });
+        world.shots.push(ShotEvent { shooter: owner, weapon: WEAPON_CUP, x, y, z, yaw: SHOT_NO_YAW, dip: SHOT_NO_DIP });
         let Some(name) = world.entities.get::<Player>(owner).map(|player| player.name.clone()) else { continue };
         let text = if card.hole == Some(hole.number) {
             let strokes = if card.strokes == 1 { "1 stroke".to_string() } else { format!("{} strokes", card.strokes) };
@@ -152,7 +152,7 @@ pub fn swing(world: &mut World, id: u32, item: u8, strike: Strike, high: bool) {
     let right = look(yaw - std::f32::consts::FRAC_PI_2, 0.0);
     let head = struck.map_or([at[0] + right[0] * SWING_OUT, feet + GOLF_BALL_RADIUS, at[2] + right[2] * SWING_OUT], |(_, position, ..)| position);
     let [x, y, z] = head.map(to_cm);
-    world.shots.push(ShotEvent { shooter: id, weapon: WEAPON_GOLF, x, y, z });
+    world.shots.push(ShotEvent { shooter: id, weapon: WEAPON_GOLF, x, y, z, yaw: SHOT_NO_YAW, dip: SHOT_NO_DIP });
     let Some((ball, ..)) = struck else { return };
     // A positive curve goes right, which is a smaller yaw.
     let spray = if strike.power > 1.0 { (world.rng.next_f64() as f32 * 2.0 - 1.0) * SPRAY } else { 0.0 };

@@ -42,6 +42,7 @@ Sizes, to be tuned in play: tank shell about 2.5 m radius, 0.7 m deep; mortar ab
 ## Wire
 
 - A new reliable message `crater { craters: Vec<Crater> }` with `live: bool` like `carved` (live ones are animated, catch-up ones are state). Bump `PROTOCOL_VERSION`, update `NETWORKING.md`, regenerate (`UPDATE_PARITY=1 cargo test -p shared`).
+- Since protocol 87 an entry also says how the shell struck (`yaw`, `dip`, `contact`, `solid`; `Strike` in `game/craters.rs`), for the marks only (SCORCH.md, "Strike"). The hole is dug the same however it struck.
 - Sent in `Game::broadcast_*` once a tick like `broadcast_carved`, and as catch-up in the join sequence next to the carved catch-up.
 
 ## Client

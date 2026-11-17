@@ -1,6 +1,9 @@
 /** Craters kept at once: a ring, the oldest overwritten. */
 export const CRATER_CAPACITY = 4096
-/** Floats per crater: `x, z, radius, depth` (metres), then birth time (seconds, the renderer's clock) and three unused. */
+/**
+ * Floats per crater: `x, z, radius, depth` (metres), then birth time (seconds, the renderer's clock), the
+ * lean's x and z, and the contact, plus 2 for a solid shot (`CraterStrike`).
+ */
 export const CRATER_FLOATS = 8
 /** Side of a cell of the grid over the ground, metres. */
 export const CRATER_CELL = 16
@@ -14,6 +17,26 @@ export const CRATER_REACH = 1.6
 export const CRATER_EMBER_LIFE = 20
 /** Seconds a crater's marks last, from its birth, fading out over the last 30% (the server's `CRATER_FADE_SECONDS`). */
 export const CRATER_FADE = 30 * 60
+
+/** Seconds the earth a crater turned up stays dark and damp, drying paler over them. */
+export const CRATER_DRY = 150
+/** How far from a crater's heart its embers glow, in radii: only the very middle. */
+export const CRATER_EMBER_REACH = 0.3
+
+/** How the shell that dug a crater struck the ground: what its marks are painted from (SCORCH.md, "Strike"). */
+export interface CraterStrike {
+  /** The heading it flew along over the ground, radians: 0 faces -Z, a quarter turn faces -X. */
+  yaw: number
+  /** How steeply it came in: 0 skimming the ground, 1 straight down (a round mark, with no heading). */
+  dip: number
+  /** How squarely it burst on the ground: 1 in it, towards 0 as it burst above it or on a vehicle. */
+  contact: number
+  /** A solid shot, which throws earth and burns nothing. */
+  solid: boolean
+}
+
+/** A charge that went off in the ground from straight above: a round, burnt crater. */
+export const CRATER_PLUMB: CraterStrike = { yaw: 0, dip: 1, contact: 1, solid: false }
 
 /** The bucket of grid cell `(cx, cz)`, as the shader hashes it. */
 export function craterBucket(cx: number, cz: number): number {
@@ -57,12 +80,17 @@ export class Craters {
     return Math.min(this.added, CRATER_CAPACITY)
   }
 
-  /** Adds a crater at `(x, z)` with `radius` and `depth` (metres), born at `birth` (seconds, `performance.now() / 1000`). */
-  add(x: number, z: number, radius: number, depth: number, birth: number) {
+  /**
+   * Adds a crater at `(x, z)` with `radius` and `depth` (metres), born at `birth` (seconds,
+   * `performance.now() / 1000`), dug by a shell that struck as `strike` says.
+   */
+  add(x: number, z: number, radius: number, depth: number, birth: number, strike: CraterStrike = CRATER_PLUMB) {
     const slot = this.added % CRATER_CAPACITY
     if (this.added >= CRATER_CAPACITY) this.unlist(slot)
     const o = slot * CRATER_FLOATS
-    this.data.set([x, z, radius, depth, birth, 0, 0, 0], o)
+    const lean = 1 - Math.min(Math.max(strike.dip, 0), 1)
+    const contact = Math.min(Math.max(strike.contact, 0), 1)
+    this.data.set([x, z, radius, depth, birth, -Math.sin(strike.yaw) * lean, -Math.cos(strike.yaw) * lean, contact + (strike.solid ? 2 : 0)], o)
     this.order[slot] = this.added++
     this.eachBucket(slot, (bucket) => this.list(bucket, slot))
     this.dirtySlots.add(slot)

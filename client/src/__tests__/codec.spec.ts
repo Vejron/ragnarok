@@ -76,8 +76,8 @@ describe('codec', () => {
       ],
       removed: [3, 11],
       shots: [
-        { shooter: 7, weapon: 0, x: 15, y: 1.6, z: -42 },
-        { shooter: 1, weapon: 0, x: -0.2, y: 0.9, z: 310 },
+        { shooter: 7, weapon: 0, x: 15, y: 1.6, z: -42, yaw: 0.785, dip: 0.2 },
+        { shooter: 1, weapon: 0, x: -0.2, y: 0.9, z: 310, yaw: 0, dip: 1 },
       ],
       bullets: [{ id: 77, shooter: 7, item: 2, x: 1.2, y: 1.65, z: -30, vx: 15, vy: -0.2, vz: -270, tick: 1233 }],
     })

@@ -64,7 +64,7 @@ fn sample_snapshot() -> Snapshot {
         ride: 9,
         updates,
         removed: vec![3, 11],
-        shots: vec![ShotEvent { shooter: 7, weapon: WEAPON_RIFLE, x: 1500, y: 160, z: -4200 }, ShotEvent { shooter: 1, weapon: WEAPON_RIFLE, x: -20, y: 90, z: 31_000 }],
+        shots: vec![ShotEvent { shooter: 7, weapon: WEAPON_RIFLE, x: 1500, y: 160, z: -4200, yaw: 785, dip: 51 }, ShotEvent { shooter: 1, weapon: WEAPON_RIFLE, x: -20, y: 90, z: 31_000, yaw: SHOT_NO_YAW, dip: SHOT_NO_DIP }],
         bullets: vec![BulletSpawn { id: 77, shooter: 7, item: ITEM_AK5, x: 120, y: 165, z: -3000, vx: 1500, vy: -20, vz: -27000, tick: 1233 }],
     }
 }
@@ -99,7 +99,7 @@ fn samples() -> Vec<(&'static str, Vec<u8>)> {
         case("carved", S_CARVED, &Carved { tag: S_CARVED, live: true, buildings: vec![CarvedBuilding { col: 2, row: 3, index: 70_000, point: [1000, 20, -1000], blasted: vec![5, 300], fell: vec![9] }] }),
         case("built", S_BUILT, &Built { tag: S_BUILT, live: true, placed: vec![BuiltCube { x: -3, y: 40, z: 70_000, color: 11, material: 0 }], removed: vec![CubePos { x: 1, y: 2, z: -3 }], fell: vec![CubePos { x: 0, y: 41, z: 0 }, CubePos { x: -1, y: 41, z: 0 }] }),
         case("gates", S_GATES, &Gates { tag: S_GATES, live: true, gates: vec![GateState { col: 2, row: 3, index: 70_000, door: 300, open: true }, GateState { col: 0, row: 1, index: 4, door: 0, open: false }] }),
-        case("cratered", S_CRATERED, &Cratered { tag: S_CRATERED, live: false, craters: vec![CraterEntry { x: -70_000, z: 1200, radius: 560, depth: 100, age: 1799 }] }),
+        case("cratered", S_CRATERED, &Cratered { tag: S_CRATERED, live: false, craters: vec![CraterEntry { x: -70_000, z: 1200, radius: 560, depth: 100, yaw: -1571, dip: 64, contact: 255, solid: true, age: 1799 }] }),
         case("dug", S_DUG, &Dug { tag: S_DUG, tiles: vec![DugTile { col: 2, row: 3, runs: vec![40, 3, -12, -300, -1, 70_000, 1, -5] }] }),
         case("hit", S_HIT, &Hit { tag: S_HIT, role: HIT_TAKEN, kind: HIT_BODY, amount: 25, weapon: WEAPON_RIFLE, bearing: Some(-1571), x: 100, y: 90, z: -250, target: 7 }),
         case("hitNowhere", S_HIT, &Hit { tag: S_HIT, role: HIT_DEALT, kind: HIT_KILL, amount: 100, weapon: WEAPON_SNIPER, bearing: None, x: 0, y: 0, z: 0, target: 0 }),
