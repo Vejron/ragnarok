@@ -25,7 +25,7 @@ beforeAll(async () => {
 /** A tank as the wire has it: its gun fired `shots` times, `hp` left. */
 function tank(x: number, { shots = 0, hp = 250, damage }: { shots?: number; hp?: number; damage?: number[] } = {}): Components {
   return {
-    kind: { kind: KIND_TANK }, place: { x: x * 100, y: 120, z: 0 }, orientation: { qx: 0, qy: 0, qz: 0 }, steer: { steer: 0 },
+    kind: { kind: KIND_TANK }, place: { x: x * 100, y: 120, z: 0 }, orientation: { qx: 0, qy: 0, qz: 0 }, steer: { steer: 0, throttle: 0 },
     turret: { yaw: 0, pitch: 0, shots, range: 0, heat: 0, flags: 0 }, health: { hp },
     ...(damage ? { damage: { parts: damage } } : {}),
   }
@@ -67,7 +67,7 @@ function harness(driven: Driven | null = null) {
 
 describe('the vehicle presenters', () => {
   it('draw a vehicle at its pose, and the one the local player drives where it is predicted', () => {
-    const predicted: Driven = { id: 4, pose: { position: [9, 1, 9], rotation: [0, 0, 0, 1], steer: 0.5 } as never, jets: 0 }
+    const predicted: Driven = { id: 4, pose: { position: [9, 1, 9], rotation: [0, 0, 0, 1], steer: 0.5 } as never, jets: 0, throttle: 0 }
     const { store, vehicles, draw } = harness(predicted)
     store.push(10, new Map([[3, tank(1)], [4, tank(2)]]), true)
     draw(10)

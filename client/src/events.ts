@@ -16,6 +16,7 @@ import {
   type BulletSpawn, type HullMark, type ShotEvent,
 } from '@/net/codec'
 import { CarModel } from '@/render/car'
+import { SURFACE_ASPHALT } from '@/sim/surface'
 import type { ChaseCam } from '@/render/chase'
 import type { DamageNumbers } from '@/render/damagenumbers'
 import type { Debris } from '@/render/debris'
@@ -90,6 +91,21 @@ interface LiveBullet {
   shown: boolean
   /** Muzzle minus eye, closing as it flies. */
   offset: Vector3 | null
+  /** Where it was drawn last frame, and whether it has cracked past the listener yet. */
+  last?: readonly number[]
+  cracked?: boolean
+}
+
+/** A round passing closer than this to the listener, metres, is heard cracking by. */
+const CRACK_DISTANCE = 6
+
+/** Where the segment `from`–`to` passes within `CRACK_DISTANCE` of `ear`, or null if it does not. */
+function passing(from: readonly number[], to: readonly number[], ear: { x: number; y: number; z: number }): [number, number, number] | null {
+  const d = [to[0]! - from[0]!, to[1]! - from[1]!, to[2]! - from[2]!]
+  const length = d[0]! * d[0]! + d[1]! * d[1]! + d[2]! * d[2]!
+  const along = length > 0 ? Math.min(1, Math.max(0, ((ear.x - from[0]!) * d[0]! + (ear.y - from[1]!) * d[1]! + (ear.z - from[2]!) * d[2]!) / length)) : 0
+  const p: [number, number, number] = [from[0]! + d[0]! * along, from[1]! + d[1]! * along, from[2]! + d[2]! * along]
+  return Math.hypot(p[0] - ear.x, p[1] - ear.y, p[2] - ear.z) < CRACK_DISTANCE ? p : null
 }
 
 /** How far from a club's head (metres) the ball it struck can be drawn when the swing is played. */
@@ -265,6 +281,15 @@ export class Events {
         bullet.shown = true
         this.bulletLeft(bullet, at)
       }
+      // Someone else's round going by close: the snap of it, once.
+      if (bullet.last && !bullet.cracked && bullet.spawn.shooter !== this.world.localId()) {
+        const by = passing(bullet.last, at, this.world.scene.camera.position)
+        if (by) {
+          bullet.cracked = true
+          this.world.sounds.crack(by)
+        }
+      }
+      bullet.last = at
       // It leaves the eye, but is drawn leaving the barrel: the difference closes over the first 25 m.
       if (bullet.offset) {
         const flown = n * Math.hypot(bullet.spawn.vx, bullet.spawn.vy, bullet.spawn.vz) / TICK_RATE
@@ -368,6 +393,7 @@ export class Events {
       if (!surroundings.watery(to, sniper ? 0.45 : 0.25)) {
         if (sniper) effects.burst(to, 0.8)
         else effects.pelletStrike(to)
+        if (!throughGlass) this.struck(to)
       }
       if (bullet?.spawn.shooter === local && !throughGlass) view.chipped(to.x, to.y, to.z, itemDef(bullet.spawn.item)?.damage ?? 0)
     } else if (shot.weapon === WEAPON_LASER) {
@@ -391,13 +417,19 @@ export class Events {
       if (this.world.driving() === shot.shooter && !throughGlass) view.chipped(to.x, to.y, to.z, TUPP_LASER_DAMAGE)
     } else if (shot.weapon === WEAPON_MG) {
       // The round was sent flying when the gun fired; this is where it strikes something.
-      if (!surroundings.watery(to, 0.25)) this.world.rounds.struck(to)
+      if (!surroundings.watery(to, 0.25)) {
+        this.world.rounds.struck(to)
+        this.struck(to)
+      }
     } else if (shot.weapon === WEAPON_PELLET) {
       // A further pellet of a spread: the blast and the sound came with the first.
       const pellets = hitscanGunFor(WEAPON_SHOTGUN)
       const from = this.muzzleOf(shot.shooter)
       if (!pellets || (from && from.distanceTo(to) >= pellets.range - 1)) return
-      if (!surroundings.watery(to, 0.2)) effects.pelletStrike(to)
+      if (!surroundings.watery(to, 0.2)) {
+        effects.pelletStrike(to)
+        if (!throughGlass) this.struck(to)
+      }
       if (shot.shooter === local && !throughGlass) view.chipped(to.x, to.y, to.z, pellets.damage)
     } else if (shot.weapon === WEAPON_GOLF) {
       // A club swung, its head at the ball it struck, or at the feet where there was none. The local
@@ -439,7 +471,10 @@ export class Events {
       sounds.scrape(shot.shooter)
     } else if (shot.weapon === WEAPON_SNIPER) {
       // The round is drawn in flight; this is where it landed.
-      if (!surroundings.watery(to, 0.45)) effects.burst(to, 0.8)
+      if (!surroundings.watery(to, 0.45)) {
+        effects.burst(to, 0.8)
+        if (!throughGlass) this.struck(to)
+      }
     } else {
       const gun = hitscanGunFor(shot.weapon)
       if (!gun) return
@@ -452,10 +487,13 @@ export class Events {
         if (shot.shooter !== local) this.soldierFired(shot.shooter, from, this.aim(from, to), gun.pellets > 1 ? SHOTGUN : RIFLE)
         if (gun.pellets > 1) {
           // No rays for a spread: each pellet is drawn where it landed.
-          if (landed && !surroundings.watery(to, 0.2)) effects.pelletStrike(to)
+          if (landed && !surroundings.watery(to, 0.2)) {
+            effects.pelletStrike(to)
+            if (!throughGlass) this.struck(to)
+          }
         } else {
           effects.tracer(from, to, landed)
-          if (landed) surroundings.watery(to, 0.25)
+          if (landed && !surroundings.watery(to, 0.25) && !throughGlass) this.struck(to)
         }
       }
       const at = from ?? to
@@ -537,6 +575,17 @@ export class Events {
   }
 
   /** The moment a bullet is first drawn: the shooter's arm, a flash at the muzzle and the shot's sound. */
+  /**
+   * A round striking something at `to`, heard by what it struck: earth on the open ground, stone off
+   * a road or anything standing above the ground (a wall, a rock).
+   */
+  private struck(to: Vector3) {
+    const fx = this.world.fx()
+    const above = to.y - fx.groundAt(to.x, to.z)
+    const stone = above > 0.4 || fx.surfaceAt(to.x, to.z) === SURFACE_ASPHALT
+    this.world.sounds.impact([to.x, to.y, to.z], stone ? 'stone' : 'dirt')
+  }
+
   private bulletLeft(bullet: LiveBullet, at: readonly number[]) {
     const { shooter, item } = bullet.spawn
     const gun = itemDef(item)

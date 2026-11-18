@@ -1,53 +1,59 @@
-import { SURFACE_ASPHALT, SURFACE_GRASS, SURFACE_WATER } from './surface'
+import type { SynthSpec } from '@/sound/enginesynth'
+import type { Grit } from '@/sound/gritsynth'
+import { rolling, type Ground } from './groundsound'
 
 /**
- * What a vehicle sounds like, as numbers: pure functions from how it moves to how loud and how high
- * each layer of its sound is. `vehicleaudio.ts` turns them into Web Audio nodes.
+ * What a vehicle sounds like, as numbers: the revs its engine turns at (`Revs`) and pure functions
+ * from how it moves to how loud and how high each other layer of its sound is. `vehicleaudio.ts`
+ * turns them into Web Audio nodes, and `sound/enginesynth.ts` makes the engine's own sound.
  */
 
 /** How a kind's engine is heard (each kind's is in `kinds/`). */
-export type Engine =
-  /** No engine to hear: legs, or a towed gun. */
-  | { name: 'none' }
-  /**
-   * Pistons through a gearbox, or an electric motor's one gear: `shifts` is where each gear starts as a
-   * fraction of `top` speed (m/s), `hz` the fundamental at idle and `level` its loudness. `tracks` adds
-   * their clatter.
-   */
-  | { name: 'gears'; shifts: readonly number[]; top: number; hz: number; level: number; tracks?: true }
-  /** A rotary and its propeller: no gears, its note rising with the airspeed (to `top`) and the throttle, and the wind in the wires aloft. */
-  | { name: 'rotary'; top: number; hz: number; level: number }
-  /** A helicopter's turbine and the beat of its blades. */
-  | { name: 'rotor'; hz: number; level: number }
-  /** A drone's four props: a thin, high whine. */
-  | { name: 'props'; hz: number }
-  /** A small two-stroke flat out all the time, its note rising a little with the airspeed (to `top`). */
-  | { name: 'twostroke'; top: number; hz: number }
-
-/** Revs just after a shift, as a fraction of the range (idle is 0.25). */
-const AFTER_SHIFT = 0.5
-
-export interface Gearing {
-  gear: number
-  /** Engine speed, 0 idle to 1 redline. */
-  revs: number
-}
+export type Engine = { name: 'none' } | Motor
 
 /**
- * The gear a car is in at `speed` m/s (either direction) and the engine speed in it. Revs climb
- * within a gear and fall back a step at each shift, which is what makes acceleration sound quick.
+ * An engine: how its revs follow the throttle and the wheels (`name`), and how it sounds (`synth`).
+ * - `gears`: pistons through an automatic gearbox, `shifts` being where each gear starts as a fraction of `top`.
+ * - `cvt`: a belt drive (snowmobile, sled): the revs leap to where it pulls and hold there as the speed builds.
+ * - `electric`: a motor on one gear, its revs in step with the wheels and silent at a standstill.
+ * - `marine`: a boat's engine or motor turning its propeller or waterjet: the throttle sets its revs, the
+ *   speed through the water barely, so a hull rocking on the waves does not wobble its note.
+ * - `rotary`: a plane's engine and propeller, the revs rising with the throttle and the airspeed.
+ * - `rotor`: a helicopter's governed turbine, at nearly the same speed whatever the collective asks.
+ * - `props`: a drone's four motors, working harder to climb and go.
+ * - `flat`: flat out all the time (a loitering drone's two-stroke, a missile's motor).
  */
-export function gearing(engine: { shifts: readonly number[]; top: number }, speed: number): Gearing {
-  const { shifts } = engine
-  const fraction = Math.min(1, Math.abs(speed) / engine.top)
-  let gear = 0
-  while (gear + 1 < shifts.length && fraction >= shifts[gear + 1]!) gear++
-  const low = shifts[gear]!
-  const high = shifts[gear + 1] ?? 1
-  const along = Math.min(1, Math.max(0, (fraction - low) / (high - low)))
-  const start = gear === 0 ? 0.25 : AFTER_SHIFT
-  return { gear, revs: start + (1 - start) * along }
+export interface Motor {
+  name: 'gears' | 'cvt' | 'electric' | 'marine' | 'rotary' | 'rotor' | 'props' | 'flat'
+  synth: SynthSpec
+  /** Revs at idle and at the redline, rpm. */
+  idle: number
+  redline: number
+  /** Seconds the engine takes to rev from idle to the redline out of gear: a tank's heavy flywheel is slow, a two-stroke snaps. */
+  spin: number
+  /** Where each gear starts as a fraction of `top` (`gears` only; `[0]` for one). */
+  shifts: readonly number[]
+  /** Top speed, m/s. */
+  top: number
+  /** Loudness of the engine, 0..1. */
+  level: number
+  /** It runs on tracks, which clatter. */
+  tracks?: true
 }
+
+/** Revs just after an upshift, as a share of the range above idle. */
+const AFTER_SHIFT = 0.45
+/** Seconds the throttle is lifted for a shift. */
+const SHIFT_TIME = 0.22
+/** Below this share of a car's first gear the clutch still slips: the revs are the throttle's, not the wheels'. */
+const LAUNCH = 0.35
+/** A tyre slipping this much spins free of the ground: the revs run away from the speed. */
+const SPINNING = 0.45
+/** How long the rev limiter cuts the sparks, and how often, seconds. */
+const LIMITER_CUT = 0.04
+const LIMITER_EVERY = 0.11
+
+const clamp = (value: number, low = 0, high = 1) => Math.min(high, Math.max(low, value))
 
 /** How a vehicle is moving and what state it is in; everything the sound depends on. */
 export interface SoundInput {
@@ -58,14 +64,22 @@ export interface SoundInput {
   accel: number
   /** Rate of climb, m/s. */
   climb: number
+  /** How hard the driver works the engine, -1..1 (`Steer.throttle`; a helicopter's collective). */
+  throttle: number
   /** Someone drives it and it is not wrecked. */
   powered: boolean
   hp: number
   maxHp: number
   /** Worst tyre slip, 0..1. */
   slip: number
-  surface: number
+  /** What its wheels or tracks touch, or the water a hull is in. */
+  ground: Ground
+  /** On its wheels or tracks, or floating: not flying. */
   grounded: boolean
+  /** Wholly under the water: no waves to slap it, only the rush of the water past. */
+  submerged?: boolean
+  /** A tracked vehicle turning, rad/s about its own up axis. */
+  yawRate: number
   /** Per-wheel damage (FL, FR, RL, RR), or null while the vehicle is whole. */
   wheels: readonly number[] | null
   /** A plane's blip switch is cutting the engine. */
@@ -74,16 +88,152 @@ export interface SoundInput {
   jets?: number
 }
 
+/** Where an engine's revs are: rpm, how hard it pulls (0..1), and whether it is between gears. */
+export interface RevState {
+  rpm: number
+  load: number
+  gear: number
+}
+
+/**
+ * How the share of the engine a driver asks for, from their throttle while the vehicle goes `speed`
+ * m/s: pulling the stick against the way it rolls is the brake, not the gas.
+ */
+export function gasOf(throttle: number, speed: number): number {
+  if (Math.abs(speed) > 1 && throttle * speed < 0) return 0
+  return clamp(Math.abs(throttle))
+}
+
+/**
+ * One engine's revs, followed from frame to frame: the gearbox shifts, the clutch slips at a launch,
+ * spinning wheels and a car in the air let it rev free, and the limiter bounces it off the redline.
+ */
+export class Revs {
+  rpm = 0
+  gear = 0
+  private shifting = 0
+  private limiter = 0
+
+  /** Steps the revs `dt` seconds on for `motor` moving as `input` says. */
+  step(motor: Motor, input: SoundInput, dt: number): RevState {
+    const { idle, redline } = motor
+    const range = redline - idle
+    if (!input.powered || input.hp <= 0) {
+      // Switched off it runs down.
+      this.rpm *= Math.exp(-dt / 0.4)
+      this.shifting = 0
+      return { rpm: this.rpm, load: 0, gear: this.gear }
+    }
+    if (this.rpm < idle * 0.5 && motor.name !== 'electric') this.rpm = idle
+    const frac = clamp(Math.abs(input.speed) / motor.top)
+    let gas = gasOf(input.throttle, input.speed)
+    // A load on the engine: a hill to climb.
+    const climbing = input.grounded ? clamp(input.climb / 6, 0, 0.3) : 0
+    let target = idle
+    let follow = range / motor.spin
+    let load = gas
+    switch (motor.name) {
+      case 'gears': {
+        const { shifts } = motor
+        const start = (g: number) => shifts[g] ?? 1
+        if (this.gear + 1 < shifts.length && frac >= start(this.gear + 1)) {
+          this.gear++
+          this.shifting = SHIFT_TIME
+        } else if (this.gear > 0 && frac < start(this.gear) - 0.03) {
+          this.gear--
+        }
+        const low = start(this.gear)
+        const along = clamp((frac - low) / (start(this.gear + 1) - low))
+        const from = this.gear === 0 ? 0 : AFTER_SHIFT
+        const coupled = idle + range * (from + (1 - from) * along)
+        const free = idle + range * gas
+        const launching = this.gear === 0 && frac < start(1) * LAUNCH
+        const loose = !input.grounded || input.slip > SPINNING
+        if (loose) target = Math.max(coupled, free)
+        else if (launching) target = Math.max(coupled, idle + range * gas * 0.55)
+        else {
+          // In gear the wheels hold the engine to the road's speed.
+          target = coupled
+          follow *= 4
+        }
+        load = clamp(gas + climbing)
+        break
+      }
+      case 'cvt': {
+        // The belt grips once the revs are up, then pulls the sled along at the revs that give its power.
+        const engage = idle + range * 0.5
+        target = gas > 0.08 ? engage + (redline - engage) * clamp(0.45 * gas + 0.55 * frac * gas + (input.slip > SPINNING ? 0.3 : 0)) : idle + range * 0.1 * frac
+        load = clamp(gas + climbing)
+        break
+      }
+      case 'electric': {
+        target = redline * frac
+        if (!input.grounded || input.slip > SPINNING) target = Math.max(target, redline * gas * 0.6)
+        follow *= 3
+        break
+      }
+      case 'marine': {
+        target = idle + range * (0.08 + 0.92 * gas) * (0.85 + 0.15 * frac)
+        break
+      }
+      case 'rotary': {
+        // A plane's stick is at cruise in the middle, full ahead forward, the blip switch back.
+        gas = clamp(0.55 + 0.45 * input.throttle)
+        const air = clamp(Math.abs(input.speed) / motor.top)
+        target = idle + range * (0.2 + 0.5 * gas + 0.3 * air)
+        load = input.cut ? 0 : clamp(gas + input.climb / 20)
+        if (input.cut) target = idle + (target - idle) * 0.8
+        break
+      }
+      case 'rotor': {
+        // A governed turbine holds its speed; the collective changes how hard it works.
+        load = clamp(0.45 + 0.4 * input.throttle + Math.abs(input.speed) / 60 + Math.max(0, input.climb) / 12)
+        target = redline * (0.92 + 0.08 * load)
+        break
+      }
+      case 'props': {
+        load = clamp(0.3 + Math.abs(input.climb) / 10 + Math.abs(input.speed) / 30 + 0.2 * gas)
+        target = idle + range * load
+        follow *= 3
+        break
+      }
+      case 'flat': {
+        target = redline * (0.9 + 0.1 * frac)
+        load = 1
+        break
+      }
+    }
+    target = Math.min(target, redline)
+    if (this.shifting > 0) {
+      // Off the throttle for the shift; the revs fall to the next gear's.
+      this.shifting = Math.max(0, this.shifting - dt)
+      load = 0
+    }
+    const step = follow * dt
+    this.rpm += clamp(target - this.rpm, -step * 1.3, step * (0.35 + 0.65 * Math.max(gas, 0.3)))
+    // Held against the redline, the limiter cuts the sparks in a stutter.
+    if (gas > 0.6 && this.rpm >= redline * 0.985 && motor.name !== 'electric' && motor.name !== 'marine' && motor.name !== 'rotor' && motor.name !== 'flat') {
+      this.limiter += dt
+      if (this.limiter % LIMITER_EVERY < LIMITER_CUT) {
+        load = 0
+        this.rpm -= range * 0.03
+      }
+    } else this.limiter = 0
+    return { rpm: this.rpm, load, gear: this.gear }
+  }
+}
+
 export interface SoundMix {
-  /** Fundamental, Hz, before Doppler. */
-  pitch: number
+  /** The engine's revs, rpm, and how hard it pulls, 0..1, for `EngineSynth`. */
+  rpm: number
+  load: number
   /** Level of the engine layer, 0..1. */
   engine: number
-  /** Cutoff of the engine's low-pass, Hz. */
-  tone: number
   /** Beats per second of the blades or the tracks, and how loud they are. */
   chop: number
   chopLevel: number
+  /** The tone of a track's clatter as a share of the kind's (`KindSound.chop`). */
+  chopTone: number
   /** Chance per second the engine drops out for an instant. */
   stutter: number
   /** Tyre squeal level and centre frequency. */
@@ -92,6 +242,8 @@ export interface SoundMix {
   /** Rolling noise of the ground under the tyres, level and cutoff. */
   ground: number
   groundHz: number
+  /** The crunch of what it rolls over. */
+  grit: Grit
   /** Steam-like hiss of a nearly dead engine. */
   hiss: number
   /** Rattle of a bent wheel or the grind of a lost one. */
@@ -102,25 +254,10 @@ export interface SoundMix {
   cut: boolean
 }
 
-/** A propeller's two blades pass this many times per firing stroke of the nine-cylinder rotary. */
-const PROP_BEAT = 2 / 4.5
-
-const clamp = (value: number, low = 0, high = 1) => Math.min(high, Math.max(low, value))
-
-/** Squeal level for `slip` on `surface` at `speed`: loud on tarmac, a scrub on dirt, nothing in water. */
-export function squealGain(slip: number, surface: number, speed: number): number {
-  if (surface === SURFACE_WATER) return 0
+/** Squeal level for `slip` on `ground` at `speed`: loud on tarmac, a scrub on gravel, nothing on ice or in water. */
+export function squealGain(slip: number, ground: Ground, speed: number): number {
   const hard = clamp((slip - 0.15) / 0.6)
-  const factor = surface === SURFACE_ASPHALT ? 1 : surface === SURFACE_GRASS ? 0.15 : 0.35
-  return hard * factor * clamp(Math.abs(speed) / 6)
-}
-
-/** Level of the ground's rolling noise: gravel crunch off-road, a faint roar on tarmac, a swish in water. */
-export function groundGain(speed: number, surface: number): number {
-  const s = Math.abs(speed)
-  if (surface === SURFACE_ASPHALT) return 0.1 * clamp(s / 40)
-  if (surface === SURFACE_WATER) return 0.3 * clamp(s / 10)
-  return 0.7 * clamp(s / 20)
+  return hard * rolling(ground, speed, slip, false).squeal * clamp(Math.abs(speed) / 6)
 }
 
 /** Whether a drop through the air of `fall` m/s is worth a thud, and how loud, 0..1. */
@@ -134,14 +271,16 @@ export function crashSize(speed: number): 0 | 1 | 2 {
 }
 
 /** Whether a vehicle with `engine` rolls on wheels or tracks, which squeal and rumble on the ground. */
-const rolls = (engine: Engine) => engine.name === 'gears' || engine.name === 'rotary'
+const rolls = (engine: Engine) => engine.name === 'gears' || engine.name === 'cvt' || engine.name === 'electric' || engine.name === 'rotary'
 
-/** What a vehicle with `engine` sounds like, moving and in the state `input` says. */
-export function mixOf(input: SoundInput, engine: Engine): SoundMix {
-  const { speed, accel, climb, powered, hp, maxHp } = input
+const QUIET_GRIT: Grit = { rate: 0, level: 0, hz: 1000, ring: 0.6, length: 4 }
+
+/** What a vehicle with `engine` sounds like, moving as `input` says with its engine at `revs`. */
+export function mixOf(input: SoundInput, engine: Engine, revs: RevState): SoundMix {
+  const { speed, powered, hp, maxHp } = input
   const alive = hp > 0
   const quiet: SoundMix = {
-    pitch: 40, engine: 0, tone: 400, chop: 0, chopLevel: 0, stutter: 0, squeal: 0, squealHz: 1200, ground: 0, groundHz: 600, hiss: 0, rattle: 0, fire: !alive, cut: false,
+    rpm: revs.rpm, load: 0, engine: 0, chop: 0, chopLevel: 0, chopTone: 1, stutter: 0, squeal: 0, squealHz: 1200, ground: 0, groundHz: 600, grit: QUIET_GRIT, hiss: 0, rattle: 0, fire: !alive, cut: false,
   }
   if (!alive) return quiet
   // Legs have no engine to hum and no tyres on the ground: their feet are heard by the footfalls.
@@ -149,76 +288,67 @@ export function mixOf(input: SoundInput, engine: Engine): SoundMix {
   const lost = input.wheels ? input.wheels.filter((wear) => wear >= 255).length : 0
   const bent = input.wheels ? input.wheels.filter((wear) => wear >= 128 && wear < 255).length : 0
   const mix: SoundMix = { ...quiet }
-  const rolling = input.grounded ? clamp(Math.abs(speed) / 10) : 0
-  mix.rattle = Math.min(0.8, lost * 0.4 * rolling + bent * 0.1 * rolling)
-  if (rolls(engine)) {
-    mix.squeal = input.grounded ? squealGain(input.slip, input.surface, speed) : 0
-    mix.squealHz = 900 + 700 * clamp(input.slip) + 4 * Math.abs(speed)
-    mix.ground = input.grounded ? groundGain(speed, input.surface) : 0
-    mix.groundHz = input.surface === SURFACE_ASPHALT ? 400 : 900 + 40 * Math.abs(speed)
+  const moving = Math.abs(speed)
+  const rollingNow = input.grounded ? clamp(moving / 10) : 0
+  mix.rattle = Math.min(0.8, lost * 0.4 * rollingNow + bent * 0.1 * rollingNow)
+  const tracked = engine.tracks === true
+  const under = rolling(input.ground, speed, input.slip, tracked)
+  if (rolls(engine) && input.grounded) {
+    mix.squeal = squealGain(input.slip, input.ground, speed)
+    mix.squealHz = 900 + 700 * clamp(input.slip) + 4 * moving
+    mix.ground = under.roll
+    mix.groundHz = under.rollHz
+    mix.grit = under.grit
+  }
+  // A hull in the water washes and slaps, however it is driven.
+  if (!rolls(engine) && input.ground === 'water') {
+    mix.ground = under.roll
+    mix.groundHz = under.rollHz
+    mix.grit = under.grit
+  }
+  if (input.submerged) {
+    // Under the surface there are no waves to slap it: the water rushes past, low and dull.
+    mix.squeal = 0
+    mix.grit = QUIET_GRIT
+    mix.ground = 0.25 * clamp(moving / 8)
+    mix.groundHz = 180 + 10 * moving
+  }
+  if (tracked && input.grounded) {
+    // The links strike the sprockets and the road wheels, in time with the speed; a track turning on
+    // the spot squeals as it is dragged sideways.
+    mix.chop = 5 + 1.5 * moving
+    mix.chopLevel = 0.9 * clamp(moving / 4) * under.clank
+    mix.chopTone = under.clankHz
+    if (moving < 3 && Math.abs(input.yawRate) > 0.25 && input.ground !== 'water') {
+      mix.squeal = Math.max(mix.squeal, 0.35 * clamp((Math.abs(input.yawRate) - 0.25) / 0.5) * under.squeal + 0.08)
+      mix.squealHz = 1900
+    }
   }
   if (engine.name === 'rotary' && !input.grounded) {
     // In the air the wind in the wires takes the place of the ground under the wheels.
-    mix.ground = 0.6 * clamp(Math.abs(speed) / engine.top) ** 1.5
-    mix.groundHz = 250 + 30 * Math.abs(speed)
+    mix.ground = 0.6 * clamp(moving / engine.top) ** 1.5
+    mix.groundHz = 250 + 30 * moving
+    mix.grit = QUIET_GRIT
   }
   if (!powered) return mix
 
-  const health = maxHp > 0 ? hp / maxHp : 1
-  switch (engine.name) {
-    case 'rotary': {
-      // A rotary has no gears: its note rises with the airspeed and the throttle, and sags when the blip
-      // switch cuts it and the propeller windmills.
-      const cut = input.cut === true
-      const air = clamp(Math.abs(speed) / engine.top)
-      const load = cut ? 0 : clamp(0.55 + accel / 6 + climb / 20)
-      mix.pitch = engine.hz * (0.7 + 0.35 * air + 0.2 * load) * (cut ? 0.85 : 1)
-      mix.chop = mix.pitch * PROP_BEAT
-      mix.chopLevel = 0.35
-      mix.engine = engine.level * (0.5 + 0.5 * load)
-      mix.tone = 900 + 1800 * load
-      mix.cut = cut
-      break
-    }
-    case 'props': {
-      // Four small props: a thin, high whine that climbs with the work they do.
-      const load = clamp(0.3 + Math.abs(climb) / 10 + Math.abs(speed) / 30)
-      mix.pitch = engine.hz * (0.85 + 0.6 * load)
-      mix.engine = 0.14 * (0.6 + 0.4 * load)
-      mix.tone = 2200 + 2000 * load
-      break
-    }
-    case 'twostroke': {
-      // One small engine flat out all the time: its note rises a little with the airspeed and the climb.
-      const load = clamp(0.6 + climb / 15 + accel / 10)
-      mix.pitch = engine.hz * (0.8 + 0.45 * clamp(Math.abs(speed) / engine.top) + 0.15 * load)
-      mix.engine = 0.3 * (0.7 + 0.3 * load)
-      mix.tone = 1200 + 1200 * load
-      break
-    }
-    case 'rotor': {
-      const load = clamp(0.35 + Math.abs(climb) / 6 + Math.abs(speed) / 40)
-      mix.pitch = engine.hz * (0.85 + 0.5 * load)
-      mix.chop = 9 + 6 * load
-      mix.chopLevel = 1
-      mix.engine = engine.level * (0.5 + 0.5 * load)
-      mix.tone = 500 + 800 * load
-      break
-    }
-    case 'gears': {
-      const { revs } = gearing(engine, speed)
-      // Gas held when accelerating or holding speed, off when braking hard or lifting.
-      const load = accel < -2 ? 0.05 : clamp(0.3 + accel / 4)
-      mix.pitch = engine.hz * (0.7 + 1.9 * revs)
-      mix.engine = engine.level * (0.4 + 0.6 * load)
-      mix.tone = 350 + 1500 * load + 700 * revs
-      if (engine.tracks) {
-        mix.chop = 5 + 1.5 * Math.abs(speed)
-        mix.chopLevel = 0.9 * clamp(Math.abs(speed) / 4)
-      }
-      break
-    }
+  mix.rpm = revs.rpm
+  mix.load = revs.load
+  mix.engine = engine.level
+  mix.cut = input.cut === true && engine.name === 'rotary'
+  if (engine.name === 'rotor') {
+    // The blades beat with the turbine's speed.
+    mix.chop = (revs.rpm / engine.redline) * (9 + 6 * revs.load)
+    mix.chopLevel = 1
+    mix.chopTone = 1
   }
+  if (engine.name === 'rotary') {
+    // The propeller's two blades pass twice a turn.
+    mix.chop = (2 * revs.rpm) / 60
+    mix.chopLevel = 0.3
+    mix.chopTone = 1
+  }
+  const health = maxHp > 0 ? hp / maxHp : 1
   if (health < 0.4) mix.stutter = ((0.4 - health) / 0.4) * 6
   if (health < 0.15) mix.hiss = 0.12 * (1 - health / 0.15)
   // Cold gas leaving the nozzles is a loud, broad hiss: louder with both sets open.

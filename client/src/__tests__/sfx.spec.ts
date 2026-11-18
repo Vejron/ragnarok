@@ -1,3 +1,5 @@
+import { existsSync, statSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { SAMPLES, SampleBank } from '@/sfx'
 
@@ -22,5 +24,15 @@ describe('SampleBank', () => {
     bank.load()
     await new Promise((r) => setTimeout(r, 0))
     expect(bank.pick('boom')).toBeNull()
+  })
+
+  it('has every variation it names in public/sfx', () => {
+    for (const [name, count] of Object.entries(SAMPLES)) {
+      for (let n = 1; n <= count; n++) {
+        const file = resolve(process.cwd(), `public/sfx/${name}_${n}.m4a`)
+        expect(existsSync(file), file).toBe(true)
+        expect(statSync(file).size).toBeGreaterThan(1000)
+      }
+    }
   })
 })

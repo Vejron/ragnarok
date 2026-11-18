@@ -11,16 +11,10 @@ import type { RideView, SeatView } from '@/seats'
 import type { Engine } from '@/sim/engine'
 import type { WheelLayout } from '@/sim/slip'
 
-/** One of an engine's oscillators: its wave, its multiple of the fundamental and its level. */
-export type Voice = readonly [type: OscillatorType, ratio: number, level: number]
-
 export interface KindSound {
-  voices: readonly Voice[]
-  /** Resonance of the engine's tone filter: a rotary's buzz has a nasal peak on its harmonics. */
-  q: number
   /** The filter on the noise its blades or tracks chop. */
   chop: { type: BiquadFilterType; hz: number }
-  /** How its engine and wheels are heard as it moves (`mixOf`). */
+  /** Its engine (`Motor`), how its revs follow the throttle and how it is heard (`Revs`, `mixOf`). */
   engine: Engine
 }
 
@@ -75,7 +69,7 @@ export const DRIVE = { name: 'drive' } as const
 /** A car's passenger, who fires their own guns from over their shoulder. */
 export const RIDE_ALONG: SeatView = { rig: { name: 'passenger' }, role: 'passenger', board: 'E: ride along' }
 
-/** The engine sound most kinds start from: a petrol engine's sawtooth and its sub-octave. */
-export const PETROL: readonly Voice[] = [['sawtooth', 1, 0.5], ['square', 0.5, 0.35], ['sawtooth', 1.5, 0.15]]
-/** The tone filter's resonance, and the chopped noise's filter, for a kind with no blades or tracks to speak of. */
-export const PLAIN = { q: 1.2, chop: { type: 'lowpass', hz: 260 } } as const
+/** The chopped noise's filter for a kind with no blades or tracks to speak of. */
+export const PLAIN_CHOP = { type: 'lowpass', hz: 260 } as const
+/** The sound of a kind with no engine: legs, a towed gun, a ship heard by her guns. */
+export const SILENT: KindSound = { chop: PLAIN_CHOP, engine: { name: 'none' } }

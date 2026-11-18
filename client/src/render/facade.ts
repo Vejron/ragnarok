@@ -38,6 +38,8 @@ export interface Facade {
   floor: Poly[]
   /** What stands inside it (`insideFor`): its floors and stairs. Empty for a house without. */
   inside: readonly InsidePiece[]
+  /** How far each corner of the walls and roof moves in to their inner faces (`insetOf`). */
+  inset: Inset
 }
 
 /** The faces of building `range` of `look`. */
@@ -58,7 +60,7 @@ export function facadeOf(look: CollisionMesh, range: LookRange): Facade {
   // A house with rooms has its ground floor among them, on its plinth. A bridge is solid concrete
   // with no floor in it: one at the foot of its walls would lie at every height its underside does,
   // and be left in the air when it falls.
-  return { walls, roof, floor: inside.length > 0 || range.kind === BUILDING_BRIDGE ? [] : floorOf(walls), inside }
+  return { walls, roof, floor: inside.length > 0 || range.kind === BUILDING_BRIDGE ? [] : floorOf(walls), inside, inset: insetOf([...walls, ...roof]) }
 }
 
 /** The hole door `o` is in a house with rooms: from under its foot to the height of a step over its top, as the server cuts it. */
@@ -141,9 +143,73 @@ function floorOf(walls: readonly Poly[]): Poly[] {
   return floor
 }
 
-/** `poly` moved `WALL_THICKNESS` against its normal and turned over: the inner face of a wall or roof. */
-export function innerOf(poly: Poly, normal: P): Poly {
-  return poly.map((p) => sub(p, [normal[0] * WALL_THICKNESS, normal[1] * WALL_THICKNESS, normal[2] * WALL_THICKNESS])).reverse()
+/**
+ * `poly` moved `WALL_THICKNESS` in and turned over: the inner face of a wall or roof. A corner
+ * `inset` knows (a corner of the facade as it stands) moves as every face round it does, so the
+ * inner faces meet where walls and roof meet; any other moves straight in against `normal`.
+ * `place` moves a corner of a hurt building where it is drawn, before it is moved in.
+ */
+export function innerOf(poly: Poly, normal: P, inset?: Inset, place?: (p: P) => P): Poly {
+  const straight: P = [normal[0] * WALL_THICKNESS, normal[1] * WALL_THICKNESS, normal[2] * WALL_THICKNESS]
+  return poly.map((p) => sub(place ? place(p) : p, inset?.get(keyOf(p)) ?? straight)).reverse()
+}
+
+/** How far each corner of a facade moves in to the inner faces (by `keyOf`), metres. */
+export type Inset = ReadonlyMap<string, P>
+
+/** Two faces whose normals are this close are one plane at a corner (about 2.5°). */
+const SAME_PLANE = 0.999
+/** Furthest a corner moves in, in wall thicknesses: a sharp ridge or spire is not followed out to its point. */
+const MOST_INSET = 3
+
+/**
+ * How far each corner of `faces` (wound outwards) moves in to the inner faces: the point
+ * `WALL_THICKNESS` behind every face round it at once, so the inner faces of walls meeting at a
+ * corner, inner or outer, or a wall meeting the roof, meet edge to edge and leave no slit to see
+ * daylight through. Each face's normal is taken once for all its corners.
+ */
+export function insetOf(faces: readonly Poly[]): Map<string, P> {
+  const planes = new Map<string, P[]>()
+  for (const poly of faces) {
+    const n = normalOf(poly)
+    for (const p of poly) {
+      const key = keyOf(p)
+      const known = planes.get(key)
+      if (!known) planes.set(key, [n])
+      else if (!known.some((m) => dot(m, n) > SAME_PLANE)) known.push(n)
+    }
+  }
+  const out = new Map<string, P>()
+  for (const [key, normals] of planes) out.set(key, mitre(normals))
+  return out
+}
+
+/** The shortest move `d` with `d · n = WALL_THICKNESS` for every one of `normals` (unit), as near as they allow, at most `MOST_INSET` thicknesses long. */
+function mitre(normals: readonly P[]): P {
+  const t = WALL_THICKNESS
+  if (normals.length === 1) return [normals[0]![0] * t, normals[0]![1] * t, normals[0]![2] * t]
+  // Least squares, (Nᵀ N + λ I) d = Nᵀ t: a hair of λ picks the shortest move when the normals
+  // span only a plane, as two walls' do, and the mitre lies in it.
+  const a = [[1e-6, 0, 0], [0, 1e-6, 0], [0, 0, 1e-6]]
+  const b = [0, 0, 0]
+  for (const n of normals) {
+    for (let i = 0; i < 3; i++) {
+      b[i]! += n[i]! * t
+      for (let j = 0; j < 3; j++) a[i]![j]! += n[i]! * n[j]!
+    }
+  }
+  const d = solve3(a, b)
+  const length = Math.hypot(d[0], d[1], d[2])
+  const most = MOST_INSET * t
+  return length > most ? [d[0] * most / length, d[1] * most / length, d[2] * most / length] : d
+}
+
+/** `x` with `a x = b`, by Cramer's rule. */
+function solve3(a: number[][], b: number[]): P {
+  const det = (m: number[][]) => m[0]![0]! * (m[1]![1]! * m[2]![2]! - m[1]![2]! * m[2]![1]!) - m[0]![1]! * (m[1]![0]! * m[2]![2]! - m[1]![2]! * m[2]![0]!) + m[0]![2]! * (m[1]![0]! * m[2]![1]! - m[1]![1]! * m[2]![0]!)
+  const whole = det(a)
+  const column = (k: number) => a.map((row, i) => row.map((v, j) => (j === k ? b[i]! : v)))
+  return [det(column(0)) / whole, det(column(1)) / whole, det(column(2)) / whole]
 }
 
 const memo = new WeakMap<CollisionMesh, Map<number, Facade>>()

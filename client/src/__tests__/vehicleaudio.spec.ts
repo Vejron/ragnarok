@@ -1,8 +1,8 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { VehicleSounds } from '@/vehicleaudio'
 import type { SoundInput } from '@/sim/engine'
-import { KIND_HELI, KIND_JEEP, KIND_PLANE, KIND_TANK } from '@/net/codec'
-import { SURFACE_ASPHALT } from '@/sim/surface'
+import { KIND_HELI, KIND_JEEP, KIND_PLANE, KIND_TANK, KIND_WALKER } from '@/net/codec'
+import { assumeWorklet } from '@/sound/worklet'
 
 class Param {
   value = 0
@@ -72,7 +72,7 @@ const sounds = () => {
 }
 
 const input = (over: Partial<SoundInput> = {}): SoundInput => ({
-  kind: KIND_JEEP, speed: 12, accel: 1, climb: 0, powered: true, hp: 100, maxHp: 100, slip: 0, surface: SURFACE_ASPHALT, grounded: true, wheels: null, ...over,
+  kind: KIND_JEEP, speed: 12, accel: 1, climb: 0, throttle: 0.5, powered: true, hp: 100, maxHp: 100, slip: 0, ground: 'tarmac', grounded: true, yawRate: 0, wheels: null, ...over,
 })
 
 const frame = (s: VehicleSounds, cars: { id: number; at: [number, number, number]; own?: boolean; input?: Partial<SoundInput> }[]) => {
@@ -176,5 +176,107 @@ describe('VehicleSounds', () => {
     const before = ctx.log.sources.length
     s.explosion([5, 0, 0])
     expect(ctx.log.sources.length).toBeGreaterThan(before)
+  })
+
+  describe('with the engine worklet loaded', () => {
+    /** The worklet nodes made, and the messages each was sent. */
+    const made: { name: string; told: unknown[]; rpm: Param }[] = []
+    class FakeWorkletNode {
+      readonly parameters = new Map<string, Param>()
+      readonly told: unknown[] = []
+      readonly port = { postMessage: (message: unknown) => this.told.push(message) }
+      constructor(_ctx: unknown, name: string) {
+        for (const param of ['rpm', 'load', 'rate', 'level', 'hz', 'ring', 'length']) this.parameters.set(param, new Param())
+        made.push({ name, told: this.told, rpm: this.parameters.get('rpm')! })
+      }
+      connect<T>(to: T): T {
+        return to
+      }
+    }
+    afterEach(() => {
+      vi.unstubAllGlobals()
+      vi.useRealTimers()
+      made.length = 0
+    })
+
+    it('gives a running engine its own synthesiser and crunch, and tells them to stop when it goes', () => {
+      vi.useFakeTimers()
+      vi.stubGlobal('AudioWorkletNode', FakeWorkletNode)
+      const { ctx, sounds: s } = sounds()
+      assumeWorklet(ctx as unknown as BaseAudioContext)
+      frame(s, [{ id: 1, at: [20, 0, 0], input: { kind: KIND_TANK } }])
+      expect(made.map((node) => node.name).sort()).toEqual(['engine', 'grit'])
+      frame(s, [{ id: 1, at: [20, 0, 0], input: { kind: KIND_TANK } }])
+      expect(made).toHaveLength(2)
+      s.drop(1)
+      vi.runAllTimers()
+      expect(made.every((node) => node.told.length === 1)).toBe(true)
+    })
+
+    it('makes no engine for a kind that has none', () => {
+      vi.stubGlobal('AudioWorkletNode', FakeWorkletNode)
+      const { ctx, sounds: s } = sounds()
+      assumeWorklet(ctx as unknown as BaseAudioContext)
+      frame(s, [{ id: 1, at: [20, 0, 0], input: { kind: KIND_WALKER, hp: 0, powered: false } }])
+      expect(made.map((node) => node.name)).toEqual(['grit'])
+    })
+  })
+
+  describe('launches, flight, water and destruction', () => {
+    it('hears projectiles in flight, the nearest four at most, and lets each go when it ends', () => {
+      const { ctx, sounds: s } = sounds()
+      s.beginFlights()
+      for (let id = 1; id <= 6; id++) s.flight(id, 2, [id * 10, 0, 0], [-300, 0, 0])
+      // A grenade is silent in flight, and one far off is not heard.
+      s.flight(7, 1, [5, 0, 0], [0, 0, 0])
+      s.flight(8, 2, [900, 0, 0], [0, 0, 0])
+      s.endFlights()
+      expect(s.flightCount).toBe(4)
+      s.dropFlight(1)
+      expect(s.flightCount).toBe(3)
+      s.beginFlights()
+      s.endFlights()
+      expect(s.flightCount).toBe(0)
+      expect(ctx.log.sources.every((node) => node.started === 1 && node.stopped === 1)).toBe(true)
+    })
+
+    it('splashes, cracks, strikes and breaks only within earshot', () => {
+      const { ctx, sounds: s } = sounds()
+      s.splash([400, 0, 0], 2, 10)
+      s.impact([100, 0, 0], 'stone')
+      expect(ctx.log.sources.length).toBe(0)
+      s.splash([10, 0, 0], 2, 10)
+      const splashed = ctx.log.sources.length
+      expect(splashed).toBeGreaterThan(0)
+      s.impact([10, 0, 0], 'dirt')
+      s.glass([10, 0, 0], 3)
+      s.crack([2, 0, 0])
+      s.launch([10, 0, 0], 'rocket')
+      expect(ctx.log.sources.length).toBeGreaterThan(splashed + 4)
+    })
+
+    it('gives way with the small sounds, so they never crowd out a blast', () => {
+      const { ctx, sounds: s } = sounds()
+      for (let i = 0; i < 40; i++) {
+        s.impact([5, 0, 0], 'dirt')
+        s.crack([1, 0, 0])
+        s.splash([5, 0, 0], 0.2, 2)
+      }
+      const before = ctx.log.sources.length
+      s.explosion([5, 0, 0])
+      expect(ctx.log.sources.length).toBeGreaterThan(before)
+    })
+
+    it('hears a building coming down as a few crashes, not one for every section', () => {
+      const { ctx, sounds: s } = sounds()
+      s.debris([20, 0, 0], 4, 1000)
+      const one = ctx.log.sources.length
+      expect(one).toBeGreaterThan(0)
+      for (let i = 0; i < 10; i++) s.debris([20 + i * 0.5, 0, 0], 4, 1000 + i * 20)
+      expect(ctx.log.sources.length).toBe(one)
+      ctx.currentTime = 5
+      s.debris([21, 0, 0], 4, 2000)
+      expect(ctx.log.sources.length).toBeGreaterThan(one)
+    })
   })
 })

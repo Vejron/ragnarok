@@ -321,11 +321,15 @@ describe('a hurt building', () => {
     // Ground falling away from the house: 2 m lower for every 10 m out along x.
     const ground = (x: number) => -0.2 * Math.abs(x - 5)
     damage.groundAt = (x) => ground(x)
+    const landed: number[] = []
+    damage.landed = (_x, y) => landed.push(y)
     damage.attach(key, tileWith())
     damage.carve(key, 0, [cellAt(0, 0, 2, 0), cellAt(0, 0, 3, 0), cellAt(0, 0, 4, 0)], [], [-1, 2, 0], true)
     const pieces = damage.root.children[0]!.children.filter((c) => c instanceof Mesh && c.geometry.colors && c.position.lengthSq() > 0) as Mesh[]
     expect(pieces.length).toBeGreaterThan(0)
     for (let i = 0; i < 300; i++) damage.update(0.02, { dust() {} } as never, new Vector3(1e6, 0, 0))
+    // Each is heard coming down, once.
+    expect(landed.length).toBe(pieces.length)
     // Each lies with its lowest corner on the ground under it.
     for (const piece of pieces) expect(span(piece).low).toBeCloseTo(ground(piece.position.x), 1)
   })

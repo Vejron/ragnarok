@@ -30,6 +30,8 @@ export interface PeopleWorld {
    * swimmer is shown as of the render tick, a little behind the water.
    */
   rewave(x: number, z: number, tick: number): number
+  /** A foot of someone whose capsule is centred at `(x, y, z)` coming down, `weight` 0 a shuffle to 1 a sprint. */
+  footfall(x: number, y: number, z: number, weight: number): void
   /** The grooves and spray of a skier at `(x, z)` going `(vx, vz)`. */
   skiRun(id: number, x: number, z: number, vx: number, vz: number, grounded: boolean, dt: number): void
 }
@@ -90,6 +92,7 @@ export class Soldiers implements Presenter<Frame> {
     if (!dead && swim === 0 && !buried) this.world.blobFoot(x, y, z)
     avatar.update([x, y, z], entity.heading?.yaw ?? 0, velocity[0], velocity[1], grounded, frame.dt, 0, crouching,
       crouching && grounded && knock > SLIDE_MIN_SPEED, stance === STANCE_PRONE || stance === STANCE_DOWN, stance === STANCE_CHUTE, entity.motion?.vy ?? 0)
+    for (const weight of avatar.takeSteps()) if (!dead && !buried) this.world.footfall(x, y, z, weight)
     if (!dead && !buried) this.world.wade(id, x, y, z, Math.hypot(velocity[0], velocity[1]), frame.dt)
     this.world.headlamp(avatar)
     if (avatar.skis && !dead) this.world.skiRun(id, x, z, velocity[0], velocity[1], grounded, frame.dt)

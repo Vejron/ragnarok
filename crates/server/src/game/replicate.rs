@@ -210,7 +210,10 @@ impl Game {
             titan,
             place: Some(wire::Place { x, y, z }),
             orientation: Some(wire::Orientation { qx, qy, qz }),
-            steer: Some(wire::Steer { steer: to_axis(pose.steer) }),
+            steer: Some(wire::Steer {
+                steer: to_axis(pose.steer),
+                throttle: driver.and_then(|_| self.world.physics.car_throttle(id)).map_or(0, to_axis),
+            }),
             turret,
             pintle,
             thrust,

@@ -1,4 +1,4 @@
-/** Sounds the game makes, synthesised: there are no audio files. */
+/** The game's one audio context, and the rooster's crow. Vehicle sounds and one-shots are in `vehicleaudio.ts`, recorded samples in `sfx.ts`. */
 
 let context: AudioContext | null = null
 

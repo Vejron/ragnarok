@@ -83,6 +83,9 @@ const PER_PARAMETER: f64 = 0.15;
 const HIP_OVER_GABLE: f64 = 1.1;
 /// The cost of the shape OpenStreetMap names (`roof:shape`) is multiplied by this.
 const TAGGED: f64 = 0.7;
+/// How much each wing, and a porch, more than the plainest plan of the house has add to a plan's
+/// cost: of two plans the laser tells apart no better, the one with fewer wings wins.
+const PER_WING: f64 = 0.1;
 
 /// Dormers: the least slope (25°) and depth from eave to ridge (metres) a slope must have to carry one.
 const DORMER_SLOPE: f64 = 0.466;
@@ -106,14 +109,18 @@ const DORMER_GAIN: f64 = 0.7;
 /// nothing better; without it a house the laser did not see keeps its best fit.
 pub fn fit(ring: &[P], points: &[[f64; 4]], tagged: Option<Category>, eaves: Option<f64>) -> Option<Fitted> {
     let (returns, unstripped) = roof::roof_returns(ring, points)?;
-    let (wings, porch) = plan(ring)?;
+    let layouts = plans(ring);
+    let main_plan = layouts.first()?.0.clone();
     // A footprint drawn a little off where the house stands would read a gable as a low or tilted
-    // roof: the returns are moved back under it first.
-    let shift = misplaced(&returns, &wings);
-    let moved = |list: &[[f64; 3]]| list.iter().map(|r| [r[0] - shift[0], r[1] - shift[1], r[2]]).collect::<Vec<_>>();
-    let (returns, unstripped) = (moved(&returns), moved(&unstripped));
+    // roof: the returns are moved back under it first, by the shift each plan is fitted best at.
+    let moved = |list: &[[f64; 3]], shift: P| list.iter().map(|r| [r[0] - shift[0], r[1] - shift[1], r[2]]).collect::<Vec<_>>();
+    // A return moved off the house is taken to lie at its eaves: a porch's lean-to is only over the porch.
+    let porch_here = |p: P| contains(ring, p);
+    let judged = |house: &House, p: P| if porch_here(p) || house.wings.iter().any(|w| w.contains(p)) { house.height(p) } else { house.eave };
+    let (raw, unstripped_raw) = (returns, unstripped);
+    let first_shift = misplaced(&raw, &main_plan);
+    let returns = moved(&raw, first_shift);
     let ys: Vec<f64> = returns.iter().map(|r| r[2]).collect();
-    let at = |r: &[f64; 3]| [r[0], r[1]];
     let weigh = |category: Category, cost: f64, parameters: usize| {
         let mut cost = cost * (1.0 + PER_PARAMETER * (parameters - 1) as f64);
         if category == Category::Hip {
@@ -128,40 +135,50 @@ pub fn fit(ring: &[P], points: &[[f64; 4]], tagged: Option<Category>, eaves: Opt
     // Flat: the one height.
     let (flat, _) = solve_rows(&vec![[1.0, 0.0, 0.0]; returns.len()], &ys);
     let flat_cost = cost_of(&returns, &|_| flat[0]);
-    let mut best = (weigh(Category::Flat, flat_cost, 1), flat_cost, Category::Flat, Roof::Leaf(Shape::Flat { y: flat[0] }));
-    let consider = |category: Category, cost: f64, parameters: usize, roof: Roof, best: &mut (f64, f64, Category, Roof)| {
-        let weighed = weigh(category, cost, parameters);
+    let mut best = Best { weighed: weigh(Category::Flat, flat_cost, 1), cost: flat_cost, category: Category::Flat, roof: Roof::Leaf(Shape::Flat { y: flat[0] }), wings: 1, shift: first_shift };
+    // `extra` is what the plan's own wings add to the cost: it is not counted against a flat roof.
+    let consider = |category: Category, cost: f64, parameters: usize, extra: f64, roof: Roof, wings: usize, shift: P, best: &mut Best| {
+        let weighed = weigh(category, cost, parameters) * extra;
         // Noise alone must not turn a flat roof into anything else: it has to miss by clearly less.
-        if weighed < best.0 && weigh(category, cost, 1) < weigh(Category::Flat, flat_cost, 1) * 0.7 && flat_cost - cost > 0.002 {
-            *best = (weighed, cost, category, roof);
+        if weighed < best.weighed && weigh(category, cost, 1) < weigh(Category::Flat, flat_cost, 1) * 0.7 && flat_cost - cost > 0.002 {
+            *best = Best { weighed, cost, category, roof, wings, shift };
         }
     };
 
     // Shed: one slope along either side of the house's rectangle.
-    let main = wings[0];
+    let main = main_plan[0];
     for axis in [main.u, [-main.u[1], main.u[0]]] {
         let rows: Vec<[f64; 3]> = returns.iter().map(|r| [1.0, (r[0] - main.centre[0]) * axis[0] + (r[1] - main.centre[1]) * axis[1], 0.0]).collect();
         let (c, _) = solve_rows(&rows, &ys);
         let cost = cost_of(&returns, &|p| c[0] + c[1] * ((p[0] - main.centre[0]) * axis[0] + (p[1] - main.centre[1]) * axis[1]));
         if (SHED.0..=SHED.1).contains(&c[1].abs()) {
-            consider(Category::Shed, cost, 2, Roof::Leaf(Shape::Shed { y: c[0], at: main.centre, slope: [axis[0] * c[1], axis[1] * c[1]] }), &mut best);
+            consider(Category::Shed, cost, 2, 1.0, Roof::Leaf(Shape::Shed { y: c[0], at: main.centre, slope: [axis[0] * c[1], axis[1] * c[1]] }), 1, first_shift, &mut best);
         }
     }
 
-    // Gable, hip and gambrel over the wings; a lone wing may have its ridge either way.
-    let mut layouts = vec![wings.clone()];
-    if wings.len() == 1 {
-        layouts.push(vec![Wing { centre: main.centre, u: [-main.u[1], main.u[0]], half: [main.half[1], main.half[0]] }]);
-    }
-    for layout in &layouts {
-        for (pitch, category, parameters) in [(Pitch::Gable, Category::Gable, 2), (Pitch::Hip, Category::Hip, 2), (Pitch::Gambrel, Category::Gambrel, 3)] {
-            if let Some(house) = fit_wings(&returns, layout, pitch) {
-                let cost = cost_of(&returns, &|p| house.height(p));
-                consider(category, cost, parameters, Roof::House(Box::new(house)), &mut best);
+    // Gable, hip and gambrel over each plan's wings; a lone wing may have its ridge either way.
+    // A plan pays for each wing and porch more than the plainest plan has.
+    let charge = |wings: usize, porch: bool| wings + usize::from(porch);
+    let plainest = layouts.iter().map(|(plan, porch)| charge(plan.len(), *porch)).min().unwrap_or(1);
+    for (plan, porch) in &layouts {
+        let mut turns = vec![plan.clone()];
+        if let [one] = plan.as_slice() {
+            turns.push(vec![Wing { centre: one.centre, u: [-one.u[1], one.u[0]], half: [one.half[1], one.half[0]] }]);
+        }
+        let extra = 1.0 + PER_WING * (charge(plan.len(), *porch) - plainest) as f64;
+        let shift = if plan == &main_plan { first_shift } else { misplaced(&raw, plan) };
+        let returns = moved(&raw, shift);
+        for layout in turns {
+            for (pitch, category, parameters) in [(Pitch::Gable, Category::Gable, 2), (Pitch::Hip, Category::Hip, 2), (Pitch::Gambrel, Category::Gambrel, 3)] {
+                if let Some(house) = fit_wings(&returns, &layout, pitch, &porch_here) {
+                    let cost = cost_of(&returns, &|p| judged(&house, p));
+                    consider(category, cost, parameters, extra, Roof::House(Box::new(house)), layout.len(), shift, &mut best);
+                }
             }
         }
     }
-    let (_, cost, mut category, mut roof) = best;
+    let Best { cost, mut category, mut roof, mut wings, shift, .. } = best;
+    let (returns, unstripped) = (moved(&raw, shift), moved(&unstripped_raw, shift));
     let mut guessed = false;
     if let (true, Some(eave)) = (matches!(category, Category::Flat | Category::Shed) && cost > MURKY, eaves) {
         let pitch = match tagged {
@@ -171,7 +188,10 @@ pub fn fit(ring: &[P], points: &[[f64; 4]], tagged: Option<Category>, eaves: Opt
         };
         category = match pitch { Pitch::Hip => Category::Hip, Pitch::Gambrel => Category::Gambrel, Pitch::Gable => Category::Gable };
         let k = if pitch == Pitch::Gambrel { [3.0 * USUAL_PITCH, USUAL_PITCH / 2.0] } else { [USUAL_PITCH, 0.0] };
-        roof = Roof::House(Box::new(House { eave, pitch, k, wings: wings.clone(), dormers: Vec::new() }));
+        // Nothing shows how the house is laid out: it is given the plainest plan it may have.
+        let plain = layouts.iter().min_by_key(|(plan, porch)| (plan.len(), *porch)).map_or_else(|| main_plan.clone(), |(plan, _)| plan.clone());
+        wings = plain.len();
+        roof = Roof::House(Box::new(House { eave, pitch, k, wings: plain, dormers: Vec::new() }));
         guessed = true;
     }
     let mut dormers = 0;
@@ -180,9 +200,23 @@ pub fn fit(ring: &[P], points: &[[f64; 4]], tagged: Option<Category>, eaves: Opt
         house.dormers = find_dormers(house, &unstripped);
         dormers = house.dormers.len();
     }
-    let miss = cost_of(if dormers > 0 { &unstripped } else { &returns }, &|p| roof_height(&roof, p)).sqrt();
-    let _ = (porch, at);
-    Some(Fitted { roof, category, wings: wings.len(), dormers, miss, guessed })
+    let height = |p: P| match &roof {
+        Roof::House(house) => judged(house, p),
+        roof => roof_height(roof, p),
+    };
+    let miss = cost_of(if dormers > 0 { &unstripped } else { &returns }, &height).sqrt();
+    Some(Fitted { roof, category, wings, dormers, miss, guessed })
+}
+
+/// The best roof `fit` has found so far: its cost as weighed, its plain cost, and what it is.
+struct Best {
+    weighed: f64,
+    cost: f64,
+    category: Category,
+    roof: Roof,
+    wings: usize,
+    /// The shift the returns were moved back by (`misplaced`) for this roof.
+    shift: P,
 }
 
 /// Furthest a footprint is taken to be off the house the laser saw, metres, and the steps it is searched in.
@@ -190,14 +224,16 @@ const MOST_OFF: f64 = 1.0;
 const OFF_STEP: f64 = 0.25;
 
 /// How far the house the laser saw stands off `wings` (`[x, z]`, metres): the shift of the returns,
-/// within `MOST_OFF` along each side of the main wing, under which a gable fits them best. Nothing
-/// unless it fits clearly better than where it was drawn.
+/// within `MOST_OFF` along each side of the main wing, under which a gable fits them best. A
+/// return moved off every wing is taken to lie at the eaves. Nothing unless it fits clearly better
+/// than where it was drawn.
 pub(crate) fn misplaced(returns: &[[f64; 3]], wings: &[Wing]) -> P {
     let main = wings[0];
     let v = [-main.u[1], main.u[0]];
     let cost = |shift: P| {
         let moved: Vec<[f64; 3]> = returns.iter().map(|r| [r[0] - shift[0], r[1] - shift[1], r[2]]).collect();
-        fit_wings_free(&moved, wings, Pitch::Gable).map_or(f64::MAX, |house| if house.k[0] > 0.0 { cost_of(&moved, &|p| house.height(p)) } else { f64::MAX })
+        let height = |house: &House, p: P| if wings.iter().any(|w| w.contains(p)) { house.height(p) } else { house.eave };
+        fit_wings_free(&moved, wings, Pitch::Gable, &|_| false).map_or(f64::MAX, |house| if house.k[0] > 0.0 { cost_of(&moved, &|p| height(&house, p)) } else { f64::MAX })
     };
     let steps = (MOST_OFF / OFF_STEP).round() as i32;
     let mut best = ([0.0, 0.0], cost([0.0, 0.0]));
@@ -233,68 +269,180 @@ pub(crate) fn cost_of(returns: &[[f64; 3]], height: &dyn Fn(P) -> f64) -> f64 {
 /// The share of the returns a shape is judged by (`cost_of`).
 const TRIMMED: f64 = 0.75;
 
-/// The plan of `ring` as wings, the biggest (the main wing) first, and whether any of it is porch.
-/// A footprint that is not square, or cut into more than `MOST_WINGS` wings, is one wing: the
-/// smallest rectangle around it.
+/// The plan of `ring` as wings, the main wing first, and whether any of it is porch: the first of
+/// `plans`. A footprint that is not square, or cut into more than `MOST_WINGS` wings, is one wing:
+/// the smallest rectangle around it.
 pub fn plan(ring: &[P]) -> Option<(Vec<Wing>, bool)> {
+    plans(ring).into_iter().next()
+}
+
+/// The ways `ring` may be laid out as wings, each with its main wing first and whether any of it
+/// is porch. A square footprint is cut with each of its biggest rectangles as the main wing in
+/// turn (a T's bar, or its stem run on through the bar), the greatest first; and, when it fills
+/// `FILLED` of the smallest rectangle around it, it may also be that rectangle as one wing (a
+/// house drawn with a notch or a bay the roof runs over). The laser says which is the house.
+pub fn plans(ring: &[P]) -> Vec<(Vec<Wing>, bool)> {
     let u = square::direction(ring);
-    if square::is_square(ring, u) && let Some(found) = wings(ring, u) {
-        return Some(found);
+    let mut out: Vec<(Vec<Wing>, bool)> = Vec::new();
+    // Whether the plan cut the plain way, the biggest rectangle first, is wings: else the house is its rectangle.
+    let mut cut = false;
+    if square::is_square(ring, u) && let Some(grid) = Grid::of(ring, u) {
+        cut = grid.cut_from(None, 3 * MOST_WINGS).and_then(|rects| wings(rects, u)).is_some();
+        for main in grid.mains().into_iter().filter(|_| cut) {
+            if let Some(rects) = grid.cut_from(Some(main), 3 * MOST_WINGS) && let Some(found) = wings(rects, u) && !out.contains(&found) {
+                out.push(found);
+            }
+        }
     }
-    roof::rectangle(ring).map(|wing| (vec![wing], false))
+    if let Some(wing) = roof::rectangle(ring) {
+        let filled = signed_area(ring).abs() / (4.0 * wing.half[0] * wing.half[1]);
+        let one = (vec![wing], false);
+        if (!cut || filled >= FILLED) && !out.contains(&one) {
+            out.push(one);
+        }
+    }
+    out
+}
+
+/// The least share of its smallest rectangle a footprint must fill to be roofed as that rectangle, one wing.
+const FILLED: f64 = 0.85;
+/// Most ways of laying a plan out that are tried.
+const MOST_PLANS: usize = 4;
+
+/// Signed area of `ring`, positive counter-clockwise.
+fn signed_area(ring: &[P]) -> f64 {
+    (0..ring.len()).map(|i| {
+        let (a, b) = (ring[i], ring[(i + 1) % ring.len()]);
+        a[0] * b[1] - b[0] * a[1]
+    }).sum::<f64>() / 2.0
+}
+
+/// A square footprint laid on the grid of its own walls: the lines its walls run along, each way
+/// (along `u`, and across it), and which cells between them are inside it.
+struct Grid {
+    xs: Vec<f64>,
+    zs: Vec<f64>,
+    inside: Vec<bool>,
+}
+
+impl Grid {
+    /// `ring`'s grid, its walls all along `u` or across it; `None` for one of too many cells.
+    fn of(ring: &[P], u: P) -> Option<Self> {
+        let v = [-u[1], u[0]];
+        let local: Vec<P> = ring.iter().map(|p| [p[0] * u[0] + p[1] * u[1], p[0] * v[0] + p[1] * v[1]]).collect();
+        let lines = |axis: usize| {
+            let mut values: Vec<f64> = local.iter().map(|p| p[axis]).collect();
+            values.sort_by(f64::total_cmp);
+            values.dedup_by(|a, b| (*a - *b).abs() < 0.02);
+            values
+        };
+        let (xs, zs) = (lines(0), lines(1));
+        let (nx, nz) = (xs.len() - 1, zs.len() - 1);
+        if nx == 0 || nz == 0 || nx * nz > 400 {
+            return None;
+        }
+        let inside = (0..nz).flat_map(|j| (0..nx).map(move |i| (i, j))).map(|(i, j)| contains(&local, [(xs[i] + xs[i + 1]) / 2.0, (zs[j] + zs[j + 1]) / 2.0])).collect();
+        Some(Self { xs, zs, inside })
+    }
+
+    fn size(&self) -> (usize, usize) {
+        (self.xs.len() - 1, self.zs.len() - 1)
+    }
+
+    /// The rectangle over cells `[i0, i1, j0, j1]` (inclusive), `[a0, a1, b0, b1]` in metres.
+    fn metres(&self, [i0, i1, j0, j1]: [usize; 4]) -> [f64; 4] {
+        [self.xs[i0], self.xs[i1 + 1], self.zs[j0], self.zs[j1 + 1]]
+    }
+
+    fn area(&self, cells: [usize; 4]) -> f64 {
+        let [a0, a1, b0, b1] = self.metres(cells);
+        (a1 - a0) * (b1 - b0)
+    }
+
+    /// Whether every cell of `[i0, i1, j0, j1]` is inside and not yet `covered`.
+    fn free(&self, [i0, i1, j0, j1]: [usize; 4], covered: &[bool]) -> bool {
+        let nx = self.size().0;
+        (j0..=j1).all(|j| (i0..=i1).all(|i| self.inside[j * nx + i] && !covered[j * nx + i]))
+    }
+
+    /// Every rectangle of cells inside the plan that cannot grow any way, at least `MIN_WING` on
+    /// each side, the biggest first, at most `MOST_PLANS` of them.
+    fn mains(&self) -> Vec<[usize; 4]> {
+        let (nx, nz) = self.size();
+        let none = vec![false; nx * nz];
+        let mut found: Vec<(f64, [usize; 4])> = Vec::new();
+        for i0 in 0..nx {
+            for j0 in 0..nz {
+                for i1 in i0..nx {
+                    for j1 in j0..nz {
+                        let cells = [i0, i1, j0, j1];
+                        if !self.free(cells, &none) {
+                            break;
+                        }
+                        let grows = (i0 > 0 && self.free([i0 - 1, i0 - 1, j0, j1], &none))
+                            || (i1 + 1 < nx && self.free([i1 + 1, i1 + 1, j0, j1], &none))
+                            || (j0 > 0 && self.free([i0, i1, j0 - 1, j0 - 1], &none))
+                            || (j1 + 1 < nz && self.free([i0, i1, j1 + 1, j1 + 1], &none));
+                        let [a0, a1, b0, b1] = self.metres(cells);
+                        if !grows && (a1 - a0).min(b1 - b0) >= MIN_WING {
+                            found.push((self.area(cells), cells));
+                        }
+                    }
+                }
+            }
+        }
+        found.sort_by(|a, b| b.0.total_cmp(&a.0));
+        found.into_iter().take(MOST_PLANS).map(|(_, cells)| cells).collect()
+    }
+
+    /// The plan cut into rectangles `[a0, a1, b0, b1]`: `first` (or the biggest), then the biggest
+    /// of what is left, and so on. `None` for a plan of more than `most`.
+    fn cut_from(&self, first: Option<[usize; 4]>, most: usize) -> Option<Vec<[f64; 4]>> {
+        let (nx, nz) = self.size();
+        let mut covered = vec![false; nx * nz];
+        let mut rects: Vec<[f64; 4]> = Vec::new();
+        let mut next = first;
+        loop {
+            // The biggest rectangle of cells inside the plan that no rectangle has yet.
+            let cells = next.take().or_else(|| {
+                let mut best: Option<(f64, [usize; 4])> = None;
+                for i0 in 0..nx {
+                    for j0 in 0..nz {
+                        for i1 in i0..nx {
+                            for j1 in j0..nz {
+                                if !self.free([i0, i1, j0, j1], &covered) {
+                                    break;
+                                }
+                                let area = self.area([i0, i1, j0, j1]);
+                                if best.is_none_or(|(known, _)| area > known + 1e-9) {
+                                    best = Some((area, [i0, i1, j0, j1]));
+                                }
+                            }
+                        }
+                    }
+                }
+                best.map(|(_, cells)| cells)
+            });
+            let Some([i0, i1, j0, j1]) = cells else { break };
+            for j in j0..=j1 {
+                for i in i0..=i1 {
+                    covered[j * nx + i] = true;
+                }
+            }
+            rects.push(self.metres([i0, i1, j0, j1]));
+            if rects.len() > most {
+                return None;
+            }
+        }
+        Some(rects)
+    }
 }
 
 /// `ring`, whose walls all run along `u` or across it, cut into rectangles `[a0, a1, b0, b1]`
 /// (along `u`, and across it): the biggest first, then the biggest of what is left, and so on.
 /// `None` for a plan of more than `most`.
 fn cut_up(ring: &[P], u: P, most: usize) -> Option<Vec<[f64; 4]>> {
-    let v = [-u[1], u[0]];
-    let local: Vec<P> = ring.iter().map(|p| [p[0] * u[0] + p[1] * u[1], p[0] * v[0] + p[1] * v[1]]).collect();
-    let lines = |axis: usize| {
-        let mut values: Vec<f64> = local.iter().map(|p| p[axis]).collect();
-        values.sort_by(f64::total_cmp);
-        values.dedup_by(|a, b| (*a - *b).abs() < 0.02);
-        values
-    };
-    let (xs, zs) = (lines(0), lines(1));
-    let (nx, nz) = (xs.len() - 1, zs.len() - 1);
-    if nx == 0 || nz == 0 || nx * nz > 400 {
-        return None;
-    }
-    let inside: Vec<bool> = (0..nz).flat_map(|j| (0..nx).map(move |i| (i, j))).map(|(i, j)| contains(&local, [(xs[i] + xs[i + 1]) / 2.0, (zs[j] + zs[j + 1]) / 2.0])).collect();
-    let mut covered = vec![false; nx * nz];
-    let mut rects: Vec<[f64; 4]> = Vec::new();
-    loop {
-        // The biggest rectangle of cells inside the plan that no rectangle has yet.
-        let mut best: Option<(f64, [usize; 4])> = None;
-        for i0 in 0..nx {
-            for j0 in 0..nz {
-                for i1 in i0..nx {
-                    for j1 in j0..nz {
-                        let free = (j0..=j1).all(|j| (i0..=i1).all(|i| inside[j * nx + i] && !covered[j * nx + i]));
-                        if !free {
-                            break;
-                        }
-                        let area = (xs[i1 + 1] - xs[i0]) * (zs[j1 + 1] - zs[j0]);
-                        if best.is_none_or(|(known, _)| area > known + 1e-9) {
-                            best = Some((area, [i0, i1, j0, j1]));
-                        }
-                    }
-                }
-            }
-        }
-        let Some((_, [i0, i1, j0, j1])) = best else { break };
-        for j in j0..=j1 {
-            for i in i0..=i1 {
-                covered[j * nx + i] = true;
-            }
-        }
-        rects.push([xs[i0], xs[i1 + 1], zs[j0], zs[j1 + 1]]);
-        if rects.len() > most {
-            return None;
-        }
-    }
-    Some(rects)
+    Grid::of(ring, u)?.cut_from(None, most)
 }
 
 /// The rectangles a square `ring` is made of, as they stand (no wing is turned or carried in under
@@ -319,12 +467,11 @@ pub(crate) fn rectangles(ring: &[P]) -> Option<Vec<Wing>> {
     )
 }
 
-/// `ring`, whose walls all run along `u` or across it, cut into rectangles: the biggest first,
-/// then the biggest of what is left, and so on. Side wings deep enough are turned to run out from
-/// the main one and carried in under its roof to its ridge.
-fn wings(ring: &[P], u: P) -> Option<(Vec<Wing>, bool)> {
+/// The wings of a plan cut into `rects` (along `u` and across it, the main one first). Side wings
+/// deep enough are turned to run out from the main one and carried in under its roof to its ridge;
+/// strips narrower than `MIN_WING` are porches.
+fn wings(rects: Vec<[f64; 4]>, u: P) -> Option<(Vec<Wing>, bool)> {
     let v = [-u[1], u[0]];
-    let rects = cut_up(ring, u, 3 * MOST_WINGS)?;
     let total: f64 = rects.iter().map(|r| (r[1] - r[0]) * (r[3] - r[2])).sum();
     let (big, small): (Vec<[f64; 4]>, Vec<[f64; 4]>) = rects.into_iter().partition(|r| (r[1] - r[0]).min(r[3] - r[2]) >= MIN_WING);
     let porch: f64 = small.iter().map(|r| (r[1] - r[0]) * (r[3] - r[2])).sum();
@@ -386,8 +533,8 @@ fn contains(ring: &[P], [x, z]: P) -> bool {
 /// The house roofed `pitch` over `wings` that fits `returns` best, or `None` when its slopes come
 /// out unlike a real roof's. Each return is put under the wing whose roof is highest over it, and
 /// the house fitted again, a few times over.
-fn fit_wings(returns: &[[f64; 3]], wings: &[Wing], pitch: Pitch) -> Option<House> {
-    let house = fit_wings_free(returns, wings, pitch)?;
+fn fit_wings(returns: &[[f64; 3]], wings: &[Wing], pitch: Pitch, porch: &dyn Fn(P) -> bool) -> Option<House> {
+    let house = fit_wings_free(returns, wings, pitch, porch)?;
     let fits = match pitch {
         Pitch::Gambrel => (GAMBREL_LOW.0..=GAMBREL_LOW.1).contains(&house.k[0]) && (GAMBREL_HIGH.0..=GAMBREL_HIGH.1).contains(&house.k[1]) && house.k[0] > GAMBREL_BREAK * house.k[1],
         _ => (PITCH.0..=PITCH.1).contains(&house.k[0]),
@@ -396,7 +543,10 @@ fn fit_wings(returns: &[[f64; 3]], wings: &[Wing], pitch: Pitch) -> Option<House
 }
 
 /// `fit_wings` before its slopes are checked against a real roof's.
-fn fit_wings_free(returns: &[[f64; 3]], wings: &[Wing], pitch: Pitch) -> Option<House> {
+///
+/// A return under no wing is under a porch where `porch` says so: a lean-to off the nearest wing;
+/// anywhere else it is taken to lie at the eaves.
+fn fit_wings_free(returns: &[[f64; 3]], wings: &[Wing], pitch: Pitch, porch: &dyn Fn(P) -> bool) -> Option<House> {
     let ys: Vec<f64> = returns.iter().map(|r| r[2]).collect();
     let mut sorted = ys.clone();
     sorted.sort_by(f64::total_cmp);
@@ -411,7 +561,11 @@ fn fit_wings_free(returns: &[[f64; 3]], wings: &[Wing], pitch: Pitch) -> Option<
                     let (ya, yb) = (eval(&a.plane_at(p, pitch, house.eave, house.k), p), eval(&b.plane_at(p, pitch, house.eave, house.k), p));
                     ya.total_cmp(&yb)
                 });
-                let Some(wing) = under else { return [1.0, 0.0, 0.0] };
+                let Some(wing) = under else {
+                    // A porch: a lean-to off the nearest wing, its slope carried on down past the eaves.
+                    let Some(wing) = house.leaned_on(p).filter(|_| porch(p)) else { return [1.0, 0.0, 0.0] };
+                    return [1.0, -wing.out_past(p).0, 0.0];
+                };
                 let (a, b) = wing.local(p);
                 let (l, w) = (wing.half[0], wing.half[1]);
                 let d = (w - b.abs()).max(0.0);
@@ -693,6 +847,102 @@ mod tests {
         assert!(!fit(&ring, &crowns, None, None).unwrap().guessed);
         // A real flat roof is no guess.
         assert!(!fit(&ring, &sample(&ring, |_| 6.0), None, Some(6.5)).unwrap().guessed);
+    }
+
+    #[test]
+    fn a_t_house_with_a_wide_stem_keeps_its_ridge_down_the_bar() {
+        // A 12 × 6 m bar and an 8 m wide stem 6 m out of its north side: the stem run on through
+        // the bar (8 × 12 m) is a bigger rectangle than the bar, but the laser shows the bar's ridge.
+        let ring = vec![[0.0, 0.0], [12.0, 0.0], [12.0, 6.0], [10.0, 6.0], [10.0, 12.0], [2.0, 12.0], [2.0, 6.0], [0.0, 6.0]];
+        let bar = |p: P| 4.0 + 0.7 * (3.0 - (p[1] - 3.0).abs());
+        let stem = |p: P| if (2.0..=10.0).contains(&p[0]) && p[1] >= 3.0 { 4.0 + 0.7 * (4.0 - (p[0] - 6.0).abs()) } else { f64::MIN };
+        let fitted = fit(&ring, &sample(&ring, |p| bar(p).max(stem(p))), None, None).unwrap();
+        assert_eq!((fitted.category, fitted.wings), (Category::Gable, 2), "{:?}", fitted.roof);
+        assert!(fitted.miss < 0.2, "{}", fitted.miss);
+        let house = house_of(&fitted);
+        assert!(house.wings[0].u[0].abs() > 0.99 && (house.wings[0].half[0] - 6.0).abs() < 1e-6, "the main wing is the bar: {:?}", house.wings[0]);
+        // The bar's ends are under its own gable, not little roofs of their own.
+        assert!((house.height([1.0, 3.0]) - 6.1).abs() < 0.15, "{}", house.height([1.0, 3.0]));
+        let mut mesh = CollisionMesh::default();
+        let parts = roof::build(&mut mesh, &ring, 0.0, &fitted.roof);
+        roof::tests::no_cracks(&mesh, parts);
+    }
+
+    #[test]
+    fn a_house_drawn_with_a_notch_is_one_gable() {
+        // 12 × 8 m with a 1.2 × 3 m notch out of a corner, one gable over it all.
+        let ring = vec![[0.0, 0.0], [12.0, 0.0], [12.0, 8.0], [3.0, 8.0], [3.0, 6.8], [0.0, 6.8]];
+        let gable = |p: P| 5.0 + 0.6 * (4.0 - (p[1] - 4.0).abs());
+        let fitted = fit(&ring, &sample(&ring, gable), None, None).unwrap();
+        assert_eq!((fitted.category, fitted.wings), (Category::Gable, 1), "{:?}", fitted.roof);
+        assert!(fitted.miss < 0.15, "{}", fitted.miss);
+    }
+
+    #[test]
+    fn a_porch_is_a_lean_to_off_the_wall() {
+        // A 10 × 7 m gabled house with a 3 m wide porch 1.2 m out of its south wall.
+        let ring = vec![[0.0, 0.0], [3.0, 0.0], [3.0, -1.2], [6.0, -1.2], [6.0, 0.0], [10.0, 0.0], [10.0, 7.0], [0.0, 7.0]];
+        let k = 0.6;
+        let roof_of = |p: P| 4.0 + k * (3.5 - (p[1] - 3.5).abs());
+        let fitted = fit(&ring, &sample(&ring, roof_of), None, None).unwrap();
+        assert_eq!(fitted.category, Category::Gable, "{:?}", fitted.roof);
+        let house = house_of(&fitted);
+        assert!((house.eave - 4.0).abs() < 0.1, "{house:?}");
+        let porch = house.height([4.5, -0.6]);
+        assert!((porch - (house.eave - house.k[0] * 0.6)).abs() < 1e-6 && porch < house.eave - 0.2, "the porch slopes on down: {porch}");
+        let mut mesh = CollisionMesh::default();
+        let parts = roof::build(&mut mesh, &ring, 0.0, &fitted.roof);
+        assert!((roof::tests::roof_area(&mesh, parts) - 73.6).abs() < 0.05, "covers {}", roof::tests::roof_area(&mesh, parts));
+        roof::tests::no_cracks(&mesh, parts);
+    }
+
+    /// The houses of an importer's `ROOF_DUMP` file (named by `ROOF_DUMP`), each fitted again and
+    /// described: what to read when a world's roofs come out wrong.
+    #[test]
+    #[ignore]
+    fn survey_a_roof_dump() {
+        let path = std::env::var("ROOF_DUMP").expect("ROOF_DUMP names a dump");
+        let mut only: Option<usize> = std::env::var("ROOF_ONLY").ok().and_then(|s| s.parse().ok());
+        // `ROOF_AT=x,z` (a point in world metres, as an F2 screenshot's `looking.point` gives it): the house standing there.
+        let at: Option<P> = std::env::var("ROOF_AT").ok().and_then(|s| {
+            let v: Vec<f64> = s.split(',').filter_map(|n| n.trim().parse().ok()).collect();
+            (v.len() >= 2).then(|| [v[0], *v.last().unwrap()])
+        });
+        for (index, line) in std::fs::read_to_string(path).unwrap().lines().enumerate() {
+            if only.is_some_and(|o| o != index) {
+                continue;
+            }
+            let house: serde_json::Value = serde_json::from_str(line).unwrap();
+            let ring: Vec<P> = serde_json::from_value(house["ring"].clone()).unwrap();
+            if let Some(at) = at {
+                if !contains(&ring, at) {
+                    continue;
+                }
+                only = Some(index);
+            }
+            let returns: Vec<[f64; 4]> = serde_json::from_value(house["returns"].clone()).unwrap();
+            let eaves: Option<f64> = serde_json::from_value(house["eaves"].clone()).unwrap();
+            let hint = house["hint"].as_str().and_then(|h| [Category::Flat, Category::Shed, Category::Gable, Category::Hip, Category::Gambrel].into_iter().find(|c| format!("{c:?}") == h));
+            let squared = square::square(&ring).unwrap_or_else(|| ring.clone());
+            let centre = ring.iter().fold([0.0, 0.0], |s, p| [s[0] + p[0] / ring.len() as f64, s[1] + p[1] / ring.len() as f64]);
+            let pieces = cut_up(&squared, square::direction(&squared), 3 * MOST_WINGS).map_or(0, |r| r.len());
+            let (wings, porch) = plan(&squared).unwrap_or_default();
+            let fitted = fit(&squared, &returns, hint, eaves);
+            println!(
+                "{index} at [{:.0}, {:.0}]: {} corners ({} squared), {pieces} pieces, {} wings, porch {porch}: {:?}",
+                centre[0], centre[1], ring.len(), squared.len(), wings.len(), fitted.as_ref().map(|f| (f.category, f.miss, f.guessed, f.wings))
+            );
+            if let (Ok(path), Some(found)) = (std::env::var("ROOF_HEIGHTS"), &fitted) {
+                // The returns with the fitted roof's height over each, for a script to draw.
+                use std::io::Write;
+                let heights: Vec<[f64; 4]> = returns.iter().map(|r| [r[0], r[1], r[2], roof_height(&found.roof, [r[0], r[1]])]).collect();
+                let mut file = std::fs::OpenOptions::new().create(true).append(true).open(path).unwrap();
+                writeln!(file, "{}", serde_json::json!({ "index": index, "ring": squared, "heights": heights })).unwrap();
+            }
+            if only.is_some() {
+                println!("ring {ring:.2?}\nsquared {squared:.2?}\nwings {wings:.2?}\nroof {:.2?}", fitted.map(|f| f.roof));
+            }
+        }
     }
 
     #[test]

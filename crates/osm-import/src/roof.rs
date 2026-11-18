@@ -638,6 +638,25 @@ impl Wing {
         a.abs() <= self.half[0] + ON && b.abs() <= self.half[1] + ON
     }
 
+    /// How far `p`, outside the wing, lies out past its nearest wall, metres, and whether that
+    /// wall is a side (along the ridge) rather than an end.
+    pub fn out_past(&self, p: P) -> (f64, bool) {
+        let (a, b) = self.local(p);
+        let (past_end, past_side) = (a.abs() - self.half[0], b.abs() - self.half[1]);
+        (past_end.max(past_side), past_side >= past_end)
+    }
+
+    /// The lean-to roof over `p`, a bit of the house beside the wing that no wing covers (a
+    /// porch): its slope carried on down past the eaves of the wall `p` lies out from.
+    pub fn lean_to(&self, p: P, eave: f64, k: f64) -> Plane {
+        let (a, b) = self.local(p);
+        if self.out_past(p).1 {
+            local_plane(self.centre, self.u, [eave + k * self.half[1], 0.0, -k * sign(b)])
+        } else {
+            local_plane(self.centre, self.u, [eave + k * self.half[0], -k * sign(a), 0.0])
+        }
+    }
+
     /// The plane the wing's roof lies in over `p`, eaves at `eave` and slopes `k` (the second only for a gambrel's upper slope).
     pub fn plane_at(&self, p: P, pitch: Pitch, eave: f64, k: [f64; 2]) -> Plane {
         let (a, b) = self.local(p);
@@ -718,7 +737,7 @@ pub struct House {
 
 impl House {
     /// The plane the roof lies in over `p`: the highest of the wings it is on, or of a dormer
-    /// there, or the eaves for a bit of the house under no wing (a porch).
+    /// there, or for a bit of the house under no wing (a porch) a lean-to off the nearest wing.
     pub fn plane_at(&self, p: P) -> Plane {
         let mut best: Option<(f64, Plane)> = None;
         for wing in self.wings.iter().filter(|wing| wing.contains(p)) {
@@ -734,7 +753,17 @@ impl House {
                 best = Some((y, dormer.plane));
             }
         }
-        best.map_or([self.eave, 0.0, 0.0], |(_, plane)| plane)
+        best.map_or_else(|| self.porch_at(p), |(_, plane)| plane)
+    }
+
+    /// The wing nearest `p`, which is under none of them: the one a porch there leans on.
+    pub fn leaned_on(&self, p: P) -> Option<&Wing> {
+        self.wings.iter().min_by(|a, b| a.out_past(p).0.total_cmp(&b.out_past(p).0))
+    }
+
+    /// The lean-to over `p`, under no wing: the slope of the nearest wing carried on down.
+    fn porch_at(&self, p: P) -> Plane {
+        self.leaned_on(p).map_or([self.eave, 0.0, 0.0], |wing| wing.lean_to(p, self.eave, self.k[0]))
     }
 
     pub fn height(&self, p: P) -> f64 {

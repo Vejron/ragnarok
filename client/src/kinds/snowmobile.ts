@@ -5,7 +5,8 @@ import { CarModel, loadCarModels } from '@/render/car'
 import { DRIVING_DISTANCE } from '@/render/scene'
 import { SHELL_COOLDOWN_TICKS, SNOWMOBILE_MAX_SPEED } from '@/sim/consts'
 import { SNOWMOBILE_WHEELS } from '@/sim/slip'
-import { DRIVE, PLAIN, RIDE_ALONG, type VehicleKind } from './kind'
+import { TWO_STROKE_TWIN } from './engines'
+import { PLAIN_CHOP, DRIVE, RIDE_ALONG, type VehicleKind } from './kind'
 
 export const SNOWMOBILE: VehicleKind = {
   kind: KIND_SNOWMOBILE,
@@ -13,10 +14,9 @@ export const SNOWMOBILE: VehicleKind = {
   load: loadCarModels,
   ride: { distance: DRIVING_DISTANCE, reload: SHELL_COOLDOWN_TICKS, seats: [{ rig: DRIVE, role: 'sled', board: 'E: drive the snowmobile', chase: true, gauges: ['air'] }, RIDE_ALONG] },
   sound: {
-    voices: [['sawtooth', 1, 0.4], ['square', 2, 0.22], ['sawtooth', 0.5, 0.18]],
-    ...PLAIN,
+    chop: PLAIN_CHOP,
     // A belt drive has no gears: the revs climb once and hold while the speed builds, over the track's clatter.
-    engine: { name: 'gears', shifts: [0], top: SNOWMOBILE_MAX_SPEED, hz: 70, level: 0.2, tracks: true },
+    engine: { name: 'cvt', synth: TWO_STROKE_TWIN, idle: 1500, redline: 8200, spin: 0.35, shifts: [0], top: SNOWMOBILE_MAX_SPEED, level: 0.4, tracks: true },
   },
   fx: {
     wheels: SNOWMOBILE_WHEELS,

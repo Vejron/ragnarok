@@ -73,6 +73,7 @@ import { AIM_DISTANCE_SCALE, DEFAULT_FOV, ON_FOOT_DISTANCE, ON_FOOT_HEIGHT, ON_F
 import { BallCam } from './render/ballcam'
 import { ChaseCam } from './render/chase'
 import { PerfReadout } from './render/perf'
+import { Screenshots, type TiledBuilding } from './screenshot'
 import { LookWorker } from './render/lookworker'
 import { encodeHands, encodeRtc, KIND_AMV, KIND_CB90, KIND_MISSILE, KIND_PBV, KIND_STRF, KIND_STRV, KIND_SUBMARINE, KIND_TANK, LIMB_ALL, LIMB_ARMS, LIMB_LEGS, TURRET_ALT, TURRET_EMPTY } from './net/codec'
 import { TankMusic } from './music'
@@ -123,7 +124,7 @@ import { Headlights } from './entities/presenters/headlights'
 import { Roosters } from './entities/presenters/roosters'
 import { Animals } from './entities/presenters/animals'
 import { TileStreamer } from './stream'
-import { frozen, loadManifest, NO_WATER, THEME_WINTER, WORLD_BASE, type WorldData } from './world'
+import { frozen, loadManifest, NO_WATER, THEME_WINTER, WORLD_BASE, type TileData, type TileRef, type WorldData } from './world'
 import { updateNow } from './pwa'
 import { HudLayer } from '@ragnarok/engine'
 import { InGameHud } from './hud/index'
@@ -455,6 +456,10 @@ export class Game {
   private frameHandle = 0
   /** Frame-cost overlay, F3 or `?perf`. */
   private readonly perf: PerfReadout
+  /** F2: a screenshot that says where it was taken (`screenshot.ts`). */
+  private readonly screenshots: Screenshots
+  /** The tiles attached now, for a screenshot to name the building it looks at. */
+  private readonly attached = new Map<string, { ref: TileRef; tile: TileData }>()
   private reconnectTimer = 0
   private readonly backoff = new Backoff()
   private pingTimer = 0
@@ -469,6 +474,16 @@ export class Game {
     this.hullMarks = new HullMarks(this.scene.scene.scars)
     this.bodies = new Bodies(this.avatars, this.gore, this.callouts, this.chase)
     this.perf = new PerfReadout(() => this.scene.renderer, () => `quality ${resolveQuality(this.qualitySetting)}${this.qualitySetting === 'auto' ? ' (auto)' : ''}   msaa ${this.scene.quality.msaa}x   scale ${this.scene.renderScale.toFixed(2)}`)
+    this.screenshots = new Screenshots({
+      canvas: this.scene.canvas,
+      camera: this.scene.camera,
+      world: () => ({ base: WORLD_BASE, hash: this.worldHash }),
+      phase: () => this.scene.phase,
+      player: () => (this.predictor ? [...this.predictor.state.position] as [number, number, number] : null),
+      castRay: (origin, dir, max) => this.motor?.castRay(origin, dir, max) ?? null,
+      buildings: () => this.attachedBuildings(),
+      say: (text) => this.notices.receive(NOTICE_SAY, text, performance.now()),
+    })
     this.adaptive.floor = this.scene.quality.minScale
     this.input = new InputController(this.scene.canvas)
     this.applyControls(loadControls())
@@ -496,12 +511,15 @@ export class Game {
     this.glow.groundAt = (x, z) => this.scene.groundAt(x, z)
     this.scene.scene.add(this.debris.root)
     this.debris.groundAt = (x, z) => this.scene.groundAt(x, z)
+    this.debris.landed = (x, y, z, size, speed) => (size >= 1.2 ? this.sounds.thud([x, y, z], speed * 1.5) : this.sounds.debris([x, y, z], size))
     this.view.damage.groundAt = (x, z) => (this.terrain ? this.terrain.heightAt(x, z) : null)
     this.view.damage.waterAt = (x, z) => {
       const level = this.waters?.surfaceAt(x, z, this.waveClock) ?? NO_WATER
       return level === NO_WATER ? null : level
     }
     this.view.damage.splashed = (x, y, z, size, speed) => splash(this.fxWorld, { x, y, z }, size, speed)
+    this.view.damage.landed = (x, y, z, size) => this.sounds.debris([x, y, z], size)
+    this.view.glazing.heard = (at, panes) => this.sounds.glass([at[0], at[1], at[2]], panes)
     this.view.damage.looks = LookWorker.create()
     this.scene.scene.add(this.view.waterRoot)
     this.transport = new Transport(
@@ -513,7 +531,7 @@ export class Game {
     const world: VehicleWorld = {
       root: this.scene.scene, sounds: this.sounds, effects: this.effects, rounds: this.rounds, debris: this.debris, lights: this.scene.scene.lights, fx: () => this.fxWorld,
       castRay: (origin, direction, max) => this.motor?.castRay(origin, direction, max) ?? null,
-      driven: () => (this.driven && this.driver?.driving ? { id: this.driver.driving, pose: this.driven, jets: this.driver.thrust?.flags ?? 0 } : null),
+      driven: () => (this.driven && this.driver?.driving ? { id: this.driver.driving, pose: this.driven, jets: this.driver.thrust?.flags ?? 0, throttle: this.driver.throttle } : null),
       seated: () => this.seat?.vehicle ?? null,
       listen: () => this.listen(),
       ownShot: () => (this.lastShotAt = performance.now()),
@@ -545,12 +563,12 @@ export class Game {
     this.machines.add(new PlaneGuns(world, this.vehicles))
     this.machines.add(new RoofGuns(world, this.vehicles))
     this.flying.add(new Projectiles({
-      models: this.rocketModels, trails: this.trails, glow: this.glow, lights: this.scene.scene.lights, fx: () => this.fxWorld, blips: this.blips,
+      models: this.rocketModels, trails: this.trails, glow: this.glow, lights: this.scene.scene.lights, fx: () => this.fxWorld, blips: this.blips, sounds: this.sounds,
     }))
     this.flying.add(this.lying)
     this.flying.add(new Backpacks(this.backpackModels))
     const blobFoot = (x: number, y: number, z: number) => this.surroundings.blobFoot(x, y, z)
-    this.soldiers = this.people.add(new Soldiers({ avatars: this.avatars, blobFoot, rewave: (x, z, tick) => this.rewave(x, z, tick), wade: (id, x, y, z, speed, dt) => this.surroundings.wade(id, x, y, z, speed, dt), skiRun: (id, x, z, vx, vz, grounded, dt) => this.skiTracks?.run(id, x, z, vx, vz, grounded, dt), headlamp: (avatar) => this.shine(avatar), zombie: (id, x, y, z, clawing, dt) => this.zombieVoices.hear(id, x, y, z, clawing, dt) }))
+    this.soldiers = this.people.add(new Soldiers({ avatars: this.avatars, blobFoot, rewave: (x, z, tick) => this.rewave(x, z, tick), wade: (id, x, y, z, speed, dt) => this.surroundings.wade(id, x, y, z, speed, dt), skiRun: (id, x, z, vx, vz, grounded, dt) => this.skiTracks?.run(id, x, z, vx, vz, grounded, dt), headlamp: (avatar) => this.shine(avatar), footfall: (x, y, z, weight) => this.sounds.step([x, y - STANDING_Y, z], this.surroundings.stepGround(x, y, z), weight), zombie: (id, x, y, z, clawing, dt) => this.zombieVoices.hear(id, x, y, z, clawing, dt) }))
     this.riders = this.people.add(new Riders(this.avatars, this.vehicles))
     this.liftRiders = this.people.add(new LiftRiders(this.avatars, () => this.liftView, () => this.liftTick()))
     this.people.add(new Roosters({ root: this.scene.scene, listener: () => this.predictor?.state.position ?? [0, 0, 0], blobFoot }))
@@ -616,7 +634,15 @@ export class Game {
     // The buildings arrive as tiles, around wherever the player is.
     this.tiles = new TileStreamer(world, {
       prepare: (ref, tile) => this.view.prepareTile(ref, tile),
-      attach: (ref, tile) => this.view.attachTile(ref, tile),
+      attach: (ref, tile) => {
+        const detach = this.view.attachTile(ref, tile)
+        const key = `${ref.col},${ref.row}`
+        this.attached.set(key, { ref, tile })
+        return () => {
+          this.attached.delete(key)
+          detach()
+        }
+      },
       discard: (ref) => this.view.discardTile(ref),
     })
     this.tiles.setReach(this.scene.quality.loadRadius, this.scene.quality.unloadRadius)
@@ -1162,6 +1188,7 @@ export class Game {
     this.drawHud(stats, now)
     this.perf.beforeRender()
     this.scene.render()
+    this.screenshots.afterRender()
     this.perf.end(ticks)
     this.onStats(stats)
   }
@@ -1305,6 +1332,8 @@ export class Game {
     else me.update(position, flying ? local.yaw : lookYaw, vx, vz, local.grounded, dt, flying ? 0 : lookPitch, this.crouching || flying,
       this.crouching && local.grounded && Math.hypot(local.knock[0], local.knock[1]) > SLIDE_MIN_SPEED, local.prone || local.down > 0, local.chute, local.vy)
     this.shine(me)
+    // The local player's own steps are heard in their head.
+    for (const weight of me.takeSteps()) if (!sitting && this.player.alive) this.sounds.step(null, this.surroundings.stepGround(position[0]!, position[1]!, position[2]!), weight)
     if (!seated && this.player.alive) this.surroundings.wade(0, position[0], position[1], position[2], Math.hypot(vx, vz), dt)
     else this.surroundings.dry(0)
     if (local.skis && !seated && this.player.alive) this.skiTracks?.run(LOCAL_TRACK, position[0], position[2], vx, vz, local.grounded, dt)
@@ -1876,13 +1905,22 @@ export class Game {
       camera: this.scene.camera.position,
       roost: this.snowRoost,
       jetSpray: this.jetSpray,
+      heard: { splash: (at, size, speed) => this.sounds.splash(at, size, speed) },
     }
     return this.fxWorldMade
+  }
+
+  /** Every building of the tiles attached now. */
+  private *attachedBuildings(): Iterable<TiledBuilding> {
+    for (const { ref, tile } of this.attached.values()) {
+      for (let index = 0; index < tile.buildings.length; index++) yield { ref, index, building: tile.buildings[index]! }
+    }
   }
 
   dispose() {
     this.disposed = true
     this.perf.dispose()
+    this.screenshots.dispose()
     this.hud.dispose()
     this.cancelFrame()
     void this.headset?.leave()

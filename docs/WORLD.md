@@ -533,11 +533,18 @@ do footprints France cuts on its lattice (over 1000 m²).
 A house (under 250 m², `roof::SPLIT_FROM`) gets its roof from a catalogue of common shapes
 (`catalogue.rs`), not a free fit:
 
-- The squared plan is cut into at most four rectangular wings, the biggest first. A side wing at
-  least 0.6 times as deep as it is wide has its ridge run out from the main wing and is carried in
-  under its roof to the ridge, so the two meet in valleys (an L, T or U house). A bit under 1.5 m
-  wide is a porch, roofed flat at the eaves. A footprint that is not square, or needs more wings, is
-  one wing: the smallest rectangle around it.
+- The squared plan is cut into at most four rectangular wings. Each of its biggest rectangles
+  (up to four, at least 1.5 m each way) is tried as the main wing in turn, and what is left is cut
+  biggest first. On a T whose stem is wide, the stem run on through the bar is a bigger rectangle
+  than the bar, and only the laser tells which way the ridge runs. A footprint that fills 85% of its
+  smallest rectangle may also be that rectangle, one wing (a house drawn with a notch or a bay). Each
+  plan is fitted with every shape below, and a plan pays 10% for each wing or porch it has more than
+  the plainest plan of the house, so a cut that only follows a sloppy drawing loses to fewer wings.
+  A side wing at least 0.6 times as deep as it is wide has its ridge run out from the main wing and
+  is carried in under its roof to the ridge, so the two meet in valleys (an L, T or U house). A bit
+  under 1.5 m wide is a porch, roofed as a lean-to: the slope of the wing it stands against carried
+  on down past its eaves. A footprint that is not square, or needs more wings, is one wing: the
+  smallest rectangle around it.
 - The shapes are flat; shed (one slope along either side); gable; hip (a pyramid on a square
   wing); and gambrel (steep up to halfway in, then shallow). Gable, hip and gambrel have one eave
   height and one slope for the whole house, the ridge down the middle of every wing. A gable or hip
@@ -545,7 +552,8 @@ A house (under 250 m², `roof::SPLIT_FROM`) gets its roof from a catalogue of co
 - A footprint drawn a little off the house the laser saw (Kläppudden's orienteering map lies about
   0.7 m off) would read a gable as low or tilted. Before fitting, the returns are moved back under it
   by the shift, up to 1 m each way in 25 cm steps, under which a gable fits best, when that fits
-  clearly better. The roof is still built on the footprint as drawn.
+  clearly better. Each plan is searched for its own shift. The roof is still built on the footprint
+  as drawn, and a return moved off it is taken to lie at the eaves.
 - Shapes are compared by their miss over the 75% of the returns they fit best, so a crown leaning
   over the roof does not hide its shape. The simplest shape that fits wins: each parameter past the
   first costs 15%, a hip 10% more than a gable, and nothing beats flat unless it misses by under 70%
@@ -562,8 +570,10 @@ A house (under 250 m², `roof::SPLIT_FROM`) gets its roof from a catalogue of co
 - In France a house keeps its measured roof (`field.rs`) when the catalogue misses its returns by
   over 0.35 m (a block of row houses, an odd roof).
 
-Bigger buildings are fitted as before (`roof::fit`), with the ridge always down the middle, and may
-be split into parts.
+A building from 250 m² up to 800 m² is fitted from the catalogue too, and keeps that roof when it
+misses the returns by 0.3 m or less (a long T or L farmhouse, a plain block); it is never given the
+usual roof of a house under trees. Any other building that big, and every one from 800 m² up, is
+fitted freely (`roof::fit`), with the ridge always down the middle, and may be split into parts.
 
 A church is neither: it is fitted as a nave under one steep gable with its annexes roofed lower
 beside it (`church.rs`), and falls back to `roof::fit` when it is not that simple. Its windows, door
@@ -581,6 +591,14 @@ with the roof higher on one is a step wall facing the lower side: a dormer's fro
 the end of a higher part. A wall whose foot stands 2 m or more over the building's lowest (a
 dormer's front) gets small windows (0.8 × 0.7 m) and never the door (`shared::windows`, mirrored in
 `render/windows.ts`).
+
+To see why a house came out as it did, import its world with `ROOF_DUMP=<file>`: each house's
+footprint, returns, OSM shape and eaves go into it as one JSON line. The ignored test
+`catalogue::tests::survey_a_roof_dump` (`ROOF_DUMP=<file> cargo test --release -p osm-import --
+--ignored survey_a_roof_dump --nocapture`) fits every house of the dump again and prints its plan
+and shape; `ROOF_ONLY=<line>` prints one house's footprint, wings and roof, `ROOF_AT=x,z` (or the
+`x,y,z` of an F2 screenshot's `looking.point`) does the same for the house standing there, and
+`ROOF_HEIGHTS=<file>` writes each return with the fitted roof's height over it, to draw side by side.
 
 The importer prints how many footprints it squared and how many roofs each shape got, with the
 wings past the first, the dormers, the houses guessed under trees, and the French houses left to

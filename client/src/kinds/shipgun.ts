@@ -4,7 +4,7 @@ import { KIND_SHIP_GUN } from '@/net/codec'
 import { ShipGunModel } from '@/render/shipgun'
 import { MORTAR_DISTANCE } from '@/render/scene'
 import { SHIP_GUN_COOLDOWN_TICKS, SHIP_GUN_PITCH_MAX, SHIP_GUN_PITCH_MIN, SHIP_GUN_TRAVERSE } from '@/sim/consts'
-import { PETROL, PLAIN, type VehicleKind } from './kind'
+import { SILENT, type VehicleKind } from './kind'
 
 export const SHIP_GUN: VehicleKind = {
   kind: KIND_SHIP_GUN,
@@ -14,6 +14,6 @@ export const SHIP_GUN: VehicleKind = {
     reload: SHIP_GUN_COOLDOWN_TICKS,
     seats: [{ rig: { name: 'gun', hull: [SHIP_GUN_TRAVERSE, SHIP_GUN_PITCH_MIN, SHIP_GUN_PITCH_MAX] }, role: 'gunner', board: 'E: man the gun', sight: true }],
   },
-  sound: { voices: PETROL, ...PLAIN, engine: { name: 'none' } },
+  sound: SILENT,
   fx: { wheels: null, drivenFrom: null, exhaust: null, bay: [0, 0, 0] },
 }

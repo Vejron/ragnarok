@@ -5,7 +5,8 @@ import { loadSeaplaneModel, SeaplaneModel } from '@/render/seaplane'
 import { PLANE_DISTANCE } from '@/render/scene'
 import { PLANE_REAR_PITCH_MAX, PLANE_REAR_PITCH_MIN, SEAPLANE_KEEL, SEAPLANE_STALL_SPEED } from '@/sim/consts'
 import { SEAPLANE_WHEELS } from '@/sim/slip'
-import type { VehicleKind } from './kind'
+import { RADIAL_SEVEN } from './engines'
+import { type VehicleKind } from './kind'
 
 export const SEAPLANE: VehicleKind = {
   kind: KIND_SEAPLANE,
@@ -23,11 +24,9 @@ export const SEAPLANE: VehicleKind = {
     ],
   },
   sound: {
-    voices: [['square', 1, 0.4], ['sawtooth', 2, 0.24], ['square', 0.5, 0.34], ['sawtooth', 3.01, 0.08]],
     // A radial turning slower than the triplane's rotary: a deeper drone, and the propeller beats low.
-    q: 2.2,
     chop: { type: 'bandpass', hz: 180 },
-    engine: { name: 'rotary', top: 38, hz: 68, level: 0.3 },
+    engine: { name: 'rotary', synth: RADIAL_SEVEN, idle: 550, redline: 1900, spin: 1.3, shifts: [0], top: 38, level: 0.5 },
   },
   fx: { wheels: SEAPLANE_WHEELS, drivenFrom: null, exhaust: 'pipe', bay: [0, 0.5, -2.2], keel: SEAPLANE_KEEL },
 }

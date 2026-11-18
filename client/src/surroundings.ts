@@ -13,12 +13,18 @@ import type { Placed } from '@/entities/presenters/vehicles'
 import { rideView } from '@/seats'
 import { CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS } from '@/sim/consts'
 import { halfExtentsOf } from '@/sim/kinds'
+import { groundOf, type Footing } from '@/sim/groundsound'
 import { surfaceWetness } from '@/sim/surface'
+import { iced, winter } from '@/render/season'
 import type { Waters } from '@/sim/waters'
 import { NO_WATER } from '@/world'
 
 /** Feet this deep (metres) under the surface are in the water. */
 const WADE_DEPTH = 0.15
+/** Water this deep over the feet, metres, makes a step a splash. */
+const STEP_WADE = 0.08
+/** Feet this far above the terrain, metres, stand on a floor: a house's storey, a deck, a roof. */
+const STEP_FLOOR = 0.35
 /** A body whose centre is this deep (metres) under the surface is a diver, too far down to stir it. */
 const DIVE_DEPTH = 1.2
 /** Seconds between splashes of someone going through a marsh's pools: about a stride. */
@@ -102,6 +108,20 @@ export class Surroundings {
       }
     }
     was.wet = wet
+  }
+
+  /**
+   * What the feet of someone whose capsule is centred at `(x, y, z)` come down on: water over the ankles
+   * is a wade, a step well above the terrain is a floor (a house's, a deck's), and otherwise the ground
+   * as `groundOf` hears it.
+   */
+  stepGround(x: number, y: number, z: number): Footing {
+    const feet = y - (CAPSULE_HALF_HEIGHT + CAPSULE_RADIUS)
+    const fx = this.fx()
+    const level = fx.waterAt?.(x, z) ?? NO_WATER
+    if (level !== NO_WATER && !iced && level - feet > STEP_WADE) return 'wade'
+    if (feet - this.scene.groundAt(x, z) > STEP_FLOOR) return 'floor'
+    return groundOf(fx.surfaceAt(x, z), winter, iced)
   }
 
   /** Person `key` is no longer drawn, or is out of the water's reach (seated, dead). */

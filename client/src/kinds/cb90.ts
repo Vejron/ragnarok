@@ -9,6 +9,7 @@ import { KIND_CB90 } from '@/net/codec'
 import { CB90_DISTANCE } from '@/render/scene'
 import { Cb90Model, loadCb90Model } from '@/render/cb90'
 import { CB90_AIM_BACK, CB90_AIM_UP, CB90_CANNON_COOLDOWN_TICKS, CB90_CANNON_PITCH_MAX, CB90_CANNON_PITCH_MIN, CB90_MAX_SPEED, CB90_MG_PITCH_MAX, CB90_MG_PITCH_MIN } from '@/sim/consts'
+import { TWIN_DIESEL_JETS } from './engines'
 import { RIDE_ALONG, type VehicleKind } from './kind'
 
 export const CB90: VehicleKind = {
@@ -35,10 +36,8 @@ export const CB90: VehicleKind = {
   },
   // Two big marine diesels: a deep, even drone.
   sound: {
-    voices: [['sawtooth', 1, 0.45], ['square', 0.5, 0.4], ['sawtooth', 2.01, 0.14]],
-    q: 1.1,
     chop: { type: 'bandpass', hz: 500 },
-    engine: { name: 'gears', shifts: [0], top: CB90_MAX_SPEED, hz: 32, level: 0.3 },
+    engine: { name: 'marine', synth: TWIN_DIESEL_JETS, idle: 600, redline: 2300, spin: 1.6, shifts: [0], top: CB90_MAX_SPEED, level: 0.5 },
   },
   // No wheels: it carves a wake, and its waterjets throw spray. Its engines are under the after deck.
   fx: { wheels: null, drivenFrom: null, exhaust: 'pipe', bay: [0, 0.6, 6], floats: true, jets: true },

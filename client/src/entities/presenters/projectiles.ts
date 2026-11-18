@@ -5,7 +5,8 @@ import type { Rockets } from '@/render/rockets'
 import type { ProjectileTrails } from '@/render/trails'
 import type { FxWorld } from '@/render/tyres'
 import { rocketTrail } from '@/render/vehiclesmoke'
-import { PROJECTILE_FLARE, PROJECTILE_GOLF_BALL } from '@/net/codec'
+import { PROJECTILE_BOMB, PROJECTILE_FLARE, PROJECTILE_GOLF_BALL, PROJECTILE_GRENADE, PROJECTILE_ROCKET } from '@/net/codec'
+import type { VehicleSounds } from '@/vehicleaudio'
 import type { Presenter, Frame } from '../presenter'
 import type { Sampled } from '../store'
 import type { Entity } from '../units'
@@ -23,6 +24,15 @@ export interface ProjectileWorld {
   lights: PointLights
   fx: () => FxWorld
   blips: Blips
+  /** Launches and the sound of things in flight. */
+  sounds: Pick<VehicleSounds, 'launch' | 'beginFlights' | 'flight' | 'endFlights' | 'dropFlight'>
+}
+
+/** How a projectile first seen is heard leaving: a rocket lighting, a bomb off its rack, a grenade thrown. */
+const LAUNCHED: Partial<Record<number, 'rocket' | 'bomb' | 'grenade'>> = {
+  [PROJECTILE_ROCKET]: 'rocket',
+  [PROJECTILE_BOMB]: 'bomb',
+  [PROJECTILE_GRENADE]: 'grenade',
 }
 
 /**
@@ -37,6 +47,14 @@ export class Projectiles implements Presenter<Frame> {
 
   constructor(private readonly world: ProjectileWorld) {}
 
+  begin() {
+    this.world.sounds.beginFlights()
+  }
+
+  end() {
+    this.world.sounds.endFlights()
+  }
+
   wants(entity: Entity) {
     return entity.projectile !== undefined && entity.place !== undefined && entity.velocity !== undefined
   }
@@ -50,7 +68,12 @@ export class Projectiles implements Presenter<Frame> {
     if (!this.seen.has(id)) {
       this.seen.add(id)
       if (kind !== PROJECTILE_GOLF_BALL) this.world.blips.fired(0, x, z, frame.now)
+      // A helicopter's rocket pods, a plane's bomb rack and a thrown grenade send no shot of their own:
+      // a new one in the air is heard leaving.
+      const launched = LAUNCHED[kind]
+      if (launched) this.world.sounds.launch([x, y, z], launched)
     }
+    this.world.sounds.flight(id, kind, [x, y, z], [vx, vy, vz])
     this.world.models.place(id, kind, [x, y, z], [vx, vy, vz])
     this.world.trails.follow('r', id, kind, x, y, z)
     if (kind === PROJECTILE_FLARE) this.burnFlare(id, x, y, z, frame)
@@ -59,6 +82,7 @@ export class Projectiles implements Presenter<Frame> {
   }
 
   remove(id: number) {
+    this.world.sounds.dropFlight(id)
     this.world.models.remove(id)
     this.world.trails.end('r', id)
     this.owed.delete(id)

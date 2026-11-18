@@ -104,7 +104,7 @@ const KEYS: [string, string][] = [
   ['E', 'take, drive, ride, man a gun or work a gate'], ['1–5 / wheel', 'pick an item'], ['Click', 'fire'],
   ['Right mouse', 'aim (scope with the sniper or Carl Gustaf)'], ['R', 'reload'], ['X', 'holster'],
   ['G', 'parachute'], ['K', 'skis (winter)'], ['L', 'headlamp'], ['V', 'talk'], ['M', 'read the map'], ['B', 'a Titan: from its head'], ['Space', 'a Titan: leap, hold to fly'],
-  ['Tab', 'scores'], ['F3', 'network stats'], ['Esc', 'release the mouse'],
+  ['Tab', 'scores'], ['F2', 'screenshot'], ['F3', 'network stats'], ['Esc', 'release the mouse'],
 ]
 </script>
 

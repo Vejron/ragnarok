@@ -6,7 +6,8 @@ import { DRONE_DISTANCE } from '@/render/scene'
 import { SHELL_COOLDOWN_TICKS } from '@/sim/consts'
 import { DRONE_RANGE } from '@/sim/items'
 import { JEEP_WHEELS } from '@/sim/slip'
-import { PLAIN, type VehicleKind } from './kind'
+import { DRONE_MOTORS } from './engines'
+import { PLAIN_CHOP, type VehicleKind } from './kind'
 
 export const DRONE: VehicleKind = {
   kind: KIND_DRONE,
@@ -18,10 +19,8 @@ export const DRONE: VehicleKind = {
     seats: [{ rig: { name: 'fpv', pitch: [-1.4, 1.0], link: DRONE_RANGE }, role: 'drone' }],
   },
   sound: {
-    // Four props, slightly out of step with each other, so the whine beats.
-    voices: [['sawtooth', 1, 0.35], ['sawtooth', 1.013, 0.3], ['square', 2.01, 0.12]],
-    ...PLAIN,
-    engine: { name: 'props', hz: 190 },
+    chop: PLAIN_CHOP,
+    engine: { name: 'props', synth: DRONE_MOTORS, idle: 6000, redline: 12000, spin: 0.3, shifts: [0], top: 30, level: 0.2 },
   },
   // A car's wheel points, which touch only when it lands.
   fx: { wheels: JEEP_WHEELS, drivenFrom: 0, exhaust: 'pipe', bay: [0, 0.75, -1.35] },

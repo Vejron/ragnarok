@@ -44,6 +44,8 @@ export class Glazing {
   private readonly gone = new Map<number, Map<number, Set<number>>>()
   private readonly loaded = new Map<number, LoadedTile>()
   private shapes: Geometry[] | null = null
+  /** Glass heard breaking: at a point, so many panes at once. */
+  heard: (at: P, panes: number) => void = () => {}
 
   constructor(private readonly debris: Debris) {}
 
@@ -96,7 +98,10 @@ export class Glazing {
     const found = this.paneAt(at)
     if (!found) return false
     const { key, index, opening, o, broken } = found
-    if (!broken) this.break(key, index, opening, o, true, at)
+    if (!broken) {
+      this.break(key, index, opening, o, true, at)
+      this.heard(at, 1)
+    }
     return true
   }
 
@@ -116,6 +121,7 @@ export class Glazing {
       })
     }
     hit.sort((a, b) => a.d - b.d)
+    if (hit.length > 0) this.heard(paneCentre(hit[0]!.o), hit.length)
     let thrown = 0
     hit.forEach(({ key, index, opening, o }, rank) => {
       const loud = rank < LOUD_PANES && thrown < SHARDS_PER_BLAST

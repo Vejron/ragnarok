@@ -39,3 +39,6 @@ embed/umeloppet/upload/
 
 # GPU benchmark screenshots and timings (client/scripts/gpu-bench.mjs)
 client/bench-out/
+
+# the game's F2 debug screenshots, saved by the dev server
+shots/

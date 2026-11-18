@@ -1,7 +1,9 @@
 import type { CollisionMesh } from '@/world'
 import { CELL_HP, type Shell } from '@/sim/carve'
-import { drawnOpenings, openingQuads, openingsFor, type Opening } from './windows'
+import { drawnOpenings, facing, openingQuads, openingsFor, type Opening } from './windows'
 import { SOFFIT_RGB, TRIM_RGB, eaveAnchor, eavesFor } from './eaves'
+import { CHIMNEY_RGB, DETAIL_TRIM_RGB, detailsOf } from './details'
+import { Surface } from './buildingmesh'
 import { FLOOR_RGB, INSIDE_RGB, INTERIOR_SHADE, facadeFor, innerOf, type Facade } from './facade'
 import { add, centreOf, cross, dot, edgeKey, hash, keyOf, normalOf, split, sub, unit, type P, type Poly, type RGB } from './geom'
 
@@ -588,8 +590,8 @@ export function lookFracture(look: CollisionMesh, range: LookRange, shell: Shell
   out.surface = 0
   // The room inside: what stands, turned in a wall's thickness, dim, with the same ragged edge; and the floor where the house still stands over it.
   const dim = (c: RGB): RGB => [c[0] * INTERIOR_SHADE, c[1] * INTERIOR_SHADE, c[2] * INTERIOR_SHADE]
-  for (const piece of whole) out.poly(innerOf(piece.poly, piece.normal), dim(piece.roof ? roof : wall), shade, true)
-  for (const piece of kept) out.poly(innerOf(piece.poly.map(place), piece.normal), dim(piece.roof ? roof : wall), shade, true)
+  for (const piece of whole) out.poly(innerOf(piece.poly, piece.normal, facade.inset), dim(piece.roof ? roof : wall), shade, true)
+  for (const piece of kept) out.poly(innerOf(piece.poly, piece.normal, facade.inset, place), dim(piece.roof ? roof : wall), shade, true)
   for (const poly of floorStanding(facade.floor, grid, removed)) out.poly(poly, FLOOR_RGB, undefined, true)
   for (const piece of rooms) out.poly(piece.poly, INSIDE_RGB[piece.inside!] ?? FLOOR_RGB, shade, true)
   out.rims(rims, wall, roof, shade)
@@ -648,6 +650,15 @@ export function lookFracture(look: CollisionMesh, range: LookRange, shell: Shell
   // Windows and doors, but only those with wall still standing round them: a frame does not hang in the air.
   const framed = drawnOpenings(removed.size === 0 ? openings : openings.filter((o) => openingStands(shell, removed, o)), facade.inside.length > 0)
   openingQuads(framed, (corners, rgb, _normal, masonry) => out.poly(corners, masonry ? wall : rgb, shade, true))
+  // The chimney and porch, each while the cell it stands on stands, and has something to hang from.
+  const cut = (id: number) => removed.has(id)
+  for (const { corners, normal, paint, anchor } of detailsOf(look, range, drawnOpenings(openings, facade.inside.length > 0))) {
+    const [x, y, z] = [0, 1, 2].map((a) => grid.of(anchor[a]!, a)) as P
+    if ((grid.has(x, y, z) && cut(shell.index(x, y, z))) || orphan(grid, x, y, z, cut)) continue
+    out.surface = paint === 'chimney' ? Surface.Brick : paint === 'roof' ? surfaces.roof : 0
+    out.poly(facing(corners, normal), paint === 'chimney' ? CHIMNEY_RGB : paint === 'roof' ? roof : DETAIL_TRIM_RGB, shade, true)
+  }
+  out.surface = 0
   return out.soup()
 }
 

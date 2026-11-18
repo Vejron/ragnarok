@@ -76,12 +76,12 @@ A dent waits up to 150 ms for the crash event that says where the hit was, becau
 
 ### Sound
 
-Everything is synthesised, as in `audio.ts`; there are no sample files.
+The engines, the ground under them and footsteps are in [AUDIO.md](AUDIO.md).
 
 | File | What it does |
 |---|---|
-| `sim/engine.ts` | Pure: `gearing` (gear and revs for a speed, with a drop at each shift), `mixOf` (a `SoundInput` of speed, acceleration, slip, surface, hp and wheel damage becomes the level and pitch of each layer), `squealGain`, `groundGain`, `landingThud`, `crashSize`. |
-| `vehicleaudio.ts` | `VehicleSounds`: a `Voice` per vehicle (oscillators through a low-pass, plus one looping noise split into squeal, ground, hiss, fire and grind, a chopped layer for blades and tracks) through a `PannerNode`; one-shots for crashes, landings, explosions, guns and doors. |
+| `sim/engine.ts` | `Revs`, the engine's revs from the throttle, the gearbox and the wheels; and the pure `mixOf` (a `SoundInput` of speed, throttle, slip, ground, hp and wheel damage becomes the level of each layer), `squealGain`, `landingThud`, `crashSize`. |
+| `vehicleaudio.ts` | `VehicleSounds`: a `Voice` per vehicle (the worklet's engine and grit, plus one looping noise split into squeal, ground, hiss, fire and grind, a chopped layer for blades and tracks) through a `PannerNode`; one-shots for crashes, landings, footsteps, explosions, guns and doors. |
 
 The engines that play are the six nearest within 160 m, with the one you sit in always first. A voice is made for a vehicle with a driver, a wreck, or one that scraped within the last 0.2 s; a vehicle that leaves the nearest six fades out and its nodes stop. Doppler is done by hand (a pitch factor from the closing speed), since panner nodes no longer do it.
 
@@ -94,7 +94,7 @@ The driver's own car is drawn from `CarSim`'s prediction, and `VehicleFx` measur
 - `physics/vehicle.rs`: the handbrake swings the tail out; a firm corner at speed holds but full lock at speed rolls the car; a wrecked front wheel pulls to its side; a lost wheel drops its corner and drags; a battered engine is slower; a damaged jeep's scripted drive matches a fixture. The scripted, ramp and damaged-drive fixtures are mirrored in `vehicle.spec.ts`, and WASM agrees within 1 cm.
 - `mechanics/vehicles.rs`: ramming a car hurts both, dents the right sides and blames the driver; a nudge does no harm; a hit beside a wheel bends it and a second takes it off; a wreck comes back whole.
 - `delta.rs`, `codec.spec.ts`: damage travels in full states and deltas, a repair clears it, and malformed damage is rejected.
-- `engine.spec.ts`: gears climb and drop at each shift; each kind has its own voice; stutter, hiss and rattle follow damage; squeal follows slip and surface; landing and crash sizes. `vehicleaudio.spec.ts` runs the node graph on a fake `AudioContext`: voices start only for running, near vehicles, at most six play, nodes are all started and stopped once, and one-shots are range and count limited.
+- `engine.spec.ts`: the revs climb and drop at each shift; each kind has its own engine; stutter, hiss and rattle follow damage; squeal follows slip and ground; landing and crash sizes (more in [AUDIO.md](AUDIO.md)). `vehicleaudio.spec.ts` runs the node graph on a fake `AudioContext`: voices start only for running, near vehicles, at most six play, nodes are all started and stopped once, and one-shots are range and count limited.
 - `chase.spec.ts`, `tyres.spec.ts`, `carwear.spec.ts`: camera response; slip, surfaces, skidmark strips and fading, and particle life; marks and smoke for a slide but not a cruise, ruts off-road, spray in water; dents in the right place, lights, panels, lost wheels and repair.
 
 ## Not done, or not checked
@@ -102,5 +102,5 @@ The driver's own car is drawn from `CarSim`'s prediction, and `VehicleFx` measur
 - Driven once in headless Chromium on the dev world: tyre smoke and skidmarks during a handbrake turn, and a crash that dented the car and cost hp. Feel and tuning have not been judged by a person at a keyboard.
 - Riders inside take no damage from a crash, and players hit by debris take none.
 - The tank's and the helicopter's bodies keep their damage numbers but show no dents.
-- Nobody has listened to the sound: pitches, levels and the balance of layers are first guesses, and the nodes are only tested on a fake context. Headless Chromium made one voice without errors. There is no horn (it needs a protocol event), no turret servo, and rockets and grenades still explode silently.
+- There is no horn (it needs a protocol event) and no turret servo.
 - No repair short of a respawn. Falling out of the world now also resets a vehicle's health and damage.

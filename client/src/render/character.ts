@@ -105,6 +105,10 @@ const SPEED_OF: Record<string, number> = {
   crawl_right: 0.7,
 }
 const LOCOMOTION = Object.keys(SPEED_OF)
+/** Where in a walk or run cycle each foot comes down (`gait` in `build_character.py` lifts a foot while its cos is positive). */
+const FOOTFALLS = [0.25, 0.75] as const
+/** Whether a cycle going from `before` to `after` (0..1, wrapping) passed `at`. */
+const crossed = (before: number, after: number, at: number) => (after >= before ? before < at && at <= after : before < at || at <= after)
 
 /*
  * Clip names are put together from a stance's prefix, a gait and a direction. A soldier asks for some
@@ -609,6 +613,8 @@ export class Character {
   private graveTime = -1
   /** How far through its shamble a zombie is, 0..1. */
   private shamble = 0
+  /** Feet that have come down since `takeSteps`, each by how hard: 0 a crawl's shuffle, up to 1 a sprint. */
+  private readonly steps: number[] = []
 
   constructor(private readonly crowd: Crowd, id: number) {
     const asset = crowd.asset
@@ -698,6 +704,36 @@ export class Character {
   /** Whitens the outfit for a moment: it was just hit. */
   flash() {
     this.flashLeft = HIT_FLASH
+  }
+
+  /** The feet that have come down since this was last asked, each by how hard (0 a shuffle, 1 a sprint). */
+  takeSteps(): number[] {
+    return this.steps.splice(0)
+  }
+
+  /**
+   * A foot comes down where the walk cycle passes one of `FOOTFALLS` between `before` and `this.phase`,
+   * on foot: not on skis, swimming, in the air or down. Running, it lands harder than walking or creeping;
+   * crawling it only shuffles.
+   */
+  private footfalls(before: number, swimming: boolean) {
+    if (swimming || this.down || this.air > 0.5 || this.rising) return
+    if (!crossed(before, this.phase, FOOTFALLS[0]) && !crossed(before, this.phase, FOOTFALLS[1])) return
+    let walk = 0
+    let run = 0
+    let crouch = 0
+    let crawl = 0
+    for (const { name, base } of STRIDES) {
+      const w = this.weights.get(name) ?? 0
+      if (w <= 0) continue
+      if (base.startsWith('walk_')) walk += w
+      else if (base.startsWith('run_')) run += w
+      else if (base.startsWith('crouch_')) crouch += w
+      else if (base.startsWith('crawl_')) crawl += w
+    }
+    const feet = walk + run + crouch + crawl
+    if (feet < 0.4) return
+    this.steps.push((0.25 * crouch + 0.5 * walk + run) / feet)
   }
 
   /** Repaints the outfit: the player's chosen colour can arrive after their soldier. A zombie keeps its rags. */
@@ -890,7 +926,11 @@ export class Character {
     }
     // Poling hard, the arms go flat out from the first stride, however little it has got going yet.
     const paced = Math.max(this.poling > 0 ? speed + (Math.max(speed, HARD_PACE) - speed) * this.poling : speed, HERRING_PACE * this.herring)
-    if (weightSum > 0 && stride > 0) this.phase = (this.phase + (dt * paced * weightSum) / stride) % 1
+    if (weightSum > 0 && stride > 0) {
+      const before = this.phase
+      this.phase = (this.phase + (dt * paced * weightSum) / stride) % 1
+      this.footfalls(before, swimming)
+    }
     const idle = this.actions.get('idle')
     if (idle) this.idleTime = (this.idleTime + dt) % idle.clip.duration
 
@@ -1685,7 +1725,12 @@ export class Character {
     targets.set('zombie_walk', walk * (1 - claw))
     targets.set('zombie_claw', claw)
     const walkClip = this.actions.get('zombie_walk')
-    if (walkClip) this.shamble = (this.shamble + (dt * speed) / (ZOMBIE_WALK_SPEED * walkClip.clip.duration)) % 1
+    if (walkClip) {
+      const before = this.shamble
+      this.shamble = (this.shamble + (dt * speed) / (ZOMBIE_WALK_SPEED * walkClip.clip.duration)) % 1
+      // A zombie drags its feet down heavily, twice a shamble.
+      if (speed > 0.2 && (crossed(before, this.shamble, FOOTFALLS[0]) || crossed(before, this.shamble, FOOTFALLS[1]))) this.steps.push(0.7)
+    }
   }
 
   set surrendering(on: boolean) {

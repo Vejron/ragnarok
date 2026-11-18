@@ -1,7 +1,7 @@
 import { Quaternion, Vector3 } from '@ragnarok/engine'
 import { TICK_DT, ROADSTER_AIR } from './consts'
 import { controlsOf, type CarBodyState, type SimMotor, type VehiclePose } from './motor'
-import type { InputFrame } from '@/net/codec'
+import { KIND_HELI, type InputFrame } from '@/net/codec'
 import type { DriveState } from '@/entities/units'
 
 /** A correction larger than this is a teleport (respawn, unflip), not a misprediction: snap. */
@@ -41,6 +41,8 @@ export class VehicleDriver {
   private readonly errorRotation = new Quaternion()
   /** Size of the last correction, metres. */
   lastCorrection = 0
+  /** How hard the newest input works the engine, -1..1: what its engine is heard to do at once (`Steer.throttle`). */
+  private worked = 0
 
   constructor(private readonly motor: SimMotor) {}
 
@@ -53,6 +55,11 @@ export class VehicleDriver {
   get thrust(): { air: number; flags: number } | null {
     const state = this.current
     return this.id !== 0 && state && state.tank !== null ? { air: state.tank / ROADSTER_AIR, flags: state.firing } : null
+  }
+
+  /** How hard the driver works the predicted vehicle's engine, -1..1: the throttle, or a helicopter's collective. */
+  get throttle(): number {
+    return this.id !== 0 ? this.worked : 0
   }
 
   /** Remembers an input the vehicle has not been told of, for a replay once the player drives. */
@@ -79,7 +86,9 @@ export class VehicleDriver {
   }
 
   private stepWith(input: InputFrame): CarBodyState | null {
-    this.motor.driveCar(this.id, controlsOf(input, this.kind), TICK_DT)
+    const controls = controlsOf(input, this.kind)
+    this.worked = this.kind === KIND_HELI ? controls.lift : controls.throttle
+    this.motor.driveCar(this.id, controls, TICK_DT)
     return this.motor.carState(this.id)
   }
 

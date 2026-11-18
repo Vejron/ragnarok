@@ -34,7 +34,7 @@ const NOON = DAY_SECONDS * TICK_RATE
 
 /** A vehicle of `kind` at `x` metres, `hp` left, its front `front` damaged, its lamps switched on or not. */
 const vehicle = (kind: number, x: number, { hp = 100, front = 0, lit = true } = {}): Components => ({
-  kind: { kind }, place: { x: x * 100, y: 100, z: 0 }, orientation: { qx: 0, qy: 0, qz: 0 }, steer: { steer: 0 }, health: { hp },
+  kind: { kind }, place: { x: x * 100, y: 100, z: 0 }, orientation: { qx: 0, qy: 0, qz: 0 }, steer: { steer: 0, throttle: 0 }, health: { hp },
   ...(front ? { damage: { parts: [front, 0, 0, 0, 0, 0, 0, 0] } } : {}),
   ...(lit ? { flags: { flags: FLAG_LAMP, stance: 0 } } : {}),
 })
@@ -123,7 +123,7 @@ describe('headlights', () => {
     const { store, settle } = harness()
     // The gun's angles go over the wire in milliradians.
     const heli = (yaw: number, lit = true): Components => ({
-      kind: { kind: KIND_HELI }, place: { x: 0, y: 3000, z: 0 }, orientation: { qx: 0, qy: 0, qz: 0 }, steer: { steer: 0 }, health: { hp: 100 },
+      kind: { kind: KIND_HELI }, place: { x: 0, y: 3000, z: 0 }, orientation: { qx: 0, qy: 0, qz: 0 }, steer: { steer: 0, throttle: 0 }, health: { hp: 100 },
       turret: { yaw: yaw * 1000, pitch: -300, shots: 0, range: 0, heat: 0, flags: 0 },
       ...(lit ? { flags: { flags: FLAG_LAMP, stance: 0 } } : {}),
     })

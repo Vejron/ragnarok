@@ -5,6 +5,7 @@ import { loadTankModel, TankModel } from '@/render/tank'
 import { TANK_DISTANCE } from '@/render/scene'
 import { SHELL_COOLDOWN_TICKS, TANK_BARREL_MAX, TANK_HALF_EXTENTS, TANK_TRACK_HALF, TANK_BARREL_MIN, TANK_MAX_SPEED, TANK_MG_PITCH_MAX, TANK_MG_PITCH_MIN, TANK_MG_YAW_LIMIT } from '@/sim/consts'
 import { TRACK_WHEELS } from '@/sim/slip'
+import { METEOR_V12 } from './engines'
 import { DRIVE, type VehicleKind } from './kind'
 
 export const TANK: VehicleKind = {
@@ -21,10 +22,9 @@ export const TANK: VehicleKind = {
     ],
   },
   sound: {
-    voices: [['sawtooth', 1, 0.5], ['square', 0.5, 0.4], ['sawtooth', 1.51, 0.12]],
-    q: 1.2,
     chop: { type: 'bandpass', hz: 650 },
-    engine: { name: 'gears', shifts: [0], top: TANK_MAX_SPEED, hz: 30, level: 0.3, tracks: true },
+    // Slow to rev, through a five-speed Merritt-Brown box.
+    engine: { name: 'gears', synth: METEOR_V12, idle: 500, redline: 2550, spin: 2.6, shifts: [0, 0.18, 0.38, 0.62], top: TANK_MAX_SPEED, level: 0.55, tracks: true },
   },
   fx: {
     wheels: TRACK_WHEELS,

@@ -15,7 +15,7 @@ describe('replicated components in the game’s units', () => {
     const person = toGame({ kind: { kind: 0 }, place: { x: 1234, y: -123456, z: 101 }, heading: { yaw: 1571 }, motion: { vy: -500, knock_x: 650, knock_z: -300 }, flags: { flags: 0, stance: 0 } })
     expect(person).toMatchObject({ place: { x: 12.34, y: -1234.56, z: 1.01 }, heading: { yaw: 1.571 }, motion: { vy: -5, knock_x: 6.5, knock_z: -3 } })
     const roadster = toGame({
-      kind: { kind: KIND_ROADSTER }, place: { x: -250, y: 80, z: 4100 }, orientation: { qx: 1200, qy: -3000, qz: 15 }, steer: { steer: -64 },
+      kind: { kind: KIND_ROADSTER }, place: { x: -250, y: 80, z: 4100 }, orientation: { qx: 1200, qy: -3000, qz: 15 }, steer: { steer: -64, throttle: 0 },
       health: { hp: 100 }, damage: { parts: [0, 0, 40, 0, 0, 0, 255, 3] }, thrust: { air: 51, flags: THRUST_BOOST },
     })
     expect(roadster).toMatchObject({
@@ -33,7 +33,7 @@ describe('replicated components in the game’s units', () => {
   })
 
   it('keep steering within full lock', () => {
-    expect(toGame({ steer: { steer: -128 } }).steer!.steer).toBe(-1)
+    expect(toGame({ steer: { steer: -128, throttle: 0 } }).steer!.steer).toBe(-1)
   })
 
   it('carry every family of the fixture scene', () => {

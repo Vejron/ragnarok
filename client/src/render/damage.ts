@@ -228,6 +228,8 @@ export class BuildingDamage {
   waterAt: (x: number, z: number) => number | null = () => null
   /** A piece `size` metres across went into the water at `(x, y, z)` (on its surface) at `speed` m/s. */
   splashed: (x: number, y: number, z: number, size: number, speed: number) => void = () => {}
+  /** A piece `size` metres across came down on the ground at `(x, y, z)`: a section of wall when it has toppled flat. */
+  landed: (x: number, y: number, z: number, size: number) => void = () => {}
   /**
    * Where buildings with a look are redrawn when hurt, off the main thread; null to redraw them here
    * (tests, or no workers). A redraw is then a frame or two late, under the dust.
@@ -855,6 +857,7 @@ export class BuildingDamage {
         continue
       }
       piece.resting = true
+      if (!piece.wet) this.landed(mesh.position.x, ground, mesh.position.z, wide)
     }
   }
 
@@ -878,6 +881,8 @@ export class BuildingDamage {
     if (t.spent >= t.time) {
       piece.topple = undefined
       piece.resting = true
+      // The slab slams down flat.
+      this.landed(mesh.position.x, mesh.position.y, mesh.position.z, Math.max(span(mesh).wide, 2))
     }
   }
 

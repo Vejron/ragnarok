@@ -231,6 +231,25 @@ describe('a hurt house', () => {
     expect(hanging(hurt.positions, 0.2, 1.4)).toBe(hanging(whole.positions, 0.2, 1.4))
   })
 
+  it('keeps its chimney while a window or wall is shot out, and loses it with the roof under it', () => {
+    const bricks = (positions: Float32Array, custom: Float32Array) => {
+      let n = 0
+      for (let v = 0; v < positions.length / 3; v++) if (custom[v * 4] === Surface.Brick) n++
+      return n
+    }
+    const chimney = detailsOf(look, range, openingsOf(look, range)).find((q) => q.paint === 'chimney')!
+    const whole = lookFracture(look, range, shell, new Set(), new Map(), white, white)
+    expect(bricks(whole.positions, whole.custom)).toBe(5 * 6)
+    const wall = shell.cellAt(3.0, 1.5, 0.05)
+    expect(shell.isRoof(wall)).toBe(false)
+    const shot = lookFracture(look, range, shell, new Set([wall]), new Map([[shell.cellAt(1.0, 1.5, 0.05), 10]]), white, white)
+    expect(bricks(shot.positions, shot.custom)).toBe(5 * 6)
+    const [ax, ay, az] = chimney.anchor
+    const under = shell.cellAt(ax, ay, az)
+    const roofless = lookFracture(look, range, shell, new Set([under]), new Map(), white, white)
+    expect(bricks(roofless.positions, roofless.custom)).toBe(0)
+  })
+
   it('carries the eave along on a section of roof that falls', () => {
     const cells = new Set<number>()
     for (let id = 0; id < shell.dims[0] * shell.dims[1] * shell.dims[2]; id++) {

@@ -1524,6 +1524,14 @@ impl Physics {
         Some((car.tank?, car.firing))
     }
 
+    /// How hard car `id`'s driver works its engine, -1..=1: the throttle, or a helicopter's collective.
+    /// What its engine is heard to do; 0 once the controls are let go.
+    pub fn car_throttle(&self, id: u32) -> Option<f32> {
+        let car = self.cars.get(&id)?;
+        let controls = car.flight;
+        Some(if car.spec.lift == Lift::Rotor { controls.lift } else { controls.throttle }.clamp(-1.0, 1.0))
+    }
+
     pub fn car_pose(&self, id: u32) -> Option<CarPose> {
         let car = self.cars.get(&id)?;
         let body = self.bodies.get(car.body)?;

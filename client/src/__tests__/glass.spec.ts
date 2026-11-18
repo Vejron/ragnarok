@@ -147,9 +147,15 @@ describe('glazing', () => {
     const group = buildTile(tile, 0)
     const debris = pile()
     const glazing = new Glazing(debris)
+    const heard: number[] = []
+    glazing.heard = (_at, panes) => heard.push(panes)
     glazing.attach(KEY, tile, group, new Map())
     glazing.blast([5, 1, -7], 3)
     const broken = glazing.brokenPanes(KEY, 0)
+    // Heard once, for every pane it broke.
+    expect(heard).toEqual([broken.size])
+    glazing.blast([5, 1, -7], 3)
+    expect(heard).toHaveLength(1)
     const openings = openingsFor(tile.look!, tile.buildings[0]!.look!)
     expect(broken.size).toBeGreaterThan(0)
     // Only the front wall (z = -5) loses glass; the far wall keeps its panes.

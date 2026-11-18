@@ -70,6 +70,8 @@ export interface Placed {
   jets: number
   /** Air, stamina or battery left, 0..1, if it has any. */
   air: number | null
+  /** How hard its driver works the engine, -1..1 (`Steer.throttle`). */
+  throttle: number
 }
 
 /** The vehicle the local player drives, which is drawn where it is predicted. */
@@ -78,6 +80,8 @@ export interface Driven {
   pose: DrivenPose
   /** Its `THRUST_*` nozzles, as predicted. */
   jets: number
+  /** How hard its driver works the engine, -1..1, from their newest input. */
+  throttle: number
 }
 
 /** What vehicles are drawn into, and the local player's part in them. */
@@ -254,6 +258,9 @@ export class Vehicles implements Presenter<Frame> {
       model = kindView(kind).model(id)
       this.models.set(id, model)
       this.world.root.add(model.root)
+      // A guided missile is a vehicle of its own, born at its launch: a Titan's shoulder tubes send no
+      // shot, so it is heard leaving when it first appears (a submarine's tube also blasts, `launches`).
+      if (kind === KIND_MISSILE) this.world.sounds.launch([entity.place!.x, entity.place!.y, entity.place!.z], 'rocket')
     }
     const driven = this.world.driven()
     const mine = driven !== null && driven.id === id ? driven : null
@@ -269,6 +276,7 @@ export class Vehicles implements Presenter<Frame> {
     const pintle = entity.pintle ?? null
     const arms = entity.arms ?? null
     const jets = mine ? mine.jets : (entity.thrust?.flags ?? 0)
+    const throttle = mine ? mine.throttle : (entity.steer?.throttle ?? 0)
     const [x, y, z] = position
     // A hen draws its wings and legs from its flags: the driver's own as predicted, at once.
     if (model instanceof HenModel) model.setFlags(jets)
@@ -321,7 +329,7 @@ export class Vehicles implements Presenter<Frame> {
     }
     const placed: Placed = {
       kind, x, y, z, yaw: Math.atan2(-forward.x, -forward.z), rotation, steer, seats, turret, pintle, arms, sub: entity.sub ?? null,
-      hp: entity.health?.hp ?? 0, damage: entity.damage?.parts ?? UNHURT, jets, air: entity.thrust?.air ?? null,
+      hp: entity.health?.hp ?? 0, damage: entity.damage?.parts ?? UNHURT, jets, air: entity.thrust?.air ?? null, throttle,
     }
     this.placed.set(id, placed)
     this.tyres(id, placed, frame.dt, entity.arms ? (entity.arms.flags & ARMS_CUT) !== 0 : false)
@@ -366,12 +374,16 @@ export class Vehicles implements Presenter<Frame> {
         speed: fx.forwardSpeed,
         accel: fx.acceleration,
         climb: fx.velocity.y,
+        throttle: placed.throttle,
         powered,
         hp,
         maxHp: vehicleMaxHp(kind),
         slip: fx.slip,
-        surface: fx.surfaceUnder,
-        grounded: fx.grounded,
+        ground: fx.ground,
+        // Afloat is not flying: a plane down in the water hears the water, not the wind in its wires.
+        grounded: fx.grounded || fx.ground === 'water',
+        submerged: fx.submerged,
+        yawRate: fx.yawRate,
         wheels: hurt ? damage.slice(DAMAGE_WHEELS, DAMAGE_WHEELS + 4) : null,
         cut,
         // A Titan in the air with its thrusters off is silent.

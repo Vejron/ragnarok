@@ -198,6 +198,8 @@ export function buildingSurfaces(tile: Pick<BuildingTile, 'buildings'>, index: n
 type Faces = { tris: Int32Array; roof: Uint8Array }
 
 const NONE: ReadonlySet<number> = new Set()
+/** A drawn face's normal is rounded to a multiple of this in each axis (about 0.01°): too little to see, enough for faces in one plane to share their corners. */
+const NORMAL_STEP = 1 / 4096
 
 /**
  * Flat-shaded triangle soup written straight into arrays of its final size: corners in metres, and
@@ -222,13 +224,21 @@ class Soup {
     this.custom = new Float32Array(triangles * 12)
   }
 
-  /** Appends the triangle `a b c` in the colour `r g b`, its normal `(c - b) × (a - b)` normalised. */
-  triangle(ax: number, ay: number, az: number, bx: number, by: number, bz: number, cx: number, cy: number, cz: number, r: number, g: number, b: number) {
-    const [ex, ey, ez] = [cx - bx, cy - by, cz - bz]
-    const [fx, fy, fz] = [ax - bx, ay - by, az - bz]
-    let [nx, ny, nz] = [ey * fz - ez * fy, ez * fx - ex * fz, ex * fy - ey * fx]
-    const length = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1
-    ;[nx, ny, nz] = [nx / length, ny / length, nz / length]
+  /**
+   * Appends the triangle `a b c` in the colour `r g b`, its normal `normal` (that of the polygon it
+   * is cut from) or else `(c - b) × (a - b)` normalised. The normal is rounded to `NORMAL_STEP`, so
+   * the corners of faces in one plane are alike to the bit and `weld` shares them.
+   */
+  triangle(ax: number, ay: number, az: number, bx: number, by: number, bz: number, cx: number, cy: number, cz: number, r: number, g: number, b: number, normal?: readonly [number, number, number]) {
+    let [nx, ny, nz] = normal ?? [0, 0, 0]
+    if (!normal) {
+      const [ex, ey, ez] = [cx - bx, cy - by, cz - bz]
+      const [fx, fy, fz] = [ax - bx, ay - by, az - bz]
+      ;[nx, ny, nz] = [ey * fz - ez * fy, ez * fx - ex * fz, ex * fy - ey * fx]
+      const length = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1
+      ;[nx, ny, nz] = [nx / length, ny / length, nz / length]
+    }
+    ;[nx, ny, nz] = [Math.round(nx / NORMAL_STEP) * NORMAL_STEP, Math.round(ny / NORMAL_STEP) * NORMAL_STEP, Math.round(nz / NORMAL_STEP) * NORMAL_STEP]
     const { positions, normals, colors } = this
     const i = this.at
     positions[i] = ax
@@ -296,9 +306,10 @@ class Soup {
     this.triangle(...a, ...d, ...e, r, g, b)
   }
 
-  /** The polygon `poly` (in order round it) as a fan of triangles in linear `rgb`. */
+  /** The polygon `poly` (in order round it) as a fan of triangles in linear `rgb`, all with the polygon's own normal. */
   poly(poly: Poly, [r, g, b]: readonly [number, number, number]) {
-    for (let i = 1; i + 1 < poly.length; i++) this.triangle(...poly[0]!, ...poly[i]!, ...poly[i + 1]!, r, g, b)
+    const normal = normalOf(poly)
+    for (let i = 1; i + 1 < poly.length; i++) this.triangle(...poly[0]!, ...poly[i]!, ...poly[i + 1]!, r, g, b, normal)
   }
 
   /** The sphere round the box round every corner: a little looser than `Geometry` finds, but without a second pass. */
@@ -329,8 +340,9 @@ class Soup {
  * vertex is equal to another when every number of it is, bit for bit. Each of `ranges` (as
  * `Soup.buffers` takes them) is shared within itself only, and rewritten.
  *
- * A third of a building's vertices and more are another's twin, and a vertex costs the GPU 64 bytes
- * where an index costs 4: a town's tile is some 6 MB lighter for it, and draws fewer vertices.
+ * Half a building's vertices are another's twin (faces in one plane share a rounded normal,
+ * `Soup.triangle`), and a vertex costs the GPU 64 bytes where an index costs 4: a town's tile is
+ * several MB lighter for it, and draws fewer vertices.
  */
 function weld(positions: Float32Array, normals: Float32Array, colors: Float32Array, custom: Float32Array, count: number, ranges?: Uint32Array): Pick<BuildingBuffers, 'positions' | 'normals' | 'colors' | 'custom' | 'indices'> {
   const [p, n, c, x] = [bitsOf(positions), bitsOf(normals), bitsOf(colors), bitsOf(custom)]
@@ -488,8 +500,8 @@ export function buildingBuffers(tile: BuildingTile, salt: number, destroyed: Rea
       for (const poly of facade.roof) soup.poly(poly, [roof.r, roof.g, roof.b])
       // The room inside: the walls' and roof's inner faces, dim, and the floor.
       soup.surface = Surface.Plain
-      for (const poly of facade.walls) soup.poly(innerOf(poly, normalOf(poly)), dim(wall))
-      for (const poly of facade.roof) soup.poly(innerOf(poly, normalOf(poly)), dim(roof))
+      for (const poly of facade.walls) soup.poly(innerOf(poly, normalOf(poly), facade.inset), dim(wall))
+      for (const poly of facade.roof) soup.poly(innerOf(poly, normalOf(poly), facade.inset), dim(roof))
       for (const poly of facade.floor) soup.poly(poly, FLOOR_RGB)
       // Its rooms, seen from either side: a floor is the ceiling of the storey under it.
       for (const { poly, kind } of facade.inside) {

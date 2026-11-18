@@ -6,6 +6,7 @@ import { loadStrfModel, StrfModel } from '@/render/strf'
 import { STRF_BARREL_MAX, STRF_BARREL_MIN, STRF_CANNON_COOLDOWN_TICKS, STRF_HALF_EXTENTS, STRF_MAX_SPEED, STRF_TRACK_HALF } from '@/sim/consts'
 import { STRF_TRACKS } from '@/sim/slip'
 import type { SeatView } from '@/seats'
+import { DIESEL_V8 } from './engines'
 import { DRIVE, type VehicleKind } from './kind'
 
 /** A troop in the back: sealed in, sees out from behind the hull, and gets out by the ramp. */
@@ -28,10 +29,8 @@ export const STRF: VehicleKind = {
   },
   // A diesel higher and busier than the tank's.
   sound: {
-    voices: [['sawtooth', 1, 0.5], ['square', 0.5, 0.35], ['sawtooth', 2.02, 0.14]],
-    q: 1.2,
     chop: { type: 'bandpass', hz: 720 },
-    engine: { name: 'gears', shifts: [0], top: STRF_MAX_SPEED, hz: 38, level: 0.28, tracks: true },
+    engine: { name: 'gears', synth: DIESEL_V8, idle: 600, redline: 2300, spin: 1.6, shifts: [0, 0.22, 0.45, 0.7], top: STRF_MAX_SPEED, level: 0.5, tracks: true },
   },
   fx: {
     wheels: STRF_TRACKS,

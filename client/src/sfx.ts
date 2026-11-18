@@ -13,6 +13,13 @@ export const SAMPLES: Readonly<Record<string, number>> = {
   cannon: 2,
   blast: 4,
   boom: 2,
+  splash_small: 4,
+  splash_big: 3,
+  glass: 4,
+  debris: 4,
+  collapse: 2,
+  hit_dirt: 3,
+  hit_stone: 3,
 }
 
 export class SampleBank {

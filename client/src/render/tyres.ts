@@ -3,6 +3,7 @@ import { kindView } from '@/kinds'
 import type { KindFx, Roost } from '@/kinds/kind'
 import { isTracked } from '@/sim/vehicles'
 import { halfExtentsOf } from '@/sim/kinds'
+import { groundOf, type Ground } from '@/sim/groundsound'
 import { tyreSlip, type WheelLayout } from '@/sim/slip'
 import { SURFACE_ASPHALT, SURFACE_DIRT, SURFACE_GRASS, SURFACE_MUD, SURFACE_MUD_DEEP, SURFACE_MUD_FAINT, SURFACE_SAND, SURFACE_WATER, surfaceWetness } from '@/sim/surface'
 import { inMarshPool } from './marshnoise'
@@ -33,6 +34,8 @@ export interface FxWorld {
   roost?: SnowRoost | null
   /** The water a waterjet boat throws (`KindFx.jets`). */
   jetSpray?: JetSpray | null
+  /** Where effects are heard: every splash (`render/splash.ts`) makes its sound through it. */
+  heard?: { splash(at: readonly [number, number, number], size: number, speed: number): void }
 }
 
 /** Particles are skipped for vehicles further from the camera than this, metres; marks reach a little further. */
@@ -99,6 +102,14 @@ export class VehicleFx {
   private peakAccel = 0
   private peak = 0
   private surface = SURFACE_GRASS
+  /** What its wheels last touched, as it is heard. */
+  private heard: Ground = 'grass'
+  /** Whether its bottom sat in open water last frame, and whether all of it was under the surface. */
+  private afloat = false
+  private dived = false
+  /** Its heading last frame, radians, and how fast it turns, rad/s, smoothed. */
+  private heading: number | null = null
+  private turning = 0
   private down = true
   /** Whether a wheel was in water last frame. */
   private wet = false
@@ -144,6 +155,21 @@ export class VehicleFx {
     return this.surface
   }
 
+  /** What it is heard rolling on: what its wheels last touched, or the water its hull sits in. */
+  get ground(): Ground {
+    return this.afloat ? 'water' : this.heard
+  }
+
+  /** Whether it is wholly under the water: a dived submarine, a sunk car. */
+  get submerged() {
+    return this.dived
+  }
+
+  /** How fast it turns about the vertical, rad/s, smoothed; + turns left. */
+  get yawRate() {
+    return this.turning
+  }
+
   /** Whether any wheel touches the ground, or the vehicle lies upturned. */
   get grounded() {
     return this.down
@@ -180,6 +206,7 @@ export class VehicleFx {
       // After a stall, differences from the last frame mean nothing: start afresh.
       this.lift(world)
       this.lastPosition = null
+      this.heading = null
       this.measured = false
       this.soaked = null
       return
@@ -196,6 +223,14 @@ export class VehicleFx {
       // The first speed seen is taken as it is: a car that comes into view moving did not just launch.
       if (this.measured) this.accel += ((along - this.speed) / dt - this.accel) * blend
       this.speed = this.measured ? this.speed + (along - this.speed) * blend : along
+      const heading = Math.atan2(-this.forward.x, -this.forward.z)
+      if (this.heading !== null) {
+        let turned = heading - this.heading
+        if (turned > Math.PI) turned -= 2 * Math.PI
+        if (turned < -Math.PI) turned += 2 * Math.PI
+        this.turning += (turned / dt - this.turning) * blend
+      }
+      this.heading = heading
       this.measured = true
     }
     this.lastPosition = here
@@ -277,6 +312,7 @@ export class VehicleFx {
       contact.y = Math.max(contact.y, ground)
       const surface = world.surfaceAt(contact.x, contact.z)
       this.surface = surface
+      this.heard = groundOf(surface, winter, iced)
       const moving = Math.abs(this.speed)
       const wetness = surfaceWetness(surface)
       // In winter the marsh is frozen, and the lakes unless the world keeps its open water: ice takes no marks and throws nothing up.
@@ -428,6 +464,8 @@ export class VehicleFx {
     // bow wave and a V behind. How deep it sits is how far its bottom is under the surface; a planing
     // hull rides up out of it and pushes less, a crash stop digs the bow in.
     const inWater = afloat && bottom < level + SKIM_DRAFT
+    this.afloat = inWater
+    this.dived = afloat && here.y + hull < level
     if (inWater && moving > WAKE_SPEED && world.waves && here.y + hull > level - DIVED) {
       const ahead = this.forward
       const sunk = Math.min(1, Math.max(0.1, level - bottom))

@@ -5,7 +5,8 @@ import { STRV_DISTANCE } from '@/render/scene'
 import { loadStrvModel, StrvModel } from '@/render/strvs'
 import { SHELL_COOLDOWN_TICKS, STRV_HALF_EXTENTS, STRV_MAX_SPEED, STRV_TRACK_HALF } from '@/sim/consts'
 import { STRV_TRACKS } from '@/sim/slip'
-import type { VehicleKind } from './kind'
+import { DIESEL_AND_TURBINE } from './engines'
+import { type VehicleKind } from './kind'
 
 export const STRV: VehicleKind = {
   kind: KIND_STRV,
@@ -13,10 +14,9 @@ export const STRV: VehicleKind = {
   load: loadStrvModel,
   ride: { distance: STRV_DISTANCE, reload: SHELL_COOLDOWN_TICKS, seats: [{ rig: { name: 'tanker' }, role: 'strv', board: 'E: drive the Strv S', chase: true, sight: true, gauges: ['ammo'] }] },
   sound: {
-    voices: [['sawtooth', 1, 0.5], ['square', 0.5, 0.3], ['sawtooth', 2.01, 0.15]],
-    q: 1.2,
     chop: { type: 'bandpass', hz: 650 },
-    engine: { name: 'gears', shifts: [0], top: STRV_MAX_SPEED, hz: 36, level: 0.3, tracks: true },
+    // Two forward gears; the turbine is heard over the diesel all the time.
+    engine: { name: 'gears', synth: DIESEL_AND_TURBINE, idle: 650, redline: 2400, spin: 1.6, shifts: [0, 0.45], top: STRV_MAX_SPEED, level: 0.5, tracks: true },
   },
   fx: {
     wheels: STRV_TRACKS,

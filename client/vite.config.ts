@@ -1,4 +1,4 @@
-import { createReadStream, existsSync, statSync } from 'node:fs'
+import { createReadStream, existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs'
 import { extname, join, normalize } from 'node:path'
 import { fileURLToPath, URL } from 'node:url'
 
@@ -21,6 +21,40 @@ const editorWorlds = {
       res.setHeader('cache-control', 'no-cache')
       if (req.method === 'HEAD') return res.end()
       createReadStream(path).pipe(res)
+    })
+  },
+}
+
+const SHOTS = fileURLToPath(new URL('../shots', import.meta.url))
+/** Biggest screenshot taken, bytes. */
+const MOST_SHOT = 64 * 1024 * 1024
+
+/** Saves the game's F2 screenshots (`src/screenshot.ts`) as `shots/<name>.png` at the repo root, in dev only. */
+const screenshots = {
+  name: 'screenshots',
+  configureServer(server: import('vite').ViteDevServer) {
+    server.middlewares.use('/__shots', (req, res) => {
+      const name = new URL(req.url ?? '/', 'http://localhost').searchParams.get('name') ?? ''
+      if (req.method !== 'POST' || !/^[\w.-]+\.png$/.test(name)) {
+        res.statusCode = 400
+        return res.end()
+      }
+      const parts: Buffer[] = []
+      let size = 0
+      req.on('data', (part: Buffer) => {
+        size += part.length
+        if (size <= MOST_SHOT) parts.push(part)
+      })
+      req.on('end', () => {
+        if (size > MOST_SHOT) {
+          res.statusCode = 413
+          return res.end()
+        }
+        mkdirSync(SHOTS, { recursive: true })
+        writeFileSync(join(SHOTS, name), Buffer.concat(parts))
+        res.setHeader('content-type', 'application/json')
+        res.end(JSON.stringify({ path: `shots/${name}` }))
+      })
     })
   },
 }
@@ -83,7 +117,7 @@ const pwa = VitePWA({
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [vue(), ui({ ui: { colors: { primary: 'amber', neutral: 'zinc' } } }), editorWorlds, pwa],
+  plugins: [vue(), ui({ ui: { colors: { primary: 'amber', neutral: 'zinc' } } }), editorWorlds, screenshots, pwa],
   server: {
     proxy: {
       // The map editor's API (`cargo run -p editor`).

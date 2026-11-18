@@ -5,7 +5,8 @@ import { CarModel, loadCarModels } from '@/render/car'
 import { DRIVING_DISTANCE } from '@/render/scene'
 import { SHELL_COOLDOWN_TICKS, SNOWRACER_MAX_SPEED } from '@/sim/consts'
 import { SNOWRACER_WHEELS } from '@/sim/slip'
-import { DRIVE, PLAIN, RIDE_ALONG, type VehicleKind } from './kind'
+import { TWO_STROKE_SINGLE } from './engines'
+import { PLAIN_CHOP, DRIVE, RIDE_ALONG, type VehicleKind } from './kind'
 
 export const SNOWRACER: VehicleKind = {
   kind: KIND_SNOWRACER,
@@ -13,11 +14,10 @@ export const SNOWRACER: VehicleKind = {
   load: loadCarModels,
   ride: { distance: DRIVING_DISTANCE, reload: SHELL_COOLDOWN_TICKS, seats: [{ rig: DRIVE, role: 'driver', board: 'E: ride the snowracer', chase: true }, RIDE_ALONG] },
   sound: {
+    chop: PLAIN_CHOP,
     // A tiny single-cylinder two-stroke, a lawnmower's: a thin buzz that is soon at its top and holds
     // there however fast the slope takes the sled.
-    voices: [['square', 1, 0.3], ['sawtooth', 2, 0.15]],
-    ...PLAIN,
-    engine: { name: 'gears', shifts: [0], top: SNOWRACER_MAX_SPEED, hz: 95, level: 0.08 },
+    engine: { name: 'cvt', synth: TWO_STROKE_SINGLE, idle: 2200, redline: 7000, spin: 0.3, shifts: [0], top: SNOWRACER_MAX_SPEED, level: 0.2 },
   },
   fx: {
     wheels: SNOWRACER_WHEELS,

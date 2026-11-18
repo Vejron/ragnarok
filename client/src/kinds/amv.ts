@@ -10,6 +10,7 @@ import { loadCarModels } from '@/render/car'
 import { AMV_DISTANCE } from '@/render/scene'
 import { AMV_COOLDOWN_TICKS, AMV_MAX_SPEED, AMV_RELOAD_TICKS } from '@/sim/consts'
 import { AMV_WHEELS } from '@/sim/slip'
+import { DIESEL_SIX } from './engines'
 import { DRIVE, type VehicleKind } from './kind'
 
 export const AMV: VehicleKind = {
@@ -29,10 +30,8 @@ export const AMV: VehicleKind = {
   },
   // A big diesel truck: low, with a hard knock.
   sound: {
-    voices: [['sawtooth', 1, 0.5], ['square', 0.5, 0.4], ['sawtooth', 2.02, 0.12]],
-    q: 1.2,
     chop: { type: 'lowpass', hz: 300 },
-    engine: { name: 'gears', shifts: [0, 0.2, 0.42, 0.68], top: AMV_MAX_SPEED, hz: 32, level: 0.26 },
+    engine: { name: 'gears', synth: { ...DIESEL_SIX, whine: 0.2, whineRatio: 22 }, idle: 600, redline: 2300, spin: 1.4, shifts: [0, 0.2, 0.42, 0.68], top: AMV_MAX_SPEED, level: 0.46 },
   },
   fx: { wheels: AMV_WHEELS, drivenFrom: 0, exhaust: 'pipe', bay: [0.6, 0.9, -2.9] },
 }

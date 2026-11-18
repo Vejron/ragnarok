@@ -132,7 +132,7 @@ function room(n: number): Map<number, Components> {
   for (let i = 1; i <= 64; i++) entries.push([i, { ...person(i + n * 0.25, (i + n) * 0.01), motion: { vy: 0, knock_x: 0, knock_z: 0 } }])
   for (let i = 0; i < 20; i++) {
     entries.push([100 + i, {
-      kind: { kind: 2 }, place: { x: i * 500 + n * 30, y: 120, z: 0 }, orientation: { qx: 0, qy: 1000 + n * 10, qz: 0 }, steer: { steer: n % 50 },
+      kind: { kind: 2 }, place: { x: i * 500 + n * 30, y: 120, z: 0 }, orientation: { qx: 0, qy: 1000 + n * 10, qz: 0 }, steer: { steer: n % 50, throttle: 0 },
       turret: { yaw: n * 5, pitch: 100, shots: n, range: 0, heat: 0, flags: 0 }, health: { hp: 200 },
     }])
   }

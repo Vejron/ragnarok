@@ -156,8 +156,9 @@ it for those on foot, and a press that got someone in or out of a vehicle is spe
 `client/src/render/details.ts` adds what the look leaves out, drawn into the tile's mesh with the
 building: a brick chimney on the ridge of every house, old house, villa and cabin with a pitched
 roof, a third of the way along it; a small roof on two posts over the front door of an old house
-and a cabin; a flat canopy over a villa's. They are only drawn (nothing collides with them), and a
-house hurt enough to be drawn in pieces loses them.
+and a cabin; a flat canopy over a villa's. They are only drawn (nothing collides with them). A hurt
+house, drawn by `lookFracture`, keeps each while the cell it stands on (its `anchor`: the roof just
+under the chimney, the wall over the door) stands and has something to hang from.
 
 ## Colours
 

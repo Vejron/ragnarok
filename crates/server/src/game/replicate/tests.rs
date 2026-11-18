@@ -151,3 +151,39 @@ fn what_a_player_owns_is_told_to_them_alone_and_wherever_they_sit() {
     }
     assert!(others.iter().flat_map(|snapshot| &snapshot.updates).any(|update| update.id == jeep), "the jeep itself is public");
 }
+
+#[test]
+fn everyone_is_told_how_hard_a_driver_works_the_throttle() {
+    let map = WorldFile { version: WORLD_VERSION, half_extent: 20_000, spawns: vec![[0, 0], [3000, 0]], ..Default::default() };
+    let mut game = Game::new(map, 0).unwrap();
+    let mut join = || {
+        let (outbox, inbox) = mpsc::channel(4096);
+        let (reply, mut response) = oneshot::channel();
+        game.handle(Command::Join { outbox, reply, profile: Default::default() });
+        (response.try_recv().unwrap().unwrap(), inbox)
+    };
+    let ((driver, _theirs), (_other, mut others)) = (join(), join());
+    let at = game.world.entities.of::<Player>(driver).character.position;
+    let jeep = add_vehicle(&mut game.world, KIND_JEEP, [at[0] + 4.0, at[1] + 1.0, at[2]], 0.0);
+    let throttle_heard = |others: &mut mpsc::Receiver<Outgoing>| {
+        let mut heard = None;
+        for out in std::iter::from_fn(|| others.try_recv().ok()) {
+            let Outgoing::Datagram(bytes) = out else { continue };
+            let Some(snapshot): Option<Snapshot> = decode(&bytes) else { continue };
+            if let Some(steer) = snapshot.updates.iter().find(|update| update.id == jeep).and_then(|update| update.steer) {
+                heard = Some(steer[1]);
+            }
+        }
+        heard
+    };
+    for _ in 0..SNAPSHOT_EVERY * 2 {
+        game.step();
+    }
+    assert_eq!(throttle_heard(&mut others).unwrap_or(0), 0, "nobody drives it: an idle engine");
+    crate::mechanics::seat(&mut game.world, driver, jeep, 0);
+    for seq in 1..=SNAPSHOT_EVERY * 3 {
+        game.handle(Command::Input(driver, 0, vec![InputFrame { seq, forward: 127, ..Default::default() }]));
+        game.step();
+    }
+    assert_eq!(throttle_heard(&mut others), Some(127), "the other player hears the jeep floored");
+}

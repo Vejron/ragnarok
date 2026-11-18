@@ -548,3 +548,46 @@ describe('Character losing limbs', () => {
     c.dispose()
   })
 })
+
+describe('Character’s footsteps', () => {
+  /** The steps taken over `seconds` moving at (vx, vz), on the ground or not. */
+  function steps(person: Character, vx: number, vz: number, seconds = 3, grounded = true) {
+    person.takeSteps()
+    const taken: number[] = []
+    for (let t = 0; t < seconds; t += 1 / 60) {
+      person.update([0, 0.85, 0], 0, vx, vz, grounded, 1 / 60)
+      taken.push(...person.takeSteps())
+    }
+    return taken
+  }
+
+  it('puts a foot down twice a stride, harder running than walking, and none standing still', async () => {
+    const c = await crowd()
+    const person = new Character(c, 1)
+    steps(person, 0, 0, 1)
+    expect(steps(person, 0, 0)).toEqual([])
+    steps(person, 0, -3.8, 1)
+    const walking = steps(person, 0, -3.8, 4)
+    steps(person, 0, -7.3, 1)
+    const running = steps(person, 0, -7.3, 4)
+    expect(walking.length).toBeGreaterThan(4)
+    expect(running.length).toBeGreaterThan(walking.length)
+    expect(Math.min(...running)).toBeGreaterThan(Math.max(...walking))
+    c.dispose()
+  })
+
+  it('takes no steps in the air, on skis or swimming', async () => {
+    const c = await crowd()
+    const person = new Character(c, 1)
+    steps(person, 0, -5, 1, false)
+    expect(steps(person, 0, -5, 3, false)).toEqual([])
+    person.skis = true
+    steps(person, 0, -5, 1)
+    expect(steps(person, 0, -5)).toEqual([])
+    person.skis = false
+    person.swim = 1
+    steps(person, 0, -1.5, 1)
+    expect(steps(person, 0, -1.5)).toEqual([])
+    c.dispose()
+  })
+})

@@ -6,14 +6,16 @@ import { FRAME_RGB, type LookRange, type Opening } from './windows'
  * The small parts that make a house a house, worked out from its look (`Tile.look`) and its
  * openings: a chimney on its ridge, and over its front door a porch on two posts (an old house's, a
  * cabin's) or a flat canopy (a villa's). Only drawn, the same on every client; nothing collides
- * with them, and a house that is hurt enough to be drawn in pieces loses them. Pure, so it runs in
- * the tile worker too.
+ * with them. A hurt house keeps each while the cell it hangs from (`anchor`) stands. Pure, so it
+ * runs in the tile worker too.
  */
 
 /** A chimney: how far it stands over the ridge and reaches under it, and half its length along the ridge and half its width across, metres. */
 const CHIMNEY_UP = 0.9
 const CHIMNEY_DOWN = 0.6
 const CHIMNEY_HALF: readonly [number, number] = [0.4, 0.3]
+/** How far under the ridge the roof it stands on is judged, metres: inside the top cell. */
+const CHIMNEY_ROOTED = 0.15
 /** Where along the ridge it stands, from one end. */
 const CHIMNEY_ALONG = 0.35
 /** A roof flatter than this from its lowest corner to its highest, metres, has no ridge to put one on. */
@@ -31,6 +33,8 @@ export interface DetailQuad {
   /** The way it faces. */
   normal: P
   paint: DetailPaint
+  /** A point just inside the house's shell that the detail stands on: the roof under a chimney, the wall over a door. It goes when that cell does. */
+  anchor: P
 }
 
 /** Linear colours: a chimney's brick, and the trim (posts, the underside of a porch). */
@@ -40,7 +44,7 @@ export const DETAIL_TRIM_RGB: RGB = FRAME_RGB
 const CHIMNEYED: ReadonlySet<number> = new Set([BUILDING_PLAIN, BUILDING_FARMHOUSE, BUILDING_VILLA, BUILDING_CABIN])
 
 /** The five faces of a box that show: its four sides and its top. `u` is the unit along it over the ground. */
-function box(out: DetailQuad[], centre: readonly [number, number], u: readonly [number, number], halfAlong: number, halfAcross: number, y0: number, y1: number, paint: DetailPaint) {
+function box(out: DetailQuad[], centre: readonly [number, number], u: readonly [number, number], halfAlong: number, halfAcross: number, y0: number, y1: number, paint: DetailPaint, anchor: P) {
   const v = [-u[1], u[0]] as const
   const at = (a: number, b: number, y: number): P => [centre[0] + u[0] * a + v[0] * b, y, centre[1] + u[1] * a + v[1] * b]
   const sides: [number, number, number, number, P][] = [
@@ -49,8 +53,8 @@ function box(out: DetailQuad[], centre: readonly [number, number], u: readonly [
     [halfAlong, -halfAcross, halfAlong, halfAcross, [u[0], 0, u[1]]],
     [-halfAlong, halfAcross, -halfAlong, -halfAcross, [-u[0], 0, -u[1]]],
   ]
-  for (const [a0, b0, a1, b1, normal] of sides) out.push({ corners: [at(a0, b0, y0), at(a1, b1, y0), at(a1, b1, y1), at(a0, b0, y1)], normal, paint })
-  out.push({ corners: [at(-halfAlong, -halfAcross, y1), at(halfAlong, -halfAcross, y1), at(halfAlong, halfAcross, y1), at(-halfAlong, halfAcross, y1)], normal: [0, 1, 0], paint })
+  for (const [a0, b0, a1, b1, normal] of sides) out.push({ corners: [at(a0, b0, y0), at(a1, b1, y0), at(a1, b1, y1), at(a0, b0, y1)], normal, paint, anchor })
+  out.push({ corners: [at(-halfAlong, -halfAcross, y1), at(halfAlong, -halfAcross, y1), at(halfAlong, halfAcross, y1), at(-halfAlong, halfAcross, y1)], normal: [0, 1, 0], paint, anchor })
 }
 
 /** The chimney, porch and canopy of building `range` of `look`, whose openings are `openings`. */
@@ -85,7 +89,9 @@ export function detailsOf(look: CollisionMesh, range: LookRange, openings: reado
     if (from[0] > to[0] || (from[0] === to[0] && from[2] > to[2])) [from, to] = [to, from]
     const u: readonly [number, number] = longest > 0.5 ? [(to[0] - from[0]) / longest, (to[2] - from[2]) / longest] : [1, 0]
     const along = longest > 2 * CHIMNEY_HALF[0] + 1 ? CHIMNEY_ALONG * longest : longest / 2
-    box(out, [from[0] + u[0] * along, from[2] + u[1] * along], u, CHIMNEY_HALF[0], CHIMNEY_HALF[1], high - CHIMNEY_DOWN, high + CHIMNEY_UP, 'chimney')
+    const centre = [from[0] + u[0] * along, from[2] + u[1] * along] as const
+    // It stands on the roof just under the ridge.
+    box(out, centre, u, CHIMNEY_HALF[0], CHIMNEY_HALF[1], high - CHIMNEY_DOWN, high + CHIMNEY_UP, 'chimney', [centre[0], high - CHIMNEY_ROOTED, centre[1]])
   }
   // Over the front door.
   const door = openings.find((o) => o.door)
@@ -96,23 +102,25 @@ export function detailsOf(look: CollisionMesh, range: LookRange, openings: reado
   const n = door.normal
   // `s` along the wall from the door's middle, `o` out from the wall.
   const at = (s: number, o: number, y: number): P => [(a[0] + b[0]) / 2 + ux * s + n[0] * o, y, (a[2] + b[2]) / 2 + uz * s + n[2] * o]
+  // Both hang from the wall over the door, a hair inside it.
+  const anchor = at(0, -0.01, d[1] + 0.1)
   if (kind === BUILDING_VILLA) {
     const [w, depth, over, thick] = CANOPY
     const [y0, y1] = [d[1] + over, d[1] + over + thick]
-    out.push({ corners: [at(-w / 2, 0, y1), at(w / 2, 0, y1), at(w / 2, depth, y1), at(-w / 2, depth, y1)], normal: [0, 1, 0], paint: 'trim' })
-    out.push({ corners: [at(-w / 2, 0, y0), at(w / 2, 0, y0), at(w / 2, depth, y0), at(-w / 2, depth, y0)], normal: [0, -1, 0], paint: 'trim' })
-    out.push({ corners: [at(-w / 2, depth, y0), at(w / 2, depth, y0), at(w / 2, depth, y1), at(-w / 2, depth, y1)], normal: [n[0], 0, n[2]], paint: 'trim' })
+    out.push({ corners: [at(-w / 2, 0, y1), at(w / 2, 0, y1), at(w / 2, depth, y1), at(-w / 2, depth, y1)], normal: [0, 1, 0], paint: 'trim', anchor })
+    out.push({ corners: [at(-w / 2, 0, y0), at(w / 2, 0, y0), at(w / 2, depth, y0), at(-w / 2, depth, y0)], normal: [0, -1, 0], paint: 'trim', anchor })
+    out.push({ corners: [at(-w / 2, depth, y0), at(w / 2, depth, y0), at(w / 2, depth, y1), at(-w / 2, depth, y1)], normal: [n[0], 0, n[2]], paint: 'trim', anchor })
     return out
   }
   const [w, depth, over, drop, post] = PORCH
   const [back, front] = [d[1] + over, d[1] + over - drop]
-  out.push({ corners: [at(-w / 2, 0, back), at(w / 2, 0, back), at(w / 2, depth, front), at(-w / 2, depth, front)], normal: [0, 1, 0], paint: 'roof' })
-  out.push({ corners: [at(-w / 2, 0, back - 0.06), at(w / 2, 0, back - 0.06), at(w / 2, depth, front - 0.06), at(-w / 2, depth, front - 0.06)], normal: [0, -1, 0], paint: 'trim' })
-  out.push({ corners: [at(-w / 2, depth, front - 0.06), at(w / 2, depth, front - 0.06), at(w / 2, depth, front), at(-w / 2, depth, front)], normal: [n[0], 0, n[2]], paint: 'trim' })
+  out.push({ corners: [at(-w / 2, 0, back), at(w / 2, 0, back), at(w / 2, depth, front), at(-w / 2, depth, front)], normal: [0, 1, 0], paint: 'roof', anchor })
+  out.push({ corners: [at(-w / 2, 0, back - 0.06), at(w / 2, 0, back - 0.06), at(w / 2, depth, front - 0.06), at(-w / 2, depth, front - 0.06)], normal: [0, -1, 0], paint: 'trim', anchor })
+  out.push({ corners: [at(-w / 2, depth, front - 0.06), at(w / 2, depth, front - 0.06), at(w / 2, depth, front), at(-w / 2, depth, front)], normal: [n[0], 0, n[2]], paint: 'trim', anchor })
   // Its two posts, from under the door's foot (the ground may fall away) to the roof.
   for (const side of [-1, 1]) {
     const p = at((side * (w - post)) / 2, depth - post / 2, 0)
-    box(out, [p[0], p[2]], [ux, uz], post / 2, post / 2, a[1] - 0.6, front - 0.06, 'trim')
+    box(out, [p[0], p[2]], [ux, uz], post / 2, post / 2, a[1] - 0.6, front - 0.06, 'trim', anchor)
   }
   return out
 }

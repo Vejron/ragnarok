@@ -1834,7 +1834,7 @@ fn fit_roofs(
         }
     });
     let count = |n: &std::sync::atomic::AtomicUsize| n.load(std::sync::atomic::Ordering::Relaxed);
-    eprintln!("roofs from the catalogue: {:?}, {} wings past the first, {} dormers, {} guessed under trees, {} left to the measured roof; {} churches fitted as churches", tally.shapes.lock().unwrap(), count(&tally.wings), count(&tally.dormers), count(&tally.guessed), count(&tally.measured), count(&tally.churches));
+    eprintln!("roofs from the catalogue: {:?}, {} wings past the first, {} dormers, {} guessed under trees, {} left to the measured roof, {} roofs over {} m²; {} churches fitted as churches", tally.shapes.lock().unwrap(), count(&tally.wings), count(&tally.dormers), count(&tally.guessed), count(&tally.measured), count(&tally.big), roof::SPLIT_FROM, count(&tally.churches));
     slots.into_iter().map(|slot| slot.into_inner().unwrap().expect("every building was taken")).collect()
 }
 
@@ -1847,7 +1847,16 @@ struct Tally {
     measured: std::sync::atomic::AtomicUsize,
     guessed: std::sync::atomic::AtomicUsize,
     churches: std::sync::atomic::AtomicUsize,
+    /// Buildings past `roof::SPLIT_FROM` the catalogue fitted closely enough to keep.
+    big: std::sync::atomic::AtomicUsize,
 }
+
+/// A building this big or bigger (m²) is never roofed from the catalogue: a block, a hall, a school.
+const CATALOGUE_MOST: f64 = 800.0;
+/// How far the returns of a building past `roof::SPLIT_FROM` may miss the catalogue's roof, metres,
+/// for it to be kept: a big house of a plain plan (a long T or L farmhouse) gets one clean roof, and
+/// anything less plain is fitted freely in parts (`roof::fit`).
+const BIG_MISS: f64 = 0.3;
 
 /// How far a French house's returns may miss the catalogue's roof, metres, before its measured
 /// roof (`field::Field`) is kept instead: a block of row houses or an odd roof that is no one house.
@@ -1859,10 +1868,22 @@ const FRENCH_MISS: f64 = 0.35;
 /// A house the laser saw only trees over is given the usual roof at the eaves `eaves` (local y,
 /// metres) a house its size has (`cap`).
 fn from_catalogue(ring: &[P], returns: &[[f64; 4]], measured: bool, hint: Option<Category>, eaves: Option<f64>, tally: &Tally) -> Option<Top> {
-    if signed_area(ring).abs() >= roof::SPLIT_FROM {
+    let area = signed_area(ring).abs();
+    if area >= CATALOGUE_MOST {
         return None;
     }
-    let found = crate::catalogue::fit(ring, returns, hint, if measured { None } else { eaves })?;
+    // A building past `roof::SPLIT_FROM` keeps the catalogue's roof only where it fits it closely, and
+    // is never given the usual roof of a house the laser did not see.
+    let big = area >= roof::SPLIT_FROM;
+    let eaves = if measured || big { None } else { eaves };
+    dump_house(ring, returns, hint, eaves);
+    let found = crate::catalogue::fit(ring, returns, hint, eaves)?;
+    if big && found.miss > BIG_MISS {
+        return None;
+    }
+    if big {
+        tally.big.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
     if found.guessed {
         tally.guessed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
@@ -1874,6 +1895,21 @@ fn from_catalogue(ring: &[P], returns: &[[f64; 4]], measured: bool, hint: Option
     tally.wings.fetch_add(found.wings - 1, std::sync::atomic::Ordering::Relaxed);
     tally.dormers.fetch_add(found.dormers, std::sync::atomic::Ordering::Relaxed);
     Some(Top::Fitted(found.roof))
+}
+
+/// With `ROOF_DUMP` set to a file, each house's footprint (local metres), laser returns
+/// (`[x, z, y, code]`), OSM roof shape and eaves are added to it as one JSON line: what a roof that
+/// came out wrong can be fitted again from, in a test or a script, without importing the world.
+fn dump_house(ring: &[P], returns: &[[f64; 4]], hint: Option<Category>, eaves: Option<f64>) {
+    use std::io::Write;
+    static FILE: std::sync::OnceLock<Option<std::sync::Mutex<std::fs::File>>> = std::sync::OnceLock::new();
+    let file = FILE.get_or_init(|| {
+        let path = std::env::var_os("ROOF_DUMP")?;
+        Some(std::sync::Mutex::new(std::fs::File::create(path).expect("ROOF_DUMP is a file that can be written")))
+    });
+    let Some(file) = file else { return };
+    let line = serde_json::json!({ "ring": ring, "returns": returns, "hint": hint.map(|c| format!("{c:?}")), "eaves": eaves });
+    writeln!(file.lock().unwrap(), "{line}").expect("ROOF_DUMP is written");
 }
 
 /// Returns of a bridge's deck as measured, `[x, z, y]`: an empty list where nothing was measured.

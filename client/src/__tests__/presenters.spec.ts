@@ -15,7 +15,16 @@ const item = (x: number): Components => ({ pickup: { item: 3 }, place: { x: x * 
 /** Stands in for what the projectiles draw into, and records what they are told. */
 function projectileWorld() {
   const log: string[] = []
+  /** What was heard: launches and the projectiles in flight. */
+  const heard: string[] = []
   const world = {
+    sounds: {
+      launch: (_at: unknown, what: string) => heard.push(`launch ${what}`),
+      beginFlights() {},
+      flight: (id: number) => heard.push(`flight ${id}`),
+      endFlights() {},
+      dropFlight: (id: number) => heard.push(`drop ${id}`),
+    },
     models: { place: (id: number, _kind: number, [x]: readonly number[]) => log.push(`place ${id} ${x}`), remove: (id: number) => log.push(`remove ${id}`) },
     trails: { follow: (_: string, id: number) => log.push(`trail ${id}`), end: (_: string, id: number) => log.push(`end trail ${id}`) },
     glow: { spawn: () => {} },
@@ -23,10 +32,25 @@ function projectileWorld() {
     fx: () => ({}),
     blips: { fired: (shooter: number, x: number) => log.push(`fired ${shooter} ${x}`) },
   } as unknown as ProjectileWorld
-  return { log, world }
+  return { log, heard, world }
 }
 
 describe('the projectile presenter', () => {
+  it('hears a new one leave once, hears it in flight each frame, and lets its sound go when it ends', () => {
+    const store = new EntityStore()
+    const presenters = new Presenters<Frame>()
+    const { heard, world } = projectileWorld()
+    presenters.add(new Projectiles(world))
+    store.push(10, new Map([[9, rocket(0)]]), true)
+    store.push(12, new Map([[9, rocket(2)]]), true)
+    store.push(14, new Map(), true)
+    for (const tick of [10, 11, 12, 15]) presenters.run(store.sampleAll(tick), frame(tick))
+    // Kind 1 is a grenade: thrown, then heard (or not) in flight, then gone.
+    expect(heard.filter((h) => h.startsWith('launch'))).toEqual(['launch grenade'])
+    expect(heard.filter((h) => h.startsWith('flight')).length).toBeGreaterThanOrEqual(2)
+    expect(heard[heard.length - 1]).toBe('drop 9')
+  })
+
   it('draws a shell in flight, marks it on the map once, and ends it where the picture reaches its end', () => {
     const store = new EntityStore()
     const presenters = new Presenters<Frame>()
@@ -64,14 +88,14 @@ describe('the item presenter', () => {
 
 describe('the soldiers presenter', () => {
   /** Stands in for a soldier: records what it was last told. */
-  const body = () => ({ dead: false, held: 0, pose: [] as unknown[], update(...args: unknown[]) { this.pose = args } })
+  const body = () => ({ dead: false, held: 0, pose: [] as unknown[], update(...args: unknown[]) { this.pose = args }, takeSteps: () => [] })
 
   it('draws everyone else on foot as their flags say, and not the local player', () => {
     const bodies = new Map<number, ReturnType<typeof body>>()
     const avatars = { draw: (id: number) => bodies.get(id) ?? bodies.set(id, body()).get(id)! }
     const shadows: number[][] = []
     const presenters = new Presenters<Frame>()
-    const soldiers = presenters.add(new Soldiers({ avatars: avatars as never, blobFoot: (x, y, z) => shadows.push([x, y, z]), rewave: () => 0, wade: () => {}, skiRun: () => {}, headlamp: () => {}, zombie: () => {} }))
+    const soldiers = presenters.add(new Soldiers({ avatars: avatars as never, blobFoot: (x, y, z) => shadows.push([x, y, z]), rewave: () => 0, wade: () => {}, skiRun: () => {}, headlamp: () => {}, footfall: () => {}, zombie: () => {} }))
     const store = new EntityStore()
     // Flags: grounded | crouching | holding item 2; lying down. And a dead one, and the local player.
     const crouched: Components = { kind: { kind: 0 }, place: { x: 100, y: 90, z: 0 }, heading: { yaw: 500 }, flags: { flags: 1 | 4 | (2 << 3), stance: 1 }, motion: { vy: 0, knock_x: 900, knock_z: 0 } }
@@ -92,7 +116,7 @@ describe('the ghosts presenter', () => {
   it('draws a ghost as a cloud and not as a soldier, the local one from its prediction, and one taking shape as a swirl', () => {
     const log: string[] = []
     const presenters = new Presenters<Frame>()
-    const soldiers = presenters.add(new Soldiers({ avatars: { draw: () => ({ update() {} }) } as never, blobFoot: () => {}, rewave: () => 0, wade: () => {}, skiRun: () => {}, headlamp: () => {}, zombie: () => {} }))
+    const soldiers = presenters.add(new Soldiers({ avatars: { draw: () => ({ update() {} }) } as never, blobFoot: () => {}, rewave: () => 0, wade: () => {}, skiRun: () => {}, headlamp: () => {}, footfall: () => {}, zombie: () => {} }))
     presenters.add(new Ghosts({
       draw: {
         flying: ([x], _velocity, _yaw, own, blocked) => log.push(`fly ${x} ${own ? 'own' : 'other'}${blocked ? ' blocked' : ''}`),

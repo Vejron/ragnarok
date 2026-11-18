@@ -5,7 +5,8 @@ import { loadPlaneModel, PlaneModel } from '@/render/plane'
 import { PLANE_DISTANCE } from '@/render/scene'
 import { PLANE_REAR_PITCH_MAX, PLANE_REAR_PITCH_MIN } from '@/sim/consts'
 import { PLANE_WHEELS } from '@/sim/slip'
-import type { VehicleKind } from './kind'
+import { ROTARY_NINE } from './engines'
+import { type VehicleKind } from './kind'
 
 export const PLANE: VehicleKind = {
   kind: KIND_PLANE,
@@ -21,11 +22,9 @@ export const PLANE: VehicleKind = {
     ],
   },
   sound: {
-    voices: [['square', 1, 0.4], ['sawtooth', 2, 0.22], ['square', 0.5, 0.3], ['sawtooth', 4.02, 0.08]],
-    // A rotary's buzz is in its harmonics, with a nasal peak on them; the propeller beats low.
-    q: 2.5,
+    // The propeller beats low.
     chop: { type: 'bandpass', hz: 220 },
-    engine: { name: 'rotary', top: 45, hz: 85, level: 0.28 },
+    engine: { name: 'rotary', synth: ROTARY_NINE, idle: 600, redline: 1350, spin: 1.2, shifts: [0], top: 45, level: 0.5 },
   },
   fx: { wheels: PLANE_WHEELS, drivenFrom: null, exhaust: 'castor', bay: [0, 0.5, -1.8] },
 }

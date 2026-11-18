@@ -42,6 +42,7 @@ export interface Orientation {
 
 export interface Steer {
   steer: number
+  throttle: number
 }
 
 export interface Turret {
@@ -245,7 +246,7 @@ export const SCHEMA: readonly { id: number; name: ComponentName; diff: boolean; 
   { id: 2, name: 'motion', diff: true, owner: false, fields: [{ name: 'vy', unit: 'cm' }, { name: 'knock_x', unit: 'cm' }, { name: 'knock_z', unit: 'cm' }] },
   { id: 3, name: 'flags', diff: false, owner: false, fields: [{ name: 'flags' }, { name: 'stance' }] },
   { id: 4, name: 'orientation', diff: true, owner: false, fields: [{ name: 'qx', unit: 'quat' }, { name: 'qy', unit: 'quat' }, { name: 'qz', unit: 'quat' }] },
-  { id: 5, name: 'steer', diff: true, owner: false, fields: [{ name: 'steer', unit: 'axis' }] },
+  { id: 5, name: 'steer', diff: true, owner: false, fields: [{ name: 'steer', unit: 'axis' }, { name: 'throttle', unit: 'axis' }] },
   { id: 6, name: 'turret', diff: false, owner: false, fields: [{ name: 'yaw', unit: 'mrad' }, { name: 'pitch', unit: 'mrad' }, { name: 'shots' }, { name: 'range', unit: 'dm' }, { name: 'heat', unit: 'byte' }, { name: 'flags' }] },
   { id: 7, name: 'limbs', diff: false, owner: false, fields: [{ name: 'lost' }] },
   { id: 8, name: 'thrust', diff: false, owner: false, fields: [{ name: 'air', unit: 'byte' }, { name: 'flags' }] },

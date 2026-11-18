@@ -27,6 +27,10 @@ const GRAVITY = 9.8
  * on the ground and comes to rest, then shrinks away. Nothing collides with them; they are only
  * drawn.
  */
+/** A piece landing slower than this, m/s, or lying lower than this when at rest (metres: about half its size), is not heard. */
+const LANDING_SPEED = 4
+const LANDING_REST = 0.15
+
 export class Debris {
   readonly root = new Group()
   private readonly pieces: Piece[] = []
@@ -35,6 +39,8 @@ export class Debris {
 
   /** Ground height under a point. */
   groundAt: (x: number, z: number) => number = () => 0
+  /** A piece about `size` metres across struck the ground at `(x, y, z)` at `speed` m/s: heard landing. */
+  landed: (x: number, y: number, z: number, size: number, speed: number) => void = () => {}
 
   constructor(private readonly capacity = 40) {}
 
@@ -79,6 +85,8 @@ export class Debris {
       const floor = this.groundAt(object.position.x, object.position.z) + piece.rest
       if (object.position.y < floor) {
         object.position.y = floor
+        // Only a real blow is heard: not a small chip, and not one settling.
+        if (-velocity.y > LANDING_SPEED && piece.rest >= LANDING_REST) this.landed(object.position.x, floor - piece.rest, object.position.z, piece.rest * 2, -velocity.y)
         velocity.y = Math.abs(velocity.y) > 1 ? Math.abs(velocity.y) * 0.3 : 0
         velocity.x *= 0.6
         velocity.z *= 0.6

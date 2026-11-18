@@ -19,6 +19,8 @@ const MIST = 0xf2fbff
  * came down, metres per second, and throws the crown higher. Particles only, so nothing to clean up.
  */
 export function splash(world: FxWorld, at: V, size: number, speed = 0) {
+  // Heard further off than it is seen.
+  world.heard?.splash([at.x, at.y, at.z], size, speed)
   const eye = world.camera
   if (Math.hypot(eye.x - at.x, eye.y - at.y, eye.z - at.z) > RANGE) return
   // A crowded room thins its splashes before the pools start evicting each other.

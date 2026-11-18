@@ -9,6 +9,7 @@ import { loadPbvModel, PbvModel } from '@/render/pbv'
 import { PBV_BARREL_MAX, PBV_BARREL_MIN, PBV_CANNON_COOLDOWN_TICKS, PBV_HALF_EXTENTS, PBV_MAX_SPEED, PBV_TRACK_HALF } from '@/sim/consts'
 import { PBV_TRACKS } from '@/sim/slip'
 import type { SeatView } from '@/seats'
+import { DIESEL_SIX } from './engines'
 import { DRIVE, type VehicleKind } from './kind'
 
 /** A troop in the back: sealed in, sees out from behind the hull, and gets out by the rear doors. */
@@ -31,10 +32,8 @@ export const PBV: VehicleKind = {
   },
   // A diesel a little lower than the Strf 90's.
   sound: {
-    voices: [['sawtooth', 1, 0.5], ['square', 0.5, 0.36], ['sawtooth', 2.02, 0.12]],
-    q: 1.2,
     chop: { type: 'bandpass', hz: 660 },
-    engine: { name: 'gears', shifts: [0], top: PBV_MAX_SPEED, hz: 35, level: 0.28, tracks: true },
+    engine: { name: 'gears', synth: DIESEL_SIX, idle: 650, redline: 2600, spin: 1.4, shifts: [0, 0.25, 0.5, 0.75], top: PBV_MAX_SPEED, level: 0.48, tracks: true },
   },
   fx: {
     wheels: PBV_TRACKS,

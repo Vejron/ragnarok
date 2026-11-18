@@ -3,7 +3,8 @@
 import { KIND_SUBMARINE } from '@/net/codec'
 import { SubmarineModel } from '@/render/submarine'
 import { SUB_MAX_SPEED } from '@/sim/consts'
-import { PLAIN, DRIVE, type VehicleKind } from './kind'
+import { SUB_MOTORS } from './engines'
+import { PLAIN_CHOP, DRIVE, type VehicleKind } from './kind'
 
 /** It is 22 m long and its sail stands 3 m over the deck: the camera stands well off. */
 const SUB_DISTANCE = 26
@@ -21,10 +22,9 @@ export const SUBMARINE: VehicleKind = {
     ],
   },
   sound: {
-    // Electric motors under water: a low hum, a little uneven.
-    voices: [['sine', 1, 0.6], ['triangle', 2, 0.2], ['sine', 3.01, 0.08]],
-    ...PLAIN,
-    engine: { name: 'gears', shifts: [0], top: SUB_MAX_SPEED, hz: 55, level: 0.05 },
+    chop: PLAIN_CHOP,
+    // Electric motors under water: a low hum.
+    engine: { name: 'marine', synth: SUB_MOTORS, idle: 0, redline: 1800, spin: 2, shifts: [0], top: SUB_MAX_SPEED, level: 0.12 },
   },
   // No wheels: it carves a wake while it runs on the surface.
   fx: { wheels: null, drivenFrom: null, exhaust: null, bay: [0, 0, 6], floats: true },
