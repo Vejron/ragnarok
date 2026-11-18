@@ -88,7 +88,7 @@ impl Physics {
         // The tile alone, as the server's merged world holds it: what collides, under the same ids.
         let solid = Tile { buildings: tile.buildings.clone(), collision: tile.collision.clone(), trees: tile.trees.clone(), bridges: tile.bridges.clone(), lines: tile.lines.clone(), look: tile.look.clone(), graves: tile.graves.clone(), ..Default::default() };
         self.stones.set((col, row), tile.stones.clone());
-        self.waters.set((col, row), &tile.ground, &tile.water, &tile.reach);
+        self.waters.set((col, row), &tile.ground, &tile.water, &tile.reach, &tile.flow);
         let alone = Manifest { ground_cell: 0, tiles: Vec::new(), spawns: Vec::new(), ..manifest.clone() };
         let world = WorldFile::assemble(&alone, [(col, row, solid)]);
         for (collider, object) in object_colliders(&world)? {

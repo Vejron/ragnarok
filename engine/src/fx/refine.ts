@@ -143,6 +143,13 @@ export class MeshRefiner extends Effect {
   private sourcesChanged = false
   private dirty = false
   private gpu: RefineGpu | null = null
+  /**
+   * The arena's buffers its output was last copied into. The arena replaces them when it grows, copying
+   * the old ones over at once, so a copy this frame made into them before a later geometry grew the arena
+   * is lost: the square would stand empty (and what is under the water show through) until it next moved.
+   * Seeing new buffers, it copies its output in again.
+   */
+  private wroteTo: [GPUBuffer, GPUBuffer] | null = null
 
   /** `capacity` is the most source triangles the square may hold. */
   constructor(readonly capacity: number) {
@@ -184,6 +191,7 @@ export class MeshRefiner extends Effect {
       this.gpu = null
       this.sourcesChanged = this.dirty = true
     }
+    if (this.wroteTo && (this.wroteTo[0] !== ctx.vertices || this.wroteTo[1] !== ctx.indices)) this.dirty = true
     if (!this.dirty) return
     const slot = this.geometry.gpu as GeometrySlot | undefined
     // Its slot is made when its mesh is first drawn; until then there is nowhere to put it.
@@ -213,6 +221,7 @@ export class MeshRefiner extends Effect {
     }
     encoder.copyBufferToBuffer(gpu.outVertices, 0, ctx.vertices, slot.baseVertex * VERTEX_STRIDE, this.capacity * VERTS * VERTEX_STRIDE)
     encoder.copyBufferToBuffer(gpu.outIndices, 0, ctx.indices, slot.firstIndex * 4, this.capacity * TRIS * 3 * 4)
+    this.wroteTo = [ctx.vertices, ctx.indices]
     this.dirty = false
     this.ready = true
   }

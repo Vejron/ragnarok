@@ -3,7 +3,7 @@ import { Presenters, type Frame } from '@/entities/presenter'
 import { Pickups } from '@/entities/presenters/pickups'
 import { Soldiers } from '@/entities/presenters/people'
 import { Ghosts } from '@/entities/presenters/ghosts'
-import { GHOST_BLOCK_ENEMY, GHOST_FORM_TICKS, STANCE_FORM, STANCE_GHOST, TICK_MS } from '@/sim/consts'
+import { GHOST_BLOCK_ENEMY, GHOST_FORM_TICKS, STANCE_FORM, STANCE_GHOST, STANCE_SWIM, TICK_MS } from '@/sim/consts'
 import { Projectiles, type ProjectileWorld } from '@/entities/presenters/projectiles'
 import { EntityStore } from '@/entities/store'
 import type { Components } from '@/net/components.generated'
@@ -95,7 +95,7 @@ describe('the soldiers presenter', () => {
     const avatars = { draw: (id: number) => bodies.get(id) ?? bodies.set(id, body()).get(id)! }
     const shadows: number[][] = []
     const presenters = new Presenters<Frame>()
-    const soldiers = presenters.add(new Soldiers({ avatars: avatars as never, blobFoot: (x, y, z) => shadows.push([x, y, z]), rewave: () => 0, wade: () => {}, skiRun: () => {}, headlamp: () => {}, footfall: () => {}, zombie: () => {} }))
+    const soldiers = presenters.add(new Soldiers({ avatars: avatars as never, blobFoot: (x, y, z) => shadows.push([x, y, z]), rewave: () => 0, current: () => [0, 0], wade: () => {}, skiRun: () => {}, headlamp: () => {}, footfall: () => {}, zombie: () => {} }))
     const store = new EntityStore()
     // Flags: grounded | crouching | holding item 2; lying down. And a dead one, and the local player.
     const crouched: Components = { kind: { kind: 0 }, place: { x: 100, y: 90, z: 0 }, heading: { yaw: 500 }, flags: { flags: 1 | 4 | (2 << 3), stance: 1 }, motion: { vy: 0, knock_x: 900, knock_z: 0 } }
@@ -112,11 +112,33 @@ describe('the soldiers presenter', () => {
   })
 })
 
+describe('a swimmer in a current', () => {
+  it('strokes, and stirs the water, as fast as they go through it, not as fast as it carries them', () => {
+    const poses = new Map<number, unknown[]>()
+    const avatars = { draw: (id: number) => ({ update(...args: unknown[]) { poses.set(id, args) }, takeSteps: () => [] }) }
+    const wakes = new Map<number, number>()
+    const presenters = new Presenters<Frame>()
+    presenters.add(new Soldiers({ avatars: avatars as never, blobFoot: () => {}, rewave: () => 0, current: () => [2, 0.5], wade: (id, _x, _y, _z, speed) => wakes.set(id, speed), skiRun: () => {}, headlamp: () => {}, footfall: () => {}, zombie: () => {} }))
+    // The same move east, once swimming in the river and once walking on its bank.
+    const at = (x: number, stance: number): Components => ({ kind: { kind: 0 }, place: { x, y: 0, z: 0 }, heading: { yaw: 0 }, flags: { flags: 0, stance }, motion: { vy: 0, knock_x: 0, knock_z: 0 } })
+    const store = new EntityStore()
+    store.push(10, new Map([[3, at(0, STANCE_SWIM)], [4, at(0, 0)]]), true)
+    store.push(16, new Map([[3, at(50, STANCE_SWIM)], [4, at(50, 0)]]), true)
+    presenters.run(store.sampleAll(13), frame(13))
+    const [walkX, walkZ] = poses.get(4)!.slice(2, 4) as number[]
+    const [swimX, swimZ] = poses.get(3)!.slice(2, 4) as number[]
+    expect(walkX).toBeGreaterThan(1)
+    expect(swimX).toBeCloseTo(walkX! - 2)
+    expect(swimZ).toBeCloseTo(walkZ! - 0.5)
+    expect(wakes.get(3)).toBeCloseTo(Math.hypot(swimX!, swimZ!))
+  })
+})
+
 describe('the ghosts presenter', () => {
   it('draws a ghost as a cloud and not as a soldier, the local one from its prediction, and one taking shape as a swirl', () => {
     const log: string[] = []
     const presenters = new Presenters<Frame>()
-    const soldiers = presenters.add(new Soldiers({ avatars: { draw: () => ({ update() {} }) } as never, blobFoot: () => {}, rewave: () => 0, wade: () => {}, skiRun: () => {}, headlamp: () => {}, footfall: () => {}, zombie: () => {} }))
+    const soldiers = presenters.add(new Soldiers({ avatars: { draw: () => ({ update() {} }) } as never, blobFoot: () => {}, rewave: () => 0, current: () => [0, 0], wade: () => {}, skiRun: () => {}, headlamp: () => {}, footfall: () => {}, zombie: () => {} }))
     presenters.add(new Ghosts({
       draw: {
         flying: ([x], _velocity, _yaw, own, blocked) => log.push(`fly ${x} ${own ? 'own' : 'other'}${blocked ? ' blocked' : ''}`),

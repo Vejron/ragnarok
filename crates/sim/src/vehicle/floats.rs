@@ -60,13 +60,16 @@ pub(crate) fn float(body: &mut RigidBody, airframe: &Airframe, floats: &Floats, 
         return false;
     }
     let up = rotation * Vector::Y;
-    let mut velocity = body.linvel();
+    // Through the water: the current is taken off, and given back at the end. With nobody aboard, or
+    // the brake held, it is moored and holds where it is.
+    let drift = water.drift(controls.handbrake || !controls.powered);
+    let mut velocity = body.linvel() - drift;
     // Filled, it goes down slowly and settles on the bed.
     if condition.wrecked || up.y < UPRIGHT || water.height > at.y {
         velocity.y += SUNK_BUOYANCY * CAR_GRAVITY * dt;
         velocity.y *= (-SUNK_DAMPING * dt).exp();
         let drag = (-SUNK_DRAG * dt).exp();
-        body.set_linvel(Vector::new(velocity.x * drag, velocity.y, velocity.z * drag), true);
+        body.set_linvel(Vector::new(velocity.x * drag + drift.x, velocity.y, velocity.z * drag + drift.z), true);
         return false;
     }
     let nose = rotation * Vector::new(0.0, 0.0, -1.0);
@@ -79,7 +82,7 @@ pub(crate) fn float(body: &mut RigidBody, airframe: &Airframe, floats: &Floats, 
     let hold = wet.min(1.0);
 
     // It floats at its draft, rising and falling with the water under it.
-    let surfacing = water.rise + velocity.x * water.slope[0] + velocity.z * water.slope[1];
+    let surfacing = water.rise + (velocity.x + drift.x) * water.slope[0] + (velocity.z + drift.z) * water.slope[1];
     let falling = surfacing - velocity.y;
     velocity.y += CAR_GRAVITY * wet * dt;
     velocity.y += (surfacing - velocity.y) * (1.0 - (-HEAVE_DAMPING * hold * dt).exp());
@@ -99,7 +102,7 @@ pub(crate) fn float(body: &mut RigidBody, airframe: &Airframe, floats: &Floats, 
     if going > 0.0 {
         flat *= (going - slowing * dt).max(0.0) / going;
     }
-    body.set_linvel(Vector::new(flat.x, velocity.y, flat.z), true);
+    body.set_linvel(Vector::new(flat.x + drift.x, velocity.y, flat.z + drift.z), true);
 
     // The water rudder turns it while it taxis, with the propeller's wash at a standstill; as the wings
     // start to fly the stick takes over.
@@ -217,6 +220,20 @@ mod tests {
         assert!(tilt > 0.9, "it stays upright, up {tilt}");
         let drift = physics.car_pose(1).unwrap().position;
         assert!(drift[0].hypot(drift[2]) < 3.0, "with nobody aboard it lies where it is: {drift:?}");
+    }
+
+    #[test]
+    fn on_a_river_it_lies_moored_with_nobody_aboard_and_drifts_with_its_engine_idling() {
+        // The lake running east at 2 m/s.
+        let mut river = sea();
+        let step = (2.0 / shared::world::FLOW_STEP) as i8;
+        river.flow = river.water.iter().flat_map(|&w| if w == NO_WATER { [0, 0] } else { [step, 0] }).collect();
+        let mut physics = afloat(&river, 0.0, true);
+        let moored = fly(&mut physics, CarControls::IDLE, 20 * SECOND).position;
+        assert!(moored[0].hypot(moored[2]) < 1.0, "moored, it holds: {moored:?}");
+        let mut physics = afloat(&river, 0.0, true);
+        let drifting = fly(&mut physics, CarControls { powered: true, ..CarControls::IDLE }, 20 * SECOND).position;
+        assert!(drifting[0] > 15.0, "a pilot aboard with the throttle shut drifts downstream: {drifting:?}");
     }
 
     #[test]

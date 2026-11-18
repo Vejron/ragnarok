@@ -66,12 +66,14 @@ pub(crate) fn sail(body: &mut RigidBody, spec: &Spec, controls: CarControls, con
     forward.y = 0.0;
     let forward = forward.normalize_or_zero();
     let right = Vector::new(-forward.z, 0.0, forward.x);
-    let mut velocity = body.linvel();
+    // Through the water: the current is taken off, and given back at the end. At anchor she holds.
+    let drift = water.drift(controls.handbrake);
+    let mut velocity = body.linvel() - drift;
     let speed = velocity.dot(forward);
 
     // It floats at its draft, rising and falling with the water under it; a wreck fills and goes down.
     let buoyancy = if condition.wrecked { WRECK_BUOYANCY } else { 1.0 };
-    let surfacing = if condition.wrecked { 0.0 } else { water.rise + velocity.x * water.slope[0] + velocity.z * water.slope[1] };
+    let surfacing = if condition.wrecked { 0.0 } else { water.rise + (velocity.x + drift.x) * water.slope[0] + (velocity.z + drift.z) * water.slope[1] };
     velocity.y += buoyancy * CAR_GRAVITY * under / DRAFT * dt;
     velocity.y += (surfacing - velocity.y) * (1.0 - (-HEAVE_DAMPING * dt).exp());
 
@@ -100,7 +102,7 @@ pub(crate) fn sail(body: &mut RigidBody, spec: &Spec, controls: CarControls, con
     if going > 0.0 {
         flat *= (going - slowing * dt).max(0.0) / going;
     }
-    body.set_linvel(Vector::new(flat.x, velocity.y, flat.z), true);
+    body.set_linvel(Vector::new(flat.x + drift.x, velocity.y, flat.z + drift.z), true);
 
     // The rudder turns it as it makes way through the water, and holds it straight when it is let be.
     let mut spin = body.angvel();

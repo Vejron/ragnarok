@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::terrain::Ground;
 
-pub const WORLD_VERSION: u8 = 29;
+pub const WORLD_VERSION: u8 = 30;
 
 /// `Manifest::theme`: the world as it always was.
 pub const THEME_PLAIN: u8 = 0;
@@ -292,6 +292,12 @@ pub struct Tile {
     /// most a byte holds on the sea. The waves rise with it (`waves::fetch`). Empty when `water` is.
     #[serde(with = "bytes")]
     pub reach: Vec<u8>,
+    /// Which way and how fast a river's water runs at each ground sample: `x` then `z`, in steps of
+    /// `FLOW_STEP` m/s, two entries a sample in the layout of `water` (0 on still water and where it
+    /// is dry). It carries swimmers and whatever floats downstream, and is fastest in rapids. Empty
+    /// when no water in the tile flows.
+    #[serde(with = "samples8")]
+    pub flow: Vec<i8>,
     /// Streams: narrow watercourses drawn as ribbons draped on the ground, clipped to the tile.
     pub streams: Vec<Stream>,
     /// Bridges' steel (pylons, stay cables): ranges of this tile's collision triangles, collided
@@ -529,6 +535,9 @@ pub struct Bridge {
 /// The step `Tile::reach` counts in, metres: a byte reaches 1020 m, wide enough for every swell.
 pub const REACH_STEP: f32 = 4.0;
 
+/// The step `Tile::flow` counts in, m/s: a byte holds up to 6.35 m/s, faster than any rapid.
+pub const FLOW_STEP: f32 = 0.05;
+
 /// `Tile::water` entry for a sample with no water.
 pub const NO_WATER: i32 = i32::MIN;
 
@@ -578,6 +587,10 @@ pub struct WorldFile {
     /// `assemble` with `water`.
     #[serde(skip)]
     pub reach: Vec<u8>,
+    /// Which way and how fast the water runs at each `ground` sample, as `Tile::flow` (two entries a
+    /// sample). Filled by `assemble` with `water`; empty when no water flows.
+    #[serde(skip)]
+    pub flow: Vec<i8>,
     /// `THEME_*`, from the manifest.
     #[serde(skip)]
     pub theme: u8,
@@ -1348,11 +1361,18 @@ impl WorldFile {
                         world.reach = vec![0; ground.heights.len()];
                     }
                     let reach = tile.reach.len() == tile.water.len();
+                    let flow = tile.flow.len() == 2 * tile.water.len();
+                    if flow && world.flow.is_empty() {
+                        world.flow = vec![0; 2 * ground.heights.len()];
+                    }
                     for j in 0..n {
                         let (at, from) = (((j0 + j) * ground.side + i0) as usize, (j * n) as usize);
                         world.water[at..at + n as usize].copy_from_slice(&tile.water[from..from + n as usize]);
                         if reach {
                             world.reach[at..at + n as usize].copy_from_slice(&tile.reach[from..from + n as usize]);
+                        }
+                        if flow {
+                            world.flow[2 * at..2 * (at + n as usize)].copy_from_slice(&tile.flow[2 * from..2 * (from + n as usize)]);
                         }
                     }
                 }
@@ -1528,6 +1548,7 @@ mod tests {
             trees: vec![Tree { x: 5, z: -7, base: 120, height: 1200, crown: 220, kind: TREE_BIRCH, solid: true }],
             water: vec![NO_WATER, 40, 40, NO_WATER],
             reach: vec![0, 50, 50, 0],
+            flow: vec![0, 0, 20, -4, 18, -6, 0, 0],
             streams: vec![Stream { width: 200, points: vec![[0, 0], [300, 100]] }],
             bridges: vec![Bridge { first: 0, steel: 4 }],
             detail: vec![0, -3, 127, -127],
@@ -1540,14 +1561,14 @@ mod tests {
             graves: vec![Grave { x: 40, z: -60, base: 120, yaw: -1571, kind: GRAVE_CROSS }],
         };
         assert_eq!(Tile::decode(&tile.encode()).unwrap(), tile);
-        assert_eq!(tile.encode()[..3], [0xdc, 0, 18], "an array of all 18 fields");
+        assert_eq!(tile.encode()[..3], [0xdc, 0, 19], "an array of all 19 fields");
         // An empty tile is every field still, each empty.
         let empty = Tile::default().encode();
-        assert_eq!(empty[..3], [0xdc, 0, 18]);
+        assert_eq!(empty[..3], [0xdc, 0, 19]);
         assert_eq!(Tile::decode(&empty).unwrap(), Tile::default());
         // A tile without its last field, the tombstones (`[]`, its last byte), is refused.
         assert_eq!(empty[empty.len() - 1], 0x90);
-        let mut short = vec![0xdc, 0, 17];
+        let mut short = vec![0xdc, 0, 18];
         short.extend_from_slice(&empty[3..empty.len() - 1]);
         assert!(Tile::decode(&short).is_err());
         assert_eq!(manifest.tiles[0].path(), "tiles/1_0.msgpack");
@@ -1555,7 +1576,7 @@ mod tests {
 
     #[test]
     fn water_and_detail_are_written_as_little_endian_bytes() {
-        let tile = Tile { water: vec![NO_WATER, 40, 40], reach: vec![0, 7, 255], detail: vec![-1, 5], ..Default::default() };
+        let tile = Tile { water: vec![NO_WATER, 40, 40], reach: vec![0, 7, 255], flow: vec![0, 0, 12, -80, 127, -128], detail: vec![-1, 5], ..Default::default() };
         let bytes = tile.encode();
         // msgpack `bin 8` (0xc4), its length, then the samples low byte first: what the client reads
         // as an `Int32Array` or `Int8Array` (`decodeTile`).
@@ -1563,6 +1584,7 @@ mod tests {
         assert!(find(&[0xc4, 12, 0, 0, 0, 0x80, 40, 0, 0, 0, 40, 0, 0, 0]));
         assert!(find(&[0xc4, 2, 0xff, 5]));
         assert!(find(&[0xc4, 3, 0, 7, 255]), "the reach, a byte a sample");
+        assert!(find(&[0xc4, 6, 0, 0, 12, 0xb0, 127, 0x80]), "the flow, two signed bytes a sample");
         assert_eq!(Tile::decode(&bytes).unwrap(), tile);
     }
 
@@ -1617,10 +1639,13 @@ mod tests {
         pond[4] = 50;
         let mut reach = vec![0; 9];
         reach[4] = 9;
-        let wet = Tile { ground: vec![0; 9], water: pond, reach, ..Default::default() };
+        let mut flow = vec![0; 18];
+        flow[8..10].copy_from_slice(&[20, -7]);
+        let wet = Tile { ground: vec![0; 9], water: pond, reach, flow, ..Default::default() };
         let world = WorldFile::assemble(&manifest, [(0, 0, dry.clone()), (1, 0, wet), (0, 1, dry.clone()), (1, 1, dry)]);
         assert_eq!(world.water.len(), 25);
         assert_eq!((world.reach.len(), world.reach[5 + 3]), (25, 9), "the reach is joined with the water");
+        assert_eq!((world.flow.len(), &world.flow[2 * (5 + 3)..2 * (5 + 3) + 2]), (50, &[20i8, -7][..]), "and so is the flow");
         assert!(world.wet(1_000, -1_000));
         assert!(world.wet(1_300, -800), "the nearest sample decides");
         assert!(!world.wet(-1_000, -1_000));

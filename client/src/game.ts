@@ -568,7 +568,7 @@ export class Game {
     this.flying.add(this.lying)
     this.flying.add(new Backpacks(this.backpackModels))
     const blobFoot = (x: number, y: number, z: number) => this.surroundings.blobFoot(x, y, z)
-    this.soldiers = this.people.add(new Soldiers({ avatars: this.avatars, blobFoot, rewave: (x, z, tick) => this.rewave(x, z, tick), wade: (id, x, y, z, speed, dt) => this.surroundings.wade(id, x, y, z, speed, dt), skiRun: (id, x, z, vx, vz, grounded, dt) => this.skiTracks?.run(id, x, z, vx, vz, grounded, dt), headlamp: (avatar) => this.shine(avatar), footfall: (x, y, z, weight) => this.sounds.step([x, y - STANDING_Y, z], this.surroundings.stepGround(x, y, z), weight), zombie: (id, x, y, z, clawing, dt) => this.zombieVoices.hear(id, x, y, z, clawing, dt) }))
+    this.soldiers = this.people.add(new Soldiers({ avatars: this.avatars, blobFoot, rewave: (x, z, tick) => this.rewave(x, z, tick), current: (x, z) => this.waters?.flowAt(x, z) ?? [0, 0], wade: (id, x, y, z, speed, dt) => this.surroundings.wade(id, x, y, z, speed, dt), skiRun: (id, x, z, vx, vz, grounded, dt) => this.skiTracks?.run(id, x, z, vx, vz, grounded, dt), headlamp: (avatar) => this.shine(avatar), footfall: (x, y, z, weight) => this.sounds.step([x, y - STANDING_Y, z], this.surroundings.stepGround(x, y, z), weight), zombie: (id, x, y, z, clawing, dt) => this.zombieVoices.hear(id, x, y, z, clawing, dt) }))
     this.riders = this.people.add(new Riders(this.avatars, this.vehicles))
     this.liftRiders = this.people.add(new LiftRiders(this.avatars, () => this.liftView, () => this.liftTick()))
     this.people.add(new Roosters({ root: this.scene.scene, listener: () => this.predictor?.state.position ?? [0, 0, 0], blobFoot }))
@@ -1132,7 +1132,7 @@ export class Game {
     }
     const eye = this.scene.camera.position
     this.waves.update(dt, eye)
-    this.waterRefine.update(eye)
+    this.waterRefine.update(eye, this.surroundings.mirrored)
     this.view.update(dt, this.effects, this.cameraAt.set(eye.x, eye.y, eye.z), this.fxWorld)
     const ticks = this.runTicks(dt)
     const renderTick = this.clock.tickAt(now) - this.clock.interpDelay
@@ -1311,7 +1311,10 @@ export class Game {
 
   /** Draws the local soldier. */
   private poseLocal({ dt, seated, flying, sitting, scoped, reading, position, local, velocity, lookYaw, lookPitch, view }: Moment) {
-    const [vx, vz] = velocity
+    // A swimmer strokes, and stirs the water, as fast as they go through it: the current carrying them is not theirs.
+    const [cx, cz] = local.swimming && !seated ? (this.waters?.flowAt(position[0], position[2]) ?? [0, 0]) : [0, 0]
+    const vx = velocity[0] - cx
+    const vz = velocity[1] - cz
     this.avatars.begin()
     const me = this.avatars.local()
     // Reading the map the view is at the eyes, inside the head.

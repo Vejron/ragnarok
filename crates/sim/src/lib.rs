@@ -984,7 +984,7 @@ impl Physics {
         character.chute = false;
         character.ski_strain = 0;
         character.down = character.down.saturating_sub(1);
-        let (level, rise) = self.surface_at(character.position).map_or((character.position[1] + SWIM_FLOAT, 0.0), |surface| (surface.height, surface.rise));
+        let (level, rise, flow) = self.surface_at(character.position).map_or((character.position[1] + SWIM_FLOAT, 0.0, [0.0; 2]), |surface| (surface.height, surface.rise, surface.flow));
         // A stroke with run held spends stamina as running does; nothing else costs any.
         let stroke = InputFrame { buttons: input.buttons & !(BUTTON_JUMP | BUTTON_CROUCH | BUTTON_PRONE), ..*input };
         let (spent, winded, _) = spend_stamina(character.spent, character.winded, true, false, &stroke);
@@ -995,7 +995,8 @@ impl Physics {
         let (vy, [vx, vz]) = swim_velocity(character.vy, gap, rise, character.grounded, input, speed_scale, fast, dt);
         let knock = character.knock.map(|v| v * SWIM_KNOCK_KEEP);
         character.knock = if knock[0].hypot(knock[1]) < KNOCK_MIN_SPEED { [0.0, 0.0] } else { knock };
-        let desired = [(vx + character.knock[0]) * dt, vy * dt, (vz + character.knock[1]) * dt];
+        // The current carries them on top of their strokes: across a rapid, not up it.
+        let desired = [(vx + character.knock[0] + flow[0]) * dt, vy * dt, (vz + character.knock[1] + flow[1]) * dt];
         let queries = self.broad_phase.as_query_pipeline(self.narrow_phase.query_dispatcher(), &self.bodies, &self.colliders, QueryFilter::default());
         let shape = self.shape(character.prone).shape();
         let start = Vector::from(character.position);

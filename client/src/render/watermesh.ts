@@ -1,6 +1,6 @@
 import type { TileGround } from '@/sim/terrain'
 import { NO_WATER, type Stream } from '@/world'
-import { REACH_STEP } from '@/sim/waves'
+import { FLOW_STEP, REACH_STEP } from '@/sim/waves'
 import type { Height } from './shade'
 
 /*
@@ -20,8 +20,13 @@ const STREAM_DEPTH = 0.45
 /** Water cells wider than this, metres, are cut into smaller ones, fine enough for the waves to bend. */
 const WAVE_CELL = 1.5
 /**
+ * A lake's or river's current goes in `custom.zw` as `(x, z - FLOW_BIAS)` m/s, so its `w` is always well
+ * under a stream's 1 and the shader tells the two apart as before.
+ */
+export const FLOW_BIAS = 10
+/**
  * A water mesh: positions, the shader's `custom` attribute (depth, then a stream's flow, or on a lake or
- * river the open water's reach in metres in y), and indices.
+ * river the open water's reach in metres in y and its current in zw, `FLOW_BIAS` off in w), and indices.
  */
 export interface WaterBuffers {
   positions: Float32Array
@@ -36,9 +41,9 @@ export interface WaterBuffers {
  * touch water are triangulated. Depth is `water - ground` at the vertices and interpolates across
  * a cell, so the shoreline (depth 0) falls between a wet and a dry sample, and islands stay dry
  * because their ground is above the level. `reach` (`TileData.reach`) is how wide the water is at each
- * sample, which the waves grow with. Null when the tile has no water.
+ * sample, which the waves grow with, and `flow` (`TileData.flow`) which way it runs. Null when the tile has no water.
  */
-export function surfaceBuffers(water: Float32Array, ground: TileGround, reach?: Uint8Array): WaterBuffers | null {
+export function surfaceBuffers(water: Float32Array, ground: TileGround, reach?: Uint8Array, flow?: Int8Array): WaterBuffers | null {
   const { x0, z0, cell, side, heights } = ground
   if (water.length !== side * side) return null
   const positions = new Float32Array(side * side * 3)
@@ -52,8 +57,11 @@ export function surfaceBuffers(water: Float32Array, ground: TileGround, reach?: 
       const dry = level === NO_WATER
       positions.set([x0 + column * cell, dry ? heights[at]! : level, z0 + row * cell], at * 3)
       depths[at] = dry ? -1 : level - heights[at]!
-      // Lake and river water carries no flow, so its reach goes where a stream's flow would.
+      // A lake's or river's reach and current go where a stream's flow would.
       flows[at * 3] = reach && reach.length === water.length ? reach[at]! * REACH_STEP : 0
+      const flowing = flow && flow.length === 2 * water.length
+      flows[at * 3 + 1] = flowing ? flow[at * 2]! * FLOW_STEP : 0
+      flows[at * 3 + 2] = (flowing ? flow[at * 2 + 1]! * FLOW_STEP : 0) - FLOW_BIAS
     }
   }
   const indices: number[] = []
@@ -127,7 +135,7 @@ function subdivided(positions: Float32Array, depths: Float32Array, flows: Float3
 
 /**
  * The vertex attribute the shader reads: depth in x, and in yzw a stream's flow (along, across, is-stream)
- * or a lake or river's reach (metres, 0, 0).
+ * or a lake or river's reach (metres) and current (x, z - `FLOW_BIAS`, m/s).
  */
 function surfaceCustom(depths: Float32Array, flows: Float32Array): Float32Array {
   const out = new Float32Array(depths.length * 4)

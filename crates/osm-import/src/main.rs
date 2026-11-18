@@ -19,7 +19,7 @@
 //! Credentials, data sources and the cache are described in `WORLD.md`.
 
 use osm_import::region::{Place, Region};
-use osm_import::{assemble, bushes, cache, canopy, dem, detail, grid, ground, ign, lidar, minimap, osm, overpass, paint, pbf, progress, roof, species, trees, water};
+use osm_import::{assemble, bushes, cache, canopy, condition, dem, detail, grid, ground, ign, lidar, minimap, osm, overpass, paint, pbf, progress, roof, species, trees, water};
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use std::path::PathBuf;
@@ -71,6 +71,10 @@ struct Args {
     /// Leave out lakes, rivers and streams.
     #[arg(long)]
     no_water: bool,
+    /// Take the ground as the height model has it, without levelling it under buildings, cutting
+    /// streams into it or grading it to roads and rails (`condition.rs`).
+    #[arg(long)]
+    raw_ground: bool,
     /// Do not render `minimap.webp`, the top-down map the client shows, next to the world.
     #[arg(long)]
     no_minimap: bool,
@@ -222,9 +226,12 @@ fn water_map(args: &Args, place: &Place, pieces: Option<&[[f64; 4]]>) -> Result<
 
 /// The terrain under the world, the elevation of its y = 0 and the water over it, from `--dem` or
 /// Lantmäteriet, or flat with `--cell 0`. Lakes and rivers are carved into the ground.
-fn terrain(args: &Args, place: &Place, mask: Option<&std::collections::BTreeSet<(u16, u16)>>, map: &water::Map, landforms: &[osm_import::ocad::relief::Landform], cliffs: &[osm_import::ocad::relief::Cliff]) -> Result<(shared::terrain::Ground, f64, Option<dem::Dem>, water::Placed)> {
+/// The ground is shaped to `features` (`condition.rs`); the shaping comes back too, for the detail
+/// slopes to follow.
+#[allow(clippy::too_many_arguments)]
+fn terrain(args: &Args, place: &Place, mask: Option<&std::collections::BTreeSet<(u16, u16)>>, map: &water::Map, features: &condition::Features, landforms: &[osm_import::ocad::relief::Landform], cliffs: &[osm_import::ocad::relief::Cliff]) -> Result<(shared::terrain::Ground, f64, Option<dem::Dem>, water::Placed, condition::Shaping)> {
     if args.cell == 0.0 {
-        return Ok((Default::default(), 0.0, None, Default::default()));
+        return Ok((Default::default(), 0.0, None, Default::default(), Default::default()));
     }
     let (bbox, half) = (place.bbox, place.half);
     let window = source_window(args, place);
@@ -273,9 +280,16 @@ fn terrain(args: &Args, place: &Place, mask: Option<&std::collections::BTreeSet<
     if !landforms.is_empty() {
         eprintln!("ocad: {} knolls and pits, {} shaped into the ground, {} already in the height model", landforms.len(), relief.len(), enough);
     }
+    progress::stage("shaping");
+    let shaping = condition::Shaping::new(features, |x, z| {
+        let (e, n) = place.source(x, z);
+        model(e, n)
+    });
+    let (cells, moved) = shaping.moved();
+    eprintln!("shaping: {} buildings, {} streams, {} roads and rails; {cells} m² of ground moved {:.2} m on average", features.pads.len(), features.streams.len(), features.ways.len(), moved / cells.max(1) as f64);
     let shaped = |x: f64, z: f64| {
         let (e, n) = place.source(x, z);
-        source.mean(e, n, half_cell).map(|height| f64::from(height) + relief.at(e, n))
+        source.mean(e, n, half_cell).map(|height| f64::from(height) + relief.at(e, n) + shaping.mean(x, z, half_cell))
     };
     let (ground, datum) = ground::build_where(half, args.tile, args.cell, wanted, shaped, |x, z, dem| surface.bed(x, z, dem))?;
     let placed = water::Placed::new(map, &surface, datum, &ground);
@@ -297,7 +311,7 @@ fn terrain(args: &Args, place: &Place, mask: Option<&std::collections::BTreeSet<
         };
         eprintln!("ocad: on the ground, the median cliff is a step of {:.2} m", osm_import::ocad::relief::cliff_median(cliffs, on_ground));
     }
-    Ok((ground, datum, Some(source), placed))
+    Ok((ground, datum, Some(source), placed, shaping))
 }
 
 fn report(map: &water::Map, placed: &water::Placed) {
@@ -549,8 +563,6 @@ fn main() -> Result<()> {
         if let (Some(ocad), Some(path)) = (&ocad, &options.minimap_image) {
             print = ocad.print(path, &place).inspect_err(|error| eprintln!("no print of the map: {error:#}")).ok();
         }
-        let (landforms, cliffs) = ocad.as_ref().map_or((&[][..], &[][..]), |ocad| (ocad.landforms.as_slice(), ocad.cliffs.as_slice()));
-        let (ground, datum, dem, placed) = terrain(&args, &place, mask, &map, landforms, cliffs)?;
         // Everything the passes below want, in one read: from the local extract, or from Overpass, whose
         // public servers shed load with 504s (a few rounds over all of them usually get through).
         progress::stage("openstreetmap");
@@ -564,6 +576,9 @@ fn main() -> Result<()> {
             }
             None => osm,
         };
+        let (landforms, cliffs) = ocad.as_ref().map_or((&[][..], &[][..]), |ocad| (ocad.landforms.as_slice(), ocad.cliffs.as_slice()));
+        let features = if args.raw_ground { condition::Features::default() } else { condition::Features::from_osm(&osm, place.frame, &map.streams) };
+        let (ground, datum, dem, placed, shaping) = terrain(&args, &place, mask, &map, &features, landforms, cliffs)?;
         let Laser { roofs: cloud, decks, trees: detected, bushes: found_bushes } = laser(&args, &place, mask, datum, &osm, dem.as_ref())?;
         progress::stage("trees");
         let register = match trees::Register::over(place.region, bbox).filter(|_| !args.no_trees) {
@@ -636,9 +651,10 @@ fn main() -> Result<()> {
             progress::stage("detail");
             let model = |half: f64| {
                 let place = &place;
+                let shaping = &shaping;
                 move |x: f64, z: f64| {
                     let (e, n) = place.source(x, z);
-                    source.mean(e, n, half).map(f64::from)
+                    source.mean(e, n, half).map(|height| f64::from(height) + shaping.mean(x, z, half))
                 }
             };
             detail::bake(&mut built, &coarse, datum, args.detail, model(args.cell / 2.0), model(args.detail / 2.0));

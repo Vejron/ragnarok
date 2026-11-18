@@ -3,6 +3,7 @@ import type { TileGround } from '@/sim/terrain'
 import type { TileData } from '@/world'
 import type { HeightSource } from './shade'
 import { waterBuffers, type WaterBuffers } from './groundmesh'
+import { FLOW_BIAS } from './watermesh'
 import { GROUND_LIGHT_WGSL } from './groundlight'
 import { WAVES_WGSL } from '@/sim/waves'
 
@@ -59,6 +60,13 @@ fn wakeLift(p: vec2f) -> f32 {
 const FOAM_DEPTH = 0.35
 /** Along-stream speed of the flow, metres per second. */
 const FLOW_SPEED = 1.4
+/**
+ * A river's ripples and foam ride its current: two copies of them, each carried downstream for this long,
+ * seconds, then started over, half a cycle apart and crossfaded, so they move without smearing.
+ */
+const FLOW_CYCLE = 1.2
+/** From the first current (m/s) its foam starts to streak, from the second it runs white, all of it by the third. */
+const FOAM_SPEEDS = [0.7, 1.5, 3.2] as const
 
 /** Moves each vertex of a lake or river with the waves. Its functions serve the fragment too. */
 const VERTEX = /* wgsl */ `
@@ -67,6 +75,18 @@ ${WAVES_WGSL}
 // How much of the waves this water has: none on a stream or on ice, less towards the shore.
 fn waveShare(custom: vec4f) -> f32 {
   return select(waveShore(custom.x), 0.0, custom.w > 0.5) * params.wave.y;
+}
+
+// A lake's or river's current, m/s (none on a stream, which keeps its own flow).
+fn current(custom: vec4f) -> vec2f {
+  return select(vec2f(custom.z, custom.w + ${FLOW_BIAS.toFixed(1)}), vec2f(0.0), custom.w > 0.5);
+}
+
+// A rapid's standing waves, as the sim rides them (none on ice). They light the surface but do not lift
+// it: lifting the vertices by them cost 1.3 to 1.8 ms a frame at Retina size over a rapid (gpu-bench,
+// RIVERS.md), for a 22 cm heave the foam hides.
+fn standing(p: vec2f, custom: vec4f) -> vec3f {
+  return churnWaves(p, params.wave.x, length(current(custom))) * params.wave.y;
 }
 
 ${WAKES_WGSL}
@@ -133,6 +153,47 @@ fn chop(p: vec2f, t: f32, fine: f32, mid: f32) -> vec3f {
        + fine * 0.2 * octave(p, t, 1.45, 3.7, vec2f(1.5, 0.8));
 }
 
+// The chop with its broadest octave carried along by \`current\` (m/s): two copies of that octave, each
+// dragged downstream for a \`FLOW_CYCLE\` and started over, half a cycle apart and each weighted most
+// halfway through its run. It is what the eye follows; the finer ones drift as on a lake, which costs
+// a river one noise more a pixel than a lake, not four.
+fn carriedChop(p: vec2f, t: f32, fine: f32, mid: f32, current: vec2f) -> vec3f {
+  if (dot(current, current) < 0.0025) {
+    return chop(p, t, fine, mid);
+  }
+  let phase = fract(t / ${FLOW_CYCLE.toFixed(2)});
+  let weight = 1.0 - abs(1.0 - 2.0 * phase);
+  let a = octave(p - current * phase * ${FLOW_CYCLE.toFixed(2)}, t, 0.11, 0.0, vec2f(0.9, 0.35));
+  let b = octave(p - current * fract(phase + 0.5) * ${FLOW_CYCLE.toFixed(2)} + vec2f(13.7, 7.1), t, 0.11, 0.0, vec2f(0.9, 0.35));
+  // Two copies blended lose some contrast at the crossover: made up so the chop is as strong as a lake's.
+  return (a * weight + b * (1.0 - weight)) * 1.3
+       + 0.6 * octave(p, t, 0.26, 1.1, vec2f(1.1, -0.5))
+       + mid * 0.35 * octave(p, t, 0.63, 2.3, vec2f(-0.4, 1.3))
+       + fine * 0.2 * octave(p, t, 1.45, 3.7, vec2f(1.5, 0.8));
+}
+
+// Foam on running water at \`q\`, about -1 to 1: streaks drawn out along \`dir\`, the way it runs (the noise
+// smeared back along it, so a slow turn of the current never shears it). Far off (\`fine\` 0), where no
+// streak can be told, one noise.
+fn frothAt(q: vec2f, dir: vec2f, fine: f32) -> f32 {
+  let p = q * 1.3;
+  var streak = vnoise(p).x;
+  if (fine > 0.0) {
+    streak = mix(streak, 0.5 * (streak + vnoise(p - dir * 1.1).x), fine);
+  }
+  return streak * 1.1;
+}
+
+// That foam carried along by \`current\` as \`carriedChop\` carries the chop.
+fn carriedFroth(p: vec2f, t: f32, current: vec2f, fine: f32) -> f32 {
+  let dir = current / max(length(current), 1e-3);
+  let phase = fract(t / ${FLOW_CYCLE.toFixed(2)});
+  let weight = 1.0 - abs(1.0 - 2.0 * phase);
+  let a = frothAt(p - current * phase * ${FLOW_CYCLE.toFixed(2)}, dir, fine);
+  let b = frothAt(p - current * fract(phase + 0.5) * ${FLOW_CYCLE.toFixed(2)} + vec2f(5.3, 9.1), dir, fine);
+  return a * weight + b * (1.0 - weight);
+}
+
 // Where the wind is gusting, 0 (a glassy slick) to 1 (ruffled dark water): broad patches, tens of metres
 // to a couple of hundred across, that drift slowly, so water seen from above is never the same twice.
 fn gusts(p: vec2f, t: f32) -> f32 {
@@ -176,6 +237,10 @@ fn surface(s: Surface) -> vec4f {
   if (!stream && s.uv.x < 0.5 && inRefine(world) >= 0.0) {
     discard;
   }
+  // And the refined mesh, which reaches a cell past the square, leaves what is outside it to the tiles.
+  if (s.uv.x >= 0.5 && inRefine(world) < 0.0) {
+    discard;
+  }
   var p = world * 0.7;
   if (stream) {
     p = vec2f(flow.x - time * ${FLOW_SPEED.toFixed(2)}, flow.y * 3.0) * 2.2;
@@ -184,9 +249,13 @@ fn surface(s: Surface) -> vec4f {
   let away = length(to);
   let fine = 1.0 - smoothstep(25.0, 110.0, away);
   let mid = 1.0 - smoothstep(80.0, 320.0, away);
-  // Lakes and rivers: the wind's chop, stronger in the gusts. A stream keeps its flow's bands.
+  // Lakes and rivers: the wind's chop, stronger in the gusts, carried along by a river's current; how
+  // white the water runs with it. A stream keeps its flow's bands.
+  let flowing = current(s.custom);
+  let speed = length(flowing);
+  let white = smoothstep(${FOAM_SPEEDS[1].toFixed(2)}, ${FOAM_SPEEDS[2].toFixed(2)}, speed) * params.wave.y;
   let gust = select(gusts(world, time), 0.5, stream);
-  let chopped = select(chop(world, time, fine, mid), vec3f(0.0), stream);
+  let chopped = select(carriedChop(world, time, fine, mid, flowing), vec3f(0.0), stream);
   let wave = select(clamp(chopped.x * 0.5, -1.0, 1.0) * mix(0.7, 1.15, gust), bands(p, 0.0), stream);
   let band = smoothstep(0.35, 0.5, wave) * 0.5 + smoothstep(0.6, 0.7, wave) * 0.5;
 
@@ -207,10 +276,11 @@ fn surface(s: Surface) -> vec4f {
   let e = 0.15;
   let h = bands(p, 0.0);
   let flowRipple = vec2f(bands(p + vec2f(e, 0.0), 0.0) - h, bands(p + vec2f(0.0, e), 0.0) - h) / e * 0.5;
-  let grad = select(chopped.yz * mix(0.35, 1.1, gust), flowRipple, stream);
-  // The real waves' slope, with the small swell's ripples over it.
+  let grad = select(chopped.yz * mix(0.35, 1.1, gust) * (1.0 + 1.5 * white), flowRipple, stream);
+  // The real waves' slope, with the small swell's ripples over it, and a rapid's standing waves.
   let share = waveShare(s.custom);
-  let big = waves(world, params.wave.x, s.custom.y) * share;
+  let stand = standing(world, s.custom);
+  let big = waves(world, params.wave.x, s.custom.y) * share + vec3f(0.0, stand.yz);
   // And what has moved through it: its bow waves, wakes and rings, and their churn.
   let churn = wake(world) * wakeShare(s.custom);
   var n = normalize(vec3f(-grad.x * 0.45 - big.y - churn.y, 1.0, -grad.y * 0.45 - big.z - churn.z));
@@ -272,6 +342,17 @@ fn surface(s: Surface) -> vec4f {
   let froth = vnoise(world * 3.1 + vec2f(time * 0.3, time * 0.2)).x * 0.5 + 0.5;
   let wash = smoothstep(0.0, 0.25, churn.w - froth * 0.8) * mix(0.75, 1.0, lace);
   color = mix(color, params.foam * ground, wash * 0.9);
+  // Running water: foam streaks drawn out along a brisk current, and a rapid churned white, the
+  // more of it the faster it runs.
+  var rush = 0.0;
+  if (speed > ${FOAM_SPEEDS[0].toFixed(2)} && !stream) {
+    let foamy = carriedFroth(world, time, flowing, fine) * 0.5 + 0.5;
+    let amount = max(white, 0.45 * smoothstep(${FOAM_SPEEDS[0].toFixed(2)}, ${FOAM_SPEEDS[1].toFixed(2)}, speed));
+    // Broken white over dark water between, thickest on the standing waves' crests.
+    let edge = mix(0.72, 0.42, white);
+    rush = smoothstep(edge, edge + 0.14, foamy + 1.4 * max(stand.x, 0.0)) * amount * params.wave.y;
+    color = mix(color, params.foam * ground, rush * 0.9);
+  }
 
   if (params.ice.x > 0.5) {
     // Wind-scoured ice under drifts of snow, with the odd long crack: still, and opaque.
@@ -280,7 +361,7 @@ fn surface(s: Surface) -> vec4f {
     let ice = mix(vec3f(0.74, 0.86, 0.93), vec3f(0.92, 0.95, 0.98), drift) * (1.0 - crack * 0.14 * (1.0 - drift));
     return vec4f(ice * ground * 1.15 + mirror * fresnel * 0.2 * (1.0 - drift), 1.0);
   }
-  var alpha = max(smoothstep(0.0, 0.1, depth) * mix(0.62, 0.9, deep), max(cap, wash) * 0.9);
+  var alpha = max(smoothstep(0.0, 0.1, depth) * mix(0.62, 0.9, deep), max(max(cap, wash), rush) * 0.9);
   alpha = clamp(alpha - clear * 0.12 + fresnel * 0.35 + spark * 0.4, 0.0, 1.0);
   return vec4f(color, alpha);
 }
@@ -398,7 +479,7 @@ export function setWaterLight(sky: number, sun: number, cloud: Readonly<Color>) 
  * One tile's water, or null if it has none: from `prepared` when `prepareTile` built it already. It
  * is translucent and added apart from the tile's group so the game can place it in the world apart from the tile.
  */
-export function buildWater(tile: Pick<TileData, 'water' | 'reach' | 'streams'>, ground: TileGround, around?: HeightSource, prepared?: WaterBuffers[]): Group | null {
+export function buildWater(tile: Pick<TileData, 'water' | 'reach' | 'flow' | 'streams'>, ground: TileGround, around?: HeightSource, prepared?: WaterBuffers[]): Group | null {
   const meshes = (prepared ?? waterBuffers(tile, ground, around)).map((buffers) => {
     const mesh = new Mesh(new Geometry(buffers), material())
     mesh.renderOrder = 1

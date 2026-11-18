@@ -7,6 +7,7 @@ pub mod bushes;
 pub mod catalogue;
 pub mod church;
 pub mod classify;
+pub mod condition;
 pub mod cache;
 pub mod canopy;
 pub mod dem;

@@ -86,7 +86,10 @@ pub(crate) fn dive(body: &mut RigidBody, spec: &Spec, controls: CarControls, con
     forward.y = 0.0;
     let forward = forward.normalize_or_zero();
     let right = Vector::new(-forward.z, 0.0, forward.x);
-    let mut velocity = body.linvel();
+    // Through the water: the current is taken off, and given back at the end. Stopped (the handbrake,
+    // as with nobody aboard) it holds where it is.
+    let drift = water.drift(controls.handbrake);
+    let mut velocity = body.linvel() - drift;
     let speed = velocity.dot(forward);
     // How much of the hull the water holds up (all of it from floating down), and how much of the
     // waves still reach it.
@@ -94,7 +97,7 @@ pub(crate) fn dive(body: &mut RigidBody, spec: &Spec, controls: CarControls, con
     let swell = (-(depth - SUB_SURFACE_DEPTH).max(0.0) / SWELL_DEPTH).exp();
 
     // Neutral: the water bears its weight, and its trim takes it up or down as asked.
-    let surfacing = (water.rise + velocity.x * water.slope[0] + velocity.z * water.slope[1]) * swell;
+    let surfacing = (water.rise + (velocity.x + drift.x) * water.slope[0] + (velocity.z + drift.z) * water.slope[1]) * swell;
     let rise = wanted_rise(depth, controls.lift, surfacing, condition.wrecked);
     // Its weight is borne by a force, not an impulse: it is integrated together with gravity, so a
     // depth it holds is held exactly.
@@ -123,7 +126,7 @@ pub(crate) fn dive(body: &mut RigidBody, spec: &Spec, controls: CarControls, con
     if going > 0.0 {
         flat *= (going - slowing * dt).max(0.0) / going;
     }
-    body.set_linvel(Vector::new(flat.x, velocity.y, flat.z), true);
+    body.set_linvel(Vector::new(flat.x + drift.x, velocity.y, flat.z + drift.z), true);
 
     // The rudder turns it as it makes way, and holds it straight when it is let be.
     let mut spin = body.angvel();

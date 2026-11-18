@@ -100,9 +100,60 @@ pub fn wave(x: f32, z: f32, time: f32, reach: f32) -> Wave {
     out
 }
 
+/// White water: where a river runs fast its surface heaves in standing waves, which stay where the
+/// rocks under them are and rise and fall in place. They are this high (metres, half crest to trough)
+/// where the current runs at the second speed, m/s, and none below the first.
+pub const CHURN_HEIGHT: f32 = 0.22;
+pub const CHURN_SPEEDS: [f32; 2] = [1.5, 3.5];
+/// The standing waves of white water: two crossing ones, each a share of `CHURN_HEIGHT` (`height`),
+/// rising and falling `cycles` times a loop.
+const CHURN: [Swell; 2] = [
+    Swell { heading: 0.4, length: 5.0, height: 0.65, cycles: 41, phase: 0.0 },
+    Swell { heading: 2.1, length: 3.3, height: 0.35, cycles: 53, phase: 1.3 },
+];
+
+/// The standing waves at `(x, z)`, `time` seconds into the loop, on water running at `speed` m/s:
+/// nothing on a calm river, a rough heave in a rapid. The client's water shader draws the white
+/// water its own way; this is what a hull or a swimmer rides.
+pub fn churn(x: f32, z: f32, time: f32, speed: f32) -> Wave {
+    let t = ((speed - CHURN_SPEEDS[0]) / (CHURN_SPEEDS[1] - CHURN_SPEEDS[0])).clamp(0.0, 1.0);
+    let mut out = Wave::default();
+    if t <= 0.0 {
+        return out;
+    }
+    let size = CHURN_HEIGHT * t * t * (3.0 - 2.0 * t);
+    for swell in &CHURN {
+        let height = size * swell.height;
+        let k = std::f32::consts::TAU / swell.length;
+        let omega = std::f32::consts::TAU * swell.cycles as f32 / LOOP_SECONDS as f32;
+        let (dz, dx) = swell.heading.sin_cos();
+        let (sin_a, cos_a) = (k * (dx * x + dz * z) + swell.phase).sin_cos();
+        let (sin_b, cos_b) = (omega * time).sin_cos();
+        out.height += height * sin_a * cos_b;
+        out.slope[0] += height * k * dx * cos_a * cos_b;
+        out.slope[1] += height * k * dz * cos_a * cos_b;
+        out.rise -= height * omega * sin_a * sin_b;
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn white_water_heaves_in_place_only_where_the_river_runs_fast() {
+        assert_eq!(churn(3.0, 4.0, 10.0, 1.0), Wave::default(), "a calm river is smooth");
+        let (x, z, t, e, fast) = (3.7, -12.2, 21.4, 1e-3, 4.0);
+        let at = churn(x, z, t, fast);
+        let dx = (churn(x + e, z, t, fast).height - churn(x - e, z, t, fast).height) / (2.0 * e);
+        let dz = (churn(x, z + e, t, fast).height - churn(x, z - e, t, fast).height) / (2.0 * e);
+        let dt = (churn(x, z, t + e, fast).height - churn(x, z, t - e, fast).height) / (2.0 * e);
+        assert!((at.slope[0] - dx).abs() < 0.02 && (at.slope[1] - dz).abs() < 0.02 && (at.rise - dt).abs() < 0.02, "{at:?} against {dx} {dz} {dt}");
+        assert_eq!(churn(x, z, time(LOOP_TICKS + 30), fast), churn(x, z, time(30), fast), "it loops with the swell");
+        let highest = (0..LOOP_TICKS).step_by(3).map(|tick| churn(x, z, time(tick), fast).height.abs()).fold(0.0, f32::max);
+        assert!(highest > 0.05 && highest <= CHURN_HEIGHT + 1e-4, "{highest}");
+    }
 
     #[test]
     fn the_slope_and_rise_are_the_heights_derivatives() {

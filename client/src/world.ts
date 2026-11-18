@@ -3,7 +3,7 @@ import tables from './sim/tables.generated.json'
 
 /** Mirrors `crates/shared/src/world.rs`. Coordinates are metres: +X east, +Z south, +Y up. */
 
-export const WORLD_VERSION = 29
+export const WORLD_VERSION = 30
 
 /** `Manifest::theme`, mirrors `crates/shared/src/world.rs`. */
 export const THEME_WINTER = 1
@@ -470,6 +470,11 @@ export interface TileData {
    */
   reach?: Uint8Array
   /**
+   * Which way and how fast a river runs at each ground sample: `x` then `z`, two entries a sample in the
+   * layout of `water`, in steps of `FLOW_STEP` m/s. Absent when no water in the tile flows.
+   */
+  flow?: Int8Array
+  /**
    * Slopes `(dh/dx, dh/dz)` of the ground on a finer grid than `ground`, `n × n` with
    * `n = sqrt(length / 2)`, in units of `1 / DETAIL_SLOPE_SCALE`; for lighting only. Absent or empty
    * when the tile has none.
@@ -621,13 +626,14 @@ function flatIndices(triangles: readonly number[][]): Uint32Array {
 }
 
 export function decodeTile(bytes: Uint8Array): TileData {
-  const [buildings, roads, [vertices, triangles], ground, cover, trees, water, reach, streams, bridges, detail, rails, ski, lines, stones, crops, look, graves] = decode(bytes) as [
+  const [buildings, roads, [vertices, triangles], ground, cover, trees, water, reach, flow, streams, bridges, detail, rails, ski, lines, stones, crops, look, graves] = decode(bytes) as [
     [number, number[][], number, number, number, number, number, number, [number, number], [number[], number[], Uint8Array, Uint8Array], [number, number] | null][],
     [number, number, boolean, number[][]][],
     [number[][], number[][]],
     [number, Uint8Array],
     [number, number[][][]][],
     [number, number, number, number, number, number, boolean][],
+    Uint8Array,
     Uint8Array,
     Uint8Array,
     [number, number[][]][],
@@ -678,6 +684,8 @@ export function decodeTile(bytes: Uint8Array): TileData {
     ground: groundMetres(ground),
     water: inMetres(int32s(water), true),
     ...(reach.length > 0 ? { reach: reach.slice() } : {}),
+    // A copy of its own, as `detail` is.
+    ...(flow.length > 0 ? { flow: new Int8Array(flow.slice().buffer) } : {}),
     streams: streams.map(([width, points]) => ({ width: metres(width), points: points.map(point) })),
     bridges: bridges.map(([first, steel]) => ({ first, steel })),
     // A copy of its own: a view would keep the whole file alive, and be cloned whole to the worker.

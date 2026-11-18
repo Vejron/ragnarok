@@ -603,7 +603,7 @@ export class WorldView {
         this.cropLid?.dent(crater.x / 100, crater.z / 100, crater.radius / 100)
       }
     }
-    this.waters?.set(ref, ground, tile.water, tile.reach)
+    this.waters?.set(ref, ground, tile.water, tile.reach, tile.flow)
     this.groups.set(key, group)
     if (fromWorker?.terrain) this.levels.set(key, prepared.level)
     // Tiles already in place were shaded without this one beside them: close the seams. The worker

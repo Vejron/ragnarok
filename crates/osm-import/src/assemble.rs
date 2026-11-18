@@ -177,7 +177,7 @@ fn floor_of(ground: &Ground, footprint: &[P]) -> f64 {
 }
 
 /// Road width in metres and kind, or `None` for ways that are not walkable roads.
-fn road_style(highway: &str) -> Option<(f64, u8)> {
+pub(crate) fn road_style(highway: &str) -> Option<(f64, u8)> {
     Some(match highway {
         "motorway" | "trunk" | "primary" | "secondary" | "motorway_link" | "trunk_link" | "primary_link" | "secondary_link" => (10.0, ROAD_MAJOR),
         "tertiary" | "tertiary_link" | "residential" | "unclassified" | "living_street" => (7.0, ROAD_MINOR),
@@ -200,7 +200,7 @@ fn surfaced(way: &Way, kind: u8) -> u8 {
 
 /// Gauge in metres and `RAIL_*` kind of a railway way, or `None` for lines that are not drawn:
 /// underground, disused, planned, or not a track at all.
-fn rail_style(way: &Way) -> Option<(f64, u8)> {
+pub(crate) fn rail_style(way: &Way) -> Option<(f64, u8)> {
     let tag = |key: &str| way.tags.get(key).map(String::as_str);
     if tag("tunnel").is_some_and(|value| value != "no") || tag("location") == Some("underground") {
         return None;
@@ -767,8 +767,12 @@ fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collecti
         }
         // A tile with no water at all carries no water samples.
         if water.levels.len() == ground.heights.len() && water.reach.len() == water.levels.len() {
+            let flowing = water.flow.len() == 2 * water.levels.len();
             let all = Ground { origin: ground.origin, cell: ground.cell, side: ground.side, heights: water.levels };
             let reach = Ground { origin: ground.origin, cell: ground.cell, side: ground.side, heights: water.reach.iter().map(|&steps| i32::from(steps)).collect() };
+            // The current's two parts, cut as the levels are.
+            let part = |k: usize| Ground { origin: ground.origin, cell: ground.cell, side: ground.side, heights: if flowing { water.flow.iter().skip(k).step_by(2).map(|&v| i32::from(v)).collect() } else { Vec::new() } };
+            let (flow_x, flow_z) = (part(0), part(1));
             for col in 0..manifest.grid() {
                 for row in (0..manifest.grid()).filter(|&row| inside(col, row)) {
                     let block = all.block(col as u32 * per_tile, row as u32 * per_tile, samples);
@@ -776,6 +780,12 @@ fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collecti
                         let tile = tiles.entry((col, row)).or_default();
                         tile.water = block;
                         tile.reach = reach.block(col as u32 * per_tile, row as u32 * per_tile, samples).into_iter().map(|steps| steps as u8).collect();
+                        if flowing {
+                            let (x, z) = (flow_x.block(col as u32 * per_tile, row as u32 * per_tile, samples), flow_z.block(col as u32 * per_tile, row as u32 * per_tile, samples));
+                            if x.iter().chain(&z).any(|&v| v != 0) {
+                                tile.flow = x.into_iter().zip(z).flat_map(|(x, z)| [x as i8, z as i8]).collect();
+                            }
+                        }
                     }
                 }
             }
@@ -1051,6 +1061,12 @@ pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::B
         .into_iter()
         .flat_map(|(kind, points)| if matches!(kind, LINE_WALL | LINE_WALL_HIGH) { open_at_roads(&points, &roads) } else { vec![points] }.into_iter().map(move |points| (kind, points)))
         .collect();
+    // A power line runs down a corridor cleared of trees; shrubs may grow under it. The laser reads
+    // the wires and pylons as trees too, and those go with it.
+    let before = trees.len();
+    let corridors = power_corridors(&lines);
+    trees.retain(|&(at, kind, ..)| !crate::thin::is_tree(kind) || !under_power(at, &corridors));
+    eprintln!("trees: {} cleared from under power lines", before - trees.len());
     // The lines and the tombstones are laid on the ground once the tiles are built, so it is kept for them.
     let kept = (!lines.is_empty() || !lifts.is_empty() || !yards.is_empty()).then(|| ground.clone());
     // A lift's own station stands at each of its ends: the station building OSM or the laser has there goes.
@@ -1318,6 +1334,37 @@ fn poles(points: &[P], span: f64) -> Vec<P> {
         }));
     }
     poles
+}
+
+/// Half the width of the corridor cleared through the forest under a power line, metres: a local
+/// line on wooden poles, then a main line on steel pylons.
+const POLE_CORRIDOR: f64 = 7.0;
+const PYLON_CORRIDOR: f64 = 20.0;
+
+/// A cleared corridor under a power line: its half width, its bounding box grown by that, and the line.
+type Corridor<'a> = (f64, [f64; 4], &'a [P]);
+
+/// The corridors under the power lines among `lines`.
+fn power_corridors(lines: &[(u8, Vec<P>)]) -> Vec<Corridor<'_>> {
+    lines
+        .iter()
+        .filter_map(|(kind, points)| {
+            let half = match *kind {
+                LINE_POWER => POLE_CORRIDOR,
+                LINE_POWER_MAJOR => PYLON_CORRIDOR,
+                _ => return None,
+            };
+            let b = points.iter().fold([f64::MAX, f64::MAX, f64::MIN, f64::MIN], |b, p| [b[0].min(p[0] - half), b[1].min(p[1] - half), b[2].max(p[0] + half), b[3].max(p[1] + half)]);
+            Some((half, b, &points[..]))
+        })
+        .collect()
+}
+
+/// Whether `at` stands in one of the cleared `corridors` under a power line.
+fn under_power(at: P, corridors: &[Corridor]) -> bool {
+    corridors.iter().any(|&(half, b, points)| {
+        at[0] >= b[0] && at[0] <= b[2] && at[1] >= b[1] && at[1] <= b[3] && points.windows(2).any(|pair| distance_to_segment(at, pair[0], pair[1]) < half)
+    })
 }
 
 /// Half the width of the lane cleared through the forest under a ski lift, metres.
@@ -2017,7 +2064,7 @@ fn pylons_for(frame: Frame, points: &[P]) -> Pylons {
 }
 
 /// Whether a road way is carried on a bridge (and not, say, a tunnel with a stray bridge tag).
-fn is_bridge(way: &Way) -> bool {
+pub(crate) fn is_bridge(way: &Way) -> bool {
     let tag = |key: &str| way.tags.get(key).map(String::as_str);
     tag("bridge").is_some_and(|value| value != "no") && tag("tunnel").is_none_or(|value| value == "no")
 }
@@ -2620,6 +2667,18 @@ mod tests {
             assert!(fence.points.windows(2).all(|pair| (pair[1][0] - pair[0][0]).abs() <= 300 && pair[1] != pair[0]), "{fence:?}");
             assert_eq!(fence.base.len(), fence.points.len());
         }
+    }
+
+    #[test]
+    fn trees_are_cleared_from_under_power_lines_and_wider_under_pylons() {
+        let lines = vec![(LINE_POWER, vec![[0.0, 0.0], [100.0, 0.0]]), (LINE_POWER_MAJOR, vec![[0.0, 100.0], [100.0, 100.0]]), (LINE_FENCE, vec![[0.0, 50.0], [100.0, 50.0]])];
+        let corridors = power_corridors(&lines);
+        assert!(under_power([50.0, 4.0], &corridors), "under the wires on poles");
+        assert!(!under_power([50.0, 8.0], &corridors), "past the poles' corridor");
+        assert!(under_power([50.0, 115.0], &corridors), "within the pylons' wider corridor");
+        assert!(!under_power([50.0, 125.0], &corridors), "past the pylons' corridor");
+        assert!(!under_power([50.0, 50.0], &corridors), "a fence clears nothing");
+        assert!(!under_power([150.0, 0.0], &corridors), "beyond the line's end");
     }
 
     #[test]

@@ -73,13 +73,24 @@ const SWIM_LEVEL: f32 = 10.0;
 const SWIM_ROCK: f32 = 2.5;
 
 /// The water under a hull: the surface's height there (metres, averaged along the hull), which way is
-/// up off it, how fast it is rising under the hull's middle (m/s) and its slope there `[dh/dx, dh/dz]`.
+/// up off it, how fast it is rising under the hull's middle (m/s), its slope there `[dh/dx, dh/dz]`
+/// and the current there (horizontal, m/s).
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Water {
     pub height: f32,
     pub normal: Vector,
     pub rise: f32,
     pub slope: [f32; 2],
+    pub flow: Vector,
+}
+
+impl Water {
+    /// The current that carries a hull, m/s: none for one at anchor (`anchored`), which holds where it
+    /// is as on still water. The hull's water physics run on its velocity through the water, the
+    /// current taken off it and given back after, so it is carried as hard as the water holds it.
+    pub(crate) fn drift(&self, anchored: bool) -> Vector {
+        if anchored { Vector::ZERO } else { self.flow }
+    }
 }
 
 /// The water under a vehicle of `spec` whose body is `body`, `time` seconds into the waves' loop, or
@@ -99,7 +110,8 @@ pub(crate) fn water_under(waters: &Waters, time: f32, body: &RigidBody, spec: &S
     let along = (front - back) / (2.0 * hz);
     let across = (height(right * hx) - height(-right * hx)) / (2.0 * hx);
     let normal = (Vector::Y - forward * along - right * across).normalize();
-    Some(Water { height: (front + back + 2.0 * middle.height) / 4.0, normal, rise: middle.rise, slope: middle.slope })
+    let flow = Vector::new(middle.flow[0], 0.0, middle.flow[1]);
+    Some(Water { height: (front + back + 2.0 * middle.height) / 4.0, normal, rise: middle.rise, slope: middle.slope, flow })
 }
 
 /// `0` at `low`, `1` at `high`, smoothly in between.
@@ -209,13 +221,15 @@ fn swim(body: &mut RigidBody, swim: &shared::vehicles::Swim, controls: CarContro
     forward.y = 0.0;
     let forward = forward.normalize_or_zero();
     let right = Vector::new(-forward.z, 0.0, forward.x);
-    let mut velocity = body.linvel();
+    // Through the water: the current is taken off, and given back at the end.
+    let drift = water.drift(controls.handbrake);
+    let mut velocity = body.linvel() - drift;
     let speed = velocity.dot(forward);
     // How much of its draft is in the water, and how far its tracks are clear of the bed.
     let wet = (under / swim.draft).min(1.0);
     let afloat = smoothstep(SWIM_AFLOAT[0] * swim.draft, SWIM_AFLOAT[1] * swim.draft, under);
 
-    let surfacing = water.rise + velocity.x * water.slope[0] + velocity.z * water.slope[1];
+    let surfacing = water.rise + (velocity.x + drift.x) * water.slope[0] + (velocity.z + drift.z) * water.slope[1];
     velocity.y += CAR_GRAVITY * (under / swim.draft).min(SWIM_LIFT_MAX) * dt;
     velocity.y += (surfacing - velocity.y) * (1.0 - (-SWIM_HEAVE * wet * dt).exp());
 
@@ -233,7 +247,7 @@ fn swim(body: &mut RigidBody, swim: &shared::vehicles::Swim, controls: CarContro
         let slowing = wet * (SWIM_DRAG * going + SWIM_OVER * (going - swim.speed).max(0.0));
         flat *= (going - slowing * dt).max(0.0) / going;
     }
-    body.set_linvel(Vector::new(flat.x, velocity.y, flat.z), true);
+    body.set_linvel(Vector::new(flat.x + drift.x, velocity.y, flat.z + drift.z), true);
 
     let mut spin = body.angvel();
     let yaw = -controls.steer.clamp(-1.0, 1.0) * swim.turn * condition.turn * tracks;

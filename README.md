@@ -20,6 +20,7 @@ The docs are in [docs/](docs/).
 
 - [WORLD.md](docs/WORLD.md): generating the world: data sources, credentials, download cache, squared footprints and the catalogue of roof shapes (gable, hip, gambrel, cross-gabled wings, dormers)
 - [FRANCE.md](docs/FRANCE.md): worlds in France from IGN LiDAR HD
+- [TERRAIN-SHAPING.md](docs/TERRAIN-SHAPING.md): the height model shaped to OpenStreetMap: houses on level pads, streams cut into the ground and never running uphill, roads level across with clean cuts and embankments
 - [EDITOR.md](docs/EDITOR.md): the map editor
 - [SCENARIOS.md](docs/SCENARIOS.md): a guide to writing a world's `scenario.json` by hand, since there is no scenario editor
 
@@ -70,6 +71,7 @@ The docs are in [docs/](docs/).
 - [BUSES.md](docs/BUSES.md): public transport, a world option like winter: bus lines found along the major roads, with stops, and buses the server drives along them that anyone can ride, or take once the driver is gone
 - [HEADLIGHTS.md](docs/HEADLIGHTS.md): every vehicle's lamps, which its driver switches with L: headlights along the nose, a helicopter's searchlight under its gun and a Titan's in its visor
 - [WATER-WAVES.md](docs/WATER-WAVES.md): water that moves when something moves through it, a wave equation stepped on the GPU about the camera, so boats raise bow waves and leave a V behind, a boat that stops dead runs into its own wave and splashes send out rings, on water cut finer on the GPU near the camera; and a waterjet boat's spray in layers of streaks, drops, drifting mist and glints that glow against the sun
+- [RIVERS.md](docs/RIVERS.md): rivers that run downstream, fastest where they fall, carrying swimmers and drifting boats (an empty or anchored one holds), with white water and standing waves in the rapids
 - [AUDIO.md](docs/AUDIO.md): engines made firing by firing from each vehicle's real machine (the Centurion's Meteor V12, a snowmobile's two-stroke twin, a rotary, a turbine, an electric motor), revving with the driver's throttle through its gearbox, over the crunch, roll and squeal of the ground it is on, and soldiers' footsteps on what they step on
 
 ## Requirements

@@ -5,6 +5,11 @@ import { setWaterRefine, waterMaterial, waterSurfaces } from './water'
 export const REFINE_SIZE = 80
 /** It moves in steps of this many of the water's vertex spacings, so it stays on the cells' lines. */
 const SNAP_CELLS = 4
+/**
+ * Higher than this over the water mirrored about the camera, metres, nothing is refined: the wakes the
+ * refined mesh lifts are too small to see from there, and the tiles' own water is drawn throughout.
+ */
+export const REFINE_HEIGHT = 30
 
 /**
  * The lakes and rivers near the camera cut finer on the GPU (`MeshRefiner`), so that the wave field's
@@ -24,8 +29,18 @@ export class WaterRefine {
   /** Where the square is now, its corner and side, metres; null until there is water to refine. */
   area: [number, number, number] | null = null
 
-  /** Moves the square to stay about `eye` and hands it the surfaces it covers. */
-  update(eye: Readonly<XYZ>) {
+  /**
+   * Moves the square to stay about `eye` and hands it the surfaces it covers. `water` is the level of the
+   * water about the camera (`Surroundings.mirrored`), null for none: high over it, or with none, the
+   * refined mesh stands down.
+   */
+  update(eye: Readonly<XYZ>, water: number | null = null) {
+    if (water === null || eye.y - water > REFINE_HEIGHT) {
+      if (this.mesh) this.mesh.visible = false
+      this.area = null
+      setWaterRefine(null)
+      return
+    }
     if (!this.refiner) {
       const lattice = this.measure()
       if (!lattice) return
@@ -45,10 +60,14 @@ export class WaterRefine {
     const z0 = z + Math.floor((eye.z - REFINE_SIZE / 2 - z) / snap) * snap
     const sources = [...waterSurfaces].map((mesh) => mesh.geometry).filter((g) => {
       const b = g.bounds
-      return b.x + b.radius > x0 && b.x - b.radius < x0 + REFINE_SIZE && b.z + b.radius > z0 && b.z - b.radius < z0 + REFINE_SIZE
+      return b.x + b.radius > x0 - spacing && b.x - b.radius < x0 + REFINE_SIZE + spacing && b.z + b.radius > z0 - spacing && b.z - b.radius < z0 + REFINE_SIZE + spacing
     })
     this.refiner.setSources(sources)
-    this.refiner.setArea(x0, z0, REFINE_SIZE)
+    // A cell more each way than the square: the refined mesh discards what lies outside the square and
+    // the tiles what lies in it, the same test a pixel, so the two meet without the hairline gaps (the ink
+    // drew them as a dashed line) that two meshes cut along one line leave.
+    this.refiner.setArea(x0 - spacing, z0 - spacing, REFINE_SIZE + 2 * spacing)
+    this.mesh!.visible = true
     // Its slot is made the first time it is drawn; from then on each frame's square is refined before the
     // water is drawn, so the tiles can leave it to the refined mesh at once.
     this.area = this.refiner.geometry.gpu ? [x0, z0, REFINE_SIZE] : null

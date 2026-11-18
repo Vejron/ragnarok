@@ -3,7 +3,7 @@
 //! same levels, so a crossing is predicted. Frozen water is left out: winter drives on the bed as before.
 
 use shared::quant::from_cm;
-use shared::world::{NO_WATER, REACH_STEP, WorldFile};
+use shared::world::{FLOW_STEP, NO_WATER, REACH_STEP, WorldFile};
 use std::collections::BTreeMap;
 
 /// Water surface heights over a square of ground samples.
@@ -19,15 +19,18 @@ struct Grid {
     depths: Vec<f32>,
     /// How wide the open water is around each sample, metres (`Tile::reach`).
     reaches: Vec<f32>,
+    /// The water's velocity at each sample, `[x, z]` m/s (`Tile::flow`); empty where it is all still.
+    flows: Vec<[f32; 2]>,
 }
 
-/// The water's surface at a point, waves and all: its height (metres), its slope `[dh/dx, dh/dz]` and
-/// how fast it is rising there (m/s).
+/// The water's surface at a point, waves and all: its height (metres), its slope `[dh/dx, dh/dz]`,
+/// how fast it is rising there (m/s) and the current that carries what floats in it, `[x, z]` m/s.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Surface {
     pub height: f32,
     pub slope: [f32; 2],
     pub rise: f32,
+    pub flow: [f32; 2],
 }
 
 /// Every tile's water surface, by the tile it came in. A world that is not cut into whole tiles is
@@ -62,7 +65,7 @@ impl Waters {
             return waters;
         }
         if !tiled {
-            waters.put((0, 0), from_cm(ground.origin), from_cm(ground.origin), &ground.heights, &world.water, &world.reach);
+            waters.put((0, 0), from_cm(ground.origin), from_cm(ground.origin), &ground.heights, &world.water, &world.reach, &world.flow);
             return waters;
         }
         let n = per_tile + 1;
@@ -72,21 +75,23 @@ impl Waters {
                 let at = || (0..n).flat_map(|j| (0..n).map(move |i| ((j0 + j) * ground.side + i0 + i) as usize));
                 let block = |of: &[i32]| -> Vec<i32> { at().map(|at| of[at]).collect() };
                 let reach: Vec<u8> = if world.reach.len() == world.water.len() { at().map(|at| world.reach[at]).collect() } else { Vec::new() };
-                waters.set((col as u16, row as u16), &block(&ground.heights), &block(&world.water), &reach);
+                let flow: Vec<i8> = if world.flow.len() == 2 * world.water.len() { at().flat_map(|at| [world.flow[2 * at], world.flow[2 * at + 1]]).collect() } else { Vec::new() };
+                waters.set((col as u16, row as u16), &block(&ground.heights), &block(&world.water), &reach, &flow);
             }
         }
         waters
     }
 
     /// Tile `tile`'s water over its `ground`, both centimetres a sample, with how wide the open water
-    /// is around each (`Tile::reach`; empty is none, a calm pond). A sample whose water is not above
-    /// its ground is dry.
-    pub fn set(&mut self, tile: (u16, u16), ground: &[i32], water: &[i32], reach: &[u8]) {
+    /// is around each (`Tile::reach`; empty is none, a calm pond) and which way it runs
+    /// (`Tile::flow`; empty is still water). A sample whose water is not above its ground is dry.
+    pub fn set(&mut self, tile: (u16, u16), ground: &[i32], water: &[i32], reach: &[u8], flow: &[i8]) {
         let (x0, z0) = (f32::from(tile.0) * self.tile - self.half, f32::from(tile.1) * self.tile - self.half);
-        self.put(tile, x0, z0, ground, water, reach);
+        self.put(tile, x0, z0, ground, water, reach, flow);
     }
 
-    fn put(&mut self, tile: (u16, u16), x0: f32, z0: f32, ground: &[i32], water: &[i32], reach: &[u8]) {
+    #[allow(clippy::too_many_arguments)]
+    fn put(&mut self, tile: (u16, u16), x0: f32, z0: f32, ground: &[i32], water: &[i32], reach: &[u8], flow: &[i8]) {
         if self.frozen || water.is_empty() || water.len() != ground.len() || !water.iter().zip(ground).any(|(&w, &g)| w != NO_WATER && w > g) {
             self.by_tile.remove(&tile);
             return;
@@ -94,8 +99,9 @@ impl Waters {
         let levels: Vec<f32> = water.iter().zip(ground).map(|(&w, &g)| if w != NO_WATER && w > g { from_cm(w) } else { f32::NEG_INFINITY }).collect();
         let depths = water.iter().zip(ground).map(|(&w, &g)| if w != NO_WATER && w > g { from_cm(w - g) } else { 0.0 }).collect();
         let reaches = if reach.len() == water.len() { reach.iter().map(|&steps| f32::from(steps) * REACH_STEP).collect() } else { vec![0.0; water.len()] };
+        let flows = if flow.len() == 2 * water.len() { flow.chunks_exact(2).map(|v| [f32::from(v[0]) * FLOW_STEP, f32::from(v[1]) * FLOW_STEP]).collect() } else { Vec::new() };
         let side = (levels.len() as f32).sqrt().round() as usize;
-        self.by_tile.insert(tile, Grid { x0, z0, side, levels, depths, reaches });
+        self.by_tile.insert(tile, Grid { x0, z0, side, levels, depths, reaches, flows });
     }
 
     /// Stills the waves everywhere.
@@ -132,8 +138,32 @@ impl Waters {
     pub fn surface(&self, x: f32, z: f32, time: f32) -> Option<Surface> {
         let level = self.level_at(x, z)?;
         let share = if self.calm { 0.0 } else { shared::waves::shore(self.depth_at(x, z)) };
-        let wave = shared::waves::wave(x, z, time, self.reach_at(x, z));
-        Some(Surface { height: level + wave.height * share, slope: wave.slope.map(|slope| slope * share), rise: wave.rise * share })
+        let flow = self.flow_at(x, z);
+        let swell = shared::waves::wave(x, z, time, self.reach_at(x, z));
+        // A rapid's standing waves, on top of whatever swell the water's width raises.
+        let churn = if self.calm { shared::waves::Wave::default() } else { shared::waves::churn(x, z, time, flow[0].hypot(flow[1])) };
+        let wave = shared::waves::Wave {
+            height: swell.height * share + churn.height,
+            slope: [swell.slope[0] * share + churn.slope[0], swell.slope[1] * share + churn.slope[1]],
+            rise: swell.rise * share + churn.rise,
+        };
+        Some(Surface { height: level + wave.height, slope: wave.slope, rise: wave.rise, flow })
+    }
+
+    /// The current at `(x, z)`, `[x, z]` m/s, between the four samples around it; still off the grid
+    /// and on still water.
+    pub fn flow_at(&self, x: f32, z: f32) -> [f32; 2] {
+        let Some((grid, _, _)) = self.sample(x, z) else { return [0.0; 2] };
+        if grid.flows.is_empty() {
+            return [0.0; 2];
+        }
+        let (u, v) = (((x - grid.x0) / self.cell).max(0.0), ((z - grid.z0) / self.cell).max(0.0));
+        let last = grid.side - 1;
+        let (i, j) = ((u as usize).min(last.saturating_sub(1)), (v as usize).min(last.saturating_sub(1)));
+        let (fu, fv) = ((u - i as f32).clamp(0.0, 1.0), (v - j as f32).clamp(0.0, 1.0));
+        let at = |i: usize, j: usize| grid.flows[j.min(last) * grid.side + i.min(last)];
+        let mix = |a: [f32; 2], b: [f32; 2], t: f32| [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+        mix(mix(at(i, j), at(i + 1, j), fu), mix(at(i, j + 1), at(i + 1, j + 1), fu), fv)
     }
 
     /// How deep the water is at `(x, z)`, metres, between the four samples around it, as the water's
@@ -183,7 +213,7 @@ mod tests {
         // Tiles of 4 m, the world 8 m across, in 2 m cells: tile (1, 0) is x 0..4, z -4..0, 3 × 3 samples.
         let mut waters = Waters::new(400, 400, 200, false);
         let ground = vec![0; 9];
-        waters.set((1, 0), &ground, &[NO_WATER, NO_WATER, NO_WATER, NO_WATER, 150, 150, NO_WATER, 150, -10], &[]);
+        waters.set((1, 0), &ground, &[NO_WATER, NO_WATER, NO_WATER, NO_WATER, 150, 150, NO_WATER, 150, -10], &[], &[]);
         assert_eq!(waters.level_at(2.1, -1.9), Some(1.5), "the middle sample");
         assert_eq!(waters.level_at(3.9, -2.1), Some(1.5));
         assert_eq!(waters.level_at(0.2, -3.8), None, "a dry sample");
@@ -247,7 +277,7 @@ mod tests {
     #[test]
     fn frozen_water_is_not_kept() {
         let mut waters = Waters::new(400, 400, 200, true);
-        waters.set((1, 0), &[0; 9], &[150; 9], &[]);
+        waters.set((1, 0), &[0; 9], &[150; 9], &[], &[]);
         assert_eq!(waters.level_at(2.0, -2.0), None);
     }
 }

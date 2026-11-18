@@ -72,7 +72,11 @@ pub(crate) fn boat(body: &mut RigidBody, spec: &Spec, controls: CarControls, con
     forward.y = 0.0;
     let forward = forward.normalize_or_zero();
     let right = Vector::new(-forward.z, 0.0, forward.x);
-    let mut velocity = body.linvel();
+    // Everything the water does is to its way through the water: the current is taken off here and
+    // given back at the end, so let go it drifts downstream. At anchor (the handbrake, as an empty
+    // boat is held) it holds where it is.
+    let drift = water.drift(controls.handbrake);
+    let mut velocity = body.linvel() - drift;
     let speed = velocity.dot(forward);
 
     // It floats at its draft, less as it rises onto the plane, rising and falling with the water under
@@ -83,7 +87,7 @@ pub(crate) fn boat(body: &mut RigidBody, spec: &Spec, controls: CarControls, con
     let draft = CB90_DRAFT - CB90_PLANE_LIFT * planing(speed) + CB90_BRAKE_SQUAT * stopping;
     let afloat = if condition.wrecked { 0.0 } else { smoothstep(AFLOAT[0] * draft, AFLOAT[1] * draft, under) };
     let buoyancy = if condition.wrecked { WRECK_BUOYANCY } else { 1.0 };
-    let surfacing = if condition.wrecked { 0.0 } else { water.rise + velocity.x * water.slope[0] + velocity.z * water.slope[1] };
+    let surfacing = if condition.wrecked { 0.0 } else { water.rise + (velocity.x + drift.x) * water.slope[0] + (velocity.z + drift.z) * water.slope[1] };
     velocity.y += buoyancy * CAR_GRAVITY * under / draft * dt;
     velocity.y += (surfacing - velocity.y) * (1.0 - (-HEAVE_DAMPING * dt).exp());
 
@@ -111,7 +115,7 @@ pub(crate) fn boat(body: &mut RigidBody, spec: &Spec, controls: CarControls, con
     if going > 0.0 {
         flat *= (going - slowing * dt).max(0.0) / going;
     }
-    body.set_linvel(Vector::new(flat.x, velocity.y, flat.z), true);
+    body.set_linvel(Vector::new(flat.x + drift.x, velocity.y, flat.z + drift.z), true);
 
     // The jets swing it round standing still, and turn it harder under way; let be, they hold it
     // straight.
@@ -198,6 +202,38 @@ mod tests {
         assert!((pose.position[1] - REST).abs() < 0.1, "at {} not {REST}", pose.position[1]);
         assert!(pose.up_y > 0.999);
         assert!(pose.position[0].hypot(pose.position[2]) < 0.5, "it stays put: {:?}", pose.position);
+    }
+
+    #[test]
+    fn let_go_on_a_river_it_drifts_downstream_and_at_anchor_it_holds() {
+        // The lake running east at 2 m/s.
+        let mut world = sea();
+        let step = (2.0 / shared::world::FLOW_STEP) as i8;
+        world.flow = world.water.iter().flat_map(|&w| if w == NO_WATER { [0, 0] } else { [step, 0] }).collect();
+        let boat = |handbrake: bool| {
+            let mut physics = Physics::new(&world).unwrap();
+            physics.calm_waters();
+            physics.add_car(1, KIND_CB90, [0.0, REST, 0.0], 0.0);
+            run(&mut physics, CarControls { handbrake, ..CarControls::IDLE }, 20 * SECOND)
+        };
+        let drifting = boat(false);
+        assert!(drifting.position[0] > 30.0 && drifting.position[0] < 40.0 && drifting.position[2].abs() < 1.0, "carried east: {:?}", drifting.position);
+        let anchored = boat(true);
+        assert!(anchored.position[0].hypot(anchored.position[2]) < 0.5, "it holds: {:?}", anchored.position);
+    }
+
+    #[test]
+    fn its_jets_drive_it_through_the_water_so_upstream_it_makes_less_way() {
+        let mut world = sea();
+        let step = (3.0 / shared::world::FLOW_STEP) as i8;
+        world.flow = world.water.iter().flat_map(|&w| if w == NO_WATER { [0, 0] } else { [0, step] }).collect();
+        let mut physics = Physics::new(&world).unwrap();
+        physics.calm_waters();
+        // From the south shore heading north (-Z), against a current running south.
+        physics.add_car(1, KIND_CB90, [0.0, REST, 560.0], 0.0);
+        let pose = run(&mut physics, FULL_AHEAD, 35 * SECOND);
+        let over_ground = -pose.velocity[2];
+        assert!((over_ground - (CB90_MAX_SPEED - 3.0)).abs() < 1.5, "{over_ground} m/s over the ground");
     }
 
     #[test]

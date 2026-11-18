@@ -52,21 +52,28 @@ export class Surroundings {
 
   /**
    * Splashes where something of about `size` metres struck, when `at` is at or under the water surface
-   * (the server reports the carved bed). Returns whether it did.
+   * (the server reports the carved bed, or for a round that went into the water the still level it met).
+   * Returns whether it did.
    */
   watery(at: At, size: number, speed = 10): boolean {
-    // The surface with its waves (`FxWorld.waterAt`).
+    // The surface with its waves (`FxWorld.waterAt`), and the still level the server ends a round on: in
+    // a trough the waves are under that, and a shell bursting on the water drew as fire on land.
     const level = this.fx().waterAt?.(at.x, at.z) ?? NO_WATER
-    if (level === NO_WATER || at.y > level + 0.05) return false
+    const still = this.waters?.levelAt(at.x, at.z) ?? NO_WATER
+    if (level === NO_WATER || at.y > Math.max(level, still) + 0.05) return false
     splash(this.fx(), { x: at.x, y: level, z: at.z }, size, speed)
     return true
   }
+
+  /** The water level mirrored last frame, kept while it is nearly as good as any (`Waters.planeNear`); null with none about. */
+  mirrored: number | null = null
 
   /** Picks the water level to mirror this frame, if any water is about the camera. */
   mirrorWater() {
     const camera = this.scene.camera.position
     const look = this.scene.camera.getWorldDirection({ x: 0, y: 0, z: 0 })
-    const level = this.waters?.planeNear(camera.x, camera.z, look.x, look.z) ?? null
+    const level = this.waters?.planeNear(camera.x, camera.z, look.x, look.z, this.mirrored) ?? null
+    this.mirrored = level
     this.scene.setWaterPlane(level)
     // The surface over the camera with its waves, as the water draws it.
     this.scene.setUnderwater(camera.y < (this.fx().waterAt?.(camera.x, camera.z) ?? NO_WATER))

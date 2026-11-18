@@ -34,6 +34,16 @@ export const OPEN_SEA = 1020
 export const REACH_STEP = 4
 export const LOOP_SECONDS = 64
 export const LOOP_TICKS = LOOP_SECONDS * TICK_RATE
+/** The step `TileData.flow` counts in, m/s (`FLOW_STEP` in `crates/shared`). */
+export const FLOW_STEP = 0.05
+/** White water's standing waves: this high (metres) where the current runs at the second speed (m/s), none below the first. */
+export const CHURN_HEIGHT = 0.22
+export const CHURN_SPEEDS = [1.5, 3.5] as const
+/** The two standing waves, each a share of `CHURN_HEIGHT`. */
+const CHURN: readonly Swell[] = [
+  { heading: 0.4, length: 5.0, height: 0.65, cycles: 41, phase: 0.0 },
+  { heading: 2.1, length: 3.3, height: 0.35, cycles: 53, phase: 1.3 },
+]
 
 /** The surface at a point above the water's level (metres), its slope `[dh/dx, dh/dz]` and how fast it rises (m/s). */
 export interface Wave {
@@ -90,12 +100,44 @@ export function wave(x: number, z: number, time: number, reach: number): Wave {
   return out
 }
 
+const churnTerms = CHURN.map((swell) => ({
+  ...swell,
+  k: (Math.PI * 2) / swell.length,
+  omega: (Math.PI * 2 * swell.cycles) / LOOP_SECONDS,
+  dx: Math.cos(swell.heading),
+  dz: Math.sin(swell.heading),
+}))
+
+/** How big a rapid's standing waves are on water running at `speed` m/s, metres. */
+export function churnSize(speed: number): number {
+  const t = Math.min(1, Math.max(0, (speed - CHURN_SPEEDS[0]) / (CHURN_SPEEDS[1] - CHURN_SPEEDS[0])))
+  return CHURN_HEIGHT * t * t * (3 - 2 * t)
+}
+
+/** The standing waves of white water at `(x, z)`, `time` seconds into the loop, on water running at `speed` m/s. */
+export function churn(x: number, z: number, time: number, speed: number): Wave {
+  const out = { height: 0, slopeX: 0, slopeZ: 0, rise: 0 }
+  const size = churnSize(speed)
+  if (size <= 0) return out
+  for (const s of churnTerms) {
+    const height = size * s.height
+    const a = s.k * (s.dx * x + s.dz * z) + s.phase
+    const b = s.omega * time
+    out.height += height * Math.sin(a) * Math.cos(b)
+    out.slopeX += height * s.k * s.dx * Math.cos(a) * Math.cos(b)
+    out.slopeZ += height * s.k * s.dz * Math.cos(a) * Math.cos(b)
+    out.rise -= height * s.omega * Math.sin(a) * Math.sin(b)
+  }
+  return out
+}
+
 const f = (value: number) => value.toFixed(6)
 
 /**
  * The same waves in WGSL: `fn waves(p: vec2f, t: f32, reach: f32) -> vec3f` gives the height and the slope
- * `(dh/dx, dh/dz)` on open water `reach` metres across at full height for the depth, and
- * `fn waveShore(depth: f32) -> f32` the share of them water that deep has.
+ * `(dh/dx, dh/dz)` on open water `reach` metres across at full height for the depth,
+ * `fn waveShore(depth: f32) -> f32` the share of them water that deep has, and
+ * `fn churnWaves(p: vec2f, t: f32, speed: f32) -> vec3f` a rapid's standing waves on water running at `speed` m/s.
  */
 export const WAVES_WGSL = /* wgsl */ `
 fn waves(p: vec2f, t: f32, reach: f32) -> vec3f {
@@ -120,5 +162,27 @@ ${swellTerms
 
 fn waveShore(depth: f32) -> f32 {
   return smoothstep(${f(SHORE_DEPTHS[0])}, ${f(SHORE_DEPTHS[1])}, depth);
+}
+
+fn churnWaves(p: vec2f, t: f32, speed: f32) -> vec3f {
+  let size = ${f(CHURN_HEIGHT)} * smoothstep(${f(CHURN_SPEEDS[0])}, ${f(CHURN_SPEEDS[1])}, speed);
+  var out = vec3f(0.0);
+  if (size <= 0.0) {
+    return out;
+  }
+${churnTerms
+  .map(
+    (s) => `  {
+    let d = vec2f(${f(s.dx)}, ${f(s.dz)});
+    let a = ${f(s.k)} * dot(d, p) + ${f(s.phase)};
+    let b = cos(${f(s.omega)} * t);
+    let height = size * ${f(s.height)};
+    out.x += height * sin(a) * b;
+    out.y += height * ${f(s.k)} * d.x * cos(a) * b;
+    out.z += height * ${f(s.k)} * d.y * cos(a) * b;
+  }`,
+  )
+  .join('\n')}
+  return out;
 }
 `

@@ -1,6 +1,6 @@
 import { NO_WATER, type TileRef } from '@/world'
 import type { TileGround } from './terrain'
-import { REACH_STEP, shore, wave } from './waves'
+import { FLOW_STEP, REACH_STEP, shore, wave } from './waves'
 
 /** One tile's water surface heights, laid out like its ground. */
 interface TileWater {
@@ -8,11 +8,21 @@ interface TileWater {
   levels: Float32Array
   /** How wide the open water is at each sample, in `REACH_STEP`s (`TileData.reach`); null for none. */
   reach: Uint8Array | null
+  /** Which way and how fast the water runs at each sample, `x` then `z` in `FLOW_STEP`s (`TileData.flow`); null where it is still. */
+  flow: Int8Array | null
 }
 
 /** How far from the camera, metres, and in how many directions `planeNear` looks for water. */
 const PLANE_RADII = [6, 20, 45, 90, 160]
 const PLANE_RAYS = 12
+/**
+ * Water within this of the mirrored plane, metres, shows the scene in it (the water shader fades it out
+ * from 0.2 m to 0.5 m off): `planeNear` counts every level within it as the same water, so a river
+ * falling gently past the camera is one surface and not a slice every 10 cm.
+ */
+const PLANE_BAND = 0.3
+/** The level mirrored last frame stays while it has at least this share of the best level's votes. */
+const PLANE_KEEP = 0.8
 
 /**
  * The streamed-in tiles' water surface, to put splashes at the surface and not on the carved bed,
@@ -32,8 +42,35 @@ export class Waters {
     return row * 65536 + col
   }
 
-  set(ref: TileRef, ground: TileGround | null, levels: Float32Array, reach?: Uint8Array) {
-    if (ground && levels.length === ground.heights.length) this.tiles.set(this.key(ref.col, ref.row), { ground, levels, reach: reach && reach.length === levels.length ? reach : null })
+  set(ref: TileRef, ground: TileGround | null, levels: Float32Array, reach?: Uint8Array, flow?: Int8Array) {
+    if (ground && levels.length === ground.heights.length) {
+      this.tiles.set(this.key(ref.col, ref.row), { ground, levels, reach: reach && reach.length === levels.length ? reach : null, flow: flow && flow.length === 2 * levels.length ? flow : null })
+    }
+  }
+
+  /**
+   * The current at `(x, z)`, `[x, z]` m/s, between the four samples around it, as the sim has it (`Waters::flow_at`):
+   * what carries a swimmer, so what is taken off their speed to pace their strokes. Still where the tile has none.
+   */
+  flowAt(x: number, z: number): [number, number] {
+    const tile = this.tileAt(x, z)
+    if (!tile?.flow) return [0, 0]
+    const { ground, flow } = tile
+    const last = ground.side - 1
+    const u = Math.max(0, (x - ground.x0) / ground.cell)
+    const v = Math.max(0, (z - ground.z0) / ground.cell)
+    const i = Math.min(Math.floor(u), Math.max(0, last - 1))
+    const j = Math.min(Math.floor(v), Math.max(0, last - 1))
+    const fu = Math.min(1, u - i)
+    const fv = Math.min(1, v - j)
+    const out: [number, number] = [0, 0]
+    for (let k = 0; k < 2; k++) {
+      const at = (i: number, j: number) => flow[2 * (Math.min(j, last) * ground.side + Math.min(i, last)) + k]! * FLOW_STEP
+      const near = at(i, j) + (at(i + 1, j) - at(i, j)) * fu
+      const far = at(i, j + 1) + (at(i + 1, j + 1) - at(i, j + 1)) * fu
+      out[k] = near + (far - near) * fv
+    }
+    return out
   }
 
   delete(ref: TileRef) {
@@ -42,11 +79,14 @@ export class Waters {
 
   /**
    * The surface height of the water worth mirroring from the camera at `(x, z)` looking along `(dx, dz)`:
-   * the commonest level among sample points around it and ahead, nearer ones counting more. Null when none
-   * of them is wet, so a mirrored pass is only drawn where there is water to see.
+   * the level with the most water within `PLANE_BAND` of it among sample points around the camera and
+   * ahead, nearer ones counting more. `kept`, the level mirrored last frame, stays while it is nearly as
+   * good, so on a river that steps down through rapids the mirror does not flip between two levels as the
+   * camera turns. Null when none of them is wet, so a mirrored pass is only drawn where there is water to see.
    */
-  planeNear(x: number, z: number, dx: number, dz: number): number | null {
-    const votes = new Map<number, number>()
+  planeNear(x: number, z: number, dx: number, dz: number, kept: number | null = null): number | null {
+    const levels: number[] = []
+    const weights: number[] = []
     for (const radius of PLANE_RADII) {
       for (let i = 0; i < PLANE_RAYS; i++) {
         const angle = (i / PLANE_RAYS) * Math.PI * 2
@@ -55,20 +95,32 @@ export class Waters {
         const level = this.levelAt(x + px * radius, z + pz * radius)
         if (level === NO_WATER) continue
         // What lies ahead matters more than what is behind.
-        const ahead = 0.5 + 0.5 * Math.max(0, px * dx + pz * dz)
-        const key = Math.round(level * 10) / 10
-        votes.set(key, (votes.get(key) ?? 0) + ahead / radius)
+        levels.push(level)
+        weights.push((0.5 + 0.5 * Math.max(0, px * dx + pz * dz)) / radius)
       }
     }
-    let best: number | null = null
-    let most = 0
-    for (const [level, weight] of votes) {
-      if (weight > most) {
+    if (levels.length === 0) return null
+    const score = (plane: number) => levels.reduce((sum, level, k) => sum + (Math.abs(level - plane) <= PLANE_BAND ? weights[k]! : 0), 0)
+    let best = levels[0]!
+    let most = -1
+    for (const level of levels) {
+      const s = score(level)
+      if (s > most) {
         best = level
-        most = weight
+        most = s
       }
     }
-    return best
+    if (kept !== null && score(kept) >= PLANE_KEEP * most) return kept
+    // The middle of the water it wins, so it covers as much of it as it can.
+    let sum = 0
+    let total = 0
+    levels.forEach((level, k) => {
+      if (Math.abs(level - best) <= PLANE_BAND) {
+        sum += level * weights[k]!
+        total += weights[k]!
+      }
+    })
+    return Math.round((sum / total) * 10) / 10
   }
 
   /**

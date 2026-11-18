@@ -2,7 +2,8 @@ import { Mesh } from '@ragnarok/engine'
 import { describe, expect, it } from 'vitest'
 import { buildWater, disposeWater } from '@/render/water'
 import type { TileGround } from '@/sim/terrain'
-import { REACH_STEP } from '@/sim/waves'
+import { FLOW_STEP, REACH_STEP } from '@/sim/waves'
+import { FLOW_BIAS } from '@/render/watermesh'
 import { NO_WATER, type TileData } from '@/world'
 import { tileParts } from '@/render/tileprep'
 
@@ -57,10 +58,26 @@ describe('water', () => {
     disposeWater(group)
   })
 
-  it('hands the tile worker the open water’s reach, so the surface it builds has the waves the sim floats things on', () => {
+  it('carries a river’s current in zw, biased below a stream’s flag, and a lake’s as still', () => {
+    const { ground, water } = pond()
+    const flow = new Int8Array(water.length * 2)
+    for (let i = 0; i < water.length; i++) flow.set([40, -20], i * 2)
+    const custom = (buildWater({ water, flow, streams: [] }, ground)!.children[0] as Mesh).geometry.custom!
+    for (let i = 0; i < custom.length / 4; i++) {
+      expect(custom[i * 4 + 2]).toBeCloseTo(40 * FLOW_STEP)
+      expect(custom[i * 4 + 3]).toBeCloseTo(-20 * FLOW_STEP - FLOW_BIAS)
+    }
+    const still = (buildWater({ water, streams: [] }, ground)!.children[0] as Mesh).geometry.custom!
+    expect(still[2]).toBe(0)
+    expect(still[3]).toBe(-FLOW_BIAS)
+  })
+
+  it('hands the tile worker the open water’s reach and current, so the surface it builds has the waves the sim floats things on', () => {
     const reach = new Uint8Array([1, 2, 3])
-    const tile = { cover: [], roads: [], rails: [], ski: [], water: new Float32Array(3), reach, streams: [], bridges: [], collision: null, buildings: [] } as unknown as TileData
+    const flow = new Int8Array([0, 0, 4, 5, 0, 0])
+    const tile = { cover: [], roads: [], rails: [], ski: [], water: new Float32Array(3), reach, flow, streams: [], bridges: [], collision: null, buildings: [] } as unknown as TileData
     expect(tileParts(tile).reach).toBe(reach)
+    expect(tileParts(tile).flow).toBe(flow)
   })
 
   it('has no mesh for a tile without water', () => {

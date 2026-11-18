@@ -176,7 +176,9 @@ and how many objects it has of each symbol.
   or more; `barrier=wall` is a low stone wall, or a high one with such a `height` or as
   `barrier=city_wall`, opened where a road crosses it; `power=minor_line` is wooden poles and
   `power=line` steel pylons (`osm::line_kind`). Inside the map's outline OSM's are cut away
-  and the map's stand alone. OSM's power lines clear no lane in the trees: the laser already sees it.
+  and the map's stand alone. Every power line clears its lane of trees, 14 m wide under
+  wooden poles and 40 m under pylons (`under_power`), leaving the shrubs: the laser reads the wires and
+  pylons as trees standing in the lane.
 - **Looks** (`Tile::look`): every building's own walls and roof, as the importer built them before
   `voxels::bake` cut them into 72 cm cells. Cells stay what is blasted and what holds a building up;
   what is drawn and collided with is the look, with the windows cut out of the walls
@@ -477,6 +479,12 @@ The data has **no surface height or depth, and streams no width**, so:
   byte reaches 1020 m): a lake's whole width (`2R`, the same over all of it), a river's width where
   you are (twice its local inscribed radius), and the most a byte holds on the sea. A bank sample
   takes the widest water beside it. The waves grow with it (see "Waves" below);
+- `Tile.flow` holds which way and how fast a river runs at each sample, `x` then `z` as two signed
+  bytes in 0.05 m/s steps (`FLOW_STEP`), empty in a tile where nothing flows. It comes out of the same
+  fit as the river's levels: downstream is the way its OSM centre lines are drawn where they cross it
+  (else downhill), the direction is the gradient of a true (fast-marched) distance along it, and the
+  speed in the middle is `25·√slope` m/s over 120 m of its profile, 0.3 to 4 m/s, slowed towards the
+  banks. Lakes and the sea are still. See [RIVERS.md](RIVERS.md);
 - streams are drawn 2.5 m wide as ribbons on the terrain (`Tile.streams`), and the stretches that
   run through a lake or river polygon are dropped;
 - a stream goes under the roads and railways it crosses, as through a culvert: a way tagged
@@ -497,8 +505,9 @@ water narrower than `L` and all of it on water wider than `4L` (`FETCH`, a smoot
 from `Tile.reach`. So a 20 m pond only ripples (crests about 2 cm), a 200 m lake has a chop of about
 half a metre, and water 360 m across or more, and the sea, carries the whole swell (crests about
 1.8 m). The waves also die away towards the shore, from 2.5 m deep to none at 0.3 m (`SHORE_DEPTHS`).
-The client mirrors the numbers in `client/src/sim/waves.ts`, and `waves.spec.ts` holds the two
-together.
+Where a river runs fast its surface heaves in standing waves as well (`waves::churn`, up to 22 cm
+from 1.5 m/s to 3.5 m/s), which stay in place and rise and fall. The client mirrors the numbers in
+`client/src/sim/waves.ts`, and `waves.spec.ts` holds the two together.
 
 The water's surface meshes are built in the tile worker, which is sent only the parts of a tile it
 reads (`tileParts`). `reach` must be among them. It was not at first: every surface was built with a
@@ -751,6 +760,7 @@ under the deck, and nobody spawns on it. A road that crosses under a bridge is n
 `WORLD_VERSION` 25 added the graveyards' tombstones to each tile (`Tile::graves`, GRAVEYARDS.md).
 `WORLD_VERSION` 26 added which way each building's road lies (`Building::front`, BUILDING-STYLES.md).
 `WORLD_VERSION` 28 made a bridge's concrete into sections that are buildings (`BUILDING_BRIDGE`), leaving `Tile.bridges` only its steel (`Bridge { first, steel }`, BRIDGES.md).
+`WORLD_VERSION` 30 added each river's current after `Tile.reach` (`Tile::flow`, RIVERS.md).
 
 Both sides check `WORLD_VERSION` and read only the current layout: there is no reading of older
 worlds. When the layout changes, bump it in `crates/shared/src/world.rs` **and**

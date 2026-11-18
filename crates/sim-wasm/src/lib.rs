@@ -312,6 +312,15 @@ impl ClientSim {
         vec![wave.height, wave.slope[0], wave.slope[1], wave.rise]
     }
 
+    /// The standing waves of white water at `(x, z)`, `time` seconds into their loop, on water running at
+    /// `speed` m/s: height, slope x, slope z and rise (`shared::waves::churn`), for checking the client's
+    /// copy against.
+    #[wasm_bindgen(js_name = churnAt)]
+    pub fn churn_at(x: f32, z: f32, time: f32, speed: f32) -> Vec<f32> {
+        let wave = shared::waves::churn(x, z, time, speed);
+        vec![wave.height, wave.slope[0], wave.slope[1], wave.rise]
+    }
+
     /// The solid parts of a lift's pylons and stations (`shared::lifts::structure`), nine numbers a
     /// part: shape (0 a box, 1 an upright post), its middle x, y, z (metres), its turn about the
     /// vertical (radians), then a box's half extents or a post's radius, half height and 0, and its

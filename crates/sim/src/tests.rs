@@ -1084,6 +1084,23 @@ fn floating(x: f32, z: f32) -> Character {
 }
 
 #[test]
+fn a_swimmer_is_carried_downstream_and_cannot_swim_up_a_rapid() {
+    // The lake running east at 4 m/s, a rapid's pace, its surface still.
+    let mut world = lake_world();
+    let step = (4.0 / shared::world::FLOW_STEP) as i8;
+    world.flow = world.water.iter().flat_map(|&w| if w == shared::world::NO_WATER { [0, 0] } else { [step, 0] }).collect();
+    let mut physics = Physics::new(&world).unwrap();
+    physics.calm_waters();
+    let mut drifting = floating(-60.0, -50.0);
+    run(&physics, &mut drifting, &swim_input(0, 0.0, 0.0, 0), 3.0);
+    assert!((drifting.position[0] + 48.0).abs() < 0.5 && (drifting.position[2] + 50.0).abs() < 0.1, "carried 12 m east: {drifting:?}");
+    // Flat out upstream (west, a yaw of π/2) still loses ground.
+    let mut fighting = floating(-60.0, -50.0);
+    run(&physics, &mut fighting, &swim_input(127, std::f32::consts::FRAC_PI_2, 0.0, shared::consts::BUTTON_RUN), 3.0);
+    assert!(fighting.position[0] > -60.0 && fighting.position[0] < drifting.position[0] - 5.0, "slower than the drift, but downstream: {fighting:?}");
+}
+
+#[test]
 fn a_soldier_walking_into_deep_water_starts_swimming_and_floats_with_head_out() {
     let physics = calm_lake();
     let mut character = standing();
