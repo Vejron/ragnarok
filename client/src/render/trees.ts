@@ -905,12 +905,6 @@ fn bark(color: vec3f, around: f32, up: f32, kind: f32, far: f32) -> vec3f {
   return mix(color, mix(white, footColor, darkBark), near);
 }
 
-/** The pixel under \`world\`. */
-fn pixelAt(world: vec3f) -> vec2u {
-  let clip = frame.viewProj * vec4f(world, 1.0);
-  return vec2u((clip.xy / clip.w * 0.5 + 0.5) * frame.viewport.xy);
-}
-
 /** The dither's place (0 to 15) at \`pixel\`. */
 fn ditherAt(pixel: vec2u) -> u32 {
   // Copied to a variable first: WGSL only indexes a constant array with a constant.
@@ -1014,7 +1008,7 @@ fn surface(given: Surface) -> vec4f {
   let lod = clamp(log2(max(max(texels.x, texels.y), 1e-4)), 0.0, 3.0);
   var s = given;
   let fade = s.extra[0].w;
-  let pixel = pixelAt(given.world);
+  let pixel = vec2u(given.pixel);
   let dither = (f32(ditherAt(pixel)) + 0.5) / 16.0;
   let impostor = s.custom.w > 0.0;
   // After the depth pre-pass, a sample drawn at all is one the pre-pass kept: nothing to discard.

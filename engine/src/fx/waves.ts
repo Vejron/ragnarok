@@ -411,6 +411,10 @@ export class WaveField extends Effect {
     }
   }
 
+  override get idle() {
+    return true
+  }
+
   draw(): number {
     return 0
   }

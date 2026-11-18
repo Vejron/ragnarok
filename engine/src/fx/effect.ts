@@ -48,6 +48,15 @@ export abstract class Effect extends Node {
 
   abstract prepare(ctx: EffectContext, encoder: GPUCommandEncoder): void
 
+  /**
+   * True when this frame's `draw` would draw nothing, asked after `prepare`. The renderer leaves out a
+   * pass that every effect in it is idle for: the effects pass reloads and stores the whole image, and
+   * the half-resolution one clears and blends a target, whatever is drawn.
+   */
+  get idle(): boolean {
+    return false
+  }
+
   /** Records the draws; returns how many draw calls it made. */
   abstract draw(ctx: EffectContext, pass: GPURenderPassEncoder): number
 

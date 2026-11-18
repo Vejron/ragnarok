@@ -77,7 +77,12 @@ fn applyFog(rgb: vec3f, flags: u32, viewDepth: f32, world: vec3f) -> vec3f {
   if ((flags & MAT_FOG) == 0u || frame.fog.z == 0.0) {
     return rgb;
   }
-  return mix(rgb, fogTint(world), fogAmount(world, viewDepth));
+  // The tint is the sky behind the fog, a table read and an arccosine: not worked out where there is no fog.
+  let amount = fogAmount(world, viewDepth);
+  if (amount <= 0.0) {
+    return rgb;
+  }
+  return mix(rgb, fogTint(world), amount);
 }
 `
 }

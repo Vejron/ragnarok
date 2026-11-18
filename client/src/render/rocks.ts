@@ -141,6 +141,12 @@ const UNPACK_WGSL = /* wgsl */ `
   let moss = clamp(s.color.a - 2.0 * packed - 0.25, 0.0, 1.0);
   let water = select(-1.0e9, packed / 20.0 - 1000.0, packed > 0.5);`
 
+/** How wet the rock is at the pixel, 0 to 1. A bare stone has no waterline and skips its noise. */
+const WET_WGSL = /* wgsl */ `
+  // Wet below the waterline and a little over it, where the waves wash: dark, and nothing grows on it.
+  let line = water + ${WET_HEIGHT.toFixed(2)} + (rockNoise(vec3f(p.x, 0.0, p.z) * 1.7) - 0.5) * 0.12;
+  let wet = 1.0 - smoothstep(line - 0.03, line + 0.03, p.y);`
+
 /**
  * The shader: the cel look of the trees (four bands of sun, the sky's fill), but in the sun's shadow,
  * and with the stone's own detail in world space. The instance's colour is the stone's tint in rgb and
@@ -148,7 +154,7 @@ const UNPACK_WGSL = /* wgsl */ `
  * the vertex code (`render/stones.ts`), which darkens its wet stones itself.
  */
 export function rockWgsl(bare = false): string {
-  return ROCK_WGSL.replace('ROCK_ALPHA', bare ? 'let moss = 0.0;\n  let water = -1.0e9;' : UNPACK_WGSL)
+  return ROCK_WGSL.replace('ROCK_ALPHA', bare ? 'let moss = 0.0;\n  let wet = 0.0;' : UNPACK_WGSL + WET_WGSL)
 }
 
 const ROCK_WGSL = /* wgsl */ `
@@ -180,9 +186,6 @@ fn surface(s: Surface) -> vec4f {
   let p = s.world;
   let n = s.normal;
   ROCK_ALPHA
-  // Wet below the waterline and a little over it, where the waves wash: dark, and nothing grows on it.
-  let line = water + ${WET_HEIGHT.toFixed(2)} + (rockNoise(vec3f(p.x, 0.0, p.z) * 1.7) - 0.5) * 0.12;
-  let wet = 1.0 - smoothstep(line - 0.03, line + 0.03, p.y);
   // Mottled: a broad blotch and a fine grain, so the faces are not flat colour.
   let mottle = rockNoise(p * 1.3) * 0.6 + rockNoise(p * 6.1) * 0.4;
   var c = s.color.rgb * (0.84 + 0.32 * mottle);

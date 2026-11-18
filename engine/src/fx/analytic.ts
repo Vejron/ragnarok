@@ -227,6 +227,10 @@ export class FlashEffects extends Effect {
     queue.writeBuffer(gpu.clock, 0, new Float32Array([this.time, 0, 0, 0]))
   }
 
+  override get idle() {
+    return !this.live
+  }
+
   draw(ctx: EffectContext, pass: GPURenderPassEncoder): number {
     const gpu = this.gpu
     if (!gpu || !this.live) return 0

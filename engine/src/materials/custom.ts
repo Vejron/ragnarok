@@ -79,6 +79,8 @@ struct Surface {
   front: bool,
   viewDepth: f32,
   extra: array<vec4f, 3>,
+  // The pixel's place in the target, from its top left corner, at the pixel's middle.
+  pixel: vec2f,
 }
 
 // Which draw of a material with a depth pre-pass this is: 0 the only one, 1 depth only, 2 shaded after it.
@@ -102,7 +104,7 @@ fn fs(in: VertexOut, @builtin(front_facing) front: bool) -> FragmentOut {
   }
   let flags = materials[in.ids.x].params.x;
   let extra = ${material.vertex !== undefined ? 'array<vec4f, 3>(in.extra0, in.extra1, in.extra2)' : 'array<vec4f, 3>()'};
-  let c = surface(Surface(in.world, n, in.color, in.uv, in.custom, front, in.viewDepth, extra));
+  let c = surface(Surface(in.world, n, in.color, in.uv, in.custom, front, in.viewDepth, extra, in.clip.xy));
   var out: FragmentOut;
 ${material.coverage ? '  out.mask = surfaceMask;' : ''}
   if (PREPASS == 1u) {

@@ -412,6 +412,7 @@ export class Renderer {
     this.materials = new MaterialTable(device)
     this.textures = new TextureStore(device)
     this.resources = new MaterialResources(device, this.textures)
+    this.resources.watch = this.skyPanorama
     this.timer = new GpuTimer(device, 12)
     this.frameBuffer = device.createBuffer({ label: 'frame', size: FRAME_FLOATS * 4, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
     this.reflectionFrameBuffer = device.createBuffer({ label: 'reflection frame', size: FRAME_FLOATS * 4, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
@@ -608,6 +609,7 @@ export class Renderer {
     this.casters.length = 0
     this.farCasters.length = 0
     this.effects.length = 0
+    this.resources.watchSeen = false
     this.collect(scene)
     this.effects.sort((a, b) => a.renderOrder - b.renderOrder)
     this.opaque.sort(byStateThenGeometry)
@@ -656,15 +658,24 @@ export class Renderer {
     if (scene.sky) {
       this.sky.update(encoder, scene.sky)
       if (inverted) this.sky.setView(this.inverseViewProj)
-      this.sky.drawPanorama(encoder, this.sceneGroup!)
+      // The panorama is for what mirrors the sky (water): with none of it in view it is not drawn.
+      if (this.resources.watchSeen) this.sky.drawPanorama(encoder, this.sceneGroup!)
     }
     if (this.shadowsOn && !this.eye?.again) this.shadowPass(encoder)
     if (this.reflectionOn) this.reflectionPass(encoder, scene)
     this.mainPass(encoder, scene)
     if (this.depthCopyPipeline) this.depthCopyPass(encoder)
     this.smokeDrawn = false
-    if (this.effects.length || this.overlayFrom < this.mainBatches.length) {
-      const half = this.effects.some((e) => e.halfResolution)
+    // An effect with nothing alive draws nothing, and a pass with nothing to draw is left out: the
+    // effects pass would reload and store the whole image for it.
+    let half = false
+    let full = this.overlayFrom < this.mainBatches.length
+    for (const effect of this.effects) {
+      if (effect.idle) continue
+      if (effect.halfResolution) half = true
+      else full = true
+    }
+    if (half || full) {
       this.smokeDrawn = half
       if (half) this.halfResolutionPass(encoder, effects)
       this.effectsPass(encoder, effects, half)

@@ -443,11 +443,14 @@ fn displace(world: vec3f, custom: vec4f, color: vec4f) -> vec3f {
   let wide = clamp(eye / params.fade.z, 1.0, 3.5);
   let side = vec2f(world.x - root.x, world.z - root.y) * wide * grow;
   var p = base + vec3f(side.x, along * grow, side.y);
+  // Craters (the scene's, SCORCH.md) lay the blades round their rims flat, away from the middle, and
+  // char the ground: the same for every vertex of a blade, so the fragment is handed how burnt it is.
+  let crater = craterGrass(root);
+  vertexExtra[0] = vec4f(crater.z, 0.0, 0.0, 0.0);
   if (along <= 0.0 || grow <= 0.0) {
     return p;
   }
-  // Craters (the scene's, SCORCH.md) lay the blades round their rims flat, away from the middle.
-  let lean = grassLean(root, fract(rank * 7919.0) * 6.2832) + craterGrass(root).xy;
+  let lean = grassLean(root, fract(rank * 7919.0) * 6.2832) + crater.xy;
   let amount = length(lean);
   if (amount < 1e-4) {
     return p;
@@ -483,7 +486,7 @@ fn surface(s: Surface) -> vec4f {
   let even = c / (0.92 + 0.38 * t) * 1.1;
   c = mix(c, even, far * 0.85);
   // Burnt where the ground under it is charred, most at the tips.
-  c = mix(c, vec3f(0.035, 0.028, 0.02), craterGrass(s.custom.xy).z * (0.6 + 0.4 * t));
+  c = mix(c, vec3f(0.035, 0.028, 0.02), s.extra[0].x * (0.6 + 0.4 * t));
   let grey = vec3f(dot(c, vec3f(0.3, 0.59, 0.11)));
   c = mix(c, mix(grey, frame.fogColor.rgb * 0.5, 0.3) * 1.15, far * 0.35);
   return vec4f(c / PI * lit, 1.0);

@@ -135,6 +135,13 @@ export class MaterialResources {
     return program
   }
 
+  /**
+   * A texture the renderer fills each frame only if something reads it (the sky panorama), and whether
+   * a material asked for since `watchSeen` was last cleared binds it.
+   */
+  watch: Texture | null = null
+  watchSeen = false
+
   /** The group id for a ShaderMaterial: its uniforms (re-sent when its version changes) and textures. */
   custom(material: ShaderMaterial): number {
     let state = this.customs.get(material)
@@ -170,6 +177,7 @@ export class MaterialResources {
       const t = material.textures[names[i]!]
       const id = t ? t.id : 0
       const version = t ? t.version : 0
+      if (t && t === this.watch) this.watchSeen = true
       if (bound[i * 2] !== id || bound[i * 2 + 1] !== version) {
         bound[i * 2] = id
         bound[i * 2 + 1] = version

@@ -101,6 +101,8 @@ export class ParticleSystem extends Effect {
   private frames = 0
   private spawnedAt = -1
   private aliveAt = -1
+  /** The pool had nothing alive and nothing new at the last `prepare`. */
+  private empty = true
   private commands = new Float32Array(256 * COMMAND_FLOATS)
   private commandWords = new Uint32Array(this.commands.buffer)
   private commandCount = 0
@@ -217,7 +219,8 @@ export class ParticleSystem extends Effect {
     const frame = ++this.frames
     if (spawn) this.spawnedAt = frame
     // Nothing alive since the last spawn and nothing new: the last simulation left zero instances to draw.
-    if (!spawn && this.alive === 0 && this.aliveAt > this.spawnedAt) {
+    this.empty = !spawn && this.alive === 0 && this.aliveAt > this.spawnedAt
+    if (this.empty) {
       this.commandCount = 0
       this.dt = 0
       return
@@ -265,9 +268,13 @@ export class ParticleSystem extends Effect {
     this.dt = 0
   }
 
+  override get idle() {
+    return this.empty
+  }
+
   draw(ctx: EffectContext, pass: GPURenderPassEncoder): number {
     const gpu = this.gpu
-    if (!gpu) return 0
+    if (!gpu || this.empty) return 0
     gpu.ensureRender(ctx)
     for (let blend = 0; blend < 2; blend++) {
       pass.setPipeline(gpu.renderPipelines[blend]!)

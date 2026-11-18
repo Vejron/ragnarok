@@ -247,6 +247,10 @@ export class Ribbons extends Effect {
     if (n) ctx.device.queue.writeBuffer(gpu.buffer, 0, data, 0, n * SEGMENT_FLOATS)
   }
 
+  override get idle() {
+    return !this.count
+  }
+
   draw(ctx: EffectContext, pass: GPURenderPassEncoder): number {
     const gpu = this.gpu
     if (!gpu || !this.count) return 0

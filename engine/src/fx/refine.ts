@@ -226,6 +226,10 @@ export class MeshRefiner extends Effect {
     this.ready = true
   }
 
+  override get idle() {
+    return true
+  }
+
   draw(): number {
     return 0
   }

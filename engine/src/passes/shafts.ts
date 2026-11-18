@@ -139,16 +139,11 @@ export class LightShafts {
     })
   }
 
-  /** Draws the shafts for `light`, or clears them when `light` is null. `aspect` is the screen's width over its height. */
+  /** Draws the shafts for `light`, or nothing when `light` is null. `aspect` is the screen's width over its height. */
   encode(encoder: GPUCommandEncoder, light: ShaftLight | null, aspect: number, timed: (name: string) => GPURenderPassTimestampWrites | undefined) {
     if (!this.maskTexture || !this.raysTexture) return
-    if (!light) {
-      encoder.beginRenderPass({
-        label: 'shafts off',
-        colorAttachments: [{ view: this.view!, loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 1 } }],
-      }).end()
-      return
-    }
+    // With no light the output pass does not read the shafts (its `shafts` flag is 0), so nothing is drawn.
+    if (!light) return
     const d = this.data
     d[0] = light.u
     d[1] = light.v
