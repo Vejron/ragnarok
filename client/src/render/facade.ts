@@ -148,10 +148,21 @@ function floorOf(walls: readonly Poly[]): Poly[] {
  * `inset` knows (a corner of the facade as it stands) moves as every face round it does, so the
  * inner faces meet where walls and roof meet; any other moves straight in against `normal`.
  * `place` moves a corner of a hurt building where it is drawn, before it is moved in.
+ *
+ * Where faces back onto each other at a corner (a bridge's parapet standing on its deck: the
+ * parapet's underside faces down where the deck faces up), the mitre cannot move in from both, and
+ * leaves the corner short of this face. That corner is then moved the rest of the way in against
+ * `normal`, or the inner face would lie in the face's own plane: hidden while it is culled, but
+ * a hurt building is drawn from both sides, and it would fight the face for the same pixels.
  */
 export function innerOf(poly: Poly, normal: P, inset?: Inset, place?: (p: P) => P): Poly {
   const straight: P = [normal[0] * WALL_THICKNESS, normal[1] * WALL_THICKNESS, normal[2] * WALL_THICKNESS]
-  return poly.map((p) => sub(place ? place(p) : p, inset?.get(keyOf(p)) ?? straight)).reverse()
+  return poly.map((p) => {
+    let d = inset?.get(keyOf(p)) ?? straight
+    const short = WALL_THICKNESS - dot(d, normal)
+    if (short > WALL_THICKNESS / 2) d = add(d, normal, short)
+    return sub(place ? place(p) : p, d)
+  }).reverse()
 }
 
 /** How far each corner of a facade moves in to the inner faces (by `keyOf`), metres. */

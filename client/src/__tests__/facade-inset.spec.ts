@@ -65,4 +65,17 @@ describe('the inner faces of a house', () => {
     expect(Math.abs(corner[0])).toBeCloseTo(WALL_THICKNESS, 6)
     expect(Math.abs(corner[2])).toBeCloseTo(WALL_THICKNESS, 6)
   })
+
+  it('lie a wall thickness behind a face that another face backs onto, as a parapet on a bridge deck', () => {
+    // A deck 6 m long and 4 m wide, its top at 1 m, and a parapet box along its far edge whose underside rests on the deck at the same corners.
+    const top: Poly = [[0, 1, 0], [6, 1, 0], [6, 1, -4], [0, 1, -4]]
+    const side: Poly = [[0, 0, 0], [6, 0, 0], [6, 1, 0], [0, 1, 0]]
+    const under: Poly = [[0, 1, -4], [6, 1, -4], [6, 1, -3.7], [0, 1, -3.7]]
+    for (const face of [top, side, under]) if (dot(normalOf(face), face === top ? [0, 1, 0] : face === side ? [0, 0, 1] : [0, -1, 0]) < 0) face.reverse()
+    const inset = insetOf([top, side, under])
+    // Up and down cancel at the far edge: the mitre alone leaves those corners in the deck's plane.
+    expect(inset.get(keyOf([0, 1, -4]))![1]).toBeCloseTo(0, 6)
+    const n = normalOf(top)
+    for (const p of innerOf(top, n, inset)) expect(dot(n, p) - dot(n, top[0]!)).toBeCloseTo(-WALL_THICKNESS, 6)
+  })
 })
