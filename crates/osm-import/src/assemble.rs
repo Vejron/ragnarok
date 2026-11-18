@@ -216,6 +216,72 @@ fn rail_style(way: &Way) -> Option<(f64, u8)> {
     Some((tagged.map_or(fallback, |mm| mm / 1000.0), kind))
 }
 
+/// How far past a road's or track's edge a stream is taken underground, metres, so it comes out
+/// beyond the embankment rather than on the shoulder.
+const CULVERT_SHOULDER: f64 = 1.5;
+/// Steps a stream is walked in to find where it goes under a road, metres.
+const CULVERT_STEP: f64 = 0.5;
+/// A piece of stream shorter than this between two crossings is left out, metres.
+const SHORTEST_STREAM: f64 = 1.0;
+
+/// A stream's centre line without the stretches where it passes under a road or a track (`ways`:
+/// centre lines with their widths, metres), so it stops at one side and comes out at the other, as
+/// from a culvert. Bridges are not among the ways: a stream runs on under a deck.
+fn culverted(line: &[P], ways: &[(&[P], f64)]) -> Vec<Vec<P>> {
+    let bounds = |points: &[P], grow: f64| {
+        points.iter().fold([f64::MAX, f64::MAX, f64::MIN, f64::MIN], |b, p| [b[0].min(p[0] - grow), b[1].min(p[1] - grow), b[2].max(p[0] + grow), b[3].max(p[1] + grow)])
+    };
+    let own = bounds(line, 0.0);
+    let near: Vec<(&[P], f64)> = ways
+        .iter()
+        .map(|&(points, width)| (points, width / 2.0 + CULVERT_SHOULDER))
+        .filter(|&(points, reach)| {
+            let b = bounds(points, reach);
+            b[0] <= own[2] && b[2] >= own[0] && b[1] <= own[3] && b[3] >= own[1]
+        })
+        .collect();
+    if near.is_empty() || line.len() < 2 {
+        return vec![line.to_vec()];
+    }
+    let under = |p: P| near.iter().any(|&(points, reach)| points.windows(2).any(|pair| distance_to_segment(p, pair[0], pair[1]) < reach));
+    let mut runs = Vec::new();
+    let mut run: Vec<P> = Vec::new();
+    let mut was = under(line[0]);
+    if !was {
+        run.push(line[0]);
+    }
+    for pair in line.windows(2) {
+        let (a, b) = (pair[0], pair[1]);
+        let at = |t: f64| [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+        let steps = ((b[0] - a[0]).hypot(b[1] - a[1]) / CULVERT_STEP).ceil().max(1.0) as usize;
+        for k in 1..=steps {
+            let t = k as f64 / steps as f64;
+            if under(at(t)) == was {
+                continue;
+            }
+            // Halve the step down to the road's reach: `lo` stays on the side the stream came from.
+            let (mut lo, mut hi) = ((k - 1) as f64 / steps as f64, t);
+            for _ in 0..12 {
+                let middle = (lo + hi) / 2.0;
+                if under(at(middle)) == was { lo = middle } else { hi = middle }
+            }
+            if was {
+                run.push(at(hi));
+            } else {
+                run.push(at(lo));
+                runs.push(std::mem::take(&mut run));
+            }
+            was = !was;
+        }
+        if !was {
+            run.push(b);
+        }
+    }
+    runs.push(run);
+    runs.retain(|run| run.windows(2).map(|pair| (pair[1][0] - pair[0][0]).hypot(pair[1][1] - pair[0][1])).sum::<f64>() >= SHORTEST_STREAM);
+    runs
+}
+
 /// Width of the ballast bed under a track of `gauge` metres.
 pub(crate) fn ballast(gauge: f64) -> f64 {
     gauge + BALLAST_EXTRA
@@ -587,9 +653,11 @@ fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collecti
             }
         }
     }
-    // Streams are cut at tile borders like roads, keeping the direction of the flow.
-    for line in &water.streams {
-        for run in clip_polyline(line, half) {
+    // Streams go under the roads and tracks they cross, and are cut at tile borders like roads,
+    // keeping the direction of the flow.
+    let crossed: Vec<(&[P], f64)> = roads.iter().map(|(points, width, _)| (&points[..], *width)).chain(rails.iter().map(|(points, gauge, _)| (&points[..], ballast(*gauge)))).collect();
+    for line in water.streams.iter().flat_map(|line| culverted(line, &crossed)) {
+        for run in clip_polyline(&line, half) {
             per_tile(&manifest, half, side, &run, |key, points| tiles.entry(key).or_default().streams.push(Stream { width: cm(STREAM_WIDTH), points }));
         }
     }
@@ -1955,7 +2023,7 @@ fn is_bridge(way: &Way) -> bool {
 }
 
 /// Ground cover for a way's or relation's tags, or `None` if it is not cover we draw. Water is not
-/// cover: it comes from Hydrografi (`water.rs`).
+/// cover: it comes from `osm_water` (`water.rs`).
 fn cover_kind(tags: &std::collections::HashMap<String, String>) -> Option<u8> {
     let tag = |key: &str| tags.get(key).map(String::as_str);
     if let Some(kind) = tag("golf").and_then(crate::osm_golf::surface_kind) {
@@ -2246,9 +2314,48 @@ mod tests {
     }
 
     #[test]
+    fn a_stream_stops_at_a_road_and_carries_on_beyond_it() {
+        let road: &[P] = &[[0.0, -50.0], [0.0, 50.0]];
+        let runs = culverted(&[[-20.0, 3.0], [20.0, 3.0]], &[(road, 6.0)]);
+        assert_eq!(runs.len(), 2, "{runs:?}");
+        let reach = 3.0 + CULVERT_SHOULDER;
+        let (upstream, downstream) = (runs[0].last().unwrap(), runs[1][0]);
+        assert!((upstream[0] + reach).abs() < 0.01 && (downstream[0] - reach).abs() < 0.01, "{runs:?}");
+        assert_eq!((runs[0][0], *runs[1].last().unwrap()), ([-20.0, 3.0], [20.0, 3.0]), "the flow keeps its ends and direction");
+    }
+
+    #[test]
+    fn a_stream_under_a_track_stops_at_its_ballast() {
+        let track: &[P] = &[[0.0, -50.0], [0.0, 50.0]];
+        let runs = culverted(&[[-20.0, 0.0], [20.0, 0.0]], &[(track, ballast(1.435))]);
+        assert_eq!(runs.len(), 2);
+        assert!(runs.iter().flatten().all(|p| p[0].abs() >= ballast(1.435) / 2.0 + CULVERT_SHOULDER - 0.01), "{runs:?}");
+    }
+
+    #[test]
+    fn a_stream_beside_a_road_is_not_cut() {
+        let road: &[P] = &[[0.0, -50.0], [0.0, 50.0]];
+        let line = vec![[10.0, -40.0], [10.0, 0.0], [12.0, 40.0]];
+        assert_eq!(culverted(&line, &[(road, 6.0)]), vec![line]);
+    }
+
+    #[test]
+    fn a_stream_under_a_bridge_is_left_whole() {
+        // A bridge is not among the ways a stream goes under, so with only a bridge there it runs on.
+        let line = vec![[-20.0, 0.0], [20.0, 0.0]];
+        assert_eq!(culverted(&line, &[]), vec![line]);
+    }
+
+    #[test]
+    fn a_stream_wholly_under_a_road_is_gone() {
+        let road: &[P] = &[[0.0, -50.0], [0.0, 50.0]];
+        assert!(culverted(&[[-1.0, 0.0], [1.0, 0.0]], &[(road, 6.0)]).is_empty());
+    }
+
+    #[test]
     fn cover_comes_from_tags() {
         let tags = |pairs: &[(&str, &str)]| pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect::<std::collections::HashMap<_, _>>();
-        assert_eq!(cover_kind(&tags(&[("natural", "water")])), None, "water comes from Hydrografi");
+        assert_eq!(cover_kind(&tags(&[("natural", "water")])), None, "water comes from osm_water");
         assert_eq!(cover_kind(&tags(&[("landuse", "forest")])), Some(COVER_WOOD));
         assert_eq!(cover_kind(&tags(&[("leisure", "park")])), Some(COVER_PARK));
         assert_eq!(cover_kind(&tags(&[("landuse", "military")])), None);

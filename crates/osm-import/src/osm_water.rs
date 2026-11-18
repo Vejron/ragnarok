@@ -1,5 +1,5 @@
-//! Water from OpenStreetMap, the alternative to Lantmäteriet's Hydrografi (`hydro.rs`), which stops
-//! at the coast: lakes and river polygons, stream centre lines and the sea.
+//! Water from OpenStreetMap: lakes and river polygons, stream centre lines and the sea. A stream
+//! that runs underground (`tunnel=culvert`) is left out, so it shows only where it is open.
 //!
 //! OSM has no sea polygon. The sea is the side of every `natural=coastline` way that is on its
 //! right (land is on the left), so it is built here: the coastline chains are cut at the edge of
@@ -52,6 +52,10 @@ fn read_way(way: &Way, found: &mut Found, coast: &mut Vec<Vec<LatLon>>) {
     if tag("natural") == "coastline" {
         coast.push(geometry.clone());
     } else if matches!(tag("waterway"), "river" | "stream" | "canal") {
+        // Piped under a road or a yard (`tunnel=culvert`, or `yes`): nothing of it shows.
+        if !matches!(tag("tunnel"), "" | "no") {
+            return;
+        }
         found.streams.push(geometry.clone());
     } else if is_closed(geometry) {
         (if is_river(&way.tags) { &mut found.rivers } else { &mut found.lakes }).push(vec![geometry.clone()]);
@@ -293,6 +297,21 @@ mod tests {
     fn area(ring: &[P]) -> f64 {
         let n = ring.len();
         (0..n).map(|i| ring[i][0] * ring[(i + 1) % n][1] - ring[(i + 1) % n][0] * ring[i][1]).sum::<f64>().abs() / 2.0
+    }
+
+    #[test]
+    fn a_culvert_is_not_drawn_as_a_stream() {
+        let way = |id, tags: &[(&str, &str)]| Way {
+            id,
+            tags: tags.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+            geometry: vec![LatLon { lat: 64.0, lon: 19.0 }, LatLon { lat: 64.001, lon: 19.0 }],
+        };
+        let data = Data {
+            ways: vec![way(1, &[("waterway", "stream")]), way(2, &[("waterway", "stream"), ("tunnel", "culvert")]), way(3, &[("waterway", "stream"), ("tunnel", "no")])],
+            relations: Vec::new(),
+            nodes: Vec::new(),
+        };
+        assert_eq!(from(&data).streams.len(), 2, "the open stream and the one tagged tunnel=no");
     }
 
     #[test]

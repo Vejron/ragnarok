@@ -5,11 +5,10 @@ how to run, cache and debug it. The format itself is described in [design.md](de
 file is about the *pipeline*. The code is `crates/osm-import`.
 
 ```
-OpenStreetMap ────────────┐  buildings, roads, railways, cover, golf, lifts, ski tracks
-  (Geofabrik extract,      │
+OpenStreetMap ────────────┐  buildings, roads, railways, cover, golf, lifts, ski tracks,
+  (Geofabrik extract,      │  lakes, rivers, streams, sea ► water surface, carved beds
    else Overpass)          │
 Lantmäteriet DTM  ────────┤  terrain heights ──► ground grid
-Lantmäteriet Hydrografi ──┤  lakes, rivers, streams ► water surface, carved beds
 Lantmäteriet laser ───────┤  roof shapes ──────► buildings' roofs
                           │  canopy ───────────► trees (every tree in the woods too)
 Umeå tree register ───────┤  planted trees ────► archetypes by species
@@ -37,7 +36,6 @@ Restart the server afterwards: it reads the whole world at start. The importer c
 | `--cell m` | Terrain sample spacing, default 4 m (or an `--area` world's `cell`), must divide `--tile`; 1, 2 or 4 m make a 256 m tile `2^k + 1` samples a side, which the client simplifies best. `0` is flat ground and needs no credentials. |
 | `--dem file.tif` | Take elevation from a local DTM GeoTIFF instead of Lantmäteriet. |
 | `--no-water` | Leave out lakes, rivers and streams (skips the water download). |
-| `--osm-water` | Take lakes, rivers, streams and the sea from OpenStreetMap instead of Hydrografi. It has the sea. Instant from a local extract; from Overpass, part of the one query per block. |
 | `--no-roofs` | Buildings stay boxes of their tagged height. The point cloud (the slowest and biggest download) is then only read for trees; add `--no-lidar-trees` to skip it completely. |
 | `--no-trees` | Skip the tree register. |
 | `--no-minimap` | Skip `minimap.webp`, the pre-rendered top-down map (2048 px, 4096 under a `minimap_image`; a lossy WebP written next to `world.msgpack`) that the client shows as minimap and map. |
@@ -134,7 +132,7 @@ boulders, stony ground and small path. Outside it nothing changes. A world names
 so that editor builds get it too:
 
 ```json
-{ "tiles": [...], "cell": 1, "ocad": "temp-maps/ocad/map.ocd", "ocad_shift": [0, 0], "osm_water": true,
+{ "tiles": [...], "cell": 1, "ocad": "temp-maps/ocad/map.ocd", "ocad_shift": [0, 0],
   "minimap_image": "temp-maps/ocad/map.png" }
 ```
 
@@ -155,7 +153,7 @@ and how many objects it has of each symbol.
   outline is laid as wood under the rest, and no rocks are made up inside it.
 - **What the map does not decide.** The terrain stays with the laser, but for the knolls and pits it adds
   (set `"cell": 1`, or they fall between the samples). The trees stay with the laser and NMD, but open land
-  clears them. The water stays with its usual source. A world on the coast wants `"osm_water": true`: Hydrografi has no sea.
+  clears them. The water stays with OpenStreetMap's.
 - **`minimap_image`** is a JPEG or PNG render of the map laid over the drawn minimap, which is then drawn
   4096 px across instead of 2048 so the map's symbols stay readable. With a world file beside it (`.pgw`,
   `.jgw` or `.wld`, as OCAD's georeferenced export writes, with a `.prj` that must be SWEREF 99 TM) it is
@@ -272,9 +270,7 @@ Paint 256 m tiles on OpenStreetMap, name the world and save it (`worlds/<name>/a
 `{gx, gy}` tiles of the global grid). **Download** fills the importer's cache for the blocks the
 tiles lie in, **Generate world** runs `osm-import --area` on it, and **use** makes it the active
 world: restart the server (it reads `worlds/active.json`, unless `RAGNAROK_WORLD` is set) and reload the
-game (in dev the client reads the same file; `VITE_WORLD_BASE` overrides). A Swedish world on the
-coast wants **Sea (water from OpenStreetMap)** ticked in the World panel (`"osm_water": true`):
-Hydrografi has lakes and rivers but no sea.
+game (in dev the client reads the same file; `VITE_WORLD_BASE` overrides).
 
 How it works:
 
@@ -283,8 +279,8 @@ How it works:
   (`shared::world::SCALE_LATITUDE`). France's is cut in Lambert-93 metres from 46.5° N 3° E (see
   Regions, below). So a tile is the same ground whichever world it is in. The region picker in the
   World panel switches grids; a world's `area.json` keeps its `region` (absent means Sweden).
-- **Downloads are per 2 km block of that grid** (8 x 8 tiles). The cache key of a block's Overpass,
-  Hydrografi and tree requests depends on the block only, so worlds share entries, and the editor
+- **Downloads are per 2 km block of that grid** (8 x 8 tiles). The cache key of a block's Overpass
+  and tree requests depends on the block only, so worlds share entries, and the editor
   can tell which blocks are cached from the keys without downloading (`grid::Block::status`). The
   height model and laser blocks were already shared.
 - **The world is the smallest square of tiles that holds the painted ones**, centred on it, with
@@ -343,7 +339,7 @@ is classified, so it is read rather than guessed at. Roofs are measured from the
 come from class 17 and trees from class 5. Big buildings are cut into 32 m pieces. Roof colours
 come from IGN's aerial photo (BD ORTHO, `paint.rs`): the photo's median inside each building, snapped
 to a toon palette, stored as the building's `paint` (`--no-paint` leaves the colours to the client).
-In Paris the city's tree register adds species. Water comes from OpenStreetMap (`--osm-water` is implied).
+In Paris the city's tree register adds species.
 
 ```sh
 cargo run --release -p osm-import -- --center 47.3966,0.6880 --half 384 --cell 1   # Tours, by Pont Wilson
@@ -355,8 +351,8 @@ part works, what it costs the server and what is left is in [FRANCE.md](FRANCE.m
 
 ## Credentials
 
-Lantmäteriet's height model, point cloud and water need a (free) Geotorget account with the *Markhöjdmodell*,
-*Laserdata Skog* and *Hydrografi Direkt* services enabled. The importer reads two environment variables:
+Lantmäteriet's height model and point cloud need a (free) Geotorget account with the *Markhöjdmodell* and
+*Laserdata Skog* services enabled. The importer reads two environment variables:
 
 ```
 LM_USER=...
@@ -377,8 +373,7 @@ auth. They are never written to the cache or to the world files. OSM and Umeå's
 
 | Data | Source | Licence | Used for |
 |---|---|---|---|
-| Buildings, roads, railways, woods, parks | OpenStreetMap through [Overpass](https://overpass-api.de) | ODbL, © OpenStreetMap contributors | `Building` footprints and heights, `Road`, `Rail`, `Cover` |
-| Lakes, rivers, streams | Lantmäteriet *Hydrografi Direkt*, OGC API Features `ogc-features/v1/hydrografi` (`StandingWater`, `WatercoursePolygon`, `WatercourseLine`) | check the product's terms on Geotorget | `Tile.water`, `Tile.streams`, carved ground |
+| Buildings, roads, railways, woods, parks, lakes, rivers, streams, the sea | OpenStreetMap through [Overpass](https://overpass-api.de) | ODbL, © OpenStreetMap contributors | `Building` footprints and heights, `Road`, `Rail`, `Cover`, `Tile.water`, `Tile.streams`, carved ground |
 | Terrain | Lantmäteriet *Markhöjd grid 1 m* (DTM), STAC collection `dtm-cog`, cloud-optimised GeoTIFF | CC BY 4.0 | `Tile.ground`, building floors, tree bases |
 | Laser points | Lantmäteriet *Laserdata Skog* (COPC), STAC collection `dsm-skoglig-copc` | CC BY 4.0 | roof fitting, trees |
 | Street and park trees | Umeå kommun open data, [`trad-som-forvaltas-av-gator-och-parker`](https://opendata.umea.se/explore/assets/trad-som-forvaltas-av-gator-och-parker/) | CC0 | `Tile.trees` |
@@ -452,12 +447,11 @@ listed in `Tile.bridges` as `(first, steel)` ranges. Trees within 4 m of a bridg
 the pylon and cables). Bridge roads never offer spawns. Deck heights over the Umeälven can be
 tuned by `clearance` in `bridge.rs`.
 
-### Water (Hydrografi)
-The default. `--osm-water` takes it from OpenStreetMap instead (see the end of this section).
-Lakes (`StandingWater`) and wide rivers (`WatercoursePolygon`) are polygons; streams
-(`WatercourseLine`) are centre lines in the direction the water flows. The service is queried per
-2 km square (CRS84 bounding box, paged, cached like Overpass answers). It has **no surface height,
-depth or width**, so:
+### Water
+Water comes from the OpenStreetMap read (`osm_water::from`): lakes (`natural=water`, reservoirs) and
+wide rivers (`waterway=riverbank`, `water=river`) are polygons, streams (`waterway=river|stream|canal`)
+are centre lines in the direction the water flows, and the sea is built from the coastline (see "The sea").
+The data has **no surface height or depth, and streams no width**, so:
 
 - a lake's surface is the median of the DTM inside it (the DTM is flat over water); a lake whose
   10th and 90th percentile differ by more than 1.5 m is reported, since it is drawn flat;
@@ -484,10 +478,16 @@ depth or width**, so:
   you are (twice its local inscribed radius), and the most a byte holds on the sea. A bank sample
   takes the widest water beside it. The waves grow with it (see "Waves" below);
 - streams are drawn 2.5 m wide as ribbons on the terrain (`Tile.streams`), and the stretches that
-  run through a lake or river polygon are dropped.
+  run through a lake or river polygon are dropped;
+- a stream goes under the roads and railways it crosses, as through a culvert: a way tagged
+  `tunnel=culvert` (or any `tunnel` but `no`) is left out, and wherever a stream line passes within
+  a road's half width, or a track's ballast, plus 1.5 m (`CULVERT_SHOULDER`) of its centre line, that
+  stretch is cut out (`assemble::culverted`). So the ribbon stops beyond the embankment on one side
+  and starts again on the other, culvert tagged or not. Bridges are not cut: the stream runs on under
+  the deck. The minimap shows the same short gap.
 
-OSM water (`natural=water`, `waterway=riverbank`, `landuse=basin|reservoir`) is no longer
-imported. Without credentials, with `--cell 0` or with `--no-water` the world has no water.
+Water is no cover (`natural=water` is not a `Cover`). With `--cell 0` or with `--no-water` the world
+has no water.
 
 #### Waves
 `shared::waves` is five swells crossing (90, 60, 25, 13 and 7.5 m long), the same function of place
@@ -768,9 +768,8 @@ cargo test -p osm-import        # classification, roofs, tiling, cache
 cargo test -p osm-import lidar_probe -- --ignored --nocapture
 ```
 
-### Water from OpenStreetMap (`--osm-water`)
-Lakes (`natural=water`, riverbanks, reservoirs), rivers and streams come from the OpenStreetMap read
-(the local extract, or Overpass per 2 km block). **The sea** has no polygon in OSM: coastline ways (land on the left) are joined, cut at the
+### The sea
+**The sea** has no polygon in OSM: coastline ways (land on the left) are joined, cut at the
 edge of the world's grid and closed clockwise along it (`osm_water::sea`); islands become holes. The
 height model leaves the sea out, so its surface is fixed at 0 m. Its bed is not a lake's bowl: it
 follows only the distance `s` from land, `0.3 + 11.7·t·(1.5 − 0.5·t)` m with `t = s / max(S, 600 m)`

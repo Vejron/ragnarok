@@ -9,7 +9,7 @@
 
 use osm_import::grid::{self, BLOCK_TILES, Block, Tile};
 use osm_import::region::Region;
-use osm_import::{cache, hydro, osm, overpass, progress, trees};
+use osm_import::{cache, osm, overpass, progress, trees};
 use salvo::prelude::*;
 use serde::{Deserialize, Serialize};
 use shared::world::plain_world_name;
@@ -46,11 +46,6 @@ struct Area {
     /// submarines still sail.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     open_water: bool,
-    /// Take the water from OpenStreetMap (`osm_water` in the importer), for a world on the coast:
-    /// Hydrografi has no sea. Absent from the page, the file's own is kept; `false` is written as
-    /// nothing at all.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    osm_water: Option<bool>,
     /// Public transport (`buses` in the importer): bus lines along the major roads, with buses the
     /// server runs. Absent from the page, the file's own is kept; `false` is written as nothing at all.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -75,13 +70,10 @@ struct Area {
 
 impl Area {
     /// The page knows nothing of the importer's other options, so a save carries them over from the
-    /// file it replaces, and the season and the sea too when the page does not say. `"summer"` is no
+    /// file it replaces, and the season and the buses too when the page does not say. `"summer"` is no
     /// theme.
     fn keep_options(&mut self, old: Option<Area>) {
         if let Some(old) = old {
-            if self.osm_water.is_none() {
-                self.osm_water = old.osm_water;
-            }
             if self.buses.is_none() {
                 self.buses = old.buses;
             }
@@ -98,9 +90,6 @@ impl Area {
             self.theme = None;
             self.groomed_paths = false;
             self.open_water = false;
-        }
-        if self.osm_water == Some(false) {
-            self.osm_water = None;
         }
         if self.buses == Some(false) {
             self.buses = None;
@@ -187,7 +176,7 @@ async fn list_worlds(res: &mut Response) {
 async fn get_world(req: &mut Request, res: &mut Response) {
     let Some(name) = name_of(req, res) else { return };
     match read_area(&name) {
-        Some(area) => res.render(Json(serde_json::json!({ "name": name, "region": area.region.name(), "tiles": area.tiles, "cell": area.cell, "theme": area.theme, "groomed_paths": area.groomed_paths, "open_water": area.open_water, "osm_water": area.osm_water.unwrap_or(false), "buses": area.buses.unwrap_or(false), "spawns": area.spawns, "vehicles": area.vehicles, "items": area.items, "bots": area.bots, "animals": area.animals }))),
+        Some(area) => res.render(Json(serde_json::json!({ "name": name, "region": area.region.name(), "tiles": area.tiles, "cell": area.cell, "theme": area.theme, "groomed_paths": area.groomed_paths, "open_water": area.open_water, "buses": area.buses.unwrap_or(false), "spawns": area.spawns, "vehicles": area.vehicles, "items": area.items, "bots": area.bots, "animals": area.animals }))),
         None => fail(res, StatusCode::NOT_FOUND, "no such world"),
     }
 }
@@ -299,7 +288,7 @@ async fn cache_state(req: &mut Request, res: &mut Response) {
     for by in by0..=by1 {
         for bx in bx0..=bx1 {
             let s = Block { bx, by }.status(region);
-            blocks.push(serde_json::json!({ "bx": bx, "by": by, "overpass": s.overpass, "hydro": s.hydro, "trees": s.trees }));
+            blocks.push(serde_json::json!({ "bx": bx, "by": by, "overpass": s.overpass, "trees": s.trees }));
         }
     }
     res.render(Json(serde_json::json!({ "blocks": blocks })));
@@ -324,7 +313,7 @@ struct Job {
     started: Option<Instant>,
     #[serde(skip)]
     ended: Option<Instant>,
-    /// What went wrong, or notes (a block without water, for example).
+    /// What went wrong, or notes (a block without trees, for example).
     messages: Vec<String>,
 }
 
@@ -348,9 +337,9 @@ fn job() -> std::sync::MutexGuard<'static, Job> {
 /// Downloads, block by block, what the world's `tiles` need, into the importer's cache. In France
 /// that is also IGN's LiDAR index for the block and its terrain model under the painted tiles; the
 /// point clouds themselves are read when the world is generated, node by node.
-fn run(region: Region, blocks: Vec<Block>, tiles: Vec<Tile>, credentials: Option<(String, String)>) {
+fn run(region: Region, blocks: Vec<Block>, tiles: Vec<Tile>) {
     let endpoints: Vec<String> = overpass::DEFAULT_ENDPOINTS.iter().map(|e| e.to_string()).collect();
-    // Hydrografi and the tree register are Swedish.
+    // The tree register is Swedish.
     let swedish = region == Region::Sweden;
     for block in blocks {
         let bbox = block.bbox(region);
@@ -363,14 +352,8 @@ fn run(region: Region, blocks: Vec<Block>, tiles: Vec<Tile>, credentials: Option
             job.messages.push(format!("block ({}, {}): {error:#}", block.bx, block.by));
             return;
         }
-        // Water and trees are extras: note what is missing and carry on.
+        // Trees are an extra: note what is missing and carry on.
         let mut notes = Vec::new();
-        if let (true, Some((user, password))) = (swedish, &credentials) {
-            progress::stage("water");
-            if let Err(error) = hydro::fetch_pieces(&[bbox], user, password) {
-                notes.push(format!("block ({}, {}) has no water: {error:#}", block.bx, block.by));
-            }
-        }
         progress::stage("trees");
         if let (true, Err(error)) = (swedish, trees::fetch(bbox)) {
             notes.push(format!("block ({}, {}) has no trees: {error:#}", block.bx, block.by));
@@ -416,9 +399,8 @@ async fn start_fetch(req: &mut Request, res: &mut Response) {
     }
     progress::reset();
     if !blocks.is_empty() {
-        let credentials = credential("LM_USER").zip(credential("LM_PASS"));
         let (region, tiles) = (area.region, area.tiles);
-        std::thread::spawn(move || run(region, blocks, tiles, credentials));
+        std::thread::spawn(move || run(region, blocks, tiles));
     }
     res.render(Json(current()));
 }
@@ -599,13 +581,12 @@ mod tests {
 
     #[test]
     fn a_save_from_the_page_keeps_the_orienteering_map() {
-        let old: Area = serde_json::from_str(r#"{"tiles":[],"ocad":"maps/a.ocd","ocad_shift":[1,2],"osm_water":true,"minimap_image":"maps/a.jpg"}"#).unwrap();
+        let old: Area = serde_json::from_str(r#"{"tiles":[],"ocad":"maps/a.ocd","ocad_shift":[1,2],"minimap_image":"maps/a.jpg"}"#).unwrap();
         let mut sent: Area = serde_json::from_str(r#"{"tiles":[{"gx":1,"gy":2}],"cell":1,"spawns":[],"vehicles":[],"items":[],"bots":[]}"#).unwrap();
         sent.keep_options(Some(old));
         let saved: serde_json::Value = serde_json::from_slice(&serde_json::to_vec(&sent).unwrap()).unwrap();
         assert_eq!(saved["ocad"], "maps/a.ocd");
         assert_eq!(saved["ocad_shift"], serde_json::json!([1, 2]));
-        assert_eq!(saved["osm_water"], true);
         assert_eq!(saved["minimap_image"], "maps/a.jpg");
         assert_eq!(saved["cell"], 1.0);
     }
@@ -622,20 +603,6 @@ mod tests {
         assert!(saved(r#"{"tiles":[],"buses":false}"#, r#"{"tiles":[],"buses":true}"#).get("buses").is_none());
         // A save that does not say keeps what the file had.
         assert_eq!(saved(r#"{"tiles":[]}"#, r#"{"tiles":[],"buses":true}"#)["buses"], true);
-    }
-
-    #[test]
-    fn the_sea_switch_on_the_page_turns_osm_water_on_and_off() {
-        let saved = |sent: &str, old: &str| {
-            let mut sent: Area = serde_json::from_str(sent).unwrap();
-            sent.keep_options(Some(serde_json::from_str(old).unwrap()));
-            serde_json::from_slice::<serde_json::Value>(&serde_json::to_vec(&sent).unwrap()).unwrap()
-        };
-        assert_eq!(saved(r#"{"tiles":[],"osm_water":true}"#, r#"{"tiles":[]}"#)["osm_water"], true);
-        // Turned off: no key at all, as a world without the sea always was.
-        assert!(saved(r#"{"tiles":[],"osm_water":false}"#, r#"{"tiles":[],"osm_water":true}"#).get("osm_water").is_none());
-        // Not sent: the file's own stays.
-        assert_eq!(saved(r#"{"tiles":[]}"#, r#"{"tiles":[],"osm_water":true}"#)["osm_water"], true);
     }
 
     #[test]

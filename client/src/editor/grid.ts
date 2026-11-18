@@ -29,7 +29,6 @@ export interface BlockStatus {
   bx: number
   by: number
   overpass: boolean
-  hydro: boolean
   trees: boolean
 }
 

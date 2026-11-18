@@ -51,7 +51,7 @@ One hectare of central Tours (around Pont Wilson) has 88k building returns, 12k 
 | Editor grid (`Region::grid`) | 256 m tiles from central Umeå | 256 m tiles of Lambert-93 from (700 000, 6 600 000) |
 | Terrain | Lantmäteriet DTM (STAC, SWEREF 99 TM) | IGN MNT 0.5 m (WMS-R), or `--dem` |
 | Laser | Lantmäteriet Laserdata Skog (STAC, credentials) | IGN LiDAR HD COPC (WFS index, open) |
-| Water | Hydrografi, or `--osm-water` | OpenStreetMap |
+| Water | OpenStreetMap | OpenStreetMap |
 | Planted trees | Umeå's register | Paris's register, in Paris |
 
 The code:
@@ -96,7 +96,7 @@ The code:
 - [x] Lambert-93 forward and inverse, tested against IGN's worked example (ALG0003/0004), the false
       origin, round trips and scale.
 - [x] `Region` and `Place` in the importer. Region-aware grid, layout, source windows, painted
-      rectangles and roof lookup. Hydrografi and the tree register are skipped in France.
+      rectangles and roof lookup. The tree register is skipped in France.
 - [x] The server places editor placements, scenarios and the rooster with the frame.
 - [x] Map editor: Sweden/France picker, `region` in `area.json`, tiles drawn as turned squares, and
       region-aware cache view and downloads.

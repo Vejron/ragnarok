@@ -3,7 +3,7 @@
 //!
 //! Inside what the map covers it replaces OSM's roads, buildings and cover; outside it nothing
 //! changes. The terrain, the trees and the water stay with their own sources: the laser is better
-//! than contour lines, and lakes are carved into the ground from Hydrografi's outlines.
+//! than contour lines, and lakes are carved into the ground from OpenStreetMap's outlines.
 //!
 //! The roads and buildings come out as OSM ways, so laser roofs and paint work on them unchanged.
 

@@ -267,7 +267,7 @@ Datagrams are capped at 1200 bytes (`MAX_PACKET`). Interest management and delta
    - Height comes from `height`, then `building:levels × 3 + 1`, then a varied 6–12 m.
    - Each building becomes walls, a roof and a floor in the collision mesh (`crates/osm-import/src/roof.rs`). The floor is at the lowest ground under the footprint (`base`). Without laser data the roof is flat at the tagged height; with it, see *Roofs* below.
 4. **Roads:** highway ways are clipped to the square (Liang–Barsky) and classed as major (10 m), minor (4.5–7 m) or path (2.5–5 m). They stay 2D polylines. The client paints them into the terrain texture (below), and the server uses them to line parked vehicles up with the street.
-   - **Cover:** closed ways and multipolygon relations are classed as water, wood, park (grass, meadow, parks, pitches), farm, sand, urban or industrial. Relation members are joined end to end into rings, inner rings being holes (filled even-odd). Open pieces that never close are dropped. They are not simulated. Water is separate (`Tile.water`, `Tile.streams`, from Hydrografi): the surface height per ground sample and stream centre lines; lakes and rivers are carved into the ground, so the physics sees their beds.
+   - **Cover:** closed ways and multipolygon relations are classed as water, wood, park (grass, meadow, parks, pitches), farm, sand, urban or industrial. Relation members are joined end to end into rings, inner rings being holes (filled even-odd). Open pieces that never close are dropped. They are not simulated. Water is separate (`Tile.water`, `Tile.streams`, from OpenStreetMap's water): the surface height per ground sample and stream centre lines; lakes and rivers are carved into the ground, so the physics sees their beds.
 5. **Spawns:** points sampled along roads that are outside every footprint and at least 1.5 m from walls. Up to 64 are picked, at least 15 m apart, sorted centre-first. The server picks among the 6 most central. They are 2D, and the ground gives their height.
 6. **Tiles:** the square is cut into a grid of `tile_size` squares.
    - A building goes whole into the tile its centre is in, with its collision triangles, so a tile never needs its neighbour.
@@ -451,7 +451,7 @@ pub trait Mechanic: Send {
    - Roofs (done): flat, shed, gable and hip roofs, in up to four parts per building, fitted to Laserdata Skog with foliage rejected (§8).
    - Trees (done): Umeå's street and park tree register as seven archetypes, instanced and with trunk colliders (§8).
    - Trees in woods (done): detected from the point cloud, `Tree::solid` limits colliders (§8).
-   - Water (done): Hydrografi lakes, rivers and streams with a surface mesh and a toy-style shader.
+   - Water (done): OpenStreetMap lakes, rivers, streams and sea with a surface mesh and a toy-style shader.
    - Next: courtyard building multipolygons.
 8. **Building (done):** bricks put cubes on the buildings' lattice, and builds go on without limit from a building or the ground; they are blasted and come down like walls. See [BUILDING.md](BUILDING.md).
 

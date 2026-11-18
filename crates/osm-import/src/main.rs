@@ -9,7 +9,7 @@
 //!     cargo run -p osm-import -- --dem m708_75.tif             # elevation from a local DTM GeoTIFF
 //!     LM_USER=… LM_PASS=… cargo run -p osm-import              # elevation fetched from Lantmäteriet
 //!     cargo run -p osm-import -- --cell 0                      # flat ground, no elevation
-//!     cargo run -p osm-import -- --no-water                    # skip Lantmäteriet's Hydrografi
+//!     cargo run -p osm-import -- --no-water                    # skip lakes, rivers and streams
 //!     cargo run -p osm-import -- --no-minimap                  # skip the pre-rendered map image
 //!     cargo run -p osm-import -- --no-trees                    # skip Umeå's tree register
 //!     cargo run -p osm-import -- --refresh                     # download everything again
@@ -19,7 +19,7 @@
 //! Credentials, data sources and the cache are described in `WORLD.md`.
 
 use osm_import::region::{Place, Region};
-use osm_import::{assemble, bushes, cache, canopy, dem, detail, grid, ground, hydro, ign, lidar, minimap, osm, overpass, paint, pbf, progress, roof, species, trees, water};
+use osm_import::{assemble, bushes, cache, canopy, dem, detail, grid, ground, ign, lidar, minimap, osm, overpass, paint, pbf, progress, roof, species, trees, water};
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use std::path::PathBuf;
@@ -71,10 +71,6 @@ struct Args {
     /// Leave out lakes, rivers and streams.
     #[arg(long)]
     no_water: bool,
-    /// Take lakes, rivers, streams and the sea from OpenStreetMap instead of Lantmäteriet's
-    /// Hydrografi Direkt. Slower (Overpass), but it has the sea.
-    #[arg(long)]
-    osm_water: bool,
     /// Do not render `minimap.webp`, the top-down map the client shows, next to the world.
     #[arg(long)]
     no_minimap: bool,
@@ -175,9 +171,8 @@ fn painted_rects(args: &Args, place: &Place, mask: &std::collections::BTreeSet<(
         .collect()
 }
 
-/// Lakes, rivers and streams in local metres: from Lantmäteriet's Hydrografi in Sweden, from
-/// OpenStreetMap with `--osm-water` and always in France. Empty with `--no-water`, without
-/// credentials or on flat ground (the surface height comes from the DTM).
+/// Lakes, rivers, streams and the sea in local metres, from OpenStreetMap. Empty with `--no-water`
+/// or on flat ground (the surface height comes from the DTM).
 fn water_map(args: &Args, place: &Place, pieces: Option<&[[f64; 4]]>) -> Result<water::Map> {
     if args.no_water || args.cell == 0.0 {
         return Ok(water::Map::default());
@@ -195,7 +190,7 @@ fn water_map(args: &Args, place: &Place, pieces: Option<&[[f64; 4]]>) -> Result<
         Region::France => osm_import::region::enclosing(frame, reach),
     };
     let local = |ring: &[overpass::LatLon]| -> Vec<[f64; 2]> { ring.iter().map(|p| frame.project(p.lat, p.lon)).collect() };
-    // Rings are closed in GeoJSON: drop the repeated first point.
+    // A closed way repeats its first point: drop it.
     let open = |mut ring: Vec<[f64; 2]>| {
         if ring.len() > 1 && ring.first() == ring.last() {
             ring.pop();
@@ -208,24 +203,8 @@ fn water_map(args: &Args, place: &Place, pieces: Option<&[[f64; 4]]>) -> Result<
             map.bodies.push(water::Body { kind, rings: polygon.iter().map(|ring| open(local(ring))).filter(|ring| ring.len() >= 3).collect(), level: None });
         }
     };
-    if !args.osm_water && place.region == Region::Sweden {
-        let (Some(user), Some(password)) = (std::env::var("LM_USER").ok(), std::env::var("LM_PASS").ok()) else {
-            eprintln!("no LM_USER / LM_PASS: the world has no water (or pass --osm-water)");
-            return Ok(map);
-        };
-        let found = match pieces {
-            Some(pieces) => hydro::fetch_pieces(pieces, &user, &password),
-            None => hydro::fetch([south, west, north, east], &user, &password),
-        }
-        .context("Hydrografi failed; retry later, use --osm-water or --no-water")?;
-        polygons(&found.lakes, water::Kind::Lake, &mut map);
-        polygons(&found.rivers, water::Kind::River, &mut map);
-        map.streams = found.streams.iter().map(|line| local(line)).collect();
-        eprintln!("water: {} lakes, {} river polygons, {} stream lines from Hydrografi", found.lakes.len(), found.rivers.len(), found.streams.len());
-        return Ok(map);
-    }
     let split = overpass::split([south, west, north, east], args.overpass_chunk);
-    let data = osm::load(pieces.unwrap_or(&split), &args.overpass, 3, 15).context("OpenStreetMap water failed; retry later, use Hydrografi or --no-water")?;
+    let data = osm::load(pieces.unwrap_or(&split), &args.overpass, 3, 15).context("OpenStreetMap water failed; retry later, `--fetch-osm sweden`, or --no-water")?;
     let found = osm_import::osm_water::from(&data);
     polygons(&found.lakes, water::Kind::Lake, &mut map);
     polygons(&found.rivers, water::Kind::River, &mut map);
@@ -468,9 +447,6 @@ struct AreaOptions {
     /// A render of the orienteering map (JPEG or PNG, placed by a world file beside it if there is one) to
     /// show as the minimap where it reaches.
     minimap_image: Option<PathBuf>,
-    /// Take the water from OSM (`--osm-water`), for a world on the coast: Hydrografi has no sea.
-    #[serde(default)]
-    osm_water: bool,
     /// Public transport: find bus lines along the major roads, for the server to run buses on.
     #[serde(default)]
     buses: bool,
@@ -488,7 +464,6 @@ fn main() -> Result<()> {
         None => AreaOptions::default(),
     };
     args.cell = args.cell_arg.or(options.cell).unwrap_or(DEFAULT_CELL);
-    args.osm_water |= options.osm_water;
     let winter = match options.theme.as_deref() {
         None => false,
         Some("winter") => true,

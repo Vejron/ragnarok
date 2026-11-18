@@ -1,4 +1,4 @@
-//! Turns Hydrografi's water (`hydro.rs`) into what the world stores: a water surface height at
+//! Turns OpenStreetMap's water (`osm_water.rs`) into what the world stores: a water surface height at
 //! every ground sample, with lakes and wide rivers carved into the ground under it, and stream
 //! centre lines.
 //!

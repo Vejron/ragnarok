@@ -2,7 +2,7 @@
 //! the frame a world in it is laid out in, and the projected coordinates its height model and
 //! point cloud come in.
 //!
-//! - **Sweden**: Lantmäteriet (DTM, laser, Hydrografi) in SWEREF 99 TM, and worlds in the fixed
+//! - **Sweden**: Lantmäteriet (DTM, laser) in SWEREF 99 TM, and worlds in the fixed
 //!   equirectangular frame (`Frame::Equirect`), as every world was before France.
 //! - **France**: IGN (LiDAR HD, its MNT) in Lambert-93, and worlds in Lambert-93 itself
 //!   (`Frame::Lambert93`), so a world's metres are IGN's and its tiles line up with IGN's grid.

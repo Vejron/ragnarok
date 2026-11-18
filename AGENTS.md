@@ -65,6 +65,25 @@ To iterate faster:
 - In zsh, `grep --include=*.rs` fails with "no matches found". Quote the glob, or leave it out.
 - Blender is at `/Applications/Blender.app/Contents/MacOS/Blender`. To build one car and look at it: `Blender -b -P tools/vehicles/build_car.py -- --only <kind> --preview <dir>`.
 
+## Looking at a bug in the game
+
+- **The user's screenshots are in `shots/`.** F2 in the game saves `shots/<world>-<x>_<z>-<time>.png` at the repo root (git-ignored), so when the user says they saved a screenshot, it is the newest file there. `node client/scripts/shot-info.mjs <png>` prints what it carries: the world, the time of day (`phase`), the camera, the player's position, and what the crosshair hit, with the building's tile and index.
+- **Reproduce it in headless Chrome** before guessing at the cause:
+  ```sh
+  cd client && VITE_WORLD_BASE=/worlds/<world>/ npx vite --port 5287 --strictPort   # in the background
+  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new --enable-unsafe-webgpu \
+    --use-angle=metal --remote-debugging-port=9333 --user-data-dir=<scratch dir> --window-size=1600,900 http://localhost:5287/
+  node scripts/cdp.mjs eval "<js>"     # runs in the page; prints at most 3000 characters
+  node scripts/cdp.mjs shot <out.png>  # a screenshot to read back
+  ```
+  Port 5199 belongs to another of the user's projects. WebTransport fails headless, so the game stays in SOLO, with no server behind it. The dev build exposes `window.__game`:
+  - Move the player by setting `__game.predictor.state.position` and `.previous.position`. Aim the camera with `__game.input.yaw` and `.pitch`; a yaw of -π/2 looks along +x.
+  - Set the shot's time of day with `__game.scene.setTimeOfDay(phase)`. `?time=` does nothing in SOLO.
+  - Act on the world as the server would: `__game.view.chipped(x, y, z, damage)` dents a building, and `__game.view.carved([...])` takes cells out of it (`CarvedBuilding` in `net/messages.generated.ts`).
+  - Hide the "Click to play" panel before a screenshot, or it covers the middle of the view.
+  - To narrow a fault down, find a mesh by walking `__game.scene.scene` and switch it off, or its `receiveShadow`, and screenshot again.
+  - Stop Chrome and Vite when you are done.
+
 ## Working on the renderer
 
 The engine (`engine/`) is judged by what the GPU spends per frame, and on the high-resolution laptops it

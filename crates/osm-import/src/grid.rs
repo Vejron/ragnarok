@@ -12,7 +12,7 @@
 //! its region.
 
 use crate::region::{Place, Region, enclosing};
-use crate::{assemble, cache, hydro, overpass, trees};
+use crate::{assemble, cache, overpass, trees};
 use serde::{Deserialize, Serialize};
 use shared::world::Frame;
 
@@ -42,13 +42,12 @@ pub struct Block {
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Status {
     pub overpass: bool,
-    pub hydro: bool,
     pub trees: bool,
 }
 
 impl Status {
-    /// Enough to build the block's tiles without the network: the map data itself. Water and trees
-    /// are optional extras, so a block without them still counts.
+    /// Enough to build the block's tiles without the network: the map data itself. Trees are an
+    /// optional extra, so a block without them still counts.
     pub fn ready(self) -> bool {
         self.overpass
     }
@@ -84,14 +83,13 @@ impl Block {
     }
 
     /// The block's cache state, from the keys the downloads would use. Its OpenStreetMap is there when a
-    /// local extract covers it. Hydrografi and the tree
-    /// register are Swedish: a French block never has them.
+    /// local extract covers it. The tree register is
+    /// Swedish: a French block never has it.
     pub fn status(self, region: Region) -> Status {
         let bbox = self.bbox(region);
         let swedish = region == Region::Sweden;
         Status {
             overpass: crate::pbf::Index::covering(&[bbox]).is_some() || overpass::cached(bbox),
-            hydro: swedish && cache::has("hydro", &hydro::first_url("StandingWater", bbox)),
             trees: swedish && cache::has("trees", &trees::filter(bbox)),
         }
     }

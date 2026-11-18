@@ -16,7 +16,6 @@ pub mod detail;
 pub mod grid;
 pub mod graves;
 pub mod ground;
-pub mod hydro;
 pub mod ign;
 pub mod lidar;
 pub mod minimap;
