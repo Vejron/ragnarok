@@ -22,6 +22,7 @@ ${vertexWgsl(false, vertexScars)}
 @group(1) @binding(0) var ramps: texture_2d<f32>;
 @group(1) @binding(1) var shadowMap: texture_depth_2d;
 @group(1) @binding(2) var shadowSampler: sampler_comparison;
+@group(1) @binding(3) var farShadowMap: texture_depth_2d;
 
 // Group 2 is the material's textures; materials without them share a white map and a flat normal map.
 @group(2) @binding(0) var colorMap: texture_2d<f32>;

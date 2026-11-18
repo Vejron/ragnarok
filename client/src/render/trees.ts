@@ -104,13 +104,13 @@ const TREE_SHADOW_LEVEL = 1
 type Detail = 'full' | 'coarse' | 'shadow'
 
 /** Sides of a cone and of a trunk at each detail. Only the full shape has its ends closed. */
-const CONE_SIDES: Record<Detail, number> = { full: 12, coarse: 5, shadow: 4 }
+const CONE_SIDES: Record<Detail, number> = { full: 12, coarse: 5, shadow: 6 }
 const TRUNK_SIDES: Record<Detail, number> = { full: 6, coarse: 4, shadow: 3 }
 /**
  * How much wider a coarse crown is made, so its outline covers about what the round one did: an
- * icosahedron's faces and an octahedron's lie well inside the sphere their corners are on.
+ * icosahedron's faces and a bipyramid's lie well inside the sphere their corners are on.
  */
-const CROWN_SWELL: Record<Detail, number> = { full: 1, coarse: 1.08, shadow: 1.2 }
+const CROWN_SWELL: Record<Detail, number> = { full: 1, coarse: 1.08, shadow: 1.12 }
 
 /** Eight triangles on the unit sphere, wound as the icosphere is. */
 function octahedronGeometry(): Geometry {
@@ -121,6 +121,27 @@ function octahedronGeometry(): Geometry {
     indices.push(sx, outward ? sy : sz, outward ? sz : sy)
   }
   return new Geometry({ positions, indices: new Uint16Array(indices) })
+}
+
+/**
+ * Twelve triangles on the unit sphere: a hexagon round the middle with a point above and below, wound
+ * as the cone is. Seen from the sun it is a hexagon, round enough for a far tree's shadow, where the
+ * octahedron it replaced cast a diamond.
+ */
+function bipyramidGeometry(): Geometry {
+  const sides = 6
+  const positions: number[] = []
+  for (let i = 0; i < sides; i++) {
+    const t = (i / sides) * Math.PI * 2
+    positions.push(Math.sin(t), 0, Math.cos(t))
+  }
+  positions.push(0, 1, 0, 0, -1, 0)
+  const indices: number[] = []
+  for (let i = 0; i < sides; i++) {
+    const next = (i + 1) % sides
+    indices.push(sides, i, next, sides + 1, next, i)
+  }
+  return new Geometry({ positions: new Float32Array(positions), indices: new Uint16Array(indices) })
 }
 
 /** The side of a cylinder along Y, centred on the origin, without its ends; a cone when `top` is 0. */
@@ -174,9 +195,9 @@ function partGeometry(part: Part, detail: Detail): Geometry {
   let geometry: Geometry
   if (part.shape === 'ellipsoid') {
     // A low-poly sphere: 42 welded vertices and 80 triangles, so the crown reads as a few bold shapes.
-    // Further off 20 triangles, and in a far tree's shadow 8.
+    // Further off 20 triangles, and in a far tree's shadow 12.
     const swell = CROWN_SWELL[detail]
-    const ball = detail === 'shadow' ? octahedronGeometry() : icosphereGeometry(1, detail === 'full' ? 1 : 0)
+    const ball = detail === 'shadow' ? bipyramidGeometry() : icosphereGeometry(1, detail === 'full' ? 1 : 0)
     geometry = ball.scale(part.rx! * swell, part.ry! * swell, part.rx! * swell).translate(part.x ?? 0, part.y0, part.z ?? 0)
   } else {
     const height = part.y1! - part.y0

@@ -34,6 +34,7 @@ function typeOf(value: UniformValue): Field['type'] {
 const SHADOW_BINDINGS = /* wgsl */ `
 @group(2) @binding(1) var shadowMap: texture_depth_2d;
 @group(2) @binding(2) var shadowSampler: sampler_comparison;
+@group(2) @binding(3) var farShadowMap: texture_depth_2d;
 ${SUN_SHADOW_WGSL}
 `
 

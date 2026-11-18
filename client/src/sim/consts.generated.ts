@@ -926,8 +926,8 @@ export const CROUCH_DROP = CROUCH_EYE_DROP
 export const PRONE_HURT_HALF_LENGTH = 0.47
 export const PRONE_HURT_RADIUS = 0.38
 
-/** A whole day and night, seconds, and where in it (0 midnight, 0.5 noon) tick 0 falls. */
-export const DAY_SECONDS = 1800.0
+/** A whole day and night, seconds (an hour), and where in it (0 midnight, 0.5 noon) tick 0 falls. */
+export const DAY_SECONDS = 3600.0
 export const DAY_START_PHASE = 0.36
 
 /** A prone soldier's eye is 0.2 m above its feet, so this is relative to the capsule centre. */

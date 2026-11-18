@@ -14,7 +14,11 @@ export class Sun {
   readonly shadow = new SunShadow()
 }
 
-/** The sun's shadow: a square of `span` metres around the sun's target, rendered from the sun. */
+/**
+ * The sun's shadow: a square of `span` metres around the sun's target, rendered from the sun, and, when
+ * `far` is on, a second, coarser square ahead of the camera that carries the shadows on past the first.
+ * Each fades out towards its edge, so neither ends in a line.
+ */
 export class SunShadow {
   enabled = false
   /** Texels along each side of the map. */
@@ -24,8 +28,29 @@ export class SunShadow {
   depth = 200
   /** Blur of the shadow edge, in texels. */
   radius = 1
-  /** Comparisons per shaded pixel: 9 (a 3×3 filter, soft edged) or 1 (one bilinear tap, cheaper). */
+  /** Comparisons per shaded pixel: a soft filter (4 or 9 bilinear taps, by `radius`) or 1 (one bilinear tap, cheaper). */
   taps: 1 | 9 = 9
+  /**
+   * How far the sun must turn before its shadows follow, radians. Between steps the map is drawn from
+   * the same direction, so the edges hold still instead of re-rasterising every frame as the sun moves.
+   */
+  step = 0.001
+  /** Whether the far square is drawn. */
+  far = false
+  /** Texels along each side of the far map. */
+  farMapSize = 2048
+  /** The far square's side, metres. */
+  farSpan = 600
+  /** How far its casters may be from its centre along the sun's direction, metres. */
+  farDepth = 400
+  /** How far ahead of the camera the far square is centred, as a share of `farSpan`. */
+  farAhead = 0.35
+  /**
+   * Frames between redrawing the far map, which is kept in between, where it is, as it was. Its casters
+   * are far off and its texels wide, so a few frames' lag does not show, and drawing it every frame cost
+   * more than the near map.
+   */
+  farEvery = 4
 }
 
 /** Sky light from above blending to bounce light from below, by how much a surface faces up. */

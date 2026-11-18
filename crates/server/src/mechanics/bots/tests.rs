@@ -867,7 +867,7 @@ fn time_to_see(buttons: u16, lamp: bool, tick: u32) -> Option<f32> {
     })
 }
 
-const MIDNIGHT: u32 = (1800.0 * 0.64 * TICK_RATE as f32) as u32;
+const MIDNIGHT: u32 = (shared::consts::DAY_SECONDS * 0.64 * TICK_RATE as f32) as u32;
 
 #[test]
 fn it_takes_someone_in_slower_the_harder_they_are_to_see() {
@@ -962,7 +962,7 @@ fn someone_it_is_watching_is_lost_when_they_drop_into_the_wheat() {
 #[test]
 fn it_is_dark_at_midnight_and_light_at_noon() {
     assert_eq!(senses::darkness(MIDNIGHT), 1.0);
-    assert_eq!(senses::darkness((1800.0 * 0.14 * TICK_RATE as f32) as u32), 0.0);
+    assert_eq!(senses::darkness((shared::consts::DAY_SECONDS * 0.14 * TICK_RATE as f32) as u32), 0.0);
 }
 
 #[test]

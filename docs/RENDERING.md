@@ -240,7 +240,9 @@ The style is flat, bright and few-banded, not physically based.
   then a few-sided solid from 70 m and a billboard a part from 130 m, and both changes showed. The
   shadow pass does not run the vertex shader, so an impostor casts its shadow from a solid
   (`DetailLevel.shadow`): the few-sided one (a 20-triangle crown) out to 160 m and a crude one (one
-  octahedron crown, one cone) past it, where only the shadow changes. A felled tree is a mesh of its
+  crown, a 12-triangle hexagonal bipyramid, and one 6-sided cone) past it, where only the shadow
+  changes. The crude crown was an octahedron, whose shadow was a plain diamond. The far shadow map
+  takes every tree at the crude shape. A felled tree is a mesh of its
   own with a material that never fades. It is the engine's `InstancedMesh.levels`; rocks have it with
   no coarser shapes, for the culling alone.
 - **Rocks** (`rocks.ts`) are a few shapes a kind, carved from an icosphere by flat cuts and drawn
@@ -368,7 +370,7 @@ car's front lamps are smashed (`LIGHTS_BREAK`) or the vehicle is wrecked ([HEADL
 
 ### Day and night
 
-The day lasts 30 minutes (`DAY_SECONDS` in `render/daynight.ts`), counted from the server's tick, so
+The day lasts an hour (`DAY_SECONDS` in `crates/shared/src/consts.rs`), counted from the server's tick, so
 every player sees the same time. A fresh server opens at noon. `skyAt(phase, palette)` gives the
 light for a phase of the day (0 midnight, 0.25 sunrise, 0.5 noon, 0.75 sunset) and
 `Scene.setTimeOfDay` applies it to the sun, hemisphere, sky, fog and water. `Game` calls it every frame
@@ -388,11 +390,27 @@ once the clock has synced; the editor never does, so it stays at noon.
   are tinted as they are born by `Sky.tint` (`Scene.groundLight`): the light on flat ground against
   noon's per channel, white at noon and dark blue at midnight.
 
-The sun's shadow map is a square orthographic frustum centred on the camera's target. Its centre is
-snapped to whole texels in the light's view, so the edges do not crawl as the target moves, and the
-comparison sampler does a 3×3 PCF whose spread is `shadow.radius` texels (a uniform, so softness is not
-a recompile) with the lookup moved along the surface normal to avoid acne. Transparent meshes cast no
-shadow; meshes outside the sun's frustum are skipped.
+The sun's shadow map is a square orthographic frustum centred on the camera's target. With far
+shadows on, a second, coarser map covers a wider square centred ahead of the camera (see "Far
+shadows" below). Both are kept still in two ways:
+
+- **Against moving.** Each map's centre is snapped to whole texels in the light's view, so the edges
+  do not crawl as the target moves.
+- **Against the sun turning.** The maps are drawn from a direction that follows the sun in steps of
+  `SunShadow.step` (0.001 rad, about a texel at the tip of a 20 m tree's shadow, a step every half
+  second or so). Drawn from the live direction, every edge re-rasterised every frame and shimmered as
+  the day went on. Lighting keeps the live direction; the two never differ by more than the step.
+
+The lookup is moved along the surface normal to avoid acne, and filtered with Castaño's PCF: bilinear
+compare taps weighted so the kernel is a smooth tent with no holes, 4 taps over 3×3 texels for a
+blur radius up to 2 (classic light) and 9 over 5×5 past it (soft light). The old 3×3 filter spread its
+taps two texels apart for soft light, which left gaps, stepped the edges and made them crawl. One-tap
+materials (`sunShadowTap`) take one bilinear tap in each map. Transparent meshes cast no shadow; meshes
+outside a map's frustum are skipped by it, and the far map also skips lone meshes under 1.5 m of
+bounding radius and instances under the same (`FAR_CASTER_MIN_RADIUS`).
+
+Each map's shadow fades out over the outer 15% of its square and of its depth range. The near map
+fades into the far one, and the far one fades to light, so no shadow ends in a line.
 
 ## Soft-lighting options
 
@@ -463,17 +481,29 @@ Things to know:
 
 ### Far shadows (`far`)
 
-Changes the sun shadow's frustum and map (`SHADOW_NEAR` / `SHADOW_FAR` in `scene.ts`):
+Adds a second, coarser shadow map past the near one (`SHADOW_NEAR` / `SHADOW_FAR` in `scene.ts`,
+`SunShadow.far*` in the engine). The near map is always drawn:
 
 | | Near | Far |
 |---|---|---|
-| Frustum side | 100 m | 300 m |
-| Map size | 2048² | 4096² |
-| Texel size | ≈ 0.05 m | ≈ 0.07 m |
-| Caster range either side of target | 200 m | 300 m |
+| Square side | 100 m | 600 m |
+| Centred on | the camera's target | 35% of its side ahead of the camera, along the view |
+| Map size (high / medium / low) | 2048² / 2048² / 1024² | 2048² / 2048² / 1024² |
+| Texel size | ≈ 0.05 m | ≈ 0.3 m |
+| Caster range either side of its centre | 200 m | 400 m |
+| Casters | everything that casts | trees at their crudest shadow, nothing under 1.5 m |
+| Drawn | every frame | every 4th frame (`farEvery`), kept in between |
 
-Switching sizes makes a new shadow map on the next frame, so there can be a one-frame hitch. The far
-setting is about four times the shadow memory and fill cost.
+The far map is centred on what the camera sees, not on what it follows. From a helicopter that is the
+ground ahead, which a map round the target missed (the ground under a craft 150 m up is about 120 m
+from it across the sun's view). Drawn every frame it cost more than the near map, most of that in
+vertices, not texels (a 1024² map saved 0.03 ms). Far casters lagging four frames does not show at
+that distance.
+
+Turning it on makes the far map on the next frame, so there can be a one-frame hitch. With it off the
+near map still fades out at its edge instead of ending in a line. The far option used to be one
+300 m map at 4096²; the two maps now cost about what that did, with twice the reach and a quarter of
+the memory (2 × 16 MB against 64 MB).
 
 ## The gunsight
 

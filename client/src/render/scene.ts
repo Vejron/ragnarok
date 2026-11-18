@@ -56,12 +56,16 @@ const SUN_DISTANCE = 120
 const NOON = 0.5
 
 /**
- * The sun's shadow map covers a square this many metres to a side around the player, with casters
+ * The sun's near shadow map covers a square this many metres to a side around the player, with casters
  * taken from this far either side of the player along the sun's direction. Its resolution is the
  * quality preset's.
  */
 const SHADOW_NEAR = { span: 100, depth: 200 }
-const SHADOW_FAR = { span: 300, depth: 300 }
+/**
+ * With far shadows on, a coarser square this wide, centred ahead of the camera, carries the shadows on
+ * past the near one, casters taken from this far either side of its centre along the sun.
+ */
+const SHADOW_FAR = { span: 600, depth: 400 }
 
 /** Radians a scoped view swings per metre of camera shake: the zoomed view magnifies it, so a little goes a long way. */
 const SCOPE_SHAKE = 0.25
@@ -376,11 +380,14 @@ export class Scene {
   }
 
   private setShadowReach(far: boolean) {
-    const { span, depth } = far ? SHADOW_FAR : SHADOW_NEAR
     const shadow = this.scene.sun.shadow
-    shadow.span = span
-    shadow.mapSize = far ? this.currentPreset.shadowFar : this.currentPreset.shadowNear
-    shadow.depth = depth
+    shadow.span = SHADOW_NEAR.span
+    shadow.depth = SHADOW_NEAR.depth
+    shadow.mapSize = this.currentPreset.shadowNear
+    shadow.far = far
+    shadow.farSpan = SHADOW_FAR.span
+    shadow.farDepth = SHADOW_FAR.depth
+    shadow.farMapSize = this.currentPreset.shadowFar
   }
 
   private resize() {

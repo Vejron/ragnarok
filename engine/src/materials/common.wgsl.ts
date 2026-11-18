@@ -49,6 +49,10 @@ struct Frame {
   heightFog: vec4f,
   // How wet the world is from rain (0 to 1), how much of a rainbow shows (0 to 1), a lightning flash's brightness, unused.
   weather: vec4f,
+  // The far shadow map's light view and projection: the coarse square past the near one.
+  farShadowMatrix: mat4x4f,
+  // The far map's texel size (m), whether it is drawn (0 or 1), unused, unused.
+  farShadow: vec4f,
 }
 
 struct Object {

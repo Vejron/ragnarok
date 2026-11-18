@@ -6,7 +6,7 @@ export interface Look {
   soft: boolean
   /** A dark blob under every character and vehicle, so they sit on the ground. */
   contact: boolean
-  /** The sun's shadows reach further from the player, at a slightly coarser grain. */
+  /** A second, coarser sun shadow map carries the shadows on 600 m ahead of the camera, past the near one. */
   far: boolean
   /** Dark outlines wherever one thing meets another: a cartoon's ink. */
   ink: boolean
@@ -30,7 +30,7 @@ export interface Look {
 export const LOOK_OPTIONS: { key: keyof Look; label: string; about: string; heavy?: boolean }[] = [
   { key: 'soft', label: 'Soft light', about: 'A gentler palette, filmic tone mapping and softer sun shadows.' },
   { key: 'contact', label: 'Contact shadows', about: 'A dark patch under every character and vehicle, so they sit on the ground.' },
-  { key: 'far', label: 'Far shadows', about: 'Sun shadows reach further from you, a little coarser.', heavy: true },
+  { key: 'far', label: 'Far shadows', about: 'Sun shadows reach far ahead of you, coarser past the first hundred metres.', heavy: true },
   { key: 'ink', label: 'Ink outlines', about: 'Dark cartoon outlines where one thing meets another.' },
   { key: 'bloom', label: 'Bloom', about: 'A glow around fire, tracers and flashes.', heavy: true },
   { key: 'rays', label: 'Sun rays', about: 'Shafts of sunlight through trees and clouds, the sun\'s glare, and lamp beams in mist and rain.', heavy: true },

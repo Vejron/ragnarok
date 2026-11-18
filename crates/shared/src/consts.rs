@@ -646,8 +646,8 @@ pub const CROUCH_DROP: f32 = CROUCH_EYE_DROP;
 /// from the centre to the centre of either end, and this thick. 1.7 m long and under 0.8 m high.
 pub const PRONE_HURT_HALF_LENGTH: f32 = 0.47;
 pub const PRONE_HURT_RADIUS: f32 = 0.38;
-/// A whole day and night, seconds, and where in it (0 midnight, 0.5 noon) tick 0 falls.
-pub const DAY_SECONDS: f32 = 1800.0;
+/// A whole day and night, seconds (an hour), and where in it (0 midnight, 0.5 noon) tick 0 falls.
+pub const DAY_SECONDS: f32 = 3600.0;
 pub const DAY_START_PHASE: f32 = 0.36;
 /// A prone soldier's eye is 0.2 m above its feet, so this is relative to the capsule centre.
 pub const PRONE_EYE_HEIGHT: f32 = 0.2 - PRONE_CENTRE;

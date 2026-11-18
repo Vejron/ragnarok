@@ -201,7 +201,24 @@ thing added per pixel, and took the 200 puffs from 0.11 to 0.13 ms.
 - **Variants of the standard shader** (a plain one for characters, vehicles and buildings without the
   ground's stones, marsh, craters, worn and asphalt code): not built. Those branches are on uniform
   material flags and stay coherent, and the ground, which takes most of the screen, needs all of them.
-- **A cached static shadow map:** not built. The whole shadow pass is 0.13 ms at this size.
+- **A cached static shadow map:** not built. The whole shadow pass is 0.13 ms at this size. The far
+  shadow map (RENDERING.md, "Far shadows") is the cheap half of the idea: it is redrawn only every
+  fourth frame.
+
+## Shadows: two maps, stepped sun, gap-free filter
+
+`vindeln`, quality high, ms the shadows cost (`--parts shadows`), and the whole frame:
+
+| | forest shadows | forest frame | vista shadows | vista frame |
+|---|---|---|---|---|
+| before: one 300 m map at 4096² | 0.40 | 2.92 | 0.37 | 2.49 |
+| near 100 m + far 600 m, both 2048², far drawn every frame | 0.77 | 3.28 | 0.58 | 2.71 |
+| the same, far drawn every 4th frame | 0.42 | 2.95 | 0.32 | 2.46 |
+| near map alone (far off) | 0.29 | | 0.21 | |
+
+The far map's cost is its casters, not its texels: halving its size saved 0.03 ms and narrowing it to
+400 m saved 0.1 ms. The new filter (Castaño's, 9 taps) costs what the old 3×3 did; one tap instead
+saves 0.05 ms.
 - **GPU culling into indirect draws, and Hi-Z occlusion:** not built. The renderer's CPU time is about
   0.3 ms, WebGPU has no multi-draw-indirect (each indirect draw is still a call), and the pre-pass
   already makes hidden tree pixels cheap.

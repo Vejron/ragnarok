@@ -1,6 +1,6 @@
 import { COMMON_WGSL } from './common.wgsl'
 
-/** Depth-only: shadow casters seen from the sun. */
+/** Depth-only: shadow casters seen from the sun, into the near map (`vs`) or the far one (`vsFar`). */
 export const SHADOW_WGSL = /* wgsl */ `
 ${COMMON_WGSL}
 
@@ -13,5 +13,16 @@ fn vs(
 ) -> @builtin(position) vec4f {
   let object = objects[drawList[instance]];
   return frame.shadowMatrix * modelMatrix(object, joints, weights) * vec4f(position, 1.0);
+}
+
+@vertex
+fn vsFar(
+  @location(0) position: vec3f,
+  @location(5) joints: vec4u,
+  @location(6) weights: vec4f,
+  @builtin(instance_index) instance: u32,
+) -> @builtin(position) vec4f {
+  let object = objects[drawList[instance]];
+  return frame.farShadowMatrix * modelMatrix(object, joints, weights) * vec4f(position, 1.0);
 }
 `

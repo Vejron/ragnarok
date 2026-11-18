@@ -42,7 +42,12 @@ const VERTEX_SCAR_BUFFERS = 9
 type Layer = 'world' | 'held' | 'overlay'
 
 /** Floats in the frame uniform block. Matches `Frame` in common.wgsl. */
-const FRAME_FLOATS = 128
+const FRAME_FLOATS = 148
+/**
+ * Casters smaller than this, metres of bounding radius, are left out of the far shadow map: its texels are
+ * wide, and there they would cost draws and show as nothing.
+ */
+const FAR_CASTER_MIN_RADIUS = 1.5
 /** The sunlight on a white cloud against the atmosphere's tinted radiance for a sun of illuminance 1. */
 const CLOUD_SUNLIGHT = 0.12
 /** The sun's angular radius as drawn (`SUN_RADIUS` in sky.wgsl), radians: how wide the flare's visibility taps spread. */
@@ -256,6 +261,7 @@ export class Renderer {
    */
   private readonly materialPipelines = new WeakMap<Material, (PickedPipeline | undefined)[]>()
   private readonly shadowPipelines: GPURenderPipeline[]
+  private readonly farShadowPipelines: GPURenderPipeline[]
   private readonly outputPipeline: GPURenderPipeline
   private readonly outputUniform: GPUBuffer
   private readonly bloom: Bloom
@@ -278,11 +284,22 @@ export class Renderer {
   private depthCopyGroup: GPUBindGroup | null = null
   private hdrTarget: GPUTexture | null = null
   private shadowMap: GPUTexture
+  /** The far shadow map; 1 texel while far shadows are off. */
+  private farShadowMap: GPUTexture
   private readonly frustum = new Frustum()
   private readonly shadowFrustum = new Frustum()
   private readonly shadowMatrix = mat4.create()
+  private readonly farShadowFrustum = new Frustum()
+  private readonly farShadowMatrix = mat4.create()
   private readonly lightView = mat4.create()
   private readonly lightProjection = mat4.create()
+  /** The unit vector toward the sun that the shadow maps are drawn from: the sun's, moved on in steps. */
+  private readonly shadowDir = new Float64Array([0, 1, 0])
+  /** Whether shaded pixels look in the far shadow map, and whether it is redrawn this frame. */
+  private farShadowsOn = false
+  private farShadowsDrawn = false
+  /** The frame the far map was last drawn in. */
+  private farDrawnAt = -Infinity
   private readonly stack: Node[] = []
   private readonly pool: DrawItem[] = []
   private poolUsed = 0
@@ -338,12 +355,14 @@ export class Renderer {
   private readonly reflected: DrawItem[] = []
   private readonly reflectionBatches: Batch[] = []
   private readonly casters: DrawItem[] = []
+  private readonly farCasters: DrawItem[] = []
   private readonly effects: Effect[] = []
   /** Bumped when the render targets are recreated, for effects holding views of them. */
   private targetsVersion = 0
   private readonly halfResolution: HalfResolution
   private readonly mainBatches: Batch[] = []
   private readonly shadowBatches: Batch[] = []
+  private readonly farShadowBatches: Batch[] = []
   private camX = 0
   private camY = 0
   private camZ = 0
@@ -404,6 +423,7 @@ export class Renderer {
     this.drawListBuffer = this.makeDrawListBuffer(this.drawList.length)
     this.comparisonSampler = device.createSampler({ compare: 'less-equal', magFilter: 'linear', minFilter: 'linear' })
     this.shadowMap = this.makeShadowMap(1)
+    this.farShadowMap = this.makeShadowMap(1)
 
     // Compute sees the scene group too: the sky panorama is worked out from the frame's sky.
     const both = GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT | GPUShaderStage.COMPUTE
@@ -436,21 +456,24 @@ export class Renderer {
         { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
         { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'depth' } },
         { binding: 2, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'comparison' } },
+        { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'depth' } },
       ],
     })
     this.mainLayout = device.createPipelineLayout({ bindGroupLayouts: [this.sceneLayout, this.lightingLayout, this.resources.texturesLayout] })
     this.shadowLayout = device.createPipelineLayout({ bindGroupLayouts: [this.sceneLayout] })
     this.standardModule = device.createShaderModule({ label: 'standard', code: standardWgsl(this.vertexScars) })
     this.shadowModule = device.createShaderModule({ label: 'shadow', code: SHADOW_WGSL })
-    this.shadowPipelines = (['back', 'none'] as GPUCullMode[]).map((cullMode) =>
+    const shadowPipelines = (entryPoint: string) => (['back', 'none'] as GPUCullMode[]).map((cullMode) =>
       device.createRenderPipeline({
-        label: `shadow ${cullMode}`,
+        label: `shadow ${entryPoint} ${cullMode}`,
         layout: this.shadowLayout,
-        vertex: { module: this.shadowModule, entryPoint: 'vs', buffers: [VERTEX_LAYOUT] },
+        vertex: { module: this.shadowModule, entryPoint, buffers: [VERTEX_LAYOUT] },
         primitive: { topology: 'triangle-list', cullMode },
         depthStencil: { format: DEPTH_FORMAT, depthWriteEnabled: true, depthCompare: 'less', depthBias: 1, depthBiasSlopeScale: 1.5 },
       }),
     )
+    this.shadowPipelines = shadowPipelines('vs')
+    this.farShadowPipelines = shadowPipelines('vsFar')
 
     if (this.sampleCount > 1) {
       const copy = device.createShaderModule({ label: 'depth copy', code: DEPTH_COPY_WGSL })
@@ -570,7 +593,7 @@ export class Renderer {
     this.camX = camera.matrixWorld[12]!
     this.camY = camera.matrixWorld[13]!
     this.camZ = camera.matrixWorld[14]!
-    if (!this.eye?.again) this.setupShadow(scene)
+    if (!this.eye?.again) this.setupShadow(scene, camera)
     this.setupReflection(camera)
 
     this.poolUsed = 0
@@ -583,6 +606,7 @@ export class Renderer {
     this.overlay.length = 0
     this.held.length = 0
     this.casters.length = 0
+    this.farCasters.length = 0
     this.effects.length = 0
     this.collect(scene)
     this.effects.sort((a, b) => a.renderOrder - b.renderOrder)
@@ -592,12 +616,14 @@ export class Renderer {
     this.overlay.sort(byOrderThenFarToNear)
     this.held.sort(byOrderThenFarToNear)
     this.casters.sort(byStateThenGeometry)
+    this.farCasters.sort(byStateThenGeometry)
     this.reflected.sort(byStateThenGeometry)
 
     this.drawCount = 0
     this.mainBatches.length = 0
     this.reflectionBatches.length = 0
     this.shadowBatches.length = 0
+    this.farShadowBatches.length = 0
     this.writeBatches(this.prepass, this.mainBatches, true)
     this.writeBatches(this.opaque, this.mainBatches, true)
     this.translucentFrom = this.mainBatches.length
@@ -606,6 +632,7 @@ export class Renderer {
     this.overlayFrom = this.mainBatches.length
     this.writeBatches(this.overlay, this.mainBatches, false)
     this.writeBatches(this.casters, this.shadowBatches, true)
+    this.writeBatches(this.farCasters, this.farShadowBatches, true)
     this.writeBatches(this.reflected, this.reflectionBatches, true)
 
     this.writeFrame(scene, camera)
@@ -677,7 +704,7 @@ export class Renderer {
     stats.instances = this.drawCount
     stats.records = this.objects.count
     stats.recordsWritten = this.objects.written
-    stats.pipelines = this.pipelines.length + this.shadowPipelines.length + 1
+    stats.pipelines = this.pipelines.length + this.shadowPipelines.length + this.farShadowPipelines.length + 1
     stats.materials = this.materials.count
     stats.geometryBytes = this.arena.usedBytes
     stats.lights = this.lightGrid.count
@@ -728,8 +755,9 @@ export class Renderer {
     const material = mesh.material
     const inView = !mesh.frustumCulled || this.frustum.intersectsSphere(cx, cy, cz, radius)
     const layer: Layer = mesh.overlay ? 'overlay' : mesh.held ? 'held' : 'world'
-    const inShadow = this.shadowsOn && mesh.castShadow && !material.transparent && layer === 'world' &&
-      (!mesh.frustumCulled || this.shadowFrustum.intersectsSphere(cx, cy, cz, radius))
+    const casts = this.shadowsOn && mesh.castShadow && !material.transparent && layer === 'world'
+    const inShadow = casts && (!mesh.frustumCulled || this.shadowFrustum.intersectsSphere(cx, cy, cz, radius))
+    const inFarShadow = casts && this.farShadowsDrawn && (!mesh.frustumCulled || this.farShadowFrustum.intersectsSphere(cx, cy, cz, radius))
     const dx = cx - this.camX, dy = cy - this.camY, dz = cz - this.camZ
     const distance2 = dx * dx + dy * dy + dz * dz
     // Only what rises above the mirror, is near and big enough to show, and falls in the mirrored view.
@@ -737,11 +765,11 @@ export class Renderer {
       cy + radius > this.reflectionHeight! && distance2 < this.reflectionRange * this.reflectionRange &&
       radius * radius > distance2 * (REFLECT_MIN_SIZE * REFLECT_MIN_SIZE) &&
       (!mesh.frustumCulled || this.reflectionFrustum.intersectsSphere(cx, cy, cz, radius))
-    if (!inView && !inShadow && !inReflection) return
+    if (!inView && !inShadow && !inFarShadow && !inReflection) return
     const bones = mesh instanceof SkinnedMesh ? this.bones.sync(mesh, this.frameNumber) + 1 : 0
     const record = this.objects.sync(mesh, this.materials.sync(material), this.frameNumber, bones)
     if (mesh instanceof InstancedMesh && mesh.levels) {
-      return this.considerLevels(mesh, mesh.levels, slot, record, layer, inView, inShadow, inReflection, Math.max(0, Math.sqrt(distance2) - radius), distance2)
+      return this.considerLevels(mesh, mesh.levels, slot, record, layer, inView, inShadow, inFarShadow, inReflection, Math.max(0, Math.sqrt(distance2) - radius), distance2)
     }
     const count = mesh instanceof InstancedMesh ? mesh.count : 1
     if (inView || inReflection) {
@@ -755,16 +783,21 @@ export class Renderer {
       if (inReflection) this.reflected.push(this.item(mesh, slot, record, count, pipeline, group))
     }
     if (inShadow) this.casters.push(this.item(mesh, slot, record, count, material.side === 'front' ? 0 : 1, 0))
+    // An instanced mesh's bounds are all of its instances, so only a lone mesh is judged by its size.
+    if (inFarShadow && (mesh instanceof InstancedMesh || radius >= FAR_CASTER_MIN_RADIUS)) {
+      this.farCasters.push(this.item(mesh, slot, record, count, material.side === 'front' ? 0 : 1, 0))
+    }
   }
 
   /**
    * An instanced mesh with levels of detail, already found to be in the view, the sun's or the
    * reflection's: each instance is tested on its own and listed under the level its distance picks.
+   * The far shadow map takes every instance in it at the coarsest level's shadow.
    * `nearest` is how close to the camera the mesh's bounds come, metres.
    */
   private considerLevels(
     mesh: InstancedMesh, levels: NonNullable<InstancedMesh['levels']>, slot: GeometrySlot, record: number, layer: Layer,
-    inView: boolean, inShadow: boolean, inReflection: boolean, nearest: number, distance2: number,
+    inView: boolean, inShadow: boolean, inFarShadow: boolean, inReflection: boolean, nearest: number, distance2: number,
   ) {
     const material = mesh.material
     const last = levels.length
@@ -791,7 +824,7 @@ export class Renderer {
       // The mirror image is small and blurred by the water: all of the mesh at its coarsest.
       if (inReflection) this.reflected.push(this.item(mesh, slots[last]!, record, mesh.count, pipeline, group))
     }
-    if (!inView && !inShadow) return
+    if (!inView && !inShadow && !inFarShadow) return
     // All of it past the last change of level (and the fade into it): one draw of the whole mesh, with no instance looked at.
     const lastFade = last > 0 && levels[last - 1]!.fade ? FADE_MARGIN : 0
     if (last > 0 && levelAt(nearest * nearest, levels, this.detail) === last && nearest >= levels[last - 1]!.from * this.detail + lastFade) {
@@ -801,15 +834,17 @@ export class Renderer {
         this.place(item, material, layer)
       }
       if (inShadow) this.casters.push(this.item(mesh, shadowSlots[last]!, record, mesh.count, shadowPipeline, 0))
+      if (inFarShadow) this.farCasters.push(this.item(mesh, shadowSlots[last]!, record, mesh.count, shadowPipeline, 0))
       return
     }
     const count = mesh.count
     const spheres = instanceSpheres(mesh)
-    // Room for every instance in every level's list, for the view and then for the sun.
+    // Room for every instance in every level's list, for the view and then for the sun, and in the far map's one list.
     const lists = last + 1
-    const first = this.reserve(lists * 2 * count)
+    const farList = lists * 2
+    const first = this.reserve((farList + 1) * count)
     const scratch = this.scratch
-    if (this.levelCounts.length < lists * 2) this.levelCounts = new Uint32Array(lists * 2)
+    if (this.levelCounts.length < farList + 1) this.levelCounts = new Uint32Array(farList + 1)
     const counts = this.levelCounts
     counts.fill(0)
     // Each level's distance, squared, so an instance's level is a compare or two.
@@ -829,7 +864,7 @@ export class Renderer {
       fadeTo2[i] = level.fade ? (level.from * this.detail + FADE_MARGIN) ** 2 : -1
       if (level.fade) fades = true
     }
-    const frustum = this.frustum, shadowFrustum = this.shadowFrustum
+    const frustum = this.frustum, shadowFrustum = this.shadowFrustum, farShadowFrustum = this.farShadowFrustum
     const culled = mesh.frustumCulled
     for (let i = 0; i < count; i++) {
       const o = i * 4
@@ -852,6 +887,9 @@ export class Renderer {
         const cast = lists + Math.max(level, shadowLevel)
         scratch[first + cast * count + counts[cast]!++] = i
       }
+      if (inFarShadow && r >= FAR_CASTER_MIN_RADIUS && (!culled || farShadowFrustum.intersectsSphere(x, y, z, r))) {
+        scratch[first + farList * count + counts[farList]!++] = i
+      }
     }
     for (let level = 0; level < lists; level++) {
       const seen = counts[level]!
@@ -869,6 +907,13 @@ export class Renderer {
         item.listFirst = first + (lists + level) * count
         this.casters.push(item)
       }
+    }
+    const far = counts[farList]!
+    if (far) {
+      const item = this.item(mesh, shadowSlots[last]!, record, far, shadowPipeline, 0)
+      item.list = scratch
+      item.listFirst = first + farList * count
+      this.farCasters.push(item)
     }
   }
 
@@ -1042,32 +1087,66 @@ export class Renderer {
 
   // ---- uniforms and bind groups ----
 
-  private setupShadow(scene: Scene) {
+  private setupShadow(scene: Scene, camera: PerspectiveCamera) {
     const sun = scene.sun
     const shadow = sun.shadow
     this.shadowsOn = shadow.enabled
-    if (!shadow.enabled) return
+    this.farShadowsDrawn = false
+    if (!shadow.enabled) {
+      this.farShadowsOn = false
+      return
+    }
     if (this.shadowMap.width !== shadow.mapSize) {
       this.shadowMap.destroy()
       this.shadowMap = this.makeShadowMap(shadow.mapSize)
       this.lightingGroup = null
     }
+    const farSize = shadow.far ? shadow.farMapSize : 1
+    if (this.farShadowMap.width !== farSize) {
+      this.farShadowMap.destroy()
+      this.farShadowMap = this.makeShadowMap(farSize)
+      this.lightingGroup = null
+      this.farDrawnAt = -Infinity
+    }
+    // A far map just turned on is drawn at once; otherwise every `farEvery` frames.
+    if (!this.farShadowsOn) this.farDrawnAt = -Infinity
+    this.farShadowsOn = shadow.far
     let dx = sun.position.x - sun.target.x, dy = sun.position.y - sun.target.y, dz = sun.position.z - sun.target.z
     const len = Math.hypot(dx, dy, dz) || 1
     dx /= len; dy /= len; dz /= len
-    // Orient the light's view by direction alone and snap the target to whole texels in that view, so the
+    // The maps follow the sun in steps: drawn from a direction that changed a little every frame, every
+    // edge would re-rasterise every frame and shimmer as the day goes on.
+    const d = this.shadowDir
+    if (d[0]! * dx + d[1]! * dy + d[2]! * dz < Math.cos(shadow.step)) {
+      d[0] = dx; d[1] = dy; d[2] = dz
+    }
+    // Orient the light's view by direction alone and snap the centre to whole texels in that view, so the
     // shadow's edges do not crawl as the target moves.
-    mat4.lookAt(this.lightView, dx, dy, dz, 0, 0, 0, Math.abs(dy) > 0.99 ? 1 : 0, Math.abs(dy) > 0.99 ? 0 : 1, 0)
-    const v = this.lightView
+    const sx = d[0]!, sy = d[1]!, sz = d[2]!
+    mat4.lookAt(this.lightView, sx, sy, sz, 0, 0, 0, Math.abs(sy) > 0.99 ? 1 : 0, Math.abs(sy) > 0.99 ? 0 : 1, 0)
     const t = sun.target
-    const texel = shadow.span / shadow.mapSize
-    const cx = Math.round((v[0]! * t.x + v[4]! * t.y + v[8]! * t.z + v[12]!) / texel) * texel
-    const cy = Math.round((v[1]! * t.x + v[5]! * t.y + v[9]! * t.z + v[13]!) / texel) * texel
-    const cz = v[2]! * t.x + v[6]! * t.y + v[10]! * t.z + v[14]!
-    const half = shadow.span / 2
-    mat4.orthographic(this.lightProjection, cx - half, cx + half, cy - half, cy + half, -cz - shadow.depth, -cz + shadow.depth)
-    mat4.multiply(this.shadowMatrix, this.lightProjection, this.lightView)
-    this.shadowFrustum.setFromMatrix(this.shadowMatrix)
+    this.fitShadow(this.shadowMatrix, this.shadowFrustum, t.x, t.y, t.z, shadow.span, shadow.mapSize, shadow.depth)
+    if (!shadow.far || this.frameNumber - this.farDrawnAt < shadow.farEvery) return
+    this.farShadowsDrawn = true
+    this.farDrawnAt = this.frameNumber
+    // The far map is centred ahead of the camera, on what it sees rather than on what it follows: from a
+    // helicopter that is the ground ahead, well away from the target.
+    const v = camera.view
+    const ahead = shadow.farSpan * shadow.farAhead
+    this.fitShadow(this.farShadowMatrix, this.farShadowFrustum, this.camX - v[2]! * ahead, this.camY - v[6]! * ahead, this.camZ - v[10]! * ahead, shadow.farSpan, shadow.farMapSize, shadow.farDepth)
+  }
+
+  /** Fits a shadow map of `size` texels over `span` metres around `(x, y, z)`, `depth` metres either side of it along the sun, in the light's view. */
+  private fitShadow(matrix: mat4.Mat4, frustum: Frustum, x: number, y: number, z: number, span: number, size: number, depth: number) {
+    const v = this.lightView
+    const texel = span / size
+    const cx = Math.round((v[0]! * x + v[4]! * y + v[8]! * z + v[12]!) / texel) * texel
+    const cy = Math.round((v[1]! * x + v[5]! * y + v[9]! * z + v[13]!) / texel) * texel
+    const cz = v[2]! * x + v[6]! * y + v[10]! * z + v[14]!
+    const half = span / 2
+    mat4.orthographic(this.lightProjection, cx - half, cx + half, cy - half, cy + half, -cz - depth, -cz + depth)
+    mat4.multiply(matrix, this.lightProjection, v)
+    frustum.setFromMatrix(matrix)
   }
 
   private writeFrame(scene: Scene, camera: PerspectiveCamera) {
@@ -1115,6 +1194,9 @@ export class Renderer {
     f[83] = shadow.taps === 1 ? 1 : 0
     f[84] = camera.near
     f[85] = camera.far
+    f.set(this.farShadowMatrix, 128)
+    f[144] = shadow.farSpan / shadow.farMapSize
+    f[145] = this.farShadowsOn ? 1 : 0
     this.writeLights(scene, f)
     this.writeSky(scene, f)
     // The point-light count's neighbours are the clip: below `clip height` is cut away while mirroring.
@@ -1243,6 +1325,7 @@ export class Renderer {
           { binding: 0, resource: this.materials.ramps.createView() },
           { binding: 1, resource: this.shadowMap.createView() },
           { binding: 2, resource: this.comparisonSampler },
+          { binding: 3, resource: this.farShadowMap.createView() },
         ],
       })
     }
@@ -1251,19 +1334,24 @@ export class Renderer {
   // ---- passes ----
 
   private shadowPass(encoder: GPUCommandEncoder) {
+    this.drawShadowMap(encoder, 'shadow', this.shadowMap, this.shadowBatches, this.shadowPipelines)
+    if (this.farShadowsDrawn) this.drawShadowMap(encoder, 'far shadow', this.farShadowMap, this.farShadowBatches, this.farShadowPipelines)
+  }
+
+  private drawShadowMap(encoder: GPUCommandEncoder, label: string, map: GPUTexture, batches: Batch[], pipelines: GPURenderPipeline[]) {
     const pass = encoder.beginRenderPass({
-      label: 'shadow',
+      label,
       colorAttachments: [],
-      depthStencilAttachment: { view: this.shadowMap.createView(), depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'store' },
-      timestampWrites: this.timer.pass('shadow'),
+      depthStencilAttachment: { view: map.createView(), depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'store' },
+      timestampWrites: this.timer.pass(label),
     })
     pass.setBindGroup(0, this.sceneGroup!)
     pass.setVertexBuffer(0, this.arena.vertexBuffer)
     pass.setIndexBuffer(this.arena.indexBuffer, 'uint32')
     let current = -1
-    for (const batch of this.shadowBatches) {
+    for (const batch of batches) {
       if (batch.pipeline !== current) {
-        pass.setPipeline(this.shadowPipelines[batch.pipeline]!)
+        pass.setPipeline(pipelines[batch.pipeline]!)
         current = batch.pipeline
       }
       pass.drawIndexed(batch.slot.indexCount, batch.count, batch.slot.firstIndex, batch.slot.baseVertex, batch.first)
