@@ -166,3 +166,47 @@ fn giving_a_missile_up_brings_the_officer_back_too() {
     assert!(missile(&game).is_none());
     assert_eq!(game.world.entities.of::<Player>(officer).seat, Some(Seat { vehicle: vid, index: 1, remote: false, from: None }));
 }
+
+/// Fires a solid shell down at 45° onto the submarine's hull from the side, at its middle, and says
+/// whether it was hurt.
+fn shelled(game: &mut Game, vid: u32) -> bool {
+    let hp = |game: &Game| game.world.entities.get::<crate::entities::Health>(vid).unwrap().hp;
+    let before = hp(game);
+    let top = game.world.physics.car_pose(vid).unwrap().position[1] + SUB_HALF_EXTENTS[1];
+    let from = [-20.0, top + 20.0, 4.0];
+    let speed = 300.0 / std::f32::consts::SQRT_2;
+    game.world.launch(crate::mechanics::projectiles::Flying::new(shared::protocol::PROJECTILE_SHELL, 0, from, [speed, -speed, 0.0], 600));
+    for _ in 0..10 {
+        game.step();
+    }
+    hp(game) < before
+}
+
+#[test]
+fn a_shell_goes_on_into_the_water_and_strikes_a_submarine_just_under_it_but_not_one_deep() {
+    let (mut game, vid, mut crew) = crewed();
+    // Just under: the top of its hull a metre or so down.
+    frames(&mut game, &mut crew[..1], BUTTON_RUN, 0.0, TICK_RATE);
+    frames(&mut game, &mut crew, 0, 0.0, TICK_RATE / 2);
+    let shallow = depth(&game, vid) - SUB_HALF_EXTENTS[1];
+    assert!((0.5..2.0).contains(&shallow), "its hull's top is {shallow} m down");
+    assert!(shelled(&mut game, vid), "struck {shallow} m down");
+    // Deep: past where the water stops a shell.
+    frames(&mut game, &mut crew[..1], BUTTON_RUN, 0.0, 3 * TICK_RATE);
+    frames(&mut game, &mut crew, 0, 0.0, TICK_RATE / 2);
+    let deep = depth(&game, vid) - SUB_HALF_EXTENTS[1];
+    assert!(deep > SHELL_WATER_DEPTH + 0.5, "its hull's top is {deep} m down");
+    assert!(!shelled(&mut game, vid), "struck {deep} m down");
+}
+
+#[test]
+fn a_round_into_the_water_stops_a_metre_under_and_ends_there() {
+    let mut game = sea();
+    let round = crate::mechanics::combat::Round { damage: 30, vehicle: 5, plane: 5, weapon: shared::protocol::WEAPON_RIFLE, range: 300.0, falloff: shared::items::Falloff::NONE, pen: shared::armor::Pen::NONE };
+    // Down at 45° into open water, well clear of the submarine.
+    let dir = [std::f32::consts::FRAC_1_SQRT_2, -std::f32::consts::FRAC_1_SQRT_2, 0.0];
+    let (end, met) = crate::mechanics::combat::hitscan(&mut game.world, 0, [-100.0, 10.0, 100.0], dir, &round, 0, 0);
+    assert!(met, "the water stopped it");
+    let expected = (10.0 + ROUND_WATER_DEPTH) * std::f32::consts::SQRT_2;
+    assert!((end - expected).abs() < 0.1, "it went {end} m, not {expected}");
+}

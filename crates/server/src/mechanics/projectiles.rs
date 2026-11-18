@@ -468,16 +468,6 @@ fn punch(world: &mut World, point: [f32; 3], dir: [f32; 3], radius: f32) {
     world.blast_cubes(into, radius);
 }
 
-/// How far along `dir` from `from`, within `step`, a round goes into open water (its still level), if it does.
-fn into_water(world: &World, from: [f32; 3], dir: [f32; 3], step: f32) -> Option<f32> {
-    let to: [f32; 3] = vec3::along(from, dir, step);
-    let level = world.physics.water_level(to[0], to[2])?;
-    if from[1] < level || to[1] >= level || dir[1] >= 0.0 {
-        return None;
-    }
-    Some(((from[1] - level) / -dir[1]).clamp(0.0, step))
-}
-
 /// A rocket or a shell: flies on, and bursts on the first wall, vehicle or (with `bodies`) soldier it
 /// meets. With `armor`, a vehicle met first may turn it away instead.
 fn step_striking(world: &mut World, id: u32, dt: f32, strikes: Strikes) {
@@ -485,26 +475,34 @@ fn step_striking(world: &mut World, id: u32, dt: f32, strikes: Strikes) {
     fly(world, id, &mut s, dt);
     let speed = length(s.velocity);
     let dir = s.velocity.map(|v| v / speed);
-    let step = speed * dt;
-    let hit = world.physics.cast_ray_hit(s.position, dir, step, s.source);
-    let wall = hit.map(|(t, _)| t);
+    let mut step = speed * dt;
+    let mut hit = world.physics.cast_ray_hit(s.position, dir, step, s.source);
+    let mut wall = hit.map(|(t, _)| t);
     // Soldiers and creatures are not physics bodies, so test the path against each one.
-    let body = if strikes.bodies { super::life::first_hurtbox_hit(world, s.position, dir, wall.unwrap_or(step), Some(s.owner), 0, None) } else { None };
+    let hurtbox = |world: &World, reach: f32| if strikes.bodies { super::life::first_hurtbox_hit(world, s.position, dir, reach, Some(s.owner), 0, None) } else { None };
+    let mut body = hurtbox(world, wall.unwrap_or(step));
     s.ttl = s.ttl.saturating_sub(1);
-    // Into open water before it meets anything: it ends there in a splash, and what bursts bursts on the
-    // surface, digging nothing.
-    if let Some(t) = into_water(world, s.position, dir, step)
+    // Into open water before it meets anything: it splashes in and goes on a little way under. A
+    // vehicle or a body it meets down there it strikes as it would in the air; the bed, a wall or nothing
+    // and it ends where it went in, and what bursts bursts on the surface, digging nothing.
+    if let Some((t, stop)) = super::combat::water_stop(world, s.position, dir, step, SHELL_WATER_DEPTH, SHELL_WATER_PATH)
+        && t < step
         && body.map(|(_, at)| at).or(wall).is_none_or(|at| t < at)
     {
-        let point: [f32; 3] = vec3::along(s.position, dir, t);
-        let [x, y, z] = point.map(to_cm);
+        let entry: [f32; 3] = vec3::along(s.position, dir, t);
+        let [x, y, z] = entry.map(to_cm);
         world.shots.push(ShotEvent { shooter: s.owner, weapon: WEAPON_SPLASH, x, y, z, yaw: SHOT_NO_YAW, dip: SHOT_NO_DIP });
-        let burst = world.entities.get::<Burst>(id).copied();
-        world.entities.despawn(id);
-        if let Some(burst) = burst {
-            set_off(world, Burst { crater: [0.0, 0.0], ..burst }, s.owner, point, dir, None);
+        let under = world.physics.cast_ray_hit(s.position, dir, stop, s.source).filter(|&(at, vid)| at > t && vid.is_some());
+        let met = hurtbox(world, under.map_or(stop, |(at, _)| at)).filter(|&(_, at)| at > t);
+        if under.is_none() && met.is_none() {
+            let burst = world.entities.get::<Burst>(id).copied();
+            world.entities.despawn(id);
+            if let Some(burst) = burst {
+                set_off(world, Burst { crater: [0.0, 0.0], ..burst }, s.owner, entry, dir, None);
+            }
+            return;
         }
-        return;
+        (step, hit, wall, body) = (stop, under, under.map(|(at, _)| at), met);
     }
     if let Some(t) = body.map(|(_, t)| t).or(wall) {
         let point: [f32; 3] = vec3::along(s.position, dir, t);
@@ -758,7 +756,9 @@ fn step_round(world: &mut World, id: u32, dt: f32) {
     fly(world, id, &mut s, dt);
     let speed = length(s.velocity);
     let dir = s.velocity.map(|v| v / speed);
+    // Into the water this tick, it goes on as far as the water lets it, and ends there this tick.
     let step = speed * dt;
+    let step = super::combat::water_stop(world, s.position, dir, step, ROUND_WATER_DEPTH, ROUND_WATER_PATH).map_or(step, |(_, stop)| step.max(stop + 0.01));
     // A passenger's round leaves through their own vehicle (`source`) rather than stopping in it.
     let wall = world.physics.cast_ray_hit(s.position, dir, step, s.source);
     let mounted = world.entities.get::<MountRound>(id).map(|round| round.0);

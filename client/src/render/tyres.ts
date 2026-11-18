@@ -26,6 +26,8 @@ export interface FxWorld {
   surfaceAt(x: number, z: number): number
   /** The water surface height at a point, `NO_WATER` where there is none. */
   waterAt?(x: number, z: number): number
+  /** The river's current at a point, m/s (x, z); none in still water or without it. */
+  currentAt?(x: number, z: number): readonly [number, number]
   /** Stirs the water: hulls and bodies pressed into its waves (`WaterWaves`). */
   waves?: Stir
   /** Where the camera is, so far-away vehicles can skip the particles. */
@@ -447,7 +449,10 @@ export class VehicleFx {
     // What meets the water: the hull's underside, or a seaplane's pontoons under it, or a car's wheels.
     const hy = this.fx.keel ?? hull
     const meets = this.fx.keel === undefined && this.lowest !== null ? Math.min(here.y - hy, this.lowest) : here.y - hy
-    const moving = Math.hypot(this.velocity.x, this.velocity.z)
+    // How fast it goes through the water, m/s: a hull carried down a river at its speed throws no spray
+    // and carves no wake, and one driven up it at full throttle does, however slowly it gains ground.
+    const [cx, cz] = world.currentAt?.(here.x, here.z) ?? [0, 0]
+    const moving = Math.hypot(this.velocity.x - cx, this.velocity.z - cz)
     const afloat = level !== undefined && Number.isFinite(level)
     // Wheels or tracks on the bed under the water drive through it, not over it.
     const skimming = afloat && this.wetBottom === null && Math.abs(meets - level) < SKIM_DRAFT && moving > SKIM_SPEED
@@ -548,7 +553,10 @@ export class VehicleFx {
     const right = new Vector3(1, 0, 0).applyQuaternion(this.q).setY(0).normalize()
     const ahead = this.forward.clone().setY(0).normalize()
     const stop = this.crashStop()
-    world.jetSpray?.throw({ at: here, right, ahead, velocity: this.velocity, speed: this.speed, stop, level, halfBeam: hx, halfLength: hz, fullSpeed: JET_FULL_SPEED }, dt)
+    // Its speed ahead through the water, m/s, not over the ground: what its jets throw up.
+    const [cx, cz] = world.currentAt?.(here.x, here.z) ?? [0, 0]
+    const speed = this.speed - (cx * ahead.x + cz * ahead.z)
+    world.jetSpray?.throw({ at: here, right, ahead, velocity: this.velocity, speed, stop, level, halfBeam: hx, halfLength: hz, fullSpeed: JET_FULL_SPEED }, dt)
   }
 
   /** Exhaust puffs when the driver pulls away, and a backfire when a sports car lifts off hard. */

@@ -293,7 +293,7 @@ export class Game {
   /** The waves' clock this frame, seconds into their loop (`waveTime`). */
   private waveClock = 0
   /** The water's waves from what moves through it. */
-  private readonly waves = new WaterWaves()
+  private readonly waves = new WaterWaves((x, z) => this.waters?.flowAt(x, z) ?? [0, 0])
   /** The water near the camera cut finer, for the waves to lift. */
   private readonly waterRefine = new WaterRefine((...nodes) => this.scene.scene.add(...nodes))
   /** True from the welcome until the joiner's catch-up `destroyed` arrives: that one is state, not news. */
@@ -1904,6 +1904,7 @@ export class Game {
       groundAt: (x, z) => this.scene.groundAt(x, z),
       surfaceAt: (x, z) => this.surfaces?.at(x, z) ?? SURFACE_GRASS,
       waterAt: (x, z) => this.waters?.surfaceAt(x, z, this.waveClock) ?? NO_WATER,
+      currentAt: (x, z) => this.waters?.flowAt(x, z) ?? [0, 0],
       waves: this.waves,
       camera: this.scene.camera.position,
       roost: this.snowRoost,

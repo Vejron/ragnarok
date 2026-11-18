@@ -100,6 +100,17 @@ describe('a hull in the water waves', () => {
     expect(waves.pushing('boat')).toBeCloseTo(0.3, 6)
   })
 
+  it('on a river pushes and churns by its speed through the water, not over the ground', () => {
+    // A current of 4 m/s towards -Z.
+    const waves = new WaterWaves(() => [0, -4])
+    waves.hull('drifting', moving(4))
+    waves.hull('upstream', { ...moving(-1), x: 2 })
+    waves.update(1 / 60, eye)
+    expect(waves.pushing('drifting')).toBe(0)
+    // Driven up the rapid at 5 m/s through it, it gains 1 m/s over the ground and pushes fully.
+    expect(waves.pushing('upstream')).toBeCloseTo(0.3, 6)
+  })
+
   it('counts a hull stamped twice in a frame once, and lifts it out where it last sat once it is gone', () => {
     const waves = new WaterWaves()
     waves.hull('boat', moving(20))
@@ -172,5 +183,23 @@ describe('a boat in the waves', () => {
     }
     expect(depthAt(-10)).toBe(0)
     expect(depthAt(0.5)).toBeGreaterThan(0.1)
+  })
+
+  it('carried along at a river\'s speed carves no wake, and driven against it does', () => {
+    const wakes = (current: readonly [number, number]) => {
+      const hulls: number[] = []
+      const stir = { hull: (_key: string, st: { depth: number }) => hulls.push(st.depth), splash: () => {} }
+      const w: FxWorld = { smoke: new Particles(100), glow: new Particles(100, true), skids: new Skidmarks(10), groundAt: () => -40, surfaceAt: () => SURFACE_WATER, waterAt: () => 0, currentAt: () => current, camera: new Vec3(0, 5, 10), waves: stir }
+      const fx = new VehicleFx(3, KIND_SUBMARINE)
+      // Over the ground it goes 3 m/s towards -Z.
+      // The first frames, before its velocity is known, are not counted.
+      for (let i = 0; i < 30; i++) {
+        if (i === 5) hulls.length = 0
+        fx.update(w, [0, 0.5, -i * 3 / 60], [0, 0, 0, 1], 0, true, 1 / 60)
+      }
+      return hulls.length
+    }
+    expect(wakes([0, -3])).toBe(0)
+    expect(wakes([0, 2])).toBeGreaterThan(0)
   })
 })

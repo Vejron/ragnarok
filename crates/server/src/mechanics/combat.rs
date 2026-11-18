@@ -889,12 +889,14 @@ pub struct Strike {
     hit: Option<(u32, f32)>,
     /// Where it stops.
     pub end: f32,
+    /// Whether the water stopped it, at `end`, before it met anything.
+    pub wet: bool,
 }
 
 impl Strike {
-    /// Whether it met anything at all.
+    /// Whether it met anything at all, the water included.
     pub fn any(&self) -> bool {
-        self.hit.is_some() || self.wall.is_some()
+        self.hit.is_some() || self.wall.is_some() || self.wet
     }
 
     /// Whether it met something a beam should burn: a body or a vehicle, not a wall or the ground.
@@ -909,18 +911,63 @@ impl Strike {
 /// behind them.
 pub fn strike(world: &World, flight: &Flight, wall: Option<(f32, Option<u32>)>, range: f32) -> Strike {
     let Flight { origin, dir, shooter, back, .. } = *flight;
+    // Into open water, it goes a little way under and stops there, unless it meets something first.
+    let stop = water_stop(world, origin, dir, range, ROUND_WATER_DEPTH, ROUND_WATER_PATH).map(|(_, stop)| stop);
+    let wet = stop.is_some_and(|stop| stop < range && wall.is_none_or(|(t, _)| stop < t));
+    let (wall, range) = if wet { (None, stop.unwrap_or(range)) } else { (wall, range) };
     let reach = wall.map_or(range, |(t, _)| t);
     let glazed = wall.and_then(|(_, car)| car).filter(|car| world.entities.get::<Vehicle>(*car).is_some_and(|vehicle| vehicle_def(vehicle.kind).crew == Exposure::Glazed));
     let through = glazed.map(|car| (car, world.physics.cast_ray(origin, dir, range, car).unwrap_or(range)));
     let hit = first_hurtbox_hit(world, origin, dir, reach, shooter, back, through);
-    Strike { wall, reach, hit, end: hit.map_or(reach, |(_, t)| t) }
+    let wet = wet && hit.is_none();
+    Strike { wall, reach, hit, end: hit.map_or(reach, |(_, t)| t), wet }
+}
+
+/// How far apart, metres, the water under a ray is looked up, in [`water_stop`].
+const WATER_SAMPLE: f32 = 1.0;
+
+/// Where a round from `origin` along the unit `dir` goes into open water within `range` (at its still
+/// level; at once if it starts under it), and where the water has stopped it: `depth` metres under that
+/// level, or `path` metres on through the water, whichever comes first. Either may lie past `range`.
+/// `None` if it goes into no water within `range`.
+pub fn water_stop(world: &World, origin: [f32; 3], dir: [f32; 3], range: f32, depth: f32, path: f32) -> Option<(f32, f32)> {
+    // How far under the still water it is `t` metres along, negative above it; `None` where it is dry.
+    let under = |t: f32| {
+        let p: [f32; 3] = vec3::along(origin, dir, t);
+        world.physics.water_level(p[0], p[2]).map(|level| level - p[1])
+    };
+    let (entry, deep) = match under(0.0) {
+        Some(deep) if deep > 0.0 => (0.0, deep),
+        // Level or climbing above the water, it never goes into it.
+        _ if dir[1] >= 0.0 => return None,
+        before => {
+            let mut before = before.map(|deep| (0.0, deep));
+            let mut t = 0.0;
+            loop {
+                if t >= range {
+                    return None;
+                }
+                t = (t + WATER_SAMPLE).min(range);
+                match under(t) {
+                    // Between the last sample above it and this one under it, where it crosses the level.
+                    Some(deep) if deep >= 0.0 => {
+                        let entry = before.map_or(t, |(t0, d0)| t0 + (t - t0) * -d0 / (deep - d0));
+                        break (entry, 0.0);
+                    }
+                    above => before = above.map(|deep| (t, deep)),
+                }
+            }
+        }
+    };
+    let down = (-dir[1]).max(1e-3);
+    Some((entry, entry + path.min((depth - deep).max(0.0) / down)))
 }
 
 /// Hurts what `met` says the round met, by `round`'s damage less what the distance flown takes off. A
 /// hitscan round and a bullet in flight both end here.
 pub fn land(world: &mut World, flight: &Flight, met: &Strike, round: &Round) {
     let Flight { origin, dir, attacker, back, flown, .. } = *flight;
-    let &Strike { wall, reach, hit, end } = met;
+    let &Strike { wall, reach, hit, end, .. } = met;
     let dealt = round.falloff.apply(round.damage, flown + end);
     if let Some((victim, t)) = hit {
         let head = is_headshot(world, victim, origin, dir, t, back);

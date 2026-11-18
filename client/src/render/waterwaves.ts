@@ -45,6 +45,12 @@ type Queued = WaveStamp & { weight: number; key: string | null }
  * as it stops or leaves, so it never leaves a hole or a heap of its own size behind.
  */
 export class WaterWaves implements Stir {
+  /**
+   * `current` is the river's current at a point, m/s (x, z): a hull is judged by its speed through the
+   * water, so one carried along by a river stirs it no more than one lying still in a lake.
+   */
+  constructor(private readonly current: (x: number, z: number) => readonly [number, number] = () => [0, 0]) {}
+
   readonly field = new WaveField({ grid: WAVE_GRID, texel: WAVE_TEXEL, speed: WAVE_SPEED })
   private queue: Queued[] = []
   /** Each hull as it was last handed to a frame that stepped: how deep the water there is pushed now. */
@@ -67,8 +73,13 @@ export class WaterWaves implements Stir {
   }
 
   hull(key: string, stamp: WaveStamp) {
-    const depth = stamp.depth * pushShare(Math.hypot(stamp.velocity[0], stamp.velocity[1]))
-    this.push({ ...stamp, depth }, key)
+    // It pushes and churns the water by how fast it goes through it, not over the ground; its velocity
+    // over the ground still says where it was a step ago, so it is stamped as it is.
+    const [cx, cz] = this.current(stamp.x, stamp.z)
+    const through = Math.hypot(stamp.velocity[0] - cx, stamp.velocity[1] - cz)
+    const depth = stamp.depth * pushShare(through)
+    const churn = stamp.churn * Math.min(1, through)
+    this.push({ ...stamp, depth, churn }, key)
   }
 
   splash(x: number, z: number, radius: number, depth: number, foam: number) {

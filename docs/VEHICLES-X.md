@@ -31,7 +31,10 @@ The submarine is a small diesel-electric boat that can go under. Its captain ste
   - A rifle round or two brings it down.
 - **Back at the periscope.** However the missile ends, the officer is back in their seat with the view where the periscope points. Their body never left the submarine: it stays sealed in the hull and goes where the submarine goes. It is not drawn kneeling anywhere.
 - **Damage and wrecks.** Rifles and machine guns ring off its 25 mm pressure hull; shells go through.
-  - Rounds and rockets stop at the water's surface, so deep under it nothing reaches it.
+  - The water stops what is fired into it a little way under its still level (`combat::water_stop`):
+    - A gun's round, hitscan or in flight, goes on until it is `ROUND_WATER_DEPTH` (1 m) under, or `ROUND_WATER_PATH` (4 m) through the water, whichever comes first. It reaches a hull just awash.
+    - A shell or a rocket splashes in and goes on to `SHELL_WATER_DEPTH` (3.5 m) under, or `SHELL_WATER_PATH` (12 m) through the water. A vehicle or a body it meets there it strikes as it would in the air, armour and all. Meeting nothing, it bursts on the surface where it went in, as before. So a submarine just under can be shelled. At periscope depth its sail and the top of its hull are in reach; much deeper, nothing reaches it.
+    - A shallow shot goes no further than its path allows, so a round skipping in at a low angle stops close to where it went in.
   - The motors (`Part::Engine`) and the missiles' fuel (`Part::Fuel`) are its modules.
   - Wrecked, it is not thrown: it floods and goes down where it is, as the ship does.
 
@@ -63,7 +66,7 @@ The missile flies on the loitering drone's code. `glide` in `flight.rs` is the o
   - The officer's `Seats` place in the submarine stays theirs, so their body rides along in it.
   - `Player::embodied` is false for them, so they are not drawn kneeling.
   - When the missile goes, `drones::cut` puts them back in that seat, if it is still theirs.
-- The tests are in `mechanics/submarines/tests.rs` and `crates/sim/src/vehicle/dive.rs`. There is also `a_missile_fired_straight_up_pitches_over_to_the_look_and_runs_up_to_its_speed` in the vehicle tests.
+- The tests are in `mechanics/submarines/tests.rs` (including `a_shell_goes_on_into_the_water_and_strikes_a_submarine_just_under_it_but_not_one_deep` and `a_round_into_the_water_stops_a_metre_under_and_ends_there`) and `crates/sim/src/vehicle/dive.rs`. There is also `a_missile_fired_straight_up_pitches_over_to_the_look_and_runs_up_to_its_speed` in the vehicle tests.
 
 ## The client
 

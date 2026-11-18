@@ -36,6 +36,7 @@ The client's prediction is the same sim in WASM, and loads the same tile bytes, 
 
 - `decodeTile` reads `flow` after `reach`, and `tileParts` passes it to the tile worker. The client's `Waters` keeps it too (`flowAt`).
 - A swimmer is animated, and stirs the water, by their speed through the water: their velocity less the current (`Soldiers`, `poseLocal`). Paced by their speed over the ground, a swimmer carried down a rapid stroked flat out while lying still in the water.
+- Wakes go by speed through the water too. `WaterWaves` takes the current off a hull's velocity before it decides how hard the hull pushes and churns the water, for boats, waders and the titan's feet alike. `VehicleFx.skim` (through `FxWorld.currentAt`) does the same before deciding on a wake, planing spray, bow water and a waterjet's spray. A boat let drift down a rapid leaves the water as it found it, and one driven up it throws its full wake while barely gaining ground. The hull is still stamped with its velocity over the ground, which says where it was a step ago.
 - `surfaceBuffers` puts the current in a lake's or river's `custom.zw` as `(x, z − FLOW_BIAS)`. Its `w` thus stays far below a stream's flag of 1, and `MeshRefiner` carries it into the refined mesh with no new attribute.
 - The water shader (`render/water.ts`):
   - It carries the chop along the current: two copies of it, each dragged downstream for 1.2 s (`FLOW_CYCLE`) and then started over, half a cycle apart and crossfaded.
@@ -86,4 +87,5 @@ The first version cost 1.1 to 1.7 ms. Timing its parts one at a time:
 - client:
   - `waves.spec.ts` holds `churn` to the Rust one
   - `water.spec.ts` checks the current reaches the mesh and the tile worker
+  - `waterwaves.spec.ts`: a hull on a river pushes and churns by its speed through the water, and a boat carried at the river's speed carves no wake
   - `world.spec.ts` decodes it

@@ -423,6 +423,15 @@ pub const SHOT_NO_DIP: u8 = 255;
 /// How much of its contact with the ground a burst keeps when its shell struck a vehicle and not the
 /// ground itself (`CraterEntry::contact`): the crater is marked as one blown from above.
 pub const CRATER_DIRECT_CONTACT: f32 = 0.5;
+/// How deep under the still water a gun's round, hitscan or in flight, goes before the water has
+/// stopped it, metres, and the most it goes through the water on the way, metres: enough for a
+/// submarine's sail just under the surface, not for one at periscope depth.
+pub const ROUND_WATER_DEPTH: f32 = 1.0;
+pub const ROUND_WATER_PATH: f32 = 4.0;
+/// The same for a shell or a rocket, metres: it reaches a submarine's hull at periscope depth. What it
+/// meets under there is struck as it would be in the air; what it does not, it bursts on the surface.
+pub const SHELL_WATER_DEPTH: f32 = 3.5;
+pub const SHELL_WATER_PATH: f32 = 12.0;
 /// However many craters land on a place, the ground goes no lower than this under what it was, metres.
 pub const CRATER_MAX_DEPTH: f32 = 4.0;
 /// The most craters whose marks a joiner is sent (the oldest are dropped first). Their heights are sent whole, in `Dug`.

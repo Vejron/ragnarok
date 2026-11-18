@@ -593,6 +593,21 @@ export const SHOT_NO_DIP = 255
  */
 export const CRATER_DIRECT_CONTACT = 0.5
 
+/**
+ * How deep under the still water a gun's round, hitscan or in flight, goes before the water has
+ * stopped it, metres, and the most it goes through the water on the way, metres: enough for a
+ * submarine's sail just under the surface, not for one at periscope depth.
+ */
+export const ROUND_WATER_DEPTH = 1.0
+export const ROUND_WATER_PATH = 4.0
+
+/**
+ * The same for a shell or a rocket, metres: it reaches a submarine's hull at periscope depth. What it
+ * meets under there is struck as it would be in the air; what it does not, it bursts on the surface.
+ */
+export const SHELL_WATER_DEPTH = 3.5
+export const SHELL_WATER_PATH = 12.0
+
 /** However many craters land on a place, the ground goes no lower than this under what it was, metres. */
 export const CRATER_MAX_DEPTH = 4.0
 
