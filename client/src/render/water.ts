@@ -98,6 +98,9 @@ fn wakeShare(custom: vec4f) -> f32 {
 
 fn displace(world: vec3f, custom: vec4f, color: vec4f) -> vec3f {
   let lift = waves(world.xz, params.wave.x, custom.y).x * waveShare(custom) + wakeLift(world.xz) * wakeShare(custom);
+  // The gusts are patches tens of metres across, far broader than the mesh: worked out at each vertex
+  // and handed to the fragment, where they cost two noises a pixel.
+  vertexExtra[0] = vec4f(gusts(world.xz, frame.fog.w), 0.0, 0.0, 0.0);
   return world + vec3f(0.0, lift, 0.0);
 }
 `
@@ -147,10 +150,20 @@ fn octave(p: vec2f, t: f32, scale: f32, angle: f32, drift: vec2f) -> vec3f {
 // up into a pattern. Height (about -2 to 2) and its slope per metre. \`fine\` and \`mid\` (0 to 1) fade the
 // small ones far off, so distant water does not shimmer.
 fn chop(p: vec2f, t: f32, fine: f32, mid: f32) -> vec3f {
-  return octave(p, t, 0.11, 0.0, vec2f(0.9, 0.35))
-       + 0.6 * octave(p, t, 0.26, 1.1, vec2f(1.1, -0.5))
-       + mid * 0.35 * octave(p, t, 0.63, 2.3, vec2f(-0.4, 1.3))
-       + fine * 0.2 * octave(p, t, 1.45, 3.7, vec2f(1.5, 0.8));
+  return octave(p, t, 0.11, 0.0, vec2f(0.9, 0.35)) + finerChop(p, t, fine, mid);
+}
+
+// The chop's three finer octaves. The two smallest are left out where they have faded to nothing,
+// which is most of a lake seen from its shore.
+fn finerChop(p: vec2f, t: f32, fine: f32, mid: f32) -> vec3f {
+  var c = 0.6 * octave(p, t, 0.26, 1.1, vec2f(1.1, -0.5));
+  if (mid > 0.0) {
+    c += mid * 0.35 * octave(p, t, 0.63, 2.3, vec2f(-0.4, 1.3));
+  }
+  if (fine > 0.0) {
+    c += fine * 0.2 * octave(p, t, 1.45, 3.7, vec2f(1.5, 0.8));
+  }
+  return c;
 }
 
 // The chop with its broadest octave carried along by \`current\` (m/s): two copies of that octave, each
@@ -166,10 +179,7 @@ fn carriedChop(p: vec2f, t: f32, fine: f32, mid: f32, current: vec2f) -> vec3f {
   let a = octave(p - current * phase * ${FLOW_CYCLE.toFixed(2)}, t, 0.11, 0.0, vec2f(0.9, 0.35));
   let b = octave(p - current * fract(phase + 0.5) * ${FLOW_CYCLE.toFixed(2)} + vec2f(13.7, 7.1), t, 0.11, 0.0, vec2f(0.9, 0.35));
   // Two copies blended lose some contrast at the crossover: made up so the chop is as strong as a lake's.
-  return (a * weight + b * (1.0 - weight)) * 1.3
-       + 0.6 * octave(p, t, 0.26, 1.1, vec2f(1.1, -0.5))
-       + mid * 0.35 * octave(p, t, 0.63, 2.3, vec2f(-0.4, 1.3))
-       + fine * 0.2 * octave(p, t, 1.45, 3.7, vec2f(1.5, 0.8));
+  return (a * weight + b * (1.0 - weight)) * 1.3 + finerChop(p, t, fine, mid);
 }
 
 // Foam on running water at \`q\`, about -1 to 1: streaks drawn out along \`dir\`, the way it runs (the noise
@@ -266,7 +276,7 @@ fn surface(s: Surface) -> vec4f {
     wave = h;
     grad = vec2f(bands(p + vec2f(e, 0.0), 0.0) - h, bands(p + vec2f(0.0, e), 0.0) - h) / e * 0.5;
   } else {
-    gust = gusts(world, time);
+    gust = s.extra[0].x;
     chopped = carriedChop(world, time, fine, mid, flowing);
     wave = clamp(chopped.x * 0.5, -1.0, 1.0) * mix(0.7, 1.15, gust);
     grad = chopped.yz * mix(0.35, 1.1, gust) * (1.0 + 1.5 * white);
@@ -278,7 +288,11 @@ fn surface(s: Surface) -> vec4f {
 
   let clear = 1.0 - smoothstep(0.0, 1.4, depth);
   let bedP = select(world * 0.9, p * 0.8, stream);
-  let web = caustics(bedP, select(time * 0.8, time, stream));
+  // The light's web on the bed shows only through clear, shallow water.
+  var web = 0.0;
+  if (clear > 0.0) {
+    web = caustics(bedP, select(time * 0.8, time, stream));
+  }
   color = mix(color, params.bed, clear * 0.45);
   color += params.foam * web * clear * 0.35;
   color = mix(color, params.foam, band * 0.12);
@@ -340,16 +354,25 @@ fn surface(s: Surface) -> vec4f {
 
   let shore = ${FOAM_DEPTH.toFixed(2)} + 0.08 * sin(time * 1.3 + world.x * 0.6 + world.y * 0.45);
   let foam = 1.0 - smoothstep(shore * 0.55, shore, depth);
-  let lacy = vnoise(world * 0.9 + vec2f(time * 0.6, -time * 0.4)).x * 0.65 + vnoise(world * 2.3 - vec2f(time * 0.9, time * 0.5)).x * 0.35;
-  let lace = smoothstep(0.1, 0.55, lacy * 0.5 + 0.5);
-  color = mix(color, params.foam * ground, foam * mix(0.55, 1.0, lace));
   // Whitecaps: the high, steep crests break, in ragged patches.
   let steep = length(big.yz);
-  let cap = smoothstep(0.45, 0.9, big.x) * smoothstep(0.15, 0.4, steep) * smoothstep(0.2, 0.6, lace) * mix(0.5, 1.2, gust);
+  let crest = smoothstep(0.45, 0.9, big.x) * smoothstep(0.15, 0.4, steep);
+  // The lace that breaks up all the foam: two noises, worked out only where there is foam to break up
+  // (the shore's line, a breaking crest or a wake), which open water mostly has none of.
+  var lace = 0.0;
+  if (foam > 0.0 || crest > 0.0 || churn.w > 0.0) {
+    let lacy = vnoise(world * 0.9 + vec2f(time * 0.6, -time * 0.4)).x * 0.65 + vnoise(world * 2.3 - vec2f(time * 0.9, time * 0.5)).x * 0.35;
+    lace = smoothstep(0.1, 0.55, lacy * 0.5 + 0.5);
+  }
+  color = mix(color, params.foam * ground, foam * mix(0.55, 1.0, lace));
+  let cap = crest * smoothstep(0.2, 0.6, lace) * mix(0.5, 1.2, gust);
   color = mix(color, params.foam * ground, cap * 0.75);
   // A wake churns white behind what made it: solid where it is fresh, and as it thins it breaks up
   // into lace and streaks, the thinnest of it surviving only in the froth noise's hollows.
-  let froth = vnoise(world * 3.1 + vec2f(time * 0.3, time * 0.2)).x * 0.5 + 0.5;
+  var froth = 0.5;
+  if (churn.w > 0.0) {
+    froth = vnoise(world * 3.1 + vec2f(time * 0.3, time * 0.2)).x * 0.5 + 0.5;
+  }
   let wash = smoothstep(0.0, 0.25, churn.w - froth * 0.8) * mix(0.75, 1.0, lace);
   color = mix(color, params.foam * ground, wash * 0.9);
   // Running water: foam streaks drawn out along a brisk current, and a rapid churned white, the
