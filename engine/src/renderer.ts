@@ -155,6 +155,9 @@ interface DrawItem {
 }
 
 /** The pipeline a material was last given, and everything of the material and its place that picks one. */
+/** Which of a material's draws a pipeline is for: its only one, depth only, shaded after that, or the mirror image's. */
+type PipelineVariant = 0 | 1 | 2 | 3
+
 interface PickedPipeline {
   version: number
   layer: Layer
@@ -166,6 +169,8 @@ interface PickedPipeline {
   depthWrite: boolean
   depthBias: number
   depthBiasSlope: number
+  /** A standard material that discards along its edges (worn paths, asphalt). */
+  edges: boolean
 }
 
 /** A run of consecutive draw-list entries drawn with one call. */
@@ -247,7 +252,8 @@ export class Renderer {
   private readonly lightingLayout: GPUBindGroupLayout
   private readonly mainLayout: GPUPipelineLayout
   private readonly shadowLayout: GPUPipelineLayout
-  private readonly standardModule: GPUShaderModule
+  /** The standard shader's modules, by what they may discard: bit 0 the mirror image's clip, bit 1 a road's edges. */
+  private readonly standardModules: (GPUShaderModule | undefined)[] = []
   private readonly shadowModule: GPUShaderModule
   private readonly textures: TextureStore
   private readonly resources: MaterialResources
@@ -462,7 +468,7 @@ export class Renderer {
     })
     this.mainLayout = device.createPipelineLayout({ bindGroupLayouts: [this.sceneLayout, this.lightingLayout, this.resources.texturesLayout] })
     this.shadowLayout = device.createPipelineLayout({ bindGroupLayouts: [this.sceneLayout] })
-    this.standardModule = device.createShaderModule({ label: 'standard', code: standardWgsl(this.vertexScars) })
+    this.standardFor(false, false)
     this.shadowModule = device.createShaderModule({ label: 'shadow', code: SHADOW_WGSL })
     const shadowPipelines = (entryPoint: string) => (['back', 'none'] as GPUCullMode[]).map((cullMode) =>
       device.createRenderPipeline({
@@ -791,7 +797,7 @@ export class Renderer {
         item.depth = distance2
         this.place(item, material, layer)
       }
-      if (inReflection) this.reflected.push(this.item(mesh, slot, record, count, pipeline, group))
+      if (inReflection) this.reflected.push(this.item(mesh, slot, record, count, this.pipelineFor(material, layer, 3), group))
     }
     if (inShadow) this.casters.push(this.item(mesh, slot, record, count, material.side === 'front' ? 0 : 1, 0))
     // An instanced mesh's bounds are all of its instances, so only a lone mesh is judged by its size.
@@ -833,7 +839,7 @@ export class Renderer {
       group = material instanceof ShaderMaterial ? this.resources.custom(material) : this.resources.standard(material)
       pipeline = this.pipelineFor(material, layer)
       // The mirror image is small and blurred by the water: all of the mesh at its coarsest.
-      if (inReflection) this.reflected.push(this.item(mesh, slots[last]!, record, mesh.count, pipeline, group))
+      if (inReflection) this.reflected.push(this.item(mesh, slots[last]!, record, mesh.count, this.pipelineFor(material, layer, 3), group))
     }
     if (!inView && !inShadow && !inFarShadow) return
     // All of it past the last change of level (and the fade into it): one draw of the whole mesh, with no instance looked at.
@@ -1018,18 +1024,24 @@ export class Renderer {
 
   // ---- pipelines ----
 
-  /** The pipeline for `material` in `layer`; `prepass` 1 is its depth-only draw, 2 its draw after that (`depthPrepass`). */
-  private pipelineFor(material: Material, layer: Layer, prepass: 0 | 1 | 2 = 0): number {
+  /**
+   * The pipeline for `material` in `layer`. `variant` 1 is its depth-only draw and 2 its draw after that
+   * (`depthPrepass`); 3 is its draw in the mirror image, the only one that clips at the water.
+   */
+  private pipelineFor(material: Material, layer: Layer, prepass: PipelineVariant = 0): number {
     let picked = this.materialPipelines.get(material)
     if (!picked) this.materialPipelines.set(material, (picked = []))
     const cached = picked[prepass]
     if (cached && cached.version === material.version && cached.layer === layer) return cached.pipeline
     const program = material instanceof ShaderMaterial ? this.resources.program(material) : null
+    // A road's ribbon is the one standard surface that discards (its ragged edge): a pipeline of its own.
+    const edges = program === null && (material.worn || material.asphalt)
     // A material whose uniforms move every frame has a new version every frame, but the same pipeline
     // while none of this changed: found by comparing, with no key built.
     if (
       cached && cached.layer === layer && cached.program === program && cached.blend === material.blend && cached.side === material.side &&
-      cached.depthTest === material.depthTest && cached.depthWrite === material.depthWrite && cached.depthBias === material.depthBias && cached.depthBiasSlope === material.depthBiasSlope
+      cached.depthTest === material.depthTest && cached.depthWrite === material.depthWrite && cached.depthBias === material.depthBias && cached.depthBiasSlope === material.depthBiasSlope &&
+      cached.edges === edges
     ) {
       cached.version = material.version
       return cached.pipeline
@@ -1039,22 +1051,30 @@ export class Renderer {
     const state = layer !== 'world'
       ? `${material.blend}|${material.side}|${layer}`
       : `${material.blend}|${material.side}|${material.depthTest}|${material.depthWrite}|${material.depthBias}|${material.depthBiasSlope}`
-    const key = program ? `${program.shader.key}|${state}|${prepass}` : state
+    const key = program ? `${program.shader.key}|${state}|${prepass}` : `${state}|${edges ? 'edges' : ''}|${prepass}`
     let pipeline = this.pipelineKeys.get(key)
     if (pipeline === undefined) {
       pipeline = this.pipelines.length
       const layout = program
         ? this.device.createPipelineLayout({ bindGroupLayouts: (material as ShaderMaterial).shadows ? [this.sceneLayout, program.groupLayout, this.lightingLayout] : [this.sceneLayout, program.groupLayout] })
         : this.mainLayout
-      this.pipelines.push(this.makePipeline(material, layer, program ? 'shader material' : state, program?.module ?? this.standardModule, layout, prepass))
+      const module = program ? (prepass === 3 ? this.resources.mirrorModule(program) : program.module) : this.standardFor(prepass === 3, edges)
+      this.pipelines.push(this.makePipeline(material, layer, program ? 'shader material' : state, module, layout, prepass))
       this.pipelineKind.push(program === null ? 'standard' : (material as ShaderMaterial).shadows ? 'shadowed' : 'custom')
       this.pipelineKeys.set(key, pipeline)
     }
-    picked[prepass] = { version: material.version, layer, pipeline, program, blend: material.blend, side: material.side, depthTest: material.depthTest, depthWrite: material.depthWrite, depthBias: material.depthBias, depthBiasSlope: material.depthBiasSlope }
+    picked[prepass] = { version: material.version, layer, pipeline, program, blend: material.blend, side: material.side, depthTest: material.depthTest, depthWrite: material.depthWrite, depthBias: material.depthBias, depthBiasSlope: material.depthBiasSlope, edges }
     return pipeline
   }
 
-  private makePipeline(m: Material, layer: Layer, label: string, module: GPUShaderModule, layout: GPUPipelineLayout, prepass: 0 | 1 | 2 = 0): GPURenderPipeline {
+  /** The standard shader with only the discards a draw needs (`standardWgsl`). */
+  private standardFor(reflect: boolean, edges: boolean): GPUShaderModule {
+    const i = (reflect ? 1 : 0) | (edges ? 2 : 0)
+    return (this.standardModules[i] ??= this.device.createShaderModule({ label: 'standard', code: standardWgsl(this.vertexScars, reflect, edges) }))
+  }
+
+  private makePipeline(m: Material, layer: Layer, label: string, module: GPUShaderModule, layout: GPUPipelineLayout, variant: PipelineVariant = 0): GPURenderPipeline {
+    const prepass = variant === 3 ? 0 : variant
     let blend: GPUBlendState | undefined
     if (m.blend === 'alpha') {
       blend = {

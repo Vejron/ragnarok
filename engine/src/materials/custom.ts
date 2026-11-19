@@ -38,6 +38,20 @@ const SHADOW_BINDINGS = /* wgsl */ `
 ${SUN_SHADOW_WGSL}
 `
 
+/** Where a shader material's code takes the mirror image's clip (`mirrorCode`), or nothing. */
+const MIRROR_CLIP_MARK = '  // (mirror clip)'
+
+/**
+ * `code` (a `CustomShader`'s) for the mirror image's draw, which is cut off at the water. Only that draw
+ * has it: a shader that can discard is shaded for every hidden layer on a tiled GPU, whether or not it
+ * ever does, so the main view's must not hold the statement at all.
+ */
+export function mirrorCode(code: string): string {
+  return code.replace(MIRROR_CLIP_MARK, `  if (frame.lightCount.z > 0.5 && in.world.y < frame.lightCount.y) {
+    discard;
+  }`)
+}
+
 /** Builds the WGSL and uniform packing for a ShaderMaterial (fields laid out by WGSL's uniform rules). */
 export function compileCustom(material: ShaderMaterial): CustomShader {
   const fields: Field[] = []
@@ -110,9 +124,7 @@ ${material.coverage ? '  out.mask = surfaceMask;' : ''}
   if (PREPASS == 1u) {
     return out;
   }
-  if (frame.lightCount.z > 0.5 && in.world.y < frame.lightCount.y) {
-    discard;
-  }
+${MIRROR_CLIP_MARK}
   out.color = vec4f(applyFog(c.rgb, flags, in.viewDepth, in.world), c.a);
   return out;
 }

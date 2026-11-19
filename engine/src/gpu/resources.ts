@@ -1,4 +1,4 @@
-import { compileCustom, type CustomShader } from '../materials/custom'
+import { compileCustom, mirrorCode, type CustomShader } from '../materials/custom'
 import type { Material, ShaderMaterial } from '../scene/material'
 import type { Texture } from '../scene/texture'
 import type { TextureStore } from './textures'
@@ -7,6 +7,8 @@ import type { TextureStore } from './textures'
 export interface CustomProgram {
   shader: CustomShader
   module: GPUShaderModule
+  /** The module for the mirror image's draw, which clips at the water (`mirrorModule`). */
+  mirror: GPUShaderModule | null
   groupLayout: GPUBindGroupLayout
 }
 
@@ -106,6 +108,11 @@ export class MaterialResources {
     return entry.id
   }
 
+  /** `program`'s module for the mirror image's draw, made when first asked for (`mirrorCode`). */
+  mirrorModule(program: CustomProgram): GPUShaderModule {
+    return (program.mirror ??= this.device.createShaderModule({ label: 'shader material, mirrored', code: mirrorCode(program.shader.code) }))
+  }
+
   /** The program a ShaderMaterial compiles to. */
   program(material: ShaderMaterial): CustomProgram {
     let shader = this.compiled.get(material)
@@ -121,6 +128,7 @@ export class MaterialResources {
       program = {
         shader,
         module: this.device.createShaderModule({ label: 'shader material', code: shader.code }),
+        mirror: null,
         groupLayout: this.device.createBindGroupLayout({
           label: 'shader material',
           entries: [

@@ -13,8 +13,14 @@ import { WET_WGSL } from './wet.wgsl'
  * map: base / π × (sun × ramp(N·L) × shadow + hemisphere), then linear fog. Unlit materials skip the
  * lighting. One shader for both keeps lit and unlit meshes in the same batches. With `vertexScars`,
  * scars press a damaged mesh's vertices in as well as shading its dents.
+ *
+ * A shader that can discard loses a tiled GPU's hidden-surface removal for
+ * everything drawn with it (every hidden layer is shaded, and a constant that is false does not bring it
+ * back: the statement must be gone), so what discards is written in only for the draws that need it:
+ * `reflect` for the mirror image, cut off at the water, and `edges` for the ragged edges of worn paths
+ * and asphalt.
  */
-export const standardWgsl = (vertexScars: boolean) => /* wgsl */ `
+export const standardWgsl = (vertexScars: boolean, reflect = false, edges = false) => /* wgsl */ `
 ${COMMON_WGSL}
 ${vertexWgsl(false, vertexScars)}
 
@@ -75,9 +81,9 @@ fn fs(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4f {
   let packed = normalTexel.xy * 2.0 - 1.0;
   let mapped = select(normalTexel.xyz * 2.0 - 1.0, vec3f(packed.x, sqrt(max(0.0, 1.0 - dot(packed, packed))), packed.y), marshy);
   // Mirroring for a reflection: what is under the water plane is not part of the picture.
-  if (frame.lightCount.z > 0.5 && in.world.y < frame.lightCount.y) {
+${reflect ? `  if (frame.lightCount.z > 0.5 && in.world.y < frame.lightCount.y) {
     discard;
-  }
+  }` : ''}
   // A ribbon on the ground reads the ground's colour from its map, toned as the ground is, and keeps its own.
   let onGround = (flags & MAT_GROUND) != 0u;
   let ground = texel.rgb * in.custom.z;
@@ -90,16 +96,16 @@ fn fs(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4f {
   }
   if ((flags & MAT_WORN) != 0u) {
     let worn = wornLook(rgb, in.world.xz, in.custom, pixel, ground, onGround);
-    if (!worn.keep) {
+${edges ? `    if (!worn.keep) {
       discard;
-    }
+    }` : ''}
     rgb = worn.rgb;
   }
   if ((flags & MAT_ASPHALT) != 0u) {
     let asphalt = asphaltLook(rgb, in.world.xz, in.custom.x, in.custom.w, pixel, ground, onGround);
-    if (!asphalt.keep) {
+${edges ? `    if (!asphalt.keep) {
       discard;
-    }
+    }` : ''}
     rgb = asphalt.rgb;
   }
   var marks = CraterMark(vec2f(0.0), 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0);
