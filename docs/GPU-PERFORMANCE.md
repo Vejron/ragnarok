@@ -244,9 +244,19 @@ lace and the froth 0.29, the mirrored sky 0.20, the ground's light 0.15, the cau
 - **The caustics only through clear water**, and the chop's two finest octaves only where they have
   not faded out with distance.
 
-`vindeln`, water view: 3.60 to 3.17 ms. What is left is mostly the chop's two broad octaves and the
-swell. Making the chop once a frame into a tiling texture, as the sky panorama is, would take most of
-the remaining 0.5 ms, but a tiling chop repeats and would change how the water looks: not built.
+`vindeln`, water view: 3.60 to 3.17 ms, the picture unchanged.
+
+Then **the chop's noise from a map** (`chopPixels`, `mappedNoise` in `water.ts`). Every octave of the
+chop is the same value noise at its own scale, turn and drift, four hashes and their blend each. The
+noise is baked once, at load, over a lattice that wraps every 64 cells, 8 texels a cell (512², value
+and slope in bytes, with mips), and an octave is one filtered read of it at the mip level the pixel's
+span of water asks for. Nothing is made per frame. Each octave repeats (every 580 m for the broadest,
+44 m for the finest), but turned and drifting differently they do not line up. The water's character
+is the same; its ripples fall elsewhere, and far off it is a little smoother, since the mips average
+what the formula left to shimmer. `vindeln`, water view: 3.15 to 2.95 ms.
+
+The map is the material's first texture because a shader material's one sampler is its first
+texture's, and the map must repeat; the mirror's lookup is kept a thousandth in from its edges for that.
 
 ### 10. Opaque draws nearest first (`Renderer.nearFirst`)
 

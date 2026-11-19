@@ -68,6 +68,54 @@ const FLOW_CYCLE = 1.2
 /** From the first current (m/s) its foam starts to streak, from the second it runs white, all of it by the third. */
 const FOAM_SPEEDS = [0.7, 1.5, 3.2] as const
 
+/** How many of the noise's lattice cells the chop map holds a side, after which it repeats. */
+const CHOP_CELLS = 64
+/** The chop map's texels to a cell: enough that reading it filtered follows the noise's smooth curve. */
+const CHOP_TEXELS = 8
+/** The largest slope the noise has, per cell, which the chop map's green and blue hold as -1 to 1. */
+const CHOP_SLOPE = 3
+
+/**
+ * The chop map's pixels: the water shader's `vnoise` at each texel's middle, over a lattice that wraps
+ * at `CHOP_CELLS`, its value in red and its slope along x and y in green and blue, each from -1 to 1
+ * (the slope over `CHOP_SLOPE`) in a byte. The chop is four octaves of this noise, each turned and
+ * drifting its own way, so the map's repeat (580 m for the broadest, 44 m for the finest) does not show.
+ */
+export function chopPixels(): Uint8Array {
+  const size = CHOP_CELLS * CHOP_TEXELS
+  const fract = (v: number) => v - Math.floor(v)
+  // The shader's \`hash2\`, of a lattice point taken round the map's edge.
+  const hash = (x: number, y: number) => {
+    const qx = fract((x % CHOP_CELLS) * 0.1031)
+    const qy = fract((y % CHOP_CELLS) * 0.103)
+    const d = qx * (qy + 33.33) + qy * (qx + 33.33)
+    return fract((qx + d + qy + d) * (qx + d))
+  }
+  const lattice = new Float32Array(CHOP_CELLS * CHOP_CELLS)
+  for (let y = 0; y < CHOP_CELLS; y++) for (let x = 0; x < CHOP_CELLS; x++) lattice[y * CHOP_CELLS + x] = hash(x, y)
+  const at = (x: number, y: number) => lattice[(y % CHOP_CELLS) * CHOP_CELLS + (x % CHOP_CELLS)]!
+  const byte = (v: number) => Math.max(0, Math.min(255, Math.round((v * 0.5 + 0.5) * 255)))
+  const out = new Uint8Array(size * size * 4)
+  for (let ty = 0; ty < size; ty++) {
+    const py = (ty + 0.5) / CHOP_TEXELS
+    const iy = Math.floor(py), fy = py - iy
+    const uy = fy * fy * (3 - 2 * fy), dy = 6 * fy * (1 - fy)
+    for (let tx = 0; tx < size; tx++) {
+      const px = (tx + 0.5) / CHOP_TEXELS
+      const ix = Math.floor(px), fx = px - ix
+      const ux = fx * fx * (3 - 2 * fx), dx = 6 * fx * (1 - fx)
+      const a = at(ix, iy), b = at(ix + 1, iy), c = at(ix, iy + 1), d = at(ix + 1, iy + 1)
+      const k = a - b - c + d
+      const o = (ty * size + tx) * 4
+      out[o] = byte((a + (b - a) * ux + (c - a) * uy + k * ux * uy) * 2 - 1)
+      out[o + 1] = byte((dx * (b - a + k * uy) * 2) / CHOP_SLOPE)
+      out[o + 2] = byte((dy * (c - a + k * ux) * 2) / CHOP_SLOPE)
+      out[o + 3] = 255
+    }
+  }
+  return out
+}
+
 /** Moves each vertex of a lake or river with the waves. Its functions serve the fragment too. */
 const VERTEX = /* wgsl */ `
 ${WAVES_WGSL}
@@ -108,6 +156,10 @@ fn displace(world: vec3f, custom: vec4f, color: vec4f) -> vec3f {
 const WGSL = /* wgsl */ `
 ${GROUND_LIGHT_WGSL}
 
+const CHOP_CELLS = ${CHOP_CELLS.toFixed(1)};
+const CHOP_TEXELS = ${CHOP_TEXELS.toFixed(1)};
+const CHOP_SLOPE = ${CHOP_SLOPE.toFixed(1)};
+
 fn bands(p: vec2f, t: f32) -> f32 {
   let a = sin(p.x * 0.9 + p.y * 0.35 + t * 0.9);
   let b = sin(p.x * -0.4 + p.y * 1.1 - t * 0.7);
@@ -138,30 +190,39 @@ fn vnoise(p: vec2f) -> vec3f {
   return vec3f(v * 2.0 - 1.0, g * 2.0);
 }
 
-// One octave of chop: noise \`scale\` cells a metre, turned by \`angle\` and drifting at \`drift\` m/s, its gradient in world metres.
-fn octave(p: vec2f, t: f32, scale: f32, angle: f32, drift: vec2f) -> vec3f {
+// \`vnoise\` read from the chop map (\`chopMap\`, see \`chopPixels\`): the same noise over a lattice that
+// repeats every CHOP_CELLS cells, in one filtered read where working it out is four hashes. \`lod\` is
+// the map's mip level, so water far off reads a small, blurred level and not texels scattered over the map.
+fn mappedNoise(q: vec2f, lod: f32) -> vec3f {
+  let texel = textureSampleLevel(chopMap, materialSampler, q / CHOP_CELLS, lod);
+  return vec3f(texel.x * 2.0 - 1.0, (texel.yz * 2.0 - 1.0) * CHOP_SLOPE);
+}
+
+// One octave of chop: noise \`scale\` cells a metre, turned by \`angle\` and drifting at \`drift\` m/s, its
+// gradient in world metres. \`span\` is how many metres of water a pixel spans, for the map's mip level.
+fn octave(p: vec2f, t: f32, scale: f32, angle: f32, drift: vec2f, span: f32) -> vec3f {
   let cs = vec2f(cos(angle), sin(angle));
   let turn = mat2x2f(cs.x, cs.y, -cs.y, cs.x);
-  let n = vnoise(turn * (p + drift * t) * scale);
+  let n = mappedNoise(turn * (p + drift * t) * scale, log2(max(span * scale * CHOP_TEXELS, 1.0)));
   return vec3f(n.x, (transpose(turn) * n.yz) * scale);
 }
 
 // The wind's chop over the swell: four octaves, each turned and drifting its own way so nothing lines
 // up into a pattern. Height (about -2 to 2) and its slope per metre. \`fine\` and \`mid\` (0 to 1) fade the
 // small ones far off, so distant water does not shimmer.
-fn chop(p: vec2f, t: f32, fine: f32, mid: f32) -> vec3f {
-  return octave(p, t, 0.11, 0.0, vec2f(0.9, 0.35)) + finerChop(p, t, fine, mid);
+fn chop(p: vec2f, t: f32, fine: f32, mid: f32, span: f32) -> vec3f {
+  return octave(p, t, 0.11, 0.0, vec2f(0.9, 0.35), span) + finerChop(p, t, fine, mid, span);
 }
 
 // The chop's three finer octaves. The two smallest are left out where they have faded to nothing,
 // which is most of a lake seen from its shore.
-fn finerChop(p: vec2f, t: f32, fine: f32, mid: f32) -> vec3f {
-  var c = 0.6 * octave(p, t, 0.26, 1.1, vec2f(1.1, -0.5));
+fn finerChop(p: vec2f, t: f32, fine: f32, mid: f32, span: f32) -> vec3f {
+  var c = 0.6 * octave(p, t, 0.26, 1.1, vec2f(1.1, -0.5), span);
   if (mid > 0.0) {
-    c += mid * 0.35 * octave(p, t, 0.63, 2.3, vec2f(-0.4, 1.3));
+    c += mid * 0.35 * octave(p, t, 0.63, 2.3, vec2f(-0.4, 1.3), span);
   }
   if (fine > 0.0) {
-    c += fine * 0.2 * octave(p, t, 1.45, 3.7, vec2f(1.5, 0.8));
+    c += fine * 0.2 * octave(p, t, 1.45, 3.7, vec2f(1.5, 0.8), span);
   }
   return c;
 }
@@ -170,16 +231,16 @@ fn finerChop(p: vec2f, t: f32, fine: f32, mid: f32) -> vec3f {
 // dragged downstream for a \`FLOW_CYCLE\` and started over, half a cycle apart and each weighted most
 // halfway through its run. It is what the eye follows; the finer ones drift as on a lake, which costs
 // a river one noise more a pixel than a lake, not four.
-fn carriedChop(p: vec2f, t: f32, fine: f32, mid: f32, current: vec2f) -> vec3f {
+fn carriedChop(p: vec2f, t: f32, fine: f32, mid: f32, current: vec2f, span: f32) -> vec3f {
   if (dot(current, current) < 0.0025) {
-    return chop(p, t, fine, mid);
+    return chop(p, t, fine, mid, span);
   }
   let phase = fract(t / ${FLOW_CYCLE.toFixed(2)});
   let weight = 1.0 - abs(1.0 - 2.0 * phase);
-  let a = octave(p - current * phase * ${FLOW_CYCLE.toFixed(2)}, t, 0.11, 0.0, vec2f(0.9, 0.35));
-  let b = octave(p - current * fract(phase + 0.5) * ${FLOW_CYCLE.toFixed(2)} + vec2f(13.7, 7.1), t, 0.11, 0.0, vec2f(0.9, 0.35));
+  let a = octave(p - current * phase * ${FLOW_CYCLE.toFixed(2)}, t, 0.11, 0.0, vec2f(0.9, 0.35), span);
+  let b = octave(p - current * fract(phase + 0.5) * ${FLOW_CYCLE.toFixed(2)} + vec2f(13.7, 7.1), t, 0.11, 0.0, vec2f(0.9, 0.35), span);
   // Two copies blended lose some contrast at the crossover: made up so the chop is as strong as a lake's.
-  return (a * weight + b * (1.0 - weight)) * 1.3 + finerChop(p, t, fine, mid);
+  return (a * weight + b * (1.0 - weight)) * 1.3 + finerChop(p, t, fine, mid, span);
 }
 
 // Foam on running water at \`q\`, about -1 to 1: streaks drawn out along \`dir\`, the way it runs (the noise
@@ -241,6 +302,9 @@ fn surface(s: Surface) -> vec4f {
   let depth = s.custom.x;
   let flow = s.custom.yzw;
   let world = s.world.xz;
+  // Metres of water a pixel spans, for the chop map's mip level: taken here, before any branch. Across
+  // and along the view differ a great deal on water seen at a low angle, so their geometric mean.
+  let span = sqrt(length(dpdx(world)) * length(dpdy(world)));
   let stream = flow.z > 0.5;
   // A tile's own surface leaves the refined square to the refined mesh, which covers just its triangles
   // there: the square is on the cells' lines and the water moves only up and down, so the two meet.
@@ -277,7 +341,7 @@ fn surface(s: Surface) -> vec4f {
     grad = vec2f(bands(p + vec2f(e, 0.0), 0.0) - h, bands(p + vec2f(0.0, e), 0.0) - h) / e * 0.5;
   } else {
     gust = s.extra[0].x;
-    chopped = carriedChop(world, time, fine, mid, flowing);
+    chopped = carriedChop(world, time, fine, mid, flowing, span);
     wave = clamp(chopped.x * 0.5, -1.0, 1.0) * mix(0.7, 1.15, gust);
     grad = chopped.yz * mix(0.35, 1.1, gust) * (1.0 + 1.5 * white);
   }
@@ -340,7 +404,7 @@ fn surface(s: Surface) -> vec4f {
   // The mirror is the view flipped left to right, so the pixel's own place in it is across the screen.
   let screen = s.pixel / frame.viewport.xy;
   let ripple = vec2f(n.x, n.z) * 0.05 * fine;
-  let ruv = clamp(vec2f(1.0 - screen.x, screen.y) + ripple, vec2f(0.0), vec2f(1.0));
+  let ruv = clamp(vec2f(1.0 - screen.x, screen.y) + ripple, vec2f(0.001), vec2f(0.999));
   let seen = textureSampleLevel(reflection, materialSampler, ruv, 0.0);
   // Measured at the water's level under the waves, so a crest still mirrors the scene.
   let level = params.plane.y * (1.0 - smoothstep(0.2, 0.5, abs(s.world.y - big.x - churn.x - params.plane.x)));
@@ -407,6 +471,9 @@ const blank = new Texture({ data: new Uint8Array(4), width: 1, height: 1 }, { sr
 /** A wake map with nothing on it: no height, no slope, no foam. */
 const still = new Texture({ data: new Uint8Array([0, 0, 0, 0]), width: 1, height: 1 }, { srgb: false, wrap: 'clamp', mipmaps: false })
 
+/** The chop's noise, read filtered and at the mip level the distance asks for (`chopPixels`). */
+const chop = new Texture({ data: chopPixels(), width: CHOP_CELLS * CHOP_TEXELS, height: CHOP_CELLS * CHOP_TEXELS }, { srgb: false, wrap: 'repeat', mipmaps: true })
+
 /** One shared material, so every tile draws with the same pipeline and a sky change reaches them all. */
 let shared: ShaderMaterial | null = null
 function material(): ShaderMaterial {
@@ -433,7 +500,8 @@ function material(): ShaderMaterial {
       refineArea: [0, 0, 0, 0],
     },
     // Still water until the wave field is handed over.
-    textures: { reflection: blank, wakeMap: still, skyPanorama: blank },
+    // The chop map first: the material's sampler is its first texture's, and the map must repeat.
+    textures: { chopMap: chop, reflection: blank, wakeMap: still, skyPanorama: blank },
     blend: 'alpha',
     // Written, so the ink (which reads depth) outlines the surface and not the bed seen through it.
     depthWrite: true,
