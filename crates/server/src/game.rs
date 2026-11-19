@@ -1291,4 +1291,124 @@ mod tests {
             std::fs::write(out, serde_json::to_string(&cuts).unwrap()).unwrap();
         }
     }
+
+    /// Not a regression test: shells a stretch of real bridge (the viaduct by Backen in `home`) down
+    /// the middle of its deck and draws what is left of each section from above, to see what hangs on.
+    /// `RAGNAROK_WORLD=$PWD/worlds/home/world.msgpack cargo test --release -p server -- --ignored --nocapture bridge_wreckage`
+    /// `SINGLE=1` fires one shell at each section's middle instead and says what it took;
+    /// `WRECKAGE_OUT=<file>` writes the cuts out for the client's `view.carved` to replay.
+    #[test]
+    #[ignore]
+    fn bridge_wreckage() {
+        let path = std::env::var_os("RAGNAROK_WORLD").map(std::path::PathBuf::from).expect("RAGNAROK_WORLD");
+        let (map, _) = crate::read_world(&path).expect("a world");
+        let mut game = Game::new(map, 0).unwrap();
+        let world = &mut game.world;
+        // The viaduct by Backen in `home`, over the river.
+        let near = |c: [f32; 2]| (-1120.0..-1040.0).contains(&c[0]) && (170.0..380.0).contains(&c[1]);
+        let sections: Vec<usize> = (0..world.map.buildings.len())
+            .filter(|&i| world.map.buildings[i].kind == shared::world::BUILDING_BRIDGE)
+            .filter(|&i| {
+                let f = &world.map.buildings[i].footprint;
+                let n = f.len() as f32;
+                near([f.iter().map(|p| p[0] as f32).sum::<f32>() / n / 100.0, f.iter().map(|p| p[1] as f32).sum::<f32>() / n / 100.0])
+            })
+            .collect();
+        let bite = shared::consts::EXPLOSION_RADIUS * crate::mechanics::CARVE_REACH;
+        println!("{} sections, bite {bite:.1} m", sections.len());
+        for &index in &sections {
+            let id = world.map.building_ids[index];
+            let b = world.map.buildings[index].clone();
+            let pts: Vec<[f32; 2]> = b.footprint.iter().map(|p| [p[0] as f32 / 100.0, p[1] as f32 / 100.0]).collect();
+            // The long way across the footprint: its two corners farthest apart.
+            let (mut a, mut c, mut best) = (pts[0], pts[0], 0.0);
+            for &p in &pts {
+                for &q in &pts {
+                    let d = (p[0] - q[0]).hypot(p[1] - q[1]);
+                    if d > best {
+                        (a, c, best) = (p, q, d);
+                    }
+                }
+            }
+            let top = (b.base + b.height) as f32 / 100.0;
+            if std::env::var_os("COLUMN").is_some() {
+                // A Carl Gustaf round's bite (`blast_bridge`: a rocket's 5 m, a fifth of it, full strength)
+                // into each column 3 m up its side, one then the other, the structure checks run after each.
+                let bite = shared::consts::ROCKET_BLAST_RADIUS * 0.2;
+                let Some(carving) = world.carving(id) else { continue };
+                let shell = &carving.shell;
+                let layer = 4usize;
+                let low: Vec<[i32; 3]> = shell.solid_cells().into_iter().filter(|&c| shell.coords(c)[1] == layer).map(|c| shell.centre(c)).collect();
+                let total = shell.solid_cells().len();
+                let _ = &carving;
+                // The two cells of that layer farthest apart: one on each column's outer side.
+                let (mut p, mut q, mut best) = (low[0], low[0], -1i64);
+                for &a in &low {
+                    for &b in &low {
+                        let d = ((a[0] - b[0]) as i64).pow(2) + ((a[2] - b[2]) as i64).pow(2);
+                        if d > best {
+                            (p, q, best) = (a, b, d);
+                        }
+                    }
+                }
+                let mut report = Vec::new();
+                println!("section {index}: dims {:?}, columns hit at {p:?} and {q:?}", shell.dims);
+                for at in [p, q] {
+                    let cut = world.carve(id, at.map(|v| v as f32 / 100.0), bite);
+                    println!("  hit: {} blasted, {} cut off at once", cut.as_ref().map_or(0, |c| c.blasted.len()), cut.as_ref().map_or(0, |c| c.fell.len()));
+                    world.flush_buildings();
+                    for _ in 0..600 {
+                        world.tick = world.tick.wrapping_add(1);
+                        world.settle();
+                        world.flush_buildings();
+                    }
+                    let gone = world.carves.get(&id).map_or(0, |c| c.removed.iter().filter(|&&g| g).count());
+                    report.push(gone);
+                }
+                println!("section {index}: {total} cells, {} low cells in layer {layer}; gone after one column hit {}, after both {}", low.len(), report[0], report[1]);
+                continue;
+            }
+            if std::env::var_os("SINGLE").is_some() {
+                let mid = [(a[0] + c[0]) / 2.0, top - 0.5, (a[1] + c[1]) / 2.0];
+                let cut = world.carve(id, mid, bite);
+                let (dims, cells) = world.carves.get(&id).map_or(([0; 3], 0), |c| (c.shell.dims, c.shell.solid_cells().len()));
+                println!("section {index}: one shell at its middle: {:?} of {cells}, dims {dims:?}, {:.0} m long", cut.map(|cut| (cut.blasted.len(), cut.fell.len())), best);
+                continue;
+            }
+            let steps = (best / 2.0) as i32;
+            for k in 1..steps {
+                let t = k as f32 / steps as f32;
+                world.carve(id, [a[0] + (c[0] - a[0]) * t, top - 0.5, a[1] + (c[1] - a[1]) * t], bite);
+                world.flush_buildings();
+            }
+            for _ in 0..600 {
+                world.tick = world.tick.wrapping_add(1);
+                world.settle();
+                world.flush_buildings();
+            }
+        }
+        // `WRECKAGE_OUT=<file>`: every cut in order, as the client's `carved` takes them.
+        if let Some(out) = std::env::var_os("WRECKAGE_OUT") {
+            let cuts: Vec<serde_json::Value> = world.fresh.carved.iter().map(|(id, point, cut)| serde_json::json!({ "col": id.col, "row": id.row, "index": id.index, "point": point, "blasted": cut.blasted, "fell": cut.fell })).collect();
+            std::fs::write(out, serde_json::to_string(&cuts).unwrap()).unwrap();
+        }
+        for &index in &sections {
+            let id = world.map.building_ids[index];
+            let Some(carving) = world.carves.get(&id) else { continue };
+            let shell = &carving.shell;
+            let standing: Vec<u32> = shell.solid_cells().into_iter().filter(|&id| !carving.removed[id as usize]).collect();
+            println!("section {index}: {} of {} cells standing, dims {:?}", standing.len(), shell.solid_cells().len(), shell.dims);
+            // From above: the highest standing layer in each column, as a digit (relative to the top layer), or '.'.
+            let [nx, ny, nz] = shell.dims;
+            for z in 0..nz {
+                let row: String = (0..nx)
+                    .map(|x| match (0..ny).rev().find(|&y| standing.contains(&shell.index(x, y, z))) {
+                        Some(y) => char::from_digit(((ny - 1 - y) % 10) as u32, 10).unwrap(),
+                        None => '.',
+                    })
+                    .collect();
+                println!("  {row}");
+            }
+        }
+    }
 }

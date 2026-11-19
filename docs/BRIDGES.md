@@ -1,6 +1,6 @@
 # Destructible bridges
 
-Bridges can be brought down. Their concrete (deck, piers and parapets) is carved by blasts as a house's
+Bridges can be brought down. Their concrete (deck, piers and railings) is carved by blasts as a house's
 walls are (see [BUILDING.md](BUILDING.md) and `shared::carve`): a shell bites a ragged hole, and whatever
 is left with nothing to hold it falls into the river. Bridges are much tougher than houses, though:
 
@@ -24,11 +24,44 @@ of it. A stretch with no piers (a ramp, or a deck that is solid down to the grou
 
 Each section is a building of kind `BUILDING_BRIDGE` in the tile of its middle:
 
-- Its walls are the deck's sides and underside, the pier and the parapets. Its roof is the faces that
-  look up: the top of the deck and of the parapets.
+- Its walls are the deck's sides and underside, the pier, and the edge beams and railings. Its roof
+  is the faces of the deck that look up: the roadway (`Piece::deck`). The tops of the edge beams
+  and rails are walls, so they stay concrete.
 - Its footprint is the convex hull of its corners.
 - Its `base` is the lowest ground or river bed under it, which is where its rubble lands.
-- Its `paint` is `BRIDGE_CONCRETE` for walls and roof alike.
+- Its `paint` is `BRIDGE_CONCRETE` for its walls, and for its roof the road it carries
+  (`bridge::deck_paint`): `DECK_ASPHALT` for a paved road or path, `DECK_PLANKS` for a footpath or a
+  track, `BRIDGE_CONCRETE` for a railway. The client draws the roof with the matching pattern
+  (`buildingSurfaces`: `Surface.Asphalt` is the ground road's `asphaltLook` without its crumbling
+  edge, `Surface.Planks` boards 20 cm wide), and its cells keep it once the section is carved.
+- Its thin parts (rails, posts, the tops of the edge beams: any face with the face opposite it less
+  than `THIN`, 35 cm, behind it, `lookfracture.ts`) are drawn plain when the section is hurt. They
+  get none of a hole's soot, ragged corners, edge depth or dim inside, which are sized for a wall
+  and would stand out of an 8 cm rail as black slabs. A whole section draws no inside at all.
+- What stands on its roadway (the edge beams, posts and rails: the cells above a roof cell, or above
+  another such cell, `Shell::rests`) rests on the cell under it. When that cell goes, so does
+  everything stacked on it, and then whatever that leaves cut off (`unsupported_after`). Otherwise a
+  railing, being one long line of cells held at both ends, would be left hanging across a hole
+  blown out of the deck under it.
+- What a cut leaves too narrow to stand falls (`NARROW`, 4 cells, about 2.9 m): a cell's width is
+  the shorter run of standing cells through it along x and along z, four cells each way, counting
+  a column as standing if anything stands in its layer or the one above or below (the cells are a
+  shell, so a deck's sides are a line of their own). Only a cell left narrower than it stood when
+  whole goes, so a pier or a footbridge built narrower stands. Without it, the strips along a
+  deck's edges, with their edge beams and railings, hang on across the river as beams once the
+  middle is blown out between them.
+- A bridge is never weighed as a house is (`Shell::strain`, the structure checks `settle` runs). A
+  pier is a shell of cells each carrying the whole deck, so a hole in its side left the cells round
+  it far over their load, and shedding them spread until one Carl Gustaf round in a column brought
+  a whole section down. A bridge falls only where a cut leaves it with nothing under it, too narrow,
+  or cut off from the ground: a pier must be cut right through, and a wide deck's two columns both.
+- A hole in a concrete deck shows no broken rafters (`edgeDetail`), only a planked one does.
+- A hole's edge is drawn only where it borders a face still standing (`bordering`). When a whole
+  stretch is gone, its faces were cut at different places either side of each corner, so their edges
+  no longer meet. A house keeps those edges as the broken foot of its walls along the ground, but on
+  a bridge they would be left drawn in the air where the deck was, as long dark lines over the river.
+- `bridge_wreckage` (an ignored server test) shells the viaduct by Backen in `home` and draws what is
+  left of each section; `WRECKAGE_OUT` writes the cuts for the client to replay (`view.carved`).
 - It is a closed solid. Each 3 m stretch of deck is a box capped at both ends (`bridge::build`), so a
   section cut from the middle of the bridge has no open end. The client would draw an open end as the
   broken rim of a hole, left hanging in the air once the rest had fallen.
@@ -38,7 +71,7 @@ is therefore drawn and collided from its own smooth concrete, with the gone cell
 (`shared::facade::standing`), the same on the server and every client.
 
 A bridge has no windows (`windows::openings_of` and the client's `openingsOf` give none), so it has
-no inside and no gates. It also has no floor, eaves or chimney, plain surfaces instead of a house's patterns,
+no inside and no gates. It also has no floor, eaves or chimney, plain concrete walls instead of a house's patterns,
 and it is not drawn on the minimap as a house (its road is on the minimap already). Grass still grows
 under it.
 

@@ -8,7 +8,7 @@
 //! ground.
 
 use shared::terrain::Ground;
-use shared::world::{NO_WATER, ROAD_MAJOR, ROAD_PATH};
+use shared::world::{BRIDGE_CONCRETE, DECK_ASPHALT, DECK_PLANKS, NO_WATER, ROAD_FAINT, ROAD_MAJOR, ROAD_MINOR, ROAD_PATH, ROAD_PAVED_PATH, ROAD_TRACK};
 
 type P = [f64; 2];
 type V3 = [f64; 3];
@@ -30,7 +30,24 @@ const LIFT: f64 = 0.12;
 /// Deck sections this close to the ground are solid down to it; higher ones stand on piers.
 const SOLID_BELOW: f64 = 2.0;
 const PIER_SPACING: f64 = 24.0;
-const PARAPET: f64 = 1.0;
+/// A deck wider than this stands on two columns, one under each half, instead of one pier wall
+/// across it, metres.
+const WIDE_DECK: f64 = 14.0;
+/// The concrete beam along each edge of a deck with a drop beside it, which the railing stands on:
+/// how wide it is and how far it rises above the roadway, metres. The deck is this much wider each
+/// side than its road, so the roadway between the beams keeps the road's width.
+pub const EDGE_BEAM_WIDTH: f64 = 0.5;
+pub const EDGE_BEAM_HEIGHT: f64 = 0.25;
+/// The railing on the edge beam: steel posts at every cross section and two rails, the top one at
+/// `RAILING_HEIGHT` and the middle one at `MID_RAIL_HEIGHT` above the roadway, metres.
+pub const RAILING_HEIGHT: f64 = 1.1;
+pub const MID_RAIL_HEIGHT: f64 = 0.6;
+/// Half the side of a railing post's square section, and half a rail's, metres.
+const POST_HALF: f64 = 0.05;
+const RAIL_HALF: f64 = 0.04;
+/// How far in from the deck's outer edge the posts and rails stand, metres: on the outer half of
+/// the edge beam.
+const RAILING_INSET: f64 = 0.15;
 /// A pylon is only worth building over a crossing at least this long, metres.
 const PYLON_MIN_SPAN: f64 = 60.0;
 const CABLE_SPACING: f64 = 12.0;
@@ -41,7 +58,7 @@ const CABLE_SPACING: f64 = 12.0;
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Pylons {
     None,
-    /// No pylons, and no parapets either: a deck over a cutting, flush with the road either side of
+    /// No pylons, and no railings either: a deck over a cutting, flush with the road either side of
     /// it and with whatever deck lies beside it.
     Flush,
     /// No deck of its own at all: one carriageway of a divided road, carried on the deck it shares
@@ -58,14 +75,33 @@ pub enum Pylons {
 /// ends; Kolbäcksbron has one in the middle, over each of its two carriageways.
 pub const LANDMARKS: [(f64, f64, f64, Pylons); 2] = [(63.8263, 20.2204, 150.0, Pylons::Ends), (63.8013, 20.2994, 150.0, Pylons::Middle)];
 
+/// The kind a railway's deck is built with, in place of a `ROAD_*`: a minor road's clearance over
+/// water, and bare concrete on top (`deck_paint`), as the track is not drawn on it.
+pub const TRACK: u8 = u8::MAX;
+
+/// The colour of the top of a deck that carries a road of `kind` (`ROAD_*`, or `TRACK`): asphalt
+/// for a paved road or path, timber planks for a footpath or a track, else bare concrete. The
+/// client picks the surface's pattern from it (`buildingSurfaces`).
+pub fn deck_paint(kind: u8) -> u32 {
+    match kind {
+        ROAD_MAJOR | ROAD_MINOR | ROAD_PAVED_PATH => DECK_ASPHALT,
+        ROAD_PATH | ROAD_TRACK | ROAD_FAINT => DECK_PLANKS,
+        _ => BRIDGE_CONCRETE,
+    }
+}
+
 /// A piece of the bridge, assigned to the tile of `at` so a long bridge is cut at tile borders.
 pub struct Piece {
     pub at: P,
-    /// Steel (pylon, cables) rather than concrete (deck, piers, parapets).
+    /// Steel (pylon, cables) rather than concrete (deck, piers, railings).
     pub steel: bool,
-    /// A stretch of parapet along the deck's edge, which is left out where another bridge's deck
-    /// lies beside this one (`assemble`): the carriageways of a divided road are one roadway.
-    pub parapet: bool,
+    /// A stretch of the deck itself: its top is the roadway, drawn in the road's surface
+    /// (`deck_paint`); everything else is concrete.
+    pub deck: bool,
+    /// A stretch of edge beam, or a railing's post or rail, along the deck's edge, which is left out
+    /// where another bridge's deck lies beside this one (`assemble`): the carriageways of a divided
+    /// road are one roadway.
+    pub railing: bool,
     /// A pier under the deck, which is left out where it would stand on a road or a track that goes
     /// under the bridge (`assemble`): OSM does not say where a bridge's piers are.
     pub pier: bool,
@@ -186,7 +222,7 @@ impl Mesh {
             let l = (k + 1) % 4;
             quad([a[k], a[l], b[l], b[k]]);
         }
-        self.pieces.push(Piece { at, steel, parapet: false, pier: false, arc: self.arc, tris });
+        self.pieces.push(Piece { at, steel, deck: false, railing: false, pier: false, arc: self.arc, tris });
     }
 
     /// A box from `from` to `to` with the cross section spanned by unit axes `u` and `v`.
@@ -211,6 +247,13 @@ impl Mesh {
         let v = unit(cross(d, u));
         let at = [(from[0] + to[0]) / 2.0, (from[2] + to[2]) / 2.0];
         self.prism(at, steel, from, to, u, v, half, half);
+    }
+
+    /// Marks the piece just made as part of the railing (`Piece::railing`).
+    fn mark_railing(&mut self) {
+        if let Some(piece) = self.pieces.last_mut() {
+            piece.railing = true;
+        }
     }
 }
 
@@ -271,7 +314,7 @@ fn measured_profile(nodes: &[Node], returns: &[[f64; 3]]) -> Option<Vec<f64>> {
 fn clearance(kind: u8) -> f64 {
     match kind {
         ROAD_MAJOR => 7.0,
-        ROAD_PATH => 3.5,
+        ROAD_PATH | ROAD_PAVED_PATH => 3.5,
         _ => 5.5,
     }
 }
@@ -378,7 +421,7 @@ pub fn build(points: &[P], width: f64, kind: u8, pylons: Pylons, measured: &[[f6
         nodes.push(n);
     }
 
-    let hw = width / 2.0;
+    let hw = width / 2.0 + EDGE_BEAM_WIDTH;
     let tangent = |i: usize| {
         let (a, b) = (nodes[i.saturating_sub(1)].p, nodes[(i + 1).min(nodes.len() - 1)].p);
         let (dx, dz) = (b[0] - a[0], b[1] - a[1]);
@@ -406,19 +449,35 @@ pub fn build(points: &[P], width: f64, kind: u8, pylons: Pylons, measured: &[[f6
         // end would be the edge of a hole to the client, drawn as a broken rim in the air once all
         // round it is gone. The caps between two stretches are inside the concrete.
         mesh.hexa(mid, false, rings[i], rings[i + 1], true, true);
-        // Parapets where there is a drop beside the deck.
+        if let Some(piece) = mesh.pieces.last_mut() {
+            piece.deck = true;
+        }
+        // A railing on an edge beam where there is a drop beside the deck.
         if pylons != Pylons::Flush && nodes[i].y - nodes[i].g > 1.0 && nodes[i + 1].y - nodes[i + 1].g > 1.0 {
             for sign in [1.0, -1.0] {
-                let edge = |k: usize| {
-                    let t = tangent(k);
-                    let s = scale(side(t), sign * (hw - 0.12));
-                    [nodes[k].p[0] + s[0], nodes[k].y + PARAPET / 2.0, nodes[k].p[1] + s[2]]
+                // A point `inward` metres in from the deck's edge on this side, `up` above node `k`'s roadway.
+                let edge = |k: usize, inward: f64, up: f64| {
+                    let s = scale(side(tangent(k)), sign * (hw - inward));
+                    [nodes[k].p[0] + s[0], nodes[k].y + up, nodes[k].p[1] + s[2]]
                 };
-                let (a, b) = (edge(i), edge(i + 1));
-                let across = unit(side(unit([b[0] - a[0], 0.0, b[2] - a[2]])));
-                mesh.prism([(a[0] + b[0]) / 2.0, (a[2] + b[2]) / 2.0], false, a, b, [0.0, 1.0, 0.0], across, PARAPET / 2.0, 0.12);
-                if let Some(piece) = mesh.pieces.last_mut() {
-                    piece.parapet = true;
+                let flat = |a: V3, b: V3| unit(side(unit([b[0] - a[0], 0.0, b[2] - a[2]])));
+                // Where a stretch of railing stands: its own middle, not the deck's.
+                let middle = |a: V3, b: V3| [(a[0] + b[0]) / 2.0, (a[2] + b[2]) / 2.0];
+                let (a, b) = (edge(i, EDGE_BEAM_WIDTH / 2.0, EDGE_BEAM_HEIGHT / 2.0), edge(i + 1, EDGE_BEAM_WIDTH / 2.0, EDGE_BEAM_HEIGHT / 2.0));
+                mesh.prism(middle(a, b), false, a, b, [0.0, 1.0, 0.0], flat(a, b), EDGE_BEAM_HEIGHT / 2.0, EDGE_BEAM_WIDTH / 2.0);
+                mesh.mark_railing();
+                for height in [MID_RAIL_HEIGHT, RAILING_HEIGHT - RAIL_HALF] {
+                    let (a, b) = (edge(i, RAILING_INSET, height), edge(i + 1, RAILING_INSET, height));
+                    mesh.prism(middle(a, b), false, a, b, [0.0, 1.0, 0.0], flat(a, b), RAIL_HALF, RAIL_HALF);
+                    mesh.mark_railing();
+                }
+                // A post at this cross section, and at the last one where the railing ends.
+                let ends = if i + 1 == last || nodes[i + 2].y - nodes[i + 2].g <= 1.0 { vec![i, i + 1] } else { vec![i] };
+                for k in ends {
+                    let foot = edge(k, RAILING_INSET, EDGE_BEAM_HEIGHT);
+                    let t = tangent(k);
+                    mesh.prism([foot[0], foot[2]], false, foot, edge(k, RAILING_INSET, RAILING_HEIGHT), t, side(t), POST_HALF, POST_HALF);
+                    mesh.mark_railing();
                 }
             }
         }
@@ -431,13 +490,20 @@ pub fn build(points: &[P], width: f64, kind: u8, pylons: Pylons, measured: &[[f6
         if since >= PIER_SPACING && n.y - n.g > SOLID_BELOW + THICKNESS {
             since = 0.0;
             let t = tangent(i);
-            let top = [n.p[0], n.y - THICKNESS, n.p[1]];
-            let foot = [n.p[0], n.g - 0.5, n.p[1]];
             mesh.arc = n.arc;
-            mesh.prism(n.p, false, top, foot, t, side(t), 0.9, hw * 0.55);
-            if let Some(piece) = mesh.pieces.last_mut() {
-                piece.pier = true;
+            // One wall of a pier under a deck, or a column under each half of a wide one: one piece.
+            let columns: Vec<(f64, f64)> = if hw * 2.0 > WIDE_DECK { vec![(-hw * 0.5, hw * 0.25), (hw * 0.5, hw * 0.25)] } else { vec![(0.0, hw * 0.55)] };
+            let mut tris = Vec::new();
+            for (offset, half) in columns {
+                let s = scale(side(t), offset);
+                let at = [n.p[0] + s[0], n.p[1] + s[2]];
+                let foot_y = ground.height_at(at[0] as f32, at[1] as f32) as f64 - 0.5;
+                mesh.prism(n.p, false, [at[0], n.y - THICKNESS, at[1]], [at[0], foot_y.min(n.g - 0.5), at[1]], t, side(t), 0.9, half);
+                if let Some(piece) = mesh.pieces.pop() {
+                    tris.extend(piece.tris);
+                }
             }
+            mesh.pieces.push(Piece { at: n.p, steel: false, deck: false, railing: false, pier: true, arc: n.arc, tris });
         }
     }
 
@@ -545,7 +611,8 @@ pub fn sections(pieces: &[&Piece]) -> Vec<Vec<usize>> {
     out
 }
 
-/// Whether a bridge triangle faces up: the top of the deck or of a parapet, its roof for colour.
+/// Whether a bridge triangle faces up: the roadway (the section's roof, where the piece is deck), or
+/// the top of an edge beam or a rail.
 pub fn faces_up(tri: [V3; 3]) -> bool {
     let n = client_normal(tri);
     n[1] > 0.7 * (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt()
@@ -658,8 +725,70 @@ mod tests {
             count += 1;
         }
         assert!(count > 0);
-        let highest = pieces.iter().filter(|p| !p.steel).flat_map(|p| &p.tris).filter(|t| t.iter().all(|v| (v[1] - t[0][1]).abs() < 1e-9)).map(|t| t[0][1]).fold(f64::MIN, f64::max);
-        let top = pieces.iter().flat_map(|p| &p.tris).find(|t| t.iter().all(|v| (v[1] - highest).abs() < 1e-9) && t[0][0].abs() < 40.0).expect("a top triangle");
+        let highest = pieces.iter().filter(|p| p.deck).flat_map(|p| &p.tris).filter(|t| t.iter().all(|v| (v[1] - t[0][1]).abs() < 1e-9)).map(|t| t[0][1]).fold(f64::MIN, f64::max);
+        let top = pieces.iter().filter(|p| p.deck).flat_map(|p| &p.tris).find(|t| t.iter().all(|v| (v[1] - highest).abs() < 1e-9) && t[0][0].abs() < 40.0).expect("a top triangle");
         assert!(client_normal(*top)[1] > 0.0, "the top of the deck faces up");
+    }
+
+    #[test]
+    fn a_high_deck_has_an_edge_beam_posts_and_two_rails_each_side() {
+        let (ground, levels) = river();
+        let pieces = build(&[[-150.0, 0.0], [150.0, 0.0]], 10.0, ROAD_MAJOR, Pylons::None, &[], &ground, &levels, 295.0);
+        // Mid-span, over the water: the railing pieces within 10 m of the middle, on the +z side.
+        let near: Vec<&Piece> = pieces.iter().filter(|p| p.railing && p.at[0].abs() < 10.0 && p.at[1] > 0.0).collect();
+        let deck = vertices(&pieces).filter(|v| v[0].abs() < 1.0).map(|v| v[1]).fold(f64::MIN, f64::max) - RAILING_HEIGHT;
+        let height = |p: &Piece| p.tris.iter().flatten().map(|v| v[1]).fold(f64::MIN, f64::max) - deck;
+        let tall = |p: &Piece| p.tris.iter().flatten().map(|v| v[1]).fold(f64::MIN, f64::max) - p.tris.iter().flatten().map(|v| v[1]).fold(f64::MAX, f64::min);
+        let beams = near.iter().filter(|p| (height(p) - EDGE_BEAM_HEIGHT).abs() < 0.05).count();
+        let posts = near.iter().filter(|p| (height(p) - RAILING_HEIGHT).abs() < 0.05 && tall(p) > RAILING_HEIGHT - EDGE_BEAM_HEIGHT - 0.05).count();
+        let top_rails = near.iter().filter(|p| (height(p) - RAILING_HEIGHT).abs() < 0.05 && tall(p) < 0.2).count();
+        let mid_rails = near.iter().filter(|p| (height(p) - MID_RAIL_HEIGHT - RAIL_HALF).abs() < 0.05).count();
+        // 20 m at 3 m a cross section: six or seven stretches, a post at each.
+        assert!(beams >= 6 && posts >= 6 && top_rails >= 6 && mid_rails >= 6, "beams {beams}, posts {posts}, top rails {top_rails}, middle rails {mid_rails}");
+        assert_eq!(beams, top_rails);
+        assert_eq!(beams, mid_rails);
+    }
+
+    #[test]
+    fn the_deck_keeps_the_roads_width_between_its_edge_beams() {
+        let (ground, levels) = river();
+        let pieces = build(&[[-150.0, 0.0], [150.0, 0.0]], 10.0, ROAD_MAJOR, Pylons::None, &[], &ground, &levels, 295.0);
+        let deck = pieces.iter().filter(|p| p.deck).flat_map(|p| p.tris.iter().flatten()).filter(|v| v[0].abs() < 10.0).map(|v| v[2].abs()).fold(0.0, f64::max);
+        assert!((deck - (5.0 + EDGE_BEAM_WIDTH)).abs() < 1e-6, "deck half width {deck}");
+        let inner = pieces.iter().filter(|p| p.railing && p.at[0].abs() < 10.0).flat_map(|p| p.tris.iter().flatten()).map(|v| v[2].abs()).fold(f64::MAX, f64::min);
+        assert!((inner - 5.0).abs() < 1e-6, "the edge beams start {inner} m from the middle");
+    }
+
+    #[test]
+    fn only_the_deck_is_drawn_as_road() {
+        let (ground, levels) = river();
+        let pieces = build(&[[-150.0, 0.0], [150.0, 0.0]], 10.0, ROAD_MAJOR, Pylons::Middle, &[], &ground, &levels, 295.0);
+        assert!(pieces.iter().any(|p| p.deck));
+        assert!(pieces.iter().filter(|p| p.deck).all(|p| !p.steel && !p.railing && !p.pier));
+        // Every stretch of deck has its roadway on top, which `assemble` makes the section's roof.
+        assert!(pieces.iter().filter(|p| p.deck).all(|p| p.tris.iter().any(|&t| faces_up(t))));
+    }
+
+    #[test]
+    fn a_wide_deck_stands_on_two_columns() {
+        let (ground, levels) = river();
+        let pier = |width: f64| build(&[[-150.0, 0.0], [150.0, 0.0]], width, ROAD_MAJOR, Pylons::None, &[], &ground, &levels, 295.0).into_iter().find(|p| p.pier).expect("a pier");
+        // A closed box is 12 triangles.
+        assert_eq!(pier(10.0).tris.len(), 12, "a 10 m road stands on one pier wall");
+        assert_eq!(pier(20.0).tris.len(), 24, "a 20 m road on two columns");
+        let wide = pier(20.0);
+        let middle = wide.tris.iter().flatten().filter(|v| v[2].abs() < 2.0).count();
+        assert_eq!(middle, 0, "a 20 m road stands on two columns with a gap between");
+        assert!(wide.tris.iter().flatten().any(|v| v[2] > 3.0) && wide.tris.iter().flatten().any(|v| v[2] < -3.0));
+    }
+
+    #[test]
+    fn a_deck_is_paved_planked_or_bare_as_what_it_carries() {
+        assert_eq!(deck_paint(ROAD_MAJOR), DECK_ASPHALT);
+        assert_eq!(deck_paint(ROAD_MINOR), DECK_ASPHALT);
+        assert_eq!(deck_paint(ROAD_PAVED_PATH), DECK_ASPHALT);
+        assert_eq!(deck_paint(ROAD_PATH), DECK_PLANKS);
+        assert_eq!(deck_paint(ROAD_TRACK), DECK_PLANKS);
+        assert_eq!(deck_paint(TRACK), BRIDGE_CONCRETE);
     }
 }

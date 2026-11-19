@@ -11,6 +11,7 @@ layer (`Line`, `LINE_*` in `crates/shared/src/world.rs`), which also holds the p
 | `LINE_FENCE_HIGH`, a game fence | `barrier=fence` with `fence_type=game` or a `height` of 1.8 m or more | 518 Impassable fence |
 | `LINE_WALL`, a low stone wall | `barrier=wall` | none yet |
 | `LINE_WALL_HIGH`, a high stone wall | `barrier=city_wall`, or `barrier=wall` with a `height` of 1.8 m or more | none yet |
+| `LINE_GUARDRAIL`, a steel guard rail | inferred down the middle of a fast divided road (docs/ROADS.md) | none |
 
 `osm::line_kind` reads the tags. A `barrier=retaining_wall` is left out: it holds earth back on one
 side, and a wall standing free there would look wrong. Inside an orienteering map's outline OSM's

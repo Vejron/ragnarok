@@ -56,7 +56,7 @@ describe('marsh', () => {
   it('grows sedge, but not on a path through it or under a building', () => {
     const tile = {
       cover: [{ kind: COVER_PARK, rings: [square(0, 0, 100, 100)] }, { kind: COVER_MARSH, rings: [square(0, 0, 60, 60)] }],
-      roads: [{ kind: ROAD_PATH, width: 2, carried: false, points: [[0, 30], [60, 30]] as Point2[] }],
+      roads: [{ kind: ROAD_PATH, width: 2, carried: false, lanes: 0, forward: 0, marks: 0, along: 0, points: [[0, 30], [60, 30]] as Point2[] }],
       water: new Float32Array(),
       buildings: [{ footprint: square(40, 40, 50, 50) } as Building],
       streams: [],

@@ -3,7 +3,7 @@ import tables from './sim/tables.generated.json'
 
 /** Mirrors `crates/shared/src/world.rs`. Coordinates are metres: +X east, +Z south, +Y up. */
 
-export const WORLD_VERSION = 30
+export const WORLD_VERSION = 32
 
 /** `Manifest::theme`, mirrors `crates/shared/src/world.rs`. */
 export const THEME_WINTER = 1
@@ -43,9 +43,10 @@ export async function resolveWorldBase(): Promise<string> {
 export const ROAD_MAJOR = 0
 export const ROAD_MINOR = 1
 export const ROAD_PATH = 2
-export const ROAD_GRAVEL = 3
-export const ROAD_TRACK = 4
-export const ROAD_FAINT = 5
+export const ROAD_TRACK = 3
+export const ROAD_FAINT = 4
+/** A footway or cycleway with asphalt on it: drawn and ridden as asphalt, walked as a path. */
+export const ROAD_PAVED_PATH = 5
 /** A track on its own ballast bed, with sleepers. */
 export const RAIL_TRAIN = 0
 /** A track set flush into the street. */
@@ -65,6 +66,8 @@ export const LINE_POWER_MAJOR = 3
 export const LINE_WALL = 4
 /** A high stone wall, over head height. */
 export const LINE_WALL_HIGH = 5
+/** A steel guard rail on posts down the middle of a divided road (mitträcke). */
+export const LINE_GUARDRAIL = 6
 
 /**
  * What a kind of fence or wall is: `LINE_KINDS` in `crates/shared/src/world.rs`, through
@@ -296,8 +299,14 @@ export const BUILDING_CABIN = 8
 export const BUILDING_FARMHOUSE = 9
 export const BUILDING_VILLA = 10
 export const BUILDING_FIRE_STATION = 11
-/** A section of a bridge: drawn from its own concrete, carved by blasts, no windows and no inside. */
+/** A section of a bridge: drawn from its own concrete, carved by blasts, no windows and no inside. Its roof is the roadway. */
 export const BUILDING_BRIDGE = 12
+/** The colour of a bridge's concrete, `0xRRGGBB`: its sides, piers and railings, and a railway's deck. Mirrors `BRIDGE_CONCRETE`. */
+export const BRIDGE_CONCRETE = 0xb8b6ae
+/** The colour of a bridge's deck under a paved road or path, `0xRRGGBB`: drawn as asphalt. Mirrors `DECK_ASPHALT`. */
+export const DECK_ASPHALT = 0x6e6e70
+/** The colour of a bridge's deck under a footpath or a track, `0xRRGGBB`: drawn as planks. Mirrors `DECK_PLANKS`. */
+export const DECK_PLANKS = 0x8a7356
 
 export interface Road {
   width: number
@@ -305,7 +314,30 @@ export interface Road {
   /** Whether a bridge's deck carries this stretch: driven and mapped like any road, not drawn on the ground under it. */
   carried: boolean
   points: Point2[]
+  /** How many lanes it has, both ways together; 0 for a path or a track. */
+  lanes: number
+  /** How many of its `lanes` run the way its `points` do. */
+  forward: number
+  /** Which lines are painted on it, `MARK_*` flags. */
+  marks: number
+  /** How far along the way it was cut from its first point is, metres: a dashed line's rhythm carries on from it. */
+  along: number
 }
+
+/** White dashed lines along both edges (kantlinje): 1 m of paint, 2 m gap. Mirrors `MARK_EDGE`. */
+export const MARK_EDGE = 1
+/** Solid white lines along both edges, as on a motorway. Mirrors `MARK_EDGE_SOLID`. */
+export const MARK_EDGE_SOLID = 2
+/** Dashed lines between lanes that run the same way. Mirrors `MARK_LANES`. */
+export const MARK_LANES = 4
+/** A dashed line between the two directions. Mirrors `MARK_CENTRE`. */
+export const MARK_CENTRE = 8
+/** A solid line between the two directions (spärrlinje). Mirrors `MARK_CENTRE_SOLID`. */
+export const MARK_CENTRE_SOLID = 16
+/** No edge line on the left of the way its points run: a guard rail stands beside it. Mirrors `MARK_NO_LEFT_EDGE`. */
+export const MARK_NO_LEFT_EDGE = 32
+/** The edge line on the left is solid: a slow divided road paved up to its other carriageway. Mirrors `MARK_LEFT_SOLID`. */
+export const MARK_LEFT_SOLID = 64
 
 /** A railway track's centre line. Drawn, not simulated. */
 export interface Rail {
@@ -628,7 +660,7 @@ function flatIndices(triangles: readonly number[][]): Uint32Array {
 export function decodeTile(bytes: Uint8Array): TileData {
   const [buildings, roads, [vertices, triangles], ground, cover, trees, water, reach, flow, streams, bridges, detail, rails, ski, lines, stones, crops, look, graves] = decode(bytes) as [
     [number, number[][], number, number, number, number, number, number, [number, number], [number[], number[], Uint8Array, Uint8Array], [number, number] | null][],
-    [number, number, boolean, number[][]][],
+    [number, number, boolean, number[][], number, number, number, number][],
     [number[][], number[][]],
     [number, Uint8Array],
     [number, number[][][]][],
@@ -667,7 +699,7 @@ export function decodeTile(bytes: Uint8Array): TileData {
       paint,
       look: looks[index] && looks[index]![1]! + looks[index]![2]! > 0 ? { first: looks[index]![0]!, walls: looks[index]![1]!, roof: looks[index]![2]!, kind, front, footprint: Int32Array.from(footprint.flat()) } : null,
     })),
-    roads: roads.map(([width, kind, carried, points]) => ({ width: metres(width), kind, carried, points: points.map(point) })),
+    roads: roads.map(([width, kind, carried, points, lanes, forward, marks, along]) => ({ width: metres(width), kind, carried, points: points.map(point), lanes, forward, marks, along: metres(along) })),
     cover: cover.map(([kind, rings]) => ({ kind, rings: rings.map((ring) => ring.map(point)) })),
     trees: trees.map(([x, z, base, height, crown, kind, solid]) => ({
       x: metres(x),

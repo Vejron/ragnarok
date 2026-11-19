@@ -119,10 +119,29 @@ pub const TRADES: [&str; 10] = ["restaurant", "cafe", "fast_food", "pub", "bar",
 /// The `amenity` values of a public building.
 pub const PUBLIC: [&str; 10] = ["school", "kindergarten", "library", "police", "townhall", "hospital", "clinic", "community_centre", "social_centre", "courthouse"];
 
-/// What the use mapped on a building, or on a node inside one, says the building is: a shop, a
-/// place of trade, a public building or a fire station. A node of this kind is read with the
+/// The `tourism` values of a place people sleep in: a hotel is built like a block of flats, with
+/// rooms behind windows on every wall and storey.
+pub const LODGINGS: [&str; 4] = ["hotel", "hostel", "guest_house", "motel"];
+
+/// Whether the tags are a hotel's or the like (`LODGINGS`).
+fn is_lodging<T: Lookup + ?Sized>(tags: &T) -> bool {
+    tags.tag("tourism").is_some_and(|value| LODGINGS.contains(&value))
+}
+
+/// Whether a building whose tags say `kind` is to be taken for a hotel when a hotel is mapped on it
+/// or inside it: a shop or an untold building may be a hotel with a shop or a restaurant in it, but
+/// a house, a church or a hall is what its tags say.
+fn lodges(kind: Option<u8>) -> bool {
+    matches!(kind, None | Some(BUILDING_SHOP | BUILDING_PLAIN))
+}
+
+/// What the use mapped on a building, or on a node inside one, says the building is: a hotel (a
+/// block of flats), a shop, a place of trade, a public building or a fire station. A node of this kind is read with the
 /// buildings (`osm::is_poi`): most shops and police stations are mapped as one, not on the building.
 pub fn by_use<T: Lookup + ?Sized>(tags: &T) -> Option<u8> {
+    if is_lodging(tags) {
+        return Some(BUILDING_FLATS);
+    }
     if tags.tag("shop").is_some_and(|value| value != "no" && value != "vacant") {
         return Some(BUILDING_SHOP);
     }
@@ -161,6 +180,10 @@ pub fn by_tags(tags: &Tags, area: f64) -> Option<u8> {
         Some("cabin" | "hut") => Some(BUILDING_CABIN),
         _ => None,
     };
+    // `building=retail` with `tourism=hotel` on it: the hotel over a shop on its ground floor.
+    if is_lodging(tags) && lodges(named) {
+        return Some(BUILDING_FLATS);
+    }
     if named.is_some() {
         return named;
     }
@@ -312,10 +335,12 @@ pub fn classify(sites: &[(&Tags, &[P])], lands: &[(Land, Vec<P>)], nodes: &[(u8,
     };
     let fields_within = |at: P, reach: f64| boxed.iter().any(|(land, ring, bounds, _)| matches!(land, Land::Farm | Land::Farmyard) && within(bounds, at, reach) && distance(ring, at) < reach);
 
-    // What the nodes inside a building say it is: a fire station before a public building before a shop.
+    // What the nodes inside a building say it is: a fire station before a public building before a
+    // hotel before a shop (the hotel's restaurant).
     let weight = |kind: u8| match kind {
-        BUILDING_FIRE_STATION => 3,
-        BUILDING_PUBLIC => 2,
+        BUILDING_FIRE_STATION => 4,
+        BUILDING_PUBLIC => 3,
+        BUILDING_FLATS => 2,
         _ => 1,
     };
     let mut said: HashMap<usize, u8> = HashMap::new();
@@ -336,7 +361,13 @@ pub fn classify(sites: &[(&Tags, &[P])], lands: &[(Land, Vec<P>)], nodes: &[(u8,
     let kinds: Vec<u8> = (0..sites.len())
         .map(|index| {
             let s = &seen[index];
-            if let Some(kind) = by_tags(sites[index].0, s.area) {
+            let tagged = by_tags(sites[index].0, s.area);
+            // A hotel mapped inside a building its tags call a shop, or a plain building.
+            if let Some(&BUILDING_FLATS) = said.get(&index).filter(|_| lodges(tagged)) {
+                tally.by_node += 1;
+                return BUILDING_FLATS;
+            }
+            if let Some(kind) = tagged {
                 tally.by_tags += usize::from(kind != BUILDING_PLAIN);
                 return kind;
             }
@@ -526,6 +557,28 @@ mod tests {
         assert_eq!(tally.by_node, 3);
         assert_eq!(by_use(&tags(&[("amenity", "bench")])), None);
         assert_eq!(by_use(&tags(&[("shop", "vacant")])), None);
+    }
+
+    #[test]
+    fn a_hotel_mapped_in_a_retail_building_makes_it_a_block_of_flats_with_windows_all_round() {
+        // Hotell Forsen in Vindeln: `building=retail`, with the hotel and its restaurant as nodes in it.
+        let retail = tags(&[("building", "retail"), ("building:levels", "2")]);
+        let yes = tags(&[("building", "yes")]);
+        let hall = tags(&[("building", "industrial")]);
+        let tagged = tags(&[("building", "commercial"), ("tourism", "hotel")]);
+        let rings = [rect(0.0, 0.0, 40.0, 30.0), rect(60.0, 0.0, 20.0, 12.0), rect(100.0, 0.0, 30.0, 20.0), rect(150.0, 0.0, 30.0, 20.0), rect(200.0, 0.0, 30.0, 20.0)];
+        let sites: Vec<(&Tags, &[P])> = vec![(&retail, &rings[0]), (&yes, &rings[1]), (&hall, &rings[2]), (&tagged, &rings[3]), (&retail, &rings[4])];
+        let use_of = |pairs: &[(&str, &str)]| by_use(&tags(pairs)).unwrap();
+        let nodes = [
+            (use_of(&[("tourism", "hotel")]), [20.0, 15.0]),
+            (use_of(&[("amenity", "restaurant")]), [10.0, 10.0]),
+            (use_of(&[("tourism", "guest_house")]), [70.0, 6.0]),
+            // A hostel in what is mapped as a factory stays a hall.
+            (use_of(&[("tourism", "hostel")]), [110.0, 10.0]),
+        ];
+        let (kinds, _) = classify(&sites, &[], &nodes);
+        assert_eq!(kinds, [BUILDING_FLATS, BUILDING_FLATS, BUILDING_HALL, BUILDING_FLATS, BUILDING_SHOP], "and a shop with no hotel in it stays a shop");
+        assert_eq!(by_use(&tags(&[("tourism", "attraction")])), None);
     }
 
     #[test]

@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::terrain::Ground;
 
-pub const WORLD_VERSION: u8 = 30;
+pub const WORLD_VERSION: u8 = 32;
 
 /// `Manifest::theme`: the world as it always was.
 pub const THEME_PLAIN: u8 = 0;
@@ -433,6 +433,8 @@ pub const LINE_POWER_MAJOR: u8 = 3;
 pub const LINE_WALL: u8 = 4;
 /// A high stone wall, over head height: a town's wall, or one mapped as tall.
 pub const LINE_WALL_HIGH: u8 = 5;
+/// A steel guard rail on posts down the middle of a divided road, as on a Swedish 2+1 road (mitträcke).
+pub const LINE_GUARDRAIL: u8 = 6;
 
 /// What a kind of fence or wall is: the size of each piece's collider and what breaks it. One table
 /// for the importer, the physics and the server, and the client draws to the same sizes
@@ -454,11 +456,12 @@ pub struct LineKindDef {
 }
 
 /// The fences and walls. A kind of line that is not here (a power line) has no pieces.
-pub const LINE_KINDS: [LineKindDef; 4] = [
+pub const LINE_KINDS: [LineKindDef; 5] = [
     LineKindDef { kind: LINE_FENCE, height: 1.25, half: 0.06, step: 3.0, hp: 5, wall: false },
     LineKindDef { kind: LINE_FENCE_HIGH, height: 2.05, half: 0.06, step: 4.0, hp: 10, wall: false },
     LineKindDef { kind: LINE_WALL, height: 1.0, half: 0.25, step: 3.0, hp: 60, wall: true },
     LineKindDef { kind: LINE_WALL_HIGH, height: 2.4, half: 0.3, step: 3.0, hp: 200, wall: true },
+    LineKindDef { kind: LINE_GUARDRAIL, height: 0.75, half: 0.1, step: 2.0, hp: 40, wall: true },
 ];
 
 /// The definition of a fence or wall kind; `None` for a power line.
@@ -972,13 +975,22 @@ pub const BUILDING_VILLA: u8 = 10;
 /// A fire station: a row of garage doors for the engines in its front, a public building's windows
 /// round the rest, and one hall inside to drive into.
 pub const BUILDING_FIRE_STATION: u8 = 11;
-/// A section of a bridge: its deck, parapets and pier between two mid-spans (`osm-import`'s
-/// `bridge::sections`). Drawn and collided from its own concrete, carved by blasts as a house is but
-/// much harder to hurt (`combat`), standing on the ground under it rather than on its lowest cells;
-/// no windows, no inside, no colours of a house.
+/// A section of a bridge: its deck, edge beams, railings and pier between two mid-spans
+/// (`osm-import`'s `bridge::sections`). Drawn and collided from its own concrete, carved by blasts as
+/// a house is but much harder to hurt (`combat`), standing on the ground under it rather than on its
+/// lowest cells; no windows, no inside, no colours of a house. Its roof is the top of the deck, the
+/// roadway, painted as the road it carries (`DECK_ASPHALT`, `DECK_PLANKS`); everything else is
+/// its walls, in `BRIDGE_CONCRETE`.
 pub const BUILDING_BRIDGE: u8 = 12;
-/// The colour of a bridge's concrete, `0xRRGGBB`: its sections' `paint`, walls and deck alike.
+/// The colour of a bridge's concrete, `0xRRGGBB`: its sections' walls (sides, piers, edge beams and
+/// railings), and the deck of a railway's bridge.
 pub const BRIDGE_CONCRETE: u32 = 0xb8b6ae;
+/// The colour of the top of a deck that carries a paved road or path, `0xRRGGBB`: the road's
+/// asphalt, drawn with its pattern.
+pub const DECK_ASPHALT: u32 = 0x6e6e70;
+/// The colour of the top of a deck that carries a footpath or a track, `0xRRGGBB`: weathered timber
+/// planks laid across it.
+pub const DECK_PLANKS: u32 = 0x8a7356;
 /// How many kinds of building there are.
 pub const BUILDING_KINDS: usize = 13;
 
@@ -991,7 +1003,32 @@ pub struct Road {
     /// road, but it is not drawn on the ground, which is the river bed or the way under the bridge.
     pub carried: bool,
     pub points: Vec<[i32; 2]>,
+    /// How many lanes it has, both ways together; 0 for a path or a track, which have none.
+    pub lanes: u8,
+    /// How many of its `lanes` run the way its `points` do; on a one-way road, all of them.
+    pub forward: u8,
+    /// Which lines are painted on it, `MARK_*` flags; 0 for none.
+    pub marks: u8,
+    /// How far along the way it was cut from its first point is, centimetres: a dashed line's rhythm
+    /// carries on across tile borders from it.
+    pub along: i32,
 }
+
+/// White dashed lines along both edges, as on Swedish country roads (kantlinje): 1 m of paint, 2 m gap.
+pub const MARK_EDGE: u8 = 1;
+/// Solid white lines along both edges, as on a motorway or a motorroad. Wins over `MARK_EDGE`.
+pub const MARK_EDGE_SOLID: u8 = 2;
+/// Dashed lines between lanes that run the same way: 3 m of paint, 9 m gap.
+pub const MARK_LANES: u8 = 4;
+/// A dashed line between the two directions: 3 m of paint, 9 m gap.
+pub const MARK_CENTRE: u8 = 8;
+/// A solid line between the two directions (spärrlinje), where overtaking is barred. Wins over `MARK_CENTRE`.
+pub const MARK_CENTRE_SOLID: u8 = 16;
+/// No edge line on the left of the way its points run: a carriageway with a barrier beside it on that side.
+pub const MARK_NO_LEFT_EDGE: u8 = 32;
+/// The edge line on the left of the way its points run is solid: a carriageway of a slow divided road,
+/// paved up to the other one, where the line between them may not be crossed.
+pub const MARK_LEFT_SOLID: u8 = 64;
 
 /// A railway track's centre line.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -1215,14 +1252,16 @@ impl Tree {
     }
 }
 
+/// The roads that are driven on, asphalt whatever their `surface` tag says: there is no gravel road.
 pub const ROAD_MAJOR: u8 = 0;
 pub const ROAD_MINOR: u8 = 1;
 pub const ROAD_PATH: u8 = 2;
-/// Unpaved, from an orienteering map: a gravel road, a vehicle track's two ruts, and a trace barely
+/// Worn into the ground, from an orienteering map: a vehicle track's two ruts, and a trace barely
 /// worn into the ground.
-pub const ROAD_GRAVEL: u8 = 3;
-pub const ROAD_TRACK: u8 = 4;
-pub const ROAD_FAINT: u8 = 5;
+pub const ROAD_TRACK: u8 = 3;
+pub const ROAD_FAINT: u8 = 4;
+/// A footway or cycleway with asphalt on it: drawn and ridden as asphalt, walked as a path.
+pub const ROAD_PAVED_PATH: u8 = 5;
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct CollisionMesh {
@@ -1541,7 +1580,7 @@ mod tests {
         assert!(Manifest { open_water: false, ..manifest.clone() }.frozen());
         let tile = Tile {
             buildings: vec![Building { height: 800, footprint: vec![[0, 0], [100, 0], [100, 100]], base: 250, first: 0, walls: 6, roof: 2, roof_kind: ROOF_GABLE, kind: BUILDING_CHURCH, front: [0, -127], cells: Cells { origin: [-100, 0, 200], dims: [2, 1, 5], solid: Bits(vec![0b1011, 3]), roof: Bits(vec![1, 0]) }, paint: Some([0xeee3c8, 0x4f5866]) }, Building { height: 300, ..Default::default() }],
-            roads: vec![Road { width: 600, kind: ROAD_MINOR, carried: false, points: vec![[0, 0], [500, 500]] }],
+            roads: vec![Road { width: 600, kind: ROAD_MINOR, carried: false, points: vec![[0, 0], [500, 500]], ..Default::default() }],
             collision: CollisionMesh { vertices: vec![[0, 0, 0]], triangles: vec![[0, 0, 0]] },
             ground: vec![0, 10, 20, 30],
             cover: vec![Cover { kind: COVER_WATER, rings: vec![vec![[0, 0], [100, 0], [100, 100]]] }],

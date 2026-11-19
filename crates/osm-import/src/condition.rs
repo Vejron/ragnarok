@@ -120,8 +120,8 @@ impl Features {
             if underground || crate::assemble::is_bridge(way) {
                 continue;
             }
-            if let Some((width, kind)) = tag("highway").filter(|&value| value != "steps").and_then(crate::assemble::road_style) {
-                let grade = if kind == shared::world::ROAD_PATH { GRADE_PATH } else { GRADE_ROAD };
+            if let Some((width, kind, _)) = tag("highway").filter(|&value| value != "steps").and_then(|_| crate::lanes::style(&way.tags)) {
+                let grade = if matches!(kind, shared::world::ROAD_PATH | shared::world::ROAD_PAVED_PATH) { GRADE_PATH } else { GRADE_ROAD };
                 features.ways.push(Way { points: line(way), width, grade });
             }
             if let Some((gauge, _)) = crate::assemble::rail_style(way) {

@@ -1,4 +1,4 @@
-import { BALLAST_EXTRA, COVER_FARM, COVER_GOLF_BUNKER, COVER_INDUSTRIAL, COVER_MARSH, COVER_MARSH_DEEP, COVER_MARSH_FAINT, COVER_ROCK, COVER_SAND, COVER_WATER, NO_WATER, RAIL_TRAIN, ROAD_MAJOR, ROAD_MINOR, type Point2, type TileData, type TileRef } from '@/world'
+import { BALLAST_EXTRA, COVER_FARM, COVER_GOLF_BUNKER, COVER_INDUSTRIAL, COVER_MARSH, COVER_MARSH_DEEP, COVER_MARSH_FAINT, COVER_ROCK, COVER_SAND, COVER_WATER, NO_WATER, RAIL_TRAIN, ROAD_MAJOR, ROAD_MINOR, ROAD_PAVED_PATH, type Point2, type TileData, type TileRef } from '@/world'
 import type { TileGround } from './terrain'
 
 /**
@@ -114,7 +114,7 @@ export function rasterSurface(tile: Pick<TileData, 'cover' | 'roads' | 'water'> 
   }
   // A tram's rails are set in the street, which the roads paint.
   for (const rail of tile.rails ?? []) if (rail.kind === RAIL_TRAIN) stroke(rail.points, (rail.gauge + BALLAST_EXTRA) / 2, SURFACE_DIRT)
-  for (const road of tile.roads) stroke(road.points, road.width / 2, road.kind === ROAD_MAJOR || road.kind === ROAD_MINOR ? SURFACE_ASPHALT : SURFACE_DIRT)
+  for (const road of tile.roads) stroke(road.points, road.width / 2, road.kind === ROAD_MAJOR || road.kind === ROAD_MINOR || road.kind === ROAD_PAVED_PATH ? SURFACE_ASPHALT : SURFACE_DIRT)
 
   if (ground && tile.water.length === ground.heights.length) {
     for (let row = 0; row < side; row++) {

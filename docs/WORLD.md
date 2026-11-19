@@ -391,8 +391,11 @@ else from Overpass. Heights
 come from the `height` tag, else `building:levels` × 3 + 1, else a guess of 6–12 m. `natural=wetland` is
 marsh, by its `wetland` tag: `bog`, `swamp` and `fen` are `COVER_MARSH_DEEP`, `wet_meadow` is
 `COVER_MARSH_FAINT` and the rest `COVER_MARSH` (docs/ORIENTEERING.md has how the client draws them). A
-major or minor road whose `surface` tag is unpaved (`gravel`, `dirt`, `compacted`, `unpaved` and so on) is
-`ROAD_GRAVEL`: drawn as gravel and driven as dirt rather than asphalt. A `landuse=cemetery` or an
+major or minor road is asphalt whatever its `surface` tag says: there is no gravel road kind, since a
+beige road read as a path, not a road. A `highway=track` whose `surface` is paved (`asphalt`, `paved`, `concrete`) is a
+3.5 m asphalt road (`ROAD_MINOR`); any other track is a worn path. A footway, path, cycleway or pedestrian
+street with such a surface, and a cycleway or footway with no `surface` tag (nearly all are asphalt; a `path` stays a trail), is `ROAD_PAVED_PATH`: drawn and ridden as asphalt with no shoulder, but
+graded, bridged and passed over as a path (no house faces it); steps stay worn. A major or minor road's width, lanes and paint come from its `lanes`, `width`, `oneway` and `lane_markings` tags (`lanes.rs`), each road keeping `Road::lanes`, `forward`, `marks` (`MARK_*`) and `along`, the distance along its way where the piece starts; a fast divided road gets a `LINE_GUARDRAIL` down its middle (`barrier.rs`). docs/ROADS.md has the rules. A `landuse=cemetery` or an
 `amenity=grave_yard` is park cover with tombstones stood in it (docs/GRAVEYARDS.md). `landuse=farmland` is
 farm cover with wheat grown on it (docs/CROPS.md); a farmyard, orchard, vineyard or nursery is the same cover, bare. A bridge keeps its class, which
 sets its deck's height. Overpass
@@ -415,8 +418,19 @@ as geometry in the tile's collision mesh, so it is drawn and collided with like 
 rivers no longer swallow it. OSM has no heights, so they are inferred: the deck runs between the
 ground at its two ends, is lifted to the water surface plus a clearance (7 m major, 5.5 m minor,
 3.5 m paths) where it crosses water, is limited to a 6 % grade, and carries on as a ramp down to
-the ground if an end is still above it. Piers stand under stretches more than 2 m up, parapets
-where there is a drop. OSM does not say which bridges are cable-stayed, so pylons with stay cables
+the ground if an end is still above it. Piers stand under stretches more than 2 m up, except
+where a road, a track or another bridge goes under; another bridge running alongside (the other
+carriageway of a divided road on a deck of its own) does not count. A footway or cycleway crossing beside a road
+bridge all the way is on the same bridge: it gets no bridge of its own, and the road's deck is
+widened out over it (`paths_alongside`). A deck wider than 14 m stands on two columns, one under
+each half, rather than one pier wall across it (`WIDE_DECK`). Where there is
+a drop beside the deck, a railing runs along each edge: a concrete edge beam 0.5 m wide rising
+0.25 m above the roadway (`EDGE_BEAM_WIDTH`, `EDGE_BEAM_HEIGHT`), and on its outer half a post
+0.1 m square at every 3 m cross section with a top rail at 1.1 m and a middle rail at 0.6 m
+(`RAILING_HEIGHT`, `MID_RAIL_HEIGHT`). The deck is an edge beam wider each side than its road, so
+the roadway between the beams keeps the road's width. The roadway is drawn as the road it carries
+(`deck_paint`): asphalt for a paved road or path (`DECK_ASPHALT`), timber planks for a footpath or
+a track (`DECK_PLANKS`), bare concrete for a railway. OSM does not say which bridges are cable-stayed, so pylons with stay cables
 come from `LANDMARKS` in `bridge.rs` (a position and radius per bridge): Lundabron has a tower at
 each end, Kolbäcksbron one in the middle. Spans under 12 m are left to the terrain, unless the
 ground under them dips more than a metre.
@@ -433,16 +447,16 @@ was found):
   (`onto_the_banks`).
 - **A divided road crosses on one deck.** Two bridges of a kind that run beside each other all the
   way share a deck wide enough for both (`twin_decks`); the two stay roads, with no deck of their
-  own (`Pylons::Carried`). Where decks of separate bridges still overlap, the parapet between them
+  own (`Pylons::Carried`). Where decks of separate bridges still overlap, the railing between them
   is left out.
 - **A road over a cutting gets a deck.** Where a path goes under a road OSM does not map as a
   bridge, the terrain has a trench across the road. A drivable road over a dip in the ground
-  narrower than 24 m and more than 1.5 m deep gets a deck flush with the road, with no parapets
+  narrower than 24 m and more than 1.5 m deep gets a deck flush with the road, with no railings
   (`cuttings`, `Pylons::Flush`); the way under it stays open.
 - **No pier stands on a road** or a track that goes under the bridge.
 - **A ramp comes down to the deck's lip** over the ground (0.12 m), not to within 0.4 m of it.
 
-The concrete (deck, piers, parapets) is cut into sections, halfway between piers, and each section is
+The concrete (deck, piers, railings) is cut into sections, halfway between piers, and each section is
 a building of kind `BUILDING_BRIDGE` in the tile of its middle, carved by blasts as a house is but much
 tougher ([BRIDGES.md](BRIDGES.md)). The steel (pylon, stay cables) goes into the tile of its position,
 listed in `Tile.bridges` as `(first, steel)` ranges. Trees within 4 m of a bridge's edge are dropped (over water they are the laser's reading of

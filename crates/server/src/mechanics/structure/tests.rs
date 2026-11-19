@@ -157,6 +157,22 @@ fn a_bridge_whose_pier_is_blown_drops_its_deck_on_whoever_is_under_it() {
 }
 
 #[test]
+fn a_rocket_holing_a_pier_leaves_the_deck_standing() {
+    let (mut game, _, bridge) = game();
+    // A Carl Gustaf round's bite (a fifth of a rocket's blast, `blast_bridge`) in the pier's side, 2.5 m up.
+    let cut = game.world.carve(bridge, [0.9, 2.5, 1.5], ROCKET_BLAST_RADIUS * 0.2).expect("a bite");
+    let bite = cut.blasted.len() + cut.fell.len();
+    // A bridge is not weighed as a house is (`Shell::strain`): on the real viaduct, every cell of a
+    // pier carrying the whole deck, a hole in its side brought the section down.
+    assert!(!game.world.strained.contains_key(&bridge), "a bridge is never queued for a structure check");
+    for _ in 0..10 * TICK_RATE {
+        game.world.tick = game.world.tick.wrapping_add(1);
+        game.world.settle();
+    }
+    assert_eq!(lost(&game, bridge), bite, "only the bite goes");
+}
+
+#[test]
 fn the_fixture_worlds_bridge_is_solid_and_can_be_hit() {
     // As the importer bakes it: a section has no triangles left in the mesh, only its cells and look.
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/world/world.msgpack");

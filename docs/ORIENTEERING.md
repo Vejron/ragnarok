@@ -108,14 +108,14 @@ these.
 | Symbol | Name | In the world |
 |---|---|---|
 | 502 | Wide road | 6 m, asphalt (`ROAD_MINOR`) |
-| 503 | Road, maintained, mostly gravel here | 4 m, `ROAD_GRAVEL` |
+| 503 | Road, maintained, mostly gravel here | 4 m, asphalt (`ROAD_MINOR`): there is no gravel road |
 | 504 | Vehicle track, for slow driving | 3 m, `ROAD_TRACK`: two dirt ruts, grass between |
 | 505 | Footpath | 1.6 m dirt path |
 | 506 | Small path | 1.0 m dirt path |
 | 507 | Less distinct small path | 0.7 m, `ROAD_FAINT`: barely worn |
 | 508 | Narrow ride, a line through the forest | 0.6 m faint trace in a 3 m strip cleared of trees |
 
-All but 502 are dirt underfoot (`surface.ts`): tyres leave marks and throw dust.
+All but 502 and 503 are dirt underfoot (`surface.ts`): tyres leave marks and throw dust.
 
 ## Fences and power lines
 

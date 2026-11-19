@@ -1,4 +1,4 @@
-import type { CollisionMesh } from '@/world'
+import { BUILDING_BRIDGE, type CollisionMesh } from '@/world'
 import { CELL_HP, type Shell } from '@/sim/carve'
 import { drawnOpenings, facing, openingQuads, openingsFor, type Opening } from './windows'
 import { SOFFIT_RGB, TRIM_RGB, eaveAnchor, eavesFor } from './eaves'
@@ -71,6 +71,12 @@ const BURN_NEAR = 0.45
 const BURN_FAR = 1.7
 /** The share of its colour a fully burnt wall keeps. */
 const SOOT = 0.12
+/**
+ * A bridge's face with its opposite face less than this far behind it is thin, metres: a rail, a
+ * post or an edge beam's top. A hole's ragged, sooted edge and its depth would stand out of it, so
+ * it is drawn plain and goes with its cells.
+ */
+const THIN = 0.35
 /** Most chips drawn in a cell that has taken all but its last hit, and how dark they are. */
 const CHIPS = 6
 const CHIP_SHADE = 0.38
@@ -395,6 +401,35 @@ interface Rim {
 }
 
 /**
+ * The rims of `rims` that border what stands (`standing`): the hole's edge runs along an edge of a
+ * piece left standing. Where every cell round an edge is gone, the pieces either side of it were
+ * cut at different places and their edges do not meet, but there is no hole's edge there to draw:
+ * it would hang in the air where the building was. For a bridge, whose walls stand on no ground.
+ */
+function bordering(grid: Grid, rims: readonly Rim[], standing: readonly Piece[]): Rim[] {
+  if (rims.length === 0) return []
+  const near = new Buckets<Piece>(grid)
+  for (const piece of standing) near.add(piece, piece.poly, 0.02)
+  return rims.filter(({ a, b }) => {
+    const m: P = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2]
+    return near.at(m).some(({ poly }) => {
+      for (let i = 0; i < poly.length; i++) {
+        const [u, v] = [poly[i]!, poly[(i + 1) % poly.length]!]
+        const uv = sub(v, u)
+        const len = Math.hypot(...uv)
+        if (len < 1e-6) continue
+        const t = dot(sub(m, u), uv) / len
+        if (t < -0.01 || t > len + 0.01) continue
+        const um = sub(m, u)
+        const along = t / len
+        if (Math.hypot(um[0] - uv[0] * along, um[1] - uv[1] * along, um[2] - uv[2] * along) < 0.01) return true
+      }
+      return false
+    })
+  })
+}
+
+/**
  * The outline of `taken`: the sides no other piece of it shares, each to be drawn with a wall's
  * depth; and where each corner of the outline goes, pushed about in its wall's plane (not a corner
  * two planes share: the building's own edges stay straight). The push depends on the corner alone,
@@ -480,6 +515,43 @@ function outline(grid: Grid, taken: readonly Piece[], all: readonly Piece[], ski
   return { rims, place }
 }
 
+/**
+ * The pieces of a bridge (`pieces`) that are thin (`THIN`): those with a piece facing the other way
+ * close behind them, in the same cell or the next. None for any other building, whose walls have no
+ * faces behind them.
+ */
+function thinPieces(grid: Grid, pieces: readonly Piece[], bridge: boolean): ReadonlySet<Piece> {
+  const thin = new Set<Piece>()
+  if (!bridge) return thin
+  const near = new Buckets<Piece>(grid)
+  for (const piece of pieces) near.add(piece, piece.poly, THIN)
+  for (const piece of pieces) {
+    const c = centreOf(piece.poly)
+    const n = piece.normal
+    const behind = near.at([c[0] - n[0] * THIN * 0.5, c[1] - n[1] * THIN * 0.5, c[2] - n[2] * THIN * 0.5])
+    const found = behind.some((other) => {
+      if (dot(other.normal, n) > -0.99) return false
+      // How far behind this piece the other's plane lies, and whether this piece's middle, carried
+      // straight back onto it, lands within it.
+      const gap = dot(sub(c, other.poly[0]!), n)
+      if (gap < -0.01 || gap > THIN) return false
+      const q: P = [c[0] - n[0] * gap, c[1] - n[1] * gap, c[2] - n[2] * gap]
+      const poly = other.poly
+      let sign = 0
+      for (let i = 0; i < poly.length; i++) {
+        const [u, v] = [poly[i]!, poly[(i + 1) % poly.length]!]
+        const side = dot(cross(sub(v, u), sub(q, u)), other.normal)
+        if (Math.abs(side) < 1e-7) continue
+        if (sign === 0) sign = Math.sign(side)
+        else if (Math.sign(side) !== sign) return false
+      }
+      return true
+    })
+    if (found) thin.add(piece)
+  }
+  return thin
+}
+
 /** Soup being written: corners and a colour a corner. */
 class Writer {
   readonly positions: number[] = []
@@ -541,7 +613,13 @@ export function lookFracture(look: CollisionMesh, range: LookRange, shell: Shell
   const shellOnly = (pieces: readonly Piece[]) => pieces.filter((piece) => piece.inside === undefined)
   const [whole, kept, taken] = [shellOnly(sliced.whole), shellOnly(sliced.kept), shellOnly(sliced.taken)]
   const rooms = [...sliced.whole, ...sliced.kept].filter((piece) => piece.inside !== undefined)
-  const { rims, place } = outline(grid, taken, [...kept, ...taken], windowEdge(openings))
+  // A bridge's rails, posts and edge beams are drawn as they are cut: no ragged edge, soot, depth or inside.
+  const thin = thinPieces(grid, [...whole, ...kept, ...taken], range.kind === BUILDING_BRIDGE)
+  const thick = (piece: Piece) => !thin.has(piece)
+  const outlined = outline(grid, taken.filter(thick), [...kept, ...taken].filter(thick), windowEdge(openings))
+  const { place } = outlined
+  // A house gone to its foot keeps the broken edge of its walls along the ground; a bridge has none.
+  const rims = range.kind === BUILDING_BRIDGE ? bordering(grid, outlined.rims, kept) : outlined.rims
 
   // Which cells are gone, and which have a gone cell within two of them: only a corner in one of those can be sooted.
   const [nx, ny, nz] = shell.dims
@@ -585,13 +663,16 @@ export function lookFracture(look: CollisionMesh, range: LookRange, shell: Shell
   }
   for (const piece of kept) {
     out.surface = piece.roof ? surfaces.roof : surfaces.wall
-    out.poly(piece.poly, piece.roof ? roof : wall, shade)
+    if (thin.has(piece)) out.poly(piece.poly, piece.roof ? roof : wall, undefined, true)
+    else out.poly(piece.poly, piece.roof ? roof : wall, shade)
   }
   out.surface = 0
   // The room inside: what stands, turned in a wall's thickness, dim, with the same ragged edge; and the floor where the house still stands over it.
+  // A bridge has no windows, so only what is next to a hole can be seen into, and its rails are thinner
+  // than a wall: their inner faces would stand out beside them.
   const dim = (c: RGB): RGB => [c[0] * INTERIOR_SHADE, c[1] * INTERIOR_SHADE, c[2] * INTERIOR_SHADE]
-  for (const piece of whole) out.poly(innerOf(piece.poly, piece.normal, facade.inset), dim(piece.roof ? roof : wall), shade, true)
-  for (const piece of kept) out.poly(innerOf(piece.poly, piece.normal, facade.inset, place), dim(piece.roof ? roof : wall), shade, true)
+  if (range.kind !== BUILDING_BRIDGE) for (const piece of whole) out.poly(innerOf(piece.poly, piece.normal, facade.inset), dim(piece.roof ? roof : wall), shade, true)
+  for (const piece of kept.filter(thick)) out.poly(innerOf(piece.poly, piece.normal, facade.inset, place), dim(piece.roof ? roof : wall), shade, true)
   for (const poly of floorStanding(facade.floor, grid, removed)) out.poly(poly, FLOOR_RGB, undefined, true)
   for (const piece of rooms) out.poly(piece.poly, INSIDE_RGB[piece.inside!] ?? FLOOR_RGB, shade, true)
   out.rims(rims, wall, roof, shade)
@@ -629,7 +710,7 @@ export function lookFracture(look: CollisionMesh, range: LookRange, shell: Shell
       return true
     })
   }
-  edgeDetail(out, rims, surfaces, wall, roof, onWall)
+  edgeDetail(out, rims, surfaces, wall, roof, onWall, range.kind === BUILDING_BRIDGE)
   // Chips where rounds struck: a few ragged marks on the wall in each worn cell, more as it wears.
   if (dents.size > 0) {
     const inCell = new Map<number, Piece>()
@@ -705,9 +786,10 @@ function stick(out: Writer, from: P, to: P, normal: P, w: number, h: number, tap
 /**
  * What shows at a hole's edge: broken rafters reaching into a roof's hole along the slope, and, by
  * the walls' pattern, splinters at a wooden wall's or cracks running out across a brick or rendered
- * one. Cracks keep to the wall: each step must land on what is left of it (`onWall`).
+ * one. Cracks keep to the wall: each step must land on what is left of it (`onWall`). A `bridge`'s
+ * deck shows no rafters unless it is planked.
  */
-function edgeDetail(out: Writer, rims: readonly Rim[], surfaces: Surfaces, wall: RGB, roofRgb: RGB, onWall: (p: P, normal: P) => boolean) {
+function edgeDetail(out: Writer, rims: readonly Rim[], surfaces: Surfaces, wall: RGB, roofRgb: RGB, onWall: (p: P, normal: P) => boolean, bridge: boolean) {
   const crackRgb: RGB = [wall[0] * CRACK_SHADE, wall[1] * CRACK_SHADE, wall[2] * CRACK_SHADE]
   for (const rim of rims) {
     const { normal, inward } = rim
@@ -719,7 +801,8 @@ function edgeDetail(out: Writer, rims: readonly Rim[], surfaces: Surfaces, wall:
     const at = (t: number) => add(a, [b[0] - a[0], b[1] - a[1], b[2] - a[2]], t)
     if (rim.roof) {
       if (SHINGLED.has(surfaces.roof)) shingles(out, rim, a, b, h, normal, inward, onWall, roofRgb)
-      if (h(11) > RAFTER_CHANCE) continue
+      // A bridge's deck is concrete, with no rafters in it, unless it is planked.
+      if ((bridge && surfaces.roof !== Surface.Planks) || h(11) > RAFTER_CHANCE) continue
       // Rafters run down the slope, and only an edge across them shows their ends; a flat roof's joists, whichever way the edge goes.
       const slope = Math.abs(normal[1]) > 0.97 ? inward : unit(cross(cross([0, 1, 0], normal), normal))
       const across = dot(slope, inward)
@@ -832,13 +915,19 @@ export function lookChunk(look: CollisionMesh, range: LookRange, shell: Shell, c
   const grid = new Grid(shell)
   const sliced = slice(facadeFor(look, range), grid, [...cells].map((id) => shell.coords(id)), (id) => cells.has(id))
   const [kept, taken] = [sliced.kept, sliced.taken].map((pieces) => pieces.filter((piece) => piece.inside === undefined)) as [Piece[], Piece[]]
-  const { rims, place } = outline(grid, taken, [...kept, ...taken], windowEdge(openingsFor(look, range)))
+  // A bridge's rails, posts and edge beams fall as they are cut, as they are left standing (`lookFracture`).
+  const thin = thinPieces(grid, [...kept, ...taken], range.kind === BUILDING_BRIDGE)
+  const thick = (piece: Piece) => !thin.has(piece)
+  const outlined = outline(grid, taken.filter(thick), [...kept, ...taken].filter(thick), windowEdge(openingsFor(look, range)))
+  const { place } = outlined
+  // A house gone to its foot keeps the broken edge of its walls along the ground; a bridge has none.
+  const rims = range.kind === BUILDING_BRIDGE ? bordering(grid, outlined.rims, kept) : outlined.rims
   const out = new Writer(place, [pivot[0], pivot[1], pivot[2]])
   // The floors and walls of its rooms that were in those cells go with it.
   for (const piece of sliced.taken) if (piece.inside !== undefined) out.poly(piece.poly, INSIDE_RGB[piece.inside] ?? FLOOR_RGB, undefined, true)
-  for (const piece of taken) out.poly(piece.poly, piece.roof ? roof : wall)
+  for (const piece of taken) out.poly(piece.poly, piece.roof ? roof : wall, undefined, thin.has(piece))
   // Its inner face goes with it, so a section lying on the ground shows its dim inside.
-  for (const piece of taken) out.poly(innerOf(piece.poly.map(place), piece.normal), [wall[0] * INTERIOR_SHADE, wall[1] * INTERIOR_SHADE, wall[2] * INTERIOR_SHADE], undefined, true)
+  for (const piece of taken.filter(thick)) out.poly(innerOf(piece.poly.map(place), piece.normal), [wall[0] * INTERIOR_SHADE, wall[1] * INTERIOR_SHADE, wall[2] * INTERIOR_SHADE], undefined, true)
   out.rims(rims, wall, roof)
   // The overhang goes with the roof it hangs from.
   for (const strip of eavesFor(look, range)) {

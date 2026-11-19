@@ -4,7 +4,7 @@
 //! North is up: pixel x grows with world X (east), pixel y with world Z (south), so the image
 //! maps the playable square `[-half, half]` onto `[0, size)` in both axes.
 
-use shared::world::{COVER_FARM, COVER_GOLF_BUNKER, COVER_GOLF_FAIRWAY, COVER_GOLF_GREEN, COVER_GOLF_TEE, COVER_INDUSTRIAL, COVER_MARSH, COVER_MARSH_DEEP, COVER_MARSH_FAINT, COVER_PARK, COVER_ROCK, COVER_SAND, COVER_THICKET_FIGHT, COVER_THICKET_SLOW, COVER_THICKET_WALK, COVER_URBAN, COVER_WATER, COVER_WOOD, Manifest, NO_WATER, RAIL_TRAM, ROAD_FAINT, ROAD_GRAVEL, ROAD_MAJOR, ROAD_MINOR, ROAD_TRACK, THEME_WINTER, Tile, BUILDING_BRIDGE};
+use shared::world::{COVER_FARM, COVER_GOLF_BUNKER, COVER_GOLF_FAIRWAY, COVER_GOLF_GREEN, COVER_GOLF_TEE, COVER_INDUSTRIAL, COVER_MARSH, COVER_MARSH_DEEP, COVER_MARSH_FAINT, COVER_PARK, COVER_ROCK, COVER_SAND, COVER_THICKET_FIGHT, COVER_THICKET_SLOW, COVER_THICKET_WALK, COVER_URBAN, COVER_WATER, COVER_WOOD, Manifest, NO_WATER, RAIL_TRAM, ROAD_FAINT, ROAD_MAJOR, ROAD_PAVED_PATH, ROAD_MINOR, ROAD_TRACK, THEME_WINTER, Tile, BUILDING_BRIDGE};
 use std::collections::BTreeMap;
 
 /// Side of the image, pixels. 2048 px over 8.6 km is about 4 m a pixel.
@@ -23,7 +23,8 @@ const BUILDING: Rgb = [0xa9, 0x9d, 0x92];
 const ROAD_MAJOR_COLOR: Rgb = [0xf2, 0xb8, 0x5c];
 const ROAD_MINOR_COLOR: Rgb = [0xff, 0xff, 0xff];
 const ROAD_PATH_COLOR: Rgb = [0xc4, 0xa2, 0x78];
-const ROAD_GRAVEL_COLOR: Rgb = [0xf4, 0xef, 0xe4];
+/// A paved footway or cycleway: grey like the asphalt it is.
+const ROAD_PAVED_PATH_COLOR: Rgb = [0xd4, 0xd4, 0xd0];
 const ROAD_TRACK_COLOR: Rgb = [0xae, 0x8c, 0x62];
 const ROAD_FAINT_COLOR: Rgb = [0xcf, 0xbd, 0x9c];
 const RAIL_COLOR: Rgb = [0x6b, 0x6b, 0x6b];
@@ -232,7 +233,7 @@ pub fn render(manifest: &Manifest, tiles: &BTreeMap<(u16, u16), Tile>, overlay: 
     }
 
     // Paths under minor roads under major ones.
-    for (kind, color) in [(ROAD_FAINT, ROAD_FAINT_COLOR), (2u8, ROAD_PATH_COLOR), (ROAD_TRACK, ROAD_TRACK_COLOR), (ROAD_GRAVEL, ROAD_GRAVEL_COLOR), (ROAD_MINOR, ROAD_MINOR_COLOR), (ROAD_MAJOR, ROAD_MAJOR_COLOR)] {
+    for (kind, color) in [(ROAD_FAINT, ROAD_FAINT_COLOR), (2u8, ROAD_PATH_COLOR), (ROAD_TRACK, ROAD_TRACK_COLOR), (ROAD_PAVED_PATH, ROAD_PAVED_PATH_COLOR), (ROAD_MINOR, ROAD_MINOR_COLOR), (ROAD_MAJOR, ROAD_MAJOR_COLOR)] {
         for road in tiles.values().flat_map(|tile| &tile.roads).filter(|road| road.kind == kind) {
             let floor = if kind == 2 { 1.0 } else { 2.0 };
             let width = (f64::from(road.width) / 100.0 * canvas.scale).max(floor);
@@ -291,7 +292,7 @@ mod tests {
         let mut tile = Tile::default();
         // A 100 m building in the north-east quadrant, and a road along X = 0.
         tile.buildings.push(Building { footprint: vec![[20_000, -30_000], [30_000, -30_000], [30_000, -20_000], [20_000, -20_000]], ..Default::default() });
-        tile.roads.push(Road { width: 800, kind: ROAD_MAJOR, carried: false, points: vec![[0, -90_000], [0, 90_000]] });
+        tile.roads.push(Road { width: 800, kind: ROAD_MAJOR, carried: false, points: vec![[0, -90_000], [0, 90_000]], ..Default::default() });
         // A track along Z = 500 m, crossing the road.
         tile.rails.push(Rail { gauge: 144, kind: RAIL_TRAIN, points: vec![[-90_000, 50_000], [90_000, 50_000]] });
         let tiles = BTreeMap::from([((0, 0), tile)]);

@@ -1,6 +1,6 @@
 import { Color, Geometry, Mesh, ShaderMaterial, boxGeometry, cylinderGeometry } from '@ragnarok/engine'
 import { heightIn, type TileGround } from '@/sim/terrain'
-import { LINE_FENCE_HIGH, LINE_POWER, LINE_POWER_MAJOR, lineKindDef, linePieceIndex, type Line, type Point2 } from '@/world'
+import { LINE_FENCE_HIGH, LINE_GUARDRAIL, LINE_POWER, LINE_POWER_MAJOR, lineKindDef, linePieceIndex, type Line, type Point2 } from '@/world'
 import { winter } from './season'
 import { toonMaterial } from './toon'
 
@@ -38,6 +38,7 @@ const STEEL = 0x8c9294
 const PORCELAIN = 0xd8dcd6
 const WIRE = 0x6e7376
 const CABLE = 0x55595b
+const GALVANISED = 0xa7adb0
 const STONE = 0x8d8a82
 const CAPSTONE = 0x9c9a93
 
@@ -48,6 +49,16 @@ const WALL_LAP = 0.1
 /** Height of the course of capping stones along a wall's top, and how far it stands out each side, metres. */
 const CAP_HEIGHT = 0.12
 const CAP_OUT = 0.05
+
+/**
+ * A guard rail's two rails, heights of their middles over the ground, and their square section, metres:
+ * the bridge railing's (`RAILING_HEIGHT`, `MID_RAIL_HEIGHT`, `RAIL_HALF` in `crates/osm-import/src/bridge.rs`)
+ * brought down to a road barrier's height, in galvanised steel.
+ */
+const GUARD_RAILS = [0.69, 0.4]
+const GUARD_RAIL_SIZE = 0.08
+/** A guard rail's post: its side, metres. */
+const GUARD_POST = 0.1
 
 /** No piece is broken. */
 const WHOLE: ReadonlySet<number> = new Set()
@@ -88,6 +99,16 @@ function wallBlock(a: V3, b: V3, height: number, half: number): Geometry[] {
   const course = (y0: number, y1: number, width: number, color: number) =>
     painted(boxGeometry(length + WALL_LAP * 2, y1 - y0, width).translate(0, (y0 + y1) / 2, 0).rotateZ(pitch).rotateY(yaw).translate(...mid), color)
   return [course(-WALL_SUNK, body, half * 2, STONE), course(body, height, (half + CAP_OUT) * 2, CAPSTONE)]
+}
+
+/** A guard rail's piece from `a` to `b` (each on the ground): its rails, tilted to the slope, lapping past each end. */
+function guardRails(a: V3, b: V3): Geometry[] {
+  const flat = Math.hypot(b[0] - a[0], b[2] - a[2])
+  const length = Math.hypot(flat, b[1] - a[1])
+  const yaw = Math.atan2(-(b[2] - a[2]), b[0] - a[0])
+  const pitch = Math.atan2(b[1] - a[1], flat)
+  const mid: V3 = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2]
+  return GUARD_RAILS.map((y) => painted(boxGeometry(length + GUARD_RAIL_SIZE, GUARD_RAIL_SIZE, GUARD_RAIL_SIZE).translate(0, y, 0).rotateZ(pitch).rotateY(yaw).translate(...mid), GALVANISED))
 }
 
 /** Wire ribbons: each vertex on the wire's centre line, pushed out to the side in the shader. */
@@ -335,10 +356,15 @@ export function buildLines(lines: readonly Line[] | undefined, ground: TileGroun
       posts.forEach((at, i) => {
         const [x, y, z] = at
         // A post stands while a piece on either side of it does.
-        if (!def.wall && (stands(i - 1) || stands(i))) parts.push(post(x, y, z, high ? 2.2 : 1.25, high ? 0.07 : 0.05, WOOD))
+        const guard = kind === LINE_GUARDRAIL
+        if ((!def.wall || guard) && (stands(i - 1) || stands(i))) {
+          parts.push(guard ? painted(boxGeometry(GUARD_POST, def.height + WALL_SUNK, GUARD_POST).translate(x, y + (def.height - WALL_SUNK) / 2, z), GALVANISED) : post(x, y, z, high ? 2.2 : 1.25, high ? 0.07 : 0.05, WOOD))
+        }
         const next = posts[i + 1]
         if (!next || !stands(i)) return
-        if (def.wall) {
+        if (guard) {
+          parts.push(...guardRails(at, next))
+        } else if (def.wall) {
           parts.push(...wallBlock(at, next, def.height, def.half))
         } else if (high) {
           net.add(at, next)

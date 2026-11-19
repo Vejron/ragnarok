@@ -1,6 +1,7 @@
 //! The importer as a library: the `osm-import` command and the map editor's server share it.
 
 pub mod assemble;
+pub mod barrier;
 pub mod bridge;
 pub mod buslines;
 pub mod bushes;
@@ -18,6 +19,7 @@ pub mod grid;
 pub mod graves;
 pub mod ground;
 pub mod ign;
+pub mod lanes;
 pub mod lidar;
 pub mod minimap;
 pub mod ocad;

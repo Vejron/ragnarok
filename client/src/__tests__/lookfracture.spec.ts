@@ -5,7 +5,8 @@ import { lookSlice } from '@/render/lookworker'
 import { openingsOf } from '@/render/windows'
 import { rubbleSoup } from '@/render/shards'
 import { buildingSurfaces, Surface } from '@/render/buildingmesh'
-import { ROOF_FLAT, ROOF_GABLE } from '@/world'
+import { BRIDGE_CONCRETE, BUILDING_BRIDGE, DECK_ASPHALT, DECK_PLANKS, ROOF_FLAT, ROOF_GABLE } from '@/world'
+import { lookChunk } from '@/render/lookfracture'
 import type { CollisionMesh } from '@/world'
 
 /** A box house 5 × 4 × 3 m: walls, then a flat roof, centimetre triangles. */
@@ -42,6 +43,23 @@ function area(positions: Float32Array): number {
     sum += Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx) / 2
   }
   return sum
+}
+
+/** A box from `lo` to `hi`, centimetres, wound as the look is (each face's normal pointing in); its top apart. */
+function box(lo: number[], hi: number[]): { sides: Tri[]; top: Tri[] } {
+  const [x0, y0, z0] = lo as [number, number, number]
+  const [x1, y1, z1] = hi as [number, number, number]
+  const quad = (a: number[], b: number[], c: number[], e: number[]): Tri[] => [[...a, ...b, ...c] as Tri, [...a, ...c, ...e] as Tri]
+  return {
+    sides: [
+      ...quad([x0, y0, z0], [x1, y0, z0], [x1, y1, z0], [x0, y1, z0]),
+      ...quad([x1, y0, z1], [x0, y0, z1], [x0, y1, z1], [x1, y1, z1]),
+      ...quad([x0, y0, z1], [x0, y0, z0], [x0, y1, z0], [x0, y1, z1]),
+      ...quad([x1, y0, z0], [x1, y0, z1], [x1, y1, z1], [x1, y1, z0]),
+      ...quad([x0, y0, z0], [x0, y0, z1], [x1, y0, z1], [x1, y0, z0]),
+    ],
+    top: quad([x0, y1, z0], [x1, y1, z0], [x1, y1, z1], [x0, y1, z1]),
+  }
 }
 
 describe('lookFracture', () => {
@@ -201,6 +219,29 @@ describe('lookFracture', () => {
     }
   })
 
+  it('cuts a bridge\'s rail plain where it is broken: no ragged edge, soot, depth or inside standing out of it', () => {
+    // A deck 6 m long, 3 m wide and 0.7 m thick, and on it a rail 8 cm square at 1 m, along x.
+    const deck = box([0, 0, 0], [600, 70, 300])
+    const rail = box([0, 100, 10], [600, 108, 18])
+    const walls = [...deck.sides, ...rail.sides, ...rail.top]
+    const shell = Shell.of(walls, deck.top)!
+    const look = lookOf([...walls, ...deck.top])
+    const range = { first: 0, walls: walls.length, roof: deck.top.length, kind: BUILDING_BRIDGE }
+    const removed = new Set([shell.cellAt(3, 1.04, 0.14)])
+    const onRail = (x: number, y: number, z: number) => y > 0.9 && x > -0.001 && x < 6.001 && y < 1.081 && z > 0.099 && z < 0.181
+    for (const soup of [lookFracture(look, range, shell, removed, new Map(), [1, 1, 1], [1, 1, 1]), lookChunk(look, range, shell, removed, [0, 0, 0], [1, 1, 1], [1, 1, 1])]) {
+      const { positions: p, colors } = soup
+      let rail = 0
+      for (let i = 0; i < p.length; i += 3) {
+        if (p[i + 1]! < 0.9) continue
+        expect(onRail(p[i]!, p[i + 1]!, p[i + 2]!), `a corner at ${[p[i], p[i + 1], p[i + 2]].join(', ')} off the rail`).toBe(true)
+        expect(colors[i]!).toBeGreaterThan(0.99)
+        rail++
+      }
+      expect(rail).toBeGreaterThan(0)
+    }
+  })
+
   it('picks boards, brick or render from the wall colour, and felt for a flat roof', () => {
     const tile = (paint: [number, number] | null, roofKind = ROOF_GABLE) => ({ buildings: [{ paint, roofKind } as never] })
     expect(buildingSurfaces(tile([0xa8432f, 0xb5543f]), 0, 0)).toEqual({ wall: Surface.Upright, roof: Surface.Tiles })
@@ -213,6 +254,13 @@ describe('lookFracture', () => {
     // France's palette: limestone is cut stone, its brick brick, and slate laid in rows.
     expect(buildingSurfaces(tile([0xf0e6cc, 0x56606e]), 0, 0)).toEqual({ wall: Surface.Ashlar, roof: Surface.Tiles })
     expect(buildingSurfaces(tile([0xc0785a, 0xa4acb4]), 0, 0)).toEqual({ wall: Surface.Brick, roof: Surface.Sheet })
+  })
+
+  it('draws a bridge as plain concrete with its road on the deck: asphalt, planks, or bare for a railway', () => {
+    const bridge = (deck: number) => ({ buildings: [{ kind: BUILDING_BRIDGE, roofKind: ROOF_FLAT, paint: [BRIDGE_CONCRETE, deck] } as never] })
+    expect(buildingSurfaces(bridge(DECK_ASPHALT), 0, 0)).toEqual({ wall: Surface.Plain, roof: Surface.Asphalt })
+    expect(buildingSurfaces(bridge(DECK_PLANKS), 0, 0)).toEqual({ wall: Surface.Plain, roof: Surface.Planks })
+    expect(buildingSurfaces(bridge(BRIDGE_CONCRETE), 0, 0)).toEqual({ wall: Surface.Plain, roof: Surface.Plain })
   })
 
   it('shows broken rafters in a roof\'s hole, splinters at a wooden wall\'s, and cracks across a brick one that stay on it', () => {

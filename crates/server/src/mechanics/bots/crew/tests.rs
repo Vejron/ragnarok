@@ -87,7 +87,7 @@ fn the_driver_drives_its_route_round_and_round() {
 
 /// A road from (-200, -20) east to (200, -20), then north to (200, 100).
 fn road() -> Road {
-    Road { width: 600, kind: 0, carried: false, points: vec![[-20_000, -2_000], [-10_000, -2_000], [0, -2_000], [10_000, -2_000], [20_000, -2_000], [20_000, 10_000]] }
+    Road { width: 600, kind: 0, carried: false, points: vec![[-20_000, -2_000], [-10_000, -2_000], [0, -2_000], [10_000, -2_000], [20_000, -2_000], [20_000, 10_000]], ..Default::default() }
 }
 
 /// How far `[x, z]` is from the polyline `points` (metres).
@@ -122,7 +122,7 @@ fn a_route_made_along_a_road_goes_out_both_ways_and_back() {
 #[test]
 fn a_road_route_goes_on_straight_through_junctions_of_roads_that_meet_end_to_end() {
     // An avenue along z = 0 in 100 m pieces, with a side street off it at x = 0.
-    let piece = |a: [i32; 2], b: [i32; 2]| Road { width: 600, kind: 0, carried: false, points: vec![a, b] };
+    let piece = |a: [i32; 2], b: [i32; 2]| Road { width: 600, kind: 0, carried: false, points: vec![a, b], ..Default::default() };
     let roads = vec![
         piece([-30_000, 0], [-20_000, 0]),
         piece([-20_000, 0], [-10_000, 0]),

@@ -62,10 +62,10 @@ On `worlds/home`, twelve buses each drove about 10.5 km in 20 minutes (8.7 m/s w
 
 Driving real roads for the first time without a player's eyes found places no vehicle could pass. The importer now mends them for every vehicle (`bridge.rs`, `assemble.rs`):
 
-- **Cuttings.** Where a path goes under a road that OpenStreetMap does not map as a bridge, the terrain has a trench across the road. A drivable road over a dip narrower than 24 m and deeper than 1.5 m gets a deck over it, flush with the road and with no parapets (`cuttings`, `Pylons::Flush`). The way under it stays open. `worlds/home` has 40.
+- **Cuttings.** Where a path goes under a road that OpenStreetMap does not map as a bridge, the terrain has a trench across the road. A drivable road over a dip narrower than 24 m and deeper than 1.5 m gets a deck over it, flush with the road and with no railings (`cuttings`, `Pylons::Flush`). The way under it stays open. `worlds/home` has 40.
 - **Short bridges.** A bridge under 12 m is still left to the terrain, unless the ground under it dips more than a metre.
 - **Bridges in several ways.** Bridge ways that meet end to end are built as one bridge (`joined_bridges`). Built one by one, each came down to the ground where it ended.
-- **Divided roads.** Two bridges side by side share one deck wide enough for both (`twin_decks`), where two decks a road wide each lay over each other at two heights. Where decks still overlap, the parapet between them is left out.
+- **Divided roads.** Two bridges side by side share one deck wide enough for both (`twin_decks`), where two decks a road wide each lay over each other at two heights. Where decks still overlap, the railing between them is left out.
 - **Banks.** OpenStreetMap often ends a bridge part of the way down the bank. A bridge whose road goes on rising past its end is lengthened along that road to the top of the rise, up to 40 m (`onto_the_banks`).
 - **Ramps** now come all the way down to the lip every deck has over the ground, where they stopped up to 0.4 m short.
 - **Piers** are left out where they would stand on a road or a track under the bridge.

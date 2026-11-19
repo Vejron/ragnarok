@@ -198,7 +198,7 @@ fn game() -> Game {
         version: WORLD_VERSION,
         half_extent: 30_000,
         spawns: [[-25_000, 0], [25_000, 0]].into_iter().chain((0..11).map(|i| [i * 2700 - 12_000, 0])).collect(),
-        roads: vec![Road { width: 800, kind: 0, carried: false, points: vec![[-30_000, 0], [30_000, 0]] }],
+        roads: vec![Road { width: 800, kind: 0, carried: false, points: vec![[-30_000, 0], [30_000, 0]], ..Default::default() }],
         ..Default::default()
     };
     let mut game = Game::new(map, 0).unwrap();

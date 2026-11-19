@@ -211,7 +211,7 @@ pub fn is_bus_stop<T: Lookup + ?Sized>(tags: &T) -> bool {
     tag(tags, "highway") == Some("bus_stop")
 }
 
-/// A node of the main query: a shop, a place of trade, a public building or a fire station, mapped
+/// A node of the main query: a hotel, a shop, a place of trade, a public building or a fire station, mapped
 /// as a point inside its building (`classify::by_use`).
 pub fn is_poi<T: Lookup + ?Sized>(tags: &T) -> bool {
     crate::classify::by_use(tags).is_some()

@@ -64,7 +64,8 @@
     {"kind": 0, "height": 1.25, "half": 0.06, "step": 3, "wall": false},
     {"kind": 1, "height": 2.05, "half": 0.06, "step": 4, "wall": false},
     {"kind": 4, "height": 1, "half": 0.25, "step": 3, "wall": true},
-    {"kind": 5, "height": 2.4, "half": 0.3, "step": 3, "wall": true}
+    {"kind": 5, "height": 2.4, "half": 0.3, "step": 3, "wall": true},
+    {"kind": 6, "height": 0.75, "half": 0.1, "step": 2, "wall": true}
   ],
   "graveKinds": [
     {"kind": 0, "name": "Headstone", "halfWidth": 0.3, "halfDepth": 0.08, "height": 0.95},

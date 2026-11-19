@@ -851,7 +851,12 @@ impl World {
         self.drop_rubble(id, &cut.fell);
         self.loosen_beside_cells(id, &cut);
         // Whatever it lost is looked at again in a moment: the first cut sets the time, not each one.
-        self.strained.entry(id).or_insert(self.tick.wrapping_add(STRAIN_DELAY));
+        // Not a bridge: its reinforced concrete is not weighed as a house's walls are (`Shell::strain`),
+        // where a hole in a pier's side, its every cell carrying the whole deck, would bring it down.
+        // It falls only where a cut leaves it on nothing, too narrow, or cut off (`unsupported_after`).
+        if !self.is_bridge(id) {
+            self.strained.entry(id).or_insert(self.tick.wrapping_add(STRAIN_DELAY));
+        }
         Some(cut)
     }
 

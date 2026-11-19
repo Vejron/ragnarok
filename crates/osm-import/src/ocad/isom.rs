@@ -152,7 +152,7 @@ pub fn feature(number: i32) -> Option<Feature> {
             112 => form(2.0, 2.0, -1.8, 0.5),
             // ISOM's roads by what they are to whoever crosses them, not OSM's classes.
             502 => track(6.0, ROAD_MINOR, 0.0),
-            503 => track(4.0, ROAD_GRAVEL, 0.0),
+            503 => track(4.0, ROAD_MINOR, 0.0),
             504 => track(3.0, ROAD_TRACK, 0.0),
             505 => track(1.6, ROAD_PATH, 0.0),
             506 => track(1.0, ROAD_PATH, 0.0),

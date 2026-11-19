@@ -46,8 +46,8 @@ therefore decides in this order, and the first rule that names a kind wins:
    `farm_auxiliary` outbuildings; `industrial`, `warehouse`, `hangar`, `manufacture` and
    `man_made=works` halls; `retail`, `supermarket`, `commercial`, `kiosk`, anything with a `shop`
    and an `amenity` where people eat, drink, bank or fill up (restaurant, cafe, fast_food, pub, bar,
-   bank, pharmacy, post_office, fuel, car_wash) shops; `apartments`, `dormitory`, `hotel`, and a `yes` with three `building:levels` or more,
-   blocks of flats; `school`, `kindergarten`, `university`, `college`, `hospital`, `civic`, `public`,
+   bank, pharmacy, post_office, fuel, car_wash) shops; `apartments`, `dormitory`, `hotel`, a `tourism` hotel, hostel, guest_house or motel, and a `yes` with three `building:levels` or more,
+   blocks of flats (a hotel tagged on a `retail` or `commercial` building wins over the shop: it is the hotel over its ground floor); `school`, `kindergarten`, `university`, `college`, `hospital`, `civic`, `public`,
    `government`, `train_station`, and an `amenity` of school, kindergarten, library,
    police, town hall, hospital, clinic, community or social centre or courthouse,
    public buildings; `building` or `amenity` `fire_station` fire stations; `cabin`, `hut` and a `tourism` hut or chalet cabins. Any other value than `yes`
@@ -56,11 +56,13 @@ therefore decides in this order, and the first rule that names a kind wins:
    missionshus, bönhus, folkets hus, hembygdsgård, skola and förskola a public building;
    brandstation, räddningstjänst and brandförsvar a fire station.
 3. **A node inside it.** Most shops, cafés and police stations are mapped as a point, not on the
-   building. A `building=yes` with such a node inside its outline (a `shop`, or one of the
-   `amenity` values above, `by_use`) is what the node says: a fire station before a public
-   building before a shop, where it holds several. A building mapped as a house stays one, whatever
+   building. A `building=yes` with such a node inside its outline (a `shop`, a `tourism` hotel, hostel,
+   guest house or motel, or one of the `amenity` values above, `by_use`) is what the node says: a fire
+   station before a public building before a hotel before a shop, where it holds several. A hotel's
+   node also wins over a building tagged as a shop (Hotell Forsen in Vindeln is `building=retail`):
+   a block of flats has windows on every wall and storey, where a shop has one row along its front. A building mapped as a house stays one, whatever
    is run from it. The nodes are read with everything else (`osm::is_poi` in `wants_node`, and the
-   Overpass query), which took `pbf::VERSION` to 6: an older index is skipped until `--fetch-osm`
+   Overpass query), which took `pbf::VERSION` to 7 when hotels were added: an older index is skipped until `--fetch-osm`
    is run again.
 4. **The land use it stands in** (`Land`, the smallest area round its middle). On
    `landuse=industrial` or `railway` a building of 150 m² or more is a hall and one under 45 m² an

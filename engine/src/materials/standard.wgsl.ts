@@ -102,7 +102,9 @@ ${edges ? `    if (!worn.keep) {
     rgb = worn.rgb;
   }
   if ((flags & MAT_ASPHALT) != 0u) {
-    let asphalt = asphaltLook(rgb, in.world.xz, in.custom.x, in.custom.w, pixel, ground, onGround);
+    // Asphalt carries where it is along and across the road in custom.y and z, and its tone only in its colour.
+    let tone = in.color.g / max(material.color.g, 1e-3);
+    let asphalt = asphaltLook(rgb, in.world.xz, in.custom.x, in.custom.y, in.custom.z, in.custom.w, pixel, texel.rgb * tone, onGround);
 ${edges ? `    if (!asphalt.keep) {
       discard;
     }` : ''}

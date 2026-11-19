@@ -50,7 +50,23 @@ pub struct Shell {
     roof: Vec<bool>,
     /// Cells that hold the building up: its lowest layer, and any piece that never reached it.
     anchored: Vec<bool>,
+    /// For a bridge (`anchor_to_ground`), the cells that stand on its deck rather than being part
+    /// of it: what is above a roof cell (the roadway) or above another such cell, the edge beams and
+    /// railings. Each rests on the cell under it and falls when that goes, however it is joined to
+    /// the rest. Empty for any other building.
+    rests: Vec<bool>,
+    /// For a bridge, how wide it stands round each cell when whole (`width`). Empty for any other
+    /// building.
+    wide: Vec<u8>,
 }
+
+/// A bridge's cell left standing narrower than this many cells (`Shell::width`), and narrower than
+/// it stood when whole, falls: a strip along the edge of a deck blown out between them does not
+/// hang on as a beam. What the bridge was built narrower than this (a pier, a footbridge) stands
+/// until something cuts it narrower still.
+pub const NARROW: u8 = 4;
+/// How far each way a bridge's width is looked along, cells.
+const WIDTH_REACH: usize = 4;
 
 /// What one blast did to a building: the cells it broke, and the cells that were left with nothing
 /// to hold them and fell. Cell numbers are `Shell::index` (`(y * dims[2] + z) * dims[0] + x`).
@@ -173,6 +189,8 @@ impl Shell {
             solid: vec![false; dims[0] * dims[1] * dims[2]],
             roof: vec![false; dims[0] * dims[1] * dims[2]],
             anchored: Vec::new(),
+            rests: Vec::new(),
+            wide: Vec::new(),
         };
         for (list, is_roof) in [(walls, false), (roof, true)] {
             for tri in list {
@@ -208,6 +226,8 @@ impl Shell {
             solid: unpack(&cells.solid.0, n, dims[0] * dims[2]),
             roof: unpack(&cells.roof.0, n, dims[0] * dims[2]),
             anchored: Vec::new(),
+            rests: Vec::new(),
+            wide: Vec::new(),
         };
         shell.anchor();
         Some(shell)
@@ -368,6 +388,34 @@ impl Shell {
         let layer = nx * nz;
         let floors: Vec<i32> = (0..layer).map(|column| ground(self.origin[0] + (column % nx) as i32 * self.cell + self.cell / 2, self.origin[2] + (column / nx) as i32 * self.cell + self.cell / 2)).collect();
         self.anchored = (0..self.solid.len()).map(|i| self.solid[i] && self.origin[1] + (i / layer) as i32 * self.cell <= floors[i % layer] + self.cell).collect();
+        // Layer by layer upwards, so the cell under each is decided before it.
+        let mut rests = vec![false; self.solid.len()];
+        for i in layer..self.solid.len() {
+            let below = i - layer;
+            rests[i] = self.solid[i] && !self.roof[i] && self.solid[below] && (self.roof[below] || rests[below]);
+        }
+        self.rests = rests;
+        let whole = self.untouched();
+        self.wide = (0..self.solid.len()).map(|i| if self.solid[i] { self.width(&whole, i) } else { 0 }).collect();
+    }
+
+    /// How wide what stands round cell `i` is, given `removed`, in cells: the shorter of the runs
+    /// through it along x and along z, looked at up to `WIDTH_REACH` cells each way, where a column
+    /// stands when anything stands in it in the cell's layer or the one above or below. The cells are
+    /// a shell, so a deck's sides are a line of their own between its top and its bottom.
+    fn width(&self, removed: &[bool], i: usize) -> u8 {
+        let [nx, ny, nz] = self.dims;
+        let layer = nx * nz;
+        let (x, y, z) = ((i % layer) % nx, i / layer, (i % layer) / nx);
+        let layers = y.saturating_sub(1)..(y + 2).min(ny);
+        let standing = |x: i64, z: i64| {
+            x >= 0 && z >= 0 && (x as usize) < nx && (z as usize) < nz && layers.clone().any(|l| {
+                let j = l * layer + z as usize * nx + x as usize;
+                self.solid[j] && !removed[j]
+            })
+        };
+        let run = |dx: i64, dz: i64| (1..=WIDTH_REACH as i64).take_while(|&k| standing(x as i64 + dx * k, z as i64 + dz * k)).count();
+        (1 + run(1, 0) + run(-1, 0)).min(1 + run(0, 1) + run(0, -1)) as u8
     }
 
     /// Takes the cells within `radius` centimetres of `at` out of `removed` (one flag per cell),
@@ -448,7 +496,74 @@ impl Shell {
     /// cells beside those can have lost their hold, so each is followed until it reaches an anchor
     /// (it and every cell on the way are held) or runs out of cells (all it reached fell). The work
     /// is the size of what is looked at, not of the building's grid. Sorted by cell number.
+    ///
+    /// On a bridge, what rests on a cell that went (`rests`) goes too, and what is left too narrow
+    /// round it to stand (`NARROW`), and then whatever that leaves cut off, until nothing more goes.
     fn unsupported_after(&self, removed: &[bool], taken: &[u32]) -> Vec<u32> {
+        let mut fell = self.cut_off(removed, taken);
+        if self.wide.is_empty() {
+            return fell;
+        }
+        let layer = self.dims[0] * self.dims[2];
+        let mut now = removed.to_vec();
+        for &id in &fell {
+            now[id as usize] = true;
+        }
+        let mut gone: Vec<u32> = taken.iter().chain(&fell).copied().collect();
+        loop {
+            // Up each column from a cell that went, while what stands there rests on it.
+            let mut slid = Vec::new();
+            for &id in &gone {
+                let mut above = id as usize + layer;
+                while above < now.len() && self.rests[above] && self.solid[above] && !now[above] {
+                    now[above] = true;
+                    slid.push(above as u32);
+                    above += layer;
+                }
+            }
+            // In each layer round what went, what is left too narrow to stand (`NARROW`), all judged
+            // before any of it goes.
+            let [nx, ny, nz] = self.dims;
+            let mut looked: std::collections::HashSet<usize> = std::collections::HashSet::new();
+            let mut narrow = Vec::new();
+            for &id in gone.iter().chain(&slid) {
+                let i = id as usize;
+                let (x, y, z) = ((i % layer) % nx, i / layer, (i % layer) / nx);
+                for cy in y.saturating_sub(1)..(y + 2).min(ny) {
+                    for cz in z.saturating_sub(WIDTH_REACH)..(z + WIDTH_REACH + 1).min(nz) {
+                        for cx in x.saturating_sub(WIDTH_REACH)..(x + WIDTH_REACH + 1).min(nx) {
+                            let j = cy * layer + cz * nx + cx;
+                            if self.solid[j] && !now[j] && looked.insert(j) && self.width(&now, j) < self.wide[j].min(NARROW) {
+                                narrow.push(j as u32);
+                            }
+                        }
+                    }
+                }
+            }
+            narrow.sort_unstable();
+            let newly: Vec<u32> = slid.into_iter().chain(narrow).collect();
+            if newly.is_empty() {
+                break;
+            }
+            for &id in &newly {
+                now[id as usize] = true;
+            }
+            let more = self.cut_off(&now, &newly);
+            for &id in &more {
+                now[id as usize] = true;
+            }
+            fell.extend(&newly);
+            fell.extend(&more);
+            gone = newly.into_iter().chain(more).collect();
+        }
+        fell.sort_unstable();
+        fell.dedup();
+        fell
+    }
+
+    /// The cells beside `taken` that no chain of standing cells joins to an anchor, given
+    /// `removed` with `taken` already out of it (`unsupported_after` without what rests on them).
+    fn cut_off(&self, removed: &[bool], taken: &[u32]) -> Vec<u32> {
         let standing = |id: u32| self.solid[id as usize] && !removed[id as usize];
         let mut held: std::collections::HashSet<u32> = std::collections::HashSet::new();
         let mut fell: Vec<u32> = Vec::new();
@@ -1170,13 +1285,59 @@ mod tests {
         let mut bridge = little_bridge();
         bridge.anchor_to_ground(bank_ground);
         let mut removed = bridge.untouched();
-        // A cut across the deck between the bank and the pier leaves both halves held.
+        // A cut across the deck between the bank and the pier leaves both halves held: at most a
+        // ragged sliver at its edge too narrow to stand (`NARROW`) goes with it.
         let cut = bridge.blast(&mut removed, [600, 550, 100], 150);
-        assert!(cut.fell.is_empty(), "{} fell", cut.fell.len());
+        assert!(cut.fell.len() <= 6 && cut.fell.iter().all(|&id| (300..900).contains(&bridge.centre(id)[0])), "{} fell", cut.fell.len());
         // Then the pier goes: the stretch of deck on it has nothing left.
         let cut = bridge.blast(&mut removed, [1050, 250, 100], 150);
         assert!(cut.fell.len() > 30, "the deck on the pier falls: {}", cut.fell.len());
         assert!(cut.fell.iter().all(|&id| bridge.centre(id)[0] > 600), "and only that");
+    }
+
+    #[test]
+    fn a_railing_falls_with_the_deck_under_it() {
+        // `little_bridge`'s deck with its top as the roadway, and a rail 50 cm over it along its edge.
+        let mut walls = cuboid([0, 500, 0], [1200, 600, 200]);
+        walls.extend(cuboid([1000, 0, 0], [1100, 500, 200]));
+        walls.extend(cuboid([0, 300, 0], [200, 500, 200]));
+        walls.extend(cuboid([0, 650, 160], [1200, 700, 180]));
+        let mut bridge = Shell::new(&walls, &cuboid([0, 600, 0], [1200, 600, 200])).unwrap();
+        bridge.anchor_to_ground(bank_ground);
+        let rail = |id: u32| bridge.centre(id)[1] > 650;
+        let mut removed = bridge.untouched();
+        // Under the rail at mid-span, out of the blast's reach itself.
+        let cut = bridge.blast(&mut removed, [600, 520, 170], 120);
+        assert!(cut.blasted.iter().all(|&id| !rail(id)), "the blast does not reach the rail");
+        let layer = bridge.dims[0] * bridge.dims[2];
+        let standing_rail: Vec<u32> = bridge.solid_cells().into_iter().filter(|&id| rail(id) && !removed[id as usize]).collect();
+        assert!(cut.fell.iter().any(|&id| rail(id)), "the rail over the hole falls");
+        assert!(standing_rail.iter().all(|&id| !removed[id as usize - layer]), "no rail is left over the hole");
+        assert!(standing_rail.len() > 8, "the rail either side of it stands: {}", standing_rail.len());
+    }
+
+    #[test]
+    fn the_strips_left_along_a_deck_blown_out_between_them_fall() {
+        // A deck 24 m long and 9 m wide, 5 m to 6 m up, on banks at both ends 3 m up.
+        let mut walls = cuboid([0, 500, 0], [2400, 600, 900]);
+        walls.extend(cuboid([0, 300, 0], [200, 500, 900]));
+        walls.extend(cuboid([2200, 300, 0], [2400, 500, 900]));
+        let mut bridge = Shell::new(&walls, &cuboid([0, 600, 0], [2400, 600, 900])).unwrap();
+        bridge.anchor_to_ground(|x, _| if !(200..2200).contains(&x) { 300 } else { 0 });
+        let mut removed = bridge.untouched();
+        // A shell well short of the deck's width bites a hole, and the rest stands round it. (One that
+        // leaves only slivers beside it takes them too.)
+        let whole = bridge.standing(&removed);
+        let cut = bridge.blast(&mut removed, [1200, 550, 450], 150);
+        assert!(cut.fell.len() * 4 < cut.blasted.len(), "one shell's hole is most of what goes: {} blasted, {} fell of {whole}", cut.blasted.len(), cut.fell.len());
+        // Shells down the middle of the span, each too small to reach the edges.
+        for x in (600..=1800).step_by(150) {
+            bridge.blast(&mut removed, [x, 550, 450], 280);
+        }
+        let mid_span: Vec<[i32; 3]> = bridge.solid_cells().into_iter().filter(|&id| !removed[id as usize]).map(|id| bridge.centre(id)).filter(|c| (900..1500).contains(&c[0])).collect();
+        assert!(mid_span.is_empty(), "nothing hangs on mid-span: {} cells, e.g. {:?}", mid_span.len(), mid_span.first());
+        // The ends on the banks stand.
+        assert!(bridge.solid_cells().into_iter().any(|id| !removed[id as usize] && bridge.centre(id)[0] < 300));
     }
 
     /// The cells that fall are the ones the whole-grid search finds, blast after blast.
@@ -1467,7 +1628,7 @@ mod tests {
             let n = dims[0] * dims[1] * dims[2];
             let density = next() % 60;
             let solid: Vec<bool> = (0..n).map(|_| next() % 100 < density).collect();
-            let mut shell = Shell { origin: [0; 3], cell: CELL, dims, solid, roof: vec![false; n], anchored: Vec::new() };
+            let mut shell = Shell { origin: [0; 3], cell: CELL, dims, solid, roof: vec![false; n], anchored: Vec::new(), rests: Vec::new(), wide: Vec::new() };
             shell.anchor();
             let mut expected = vec![false; n];
             let mut seen = vec![false; n];

@@ -5,7 +5,8 @@
  * it averages to rather than shimmering. Needs MARSH_WGSL before it, for its hash and noise.
  */
 export const WALLS_WGSL = /* wgsl */ `
-// The kinds, as custom x: plain, upright boards (falu red houses), lap boards, brick, render, roof tiles, sheet metal, felt, cut stone, wooden shingles.
+// The kinds, as custom x: plain, upright boards (falu red houses), lap boards, brick, render, roof tiles, sheet metal, felt, cut stone, wooden shingles,
+// and a bridge's roadway (its roof): asphalt or timber planks.
 const WALL_UPRIGHT = 1.0;
 const WALL_LAP = 2.0;
 const WALL_BRICK = 3.0;
@@ -17,6 +18,9 @@ const ROOF_FELT = 7.0;
 const WALL_ASHLAR = 8.0;
 // Wooden shingles: short courses of narrow, uneven shakes.
 const ROOF_SHINGLES = 9.0;
+// A bridge's deck: the road's asphalt (\`asphaltLook\`), or planks laid across a footbridge.
+const ROOF_ASPHALT = 10.0;
+const ROOF_PLANKS = 11.0;
 // Mortar, a share of the brick's colour pulled towards this grey.
 const WALL_MORTAR = vec3f(0.5, 0.48, 0.44);
 
@@ -80,6 +84,20 @@ fn wallsLook(rgb: vec3f, world: vec3f, n: vec3f, kind: f32, pixel: f32) -> vec3f
     // Render: mottled, a little streaked downwards, and a darker plinth would need the ground, so none.
     let mottle = 0.6 * marshValue(vec2f(along, up) * 1.3) + 0.4 * marshValue(vec2f(along * 4.0, up * 1.5) + vec2f(17.0, 3.0));
     return rgb * (0.93 + 0.11 * mottle);
+  }
+  // A bridge's roadway, as the road on the ground is drawn but with no crumbling edge: it runs between kerbs.
+  if (kind > ROOF_ASPHALT - 0.5 && kind < ROOF_ASPHALT + 0.5) {
+    // No line along the deck is known here: its patches lie square to the world, and it has no paint.
+    return asphaltLook(rgb, world.xz, 0.0, world.x, world.z, 30.0, pixel, vec3f(0.0), false).rgb;
+  }
+  if (kind > ROOF_PLANKS - 0.5) {
+    // Planks 20 cm wide running along z, a dark gap between them; each 2.4 m long, the joints staggered,
+    // each its own shade and with grain along it.
+    let board = floor(world.x / 0.2);
+    let plank = floor((world.z + 0.83 * board) / 2.4);
+    let gap = wallSeam(world.x, 0.2, 0.014, pixel);
+    let grain = mix(1.0, 0.9 + 0.14 * marshValue(vec2f(world.x * 30.0, world.z * 0.8)), 1.0 - smoothstep(0.004, 0.02, pixel));
+    return rgb * wallTone(board, plank, 0.18, 0.2, pixel) * grain * (1.0 - 0.55 * gap);
   }
   // A roof: across the slope, and down it as far along the surface as it goes.
   if (kind > ROOF_FELT - 0.5 || level < 0.08) {

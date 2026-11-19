@@ -1,6 +1,6 @@
 import { Color } from '@ragnarok/engine'
 import type { Sphere } from '@ragnarok/engine'
-import { BUILDING_BARN, BUILDING_BRIDGE, BUILDING_CABIN, BUILDING_CHURCH, BUILDING_FARMHOUSE, BUILDING_FIRE_STATION, BUILDING_FLATS, BUILDING_HALL, BUILDING_PLAIN, BUILDING_VILLA, BUILDING_OUTBUILDING, BUILDING_PUBLIC, BUILDING_SHOP, ROOF_FLAT, type Bridge, type Building, type TileData } from '@/world'
+import { BUILDING_BARN, BUILDING_BRIDGE, BUILDING_CABIN, BUILDING_CHURCH, BUILDING_FARMHOUSE, BUILDING_FIRE_STATION, BUILDING_FLATS, BUILDING_HALL, BUILDING_PLAIN, BUILDING_VILLA, BUILDING_OUTBUILDING, BUILDING_PUBLIC, BUILDING_SHOP, DECK_ASPHALT, DECK_PLANKS, ROOF_FLAT, type Bridge, type Building, type TileData } from '@/world'
 import { shellOf } from '@/sim/carve'
 import { drawnOpenings, facing, openingQuads, openingTriangles, openingsFor, type Opening } from './windows'
 import { eaveQuads, eaveTriangles, eavesFor, type EaveStrip } from './eaves'
@@ -153,7 +153,7 @@ export function buildingColors(tile: Pick<BuildingTile, 'buildings'>, index: num
 }
 
 /** Patterns drawn on a building's faces by the shader (walls.wgsl.ts in the engine), as a vertex's custom x. */
-export const Surface = { Plain: 0, Upright: 1, Lap: 2, Brick: 3, Render: 4, Tiles: 5, Sheet: 6, Felt: 7, Ashlar: 8, Shingles: 9 } as const
+export const Surface = { Plain: 0, Upright: 1, Lap: 2, Brick: 3, Render: 4, Tiles: 5, Sheet: 6, Felt: 7, Ashlar: 8, Shingles: 9, Asphalt: 10, Planks: 11 } as const
 export type Surface = (typeof Surface)[keyof typeof Surface]
 
 /**
@@ -180,12 +180,13 @@ const SHINGLED = new Set([0x8d6e63])
 /**
  * The patterns on building `index`'s walls and roof: from the palette colour it was given (Sweden's
  * here, or France's as the importer painted it), else render, or brick if it is a dark red; a flat roof
- * is felt, the timber one wooden shingles, a red or slate one tiles and any other sheet metal.
+ * is felt, the timber one wooden shingles, a red or slate one tiles and any other sheet metal. A
+ * bridge is plain concrete with the road it carries on its deck (`DECK_ASPHALT`, `DECK_PLANKS`).
  */
 export function buildingSurfaces(tile: Pick<BuildingTile, 'buildings'>, index: number, salt: number): { wall: Surface; roof: Surface } {
-  // A bridge is plain concrete, its deck and its sides alike.
-  if (tile.buildings[index]?.kind === BUILDING_BRIDGE) return { wall: Surface.Plain, roof: Surface.Plain }
   const { wall, roof } = buildingColors(tile, index, salt)
+  // A bridge is plain concrete with the road it carries on its deck: asphalt, planks, or for a railway bare concrete.
+  if (tile.buildings[index]?.kind === BUILDING_BRIDGE) return { wall: Surface.Plain, roof: roof === DECK_ASPHALT ? Surface.Asphalt : roof === DECK_PLANKS ? Surface.Planks : Surface.Plain }
   const channels = (hex: number) => [(hex >> 16) & 255, (hex >> 8) & 255, hex & 255] as const
   const [wr, wg, wb] = channels(wall)
   const wallSurface = WALL_SURFACES.get(wall) ?? (wr > wg * 1.6 && wr + wg + wb < 400 ? Surface.Brick : Surface.Render)
@@ -476,7 +477,7 @@ export function buildingBuffers(tile: BuildingTile, salt: number, destroyed: Rea
     const own = faces[index]
     const seen = destroyed.has(index) ? null : looked(index)
     const facade = facades[index]
-    if (seen && facade) count += 2 * (fan(facade.walls) + fan(facade.roof)) + fan(facade.floor) + 2 * facade.inside.length + openingTriangles(openings[index] ?? []) + eaveTriangles(eaves[index] ?? []) + detailTriangles(details[index] ?? [])
+    if (seen && facade) count += (building.kind === BUILDING_BRIDGE ? 1 : 2) * (fan(facade.walls) + fan(facade.roof)) + fan(facade.floor) + 2 * facade.inside.length + openingTriangles(openings[index] ?? []) + eaveTriangles(eaves[index] ?? []) + detailTriangles(details[index] ?? [])
     else if (own) count += own.roof.length
     else if (own === null) count += building.walls + building.roof
   })
@@ -498,10 +499,13 @@ export function buildingBuffers(tile: BuildingTile, salt: number, destroyed: Rea
       for (const poly of facade.walls) soup.poly(poly, [wall.r, wall.g, wall.b])
       soup.surface = surfaces.roof
       for (const poly of facade.roof) soup.poly(poly, [roof.r, roof.g, roof.b])
-      // The room inside: the walls' and roof's inner faces, dim, and the floor.
+      // The room inside: the walls' and roof's inner faces, dim, and the floor. A whole bridge has no
+      // inside to see, and its rails are thinner than a wall, so their inner faces would stand out beside them.
       soup.surface = Surface.Plain
-      for (const poly of facade.walls) soup.poly(innerOf(poly, normalOf(poly), facade.inset), dim(wall))
-      for (const poly of facade.roof) soup.poly(innerOf(poly, normalOf(poly), facade.inset), dim(roof))
+      if (building.kind !== BUILDING_BRIDGE) {
+        for (const poly of facade.walls) soup.poly(innerOf(poly, normalOf(poly), facade.inset), dim(wall))
+        for (const poly of facade.roof) soup.poly(innerOf(poly, normalOf(poly), facade.inset), dim(roof))
+      }
       for (const poly of facade.floor) soup.poly(poly, FLOOR_RGB)
       // Its rooms, seen from either side: a floor is the ceiling of the storey under it.
       for (const { poly, kind } of facade.inside) {
