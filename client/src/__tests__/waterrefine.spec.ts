@@ -96,7 +96,7 @@ describe('the refined water', () => {
 describe('the refiner', () => {
   afterEach(() => vi.unstubAllGlobals())
 
-  it('copies its square in again when the arena grows, so the square never stands empty', () => {
+  it('copies its square in again when the arena grows, and never into a slot of another arena', () => {
     vi.stubGlobal('GPUBufferUsage', { STORAGE: 1, COPY_DST: 2, COPY_SRC: 4, UNIFORM: 8 })
     vi.stubGlobal('GPUShaderStage', { COMPUTE: 4 })
     const stub = () => ({})
@@ -112,13 +112,22 @@ describe('the refiner', () => {
     const refiner = new MeshRefiner(8)
     refiner.setSources([lake(0, 0, 4, 1).geometry])
     refiner.setArea(0, 0, 4)
-    refiner.geometry.gpu = { baseVertex: 0, firstIndex: 0 } as never
     const [vertices, indices] = [{}, {}]
+    // The arena its slot is in, as the renderer hands its buffers over each frame.
+    const arena = { vertexBuffer: vertices }
+    refiner.geometry.gpu = { baseVertex: 0, firstIndex: 0, owner: arena } as never
     expect(frame(vertices, indices)).toEqual([vertices, indices])
     expect(frame(vertices, indices)).toEqual([])
     // The arena grew: its buffers are new, and whatever went into the old ones this frame is lost.
     const [moreVertices, moreIndices] = [{}, {}]
+    arena.vertexBuffer = moreVertices
     expect(frame(moreVertices, moreIndices)).toEqual([moreVertices, moreIndices])
     expect(frame(moreVertices, moreIndices)).toEqual([])
+    // Another device's arena (a new renderer): the slot is not a place in it, so nothing is written
+    // there until the geometry is given a slot of its own.
+    const [otherVertices, otherIndices] = [{}, {}]
+    expect(frame(otherVertices, otherIndices)).toEqual([])
+    refiner.geometry.gpu = { baseVertex: 0, firstIndex: 0, owner: { vertexBuffer: otherVertices } } as never
+    expect(frame(otherVertices, otherIndices)).toEqual([otherVertices, otherIndices])
   })
 })
