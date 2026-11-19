@@ -33,7 +33,7 @@ fn stand(game: &mut Game, id: u32, [x, z]: [f32; 2]) {
 
 fn input(game: &mut Game, id: u32, seq: &mut u32, buttons: u16) {
     *seq += 1;
-    game.handle(Command::Input(id, 0, vec![InputFrame { seq: *seq, strafe: 0, forward: 0, yaw: 0, buttons, pitch: 0, view: 0, slot: 0 }]));
+    game.handle(Command::Input(id, 0, vec![InputFrame { seq: *seq, strafe: 0, forward: 0, yaw: 0, buttons, pitch: 0, view: 0, slot: 0, collective: 0 }]));
 }
 
 fn step(game: &mut Game, id: u32, seq: &mut u32, buttons: u16, ticks: u32) {

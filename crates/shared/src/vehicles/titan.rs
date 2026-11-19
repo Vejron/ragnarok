@@ -403,6 +403,7 @@ pub(super) const TITAN: VehicleDef = VehicleDef {
         profile: Spec::BOX,
         springs: Springs::FIRM,
         airframe: None,
+        rotor: None,
         gait: Some(TITAN_GAIT),
         arms: Some(TITAN_ARMS),
         runners: None,

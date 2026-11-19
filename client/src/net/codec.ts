@@ -233,6 +233,8 @@ export const THRUST_LINKED = 1 << 2
 export const THRUST_GLIDE = 1 << 3
 /** A hen's: neither foot is on the ground. */
 export const THRUST_AIR = 1 << 4
+/** A helicopter's: its rotor is turning slower than `HELI_LOW_ROTOR` with a pilot aboard. It sends its rotor's speed as `air`. */
+export const THRUST_LOW_ROTOR = 1 << 5
 
 const CM = 100
 const MRAD = 1000

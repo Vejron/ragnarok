@@ -353,6 +353,9 @@ messages! {
         view: u16,
         /// The hotbar slot the player has selected, `0..HOTBAR_SLOTS`.
         slot: u8,
+        /// Where a helicopter pilot has left the collective lever, 0 (down) ..= 255 (full up). The client
+        /// moves it while jump or run is held, so it stays where it is let go.
+        collective: u8,
     }
 
     /// The newest `INPUT_REDUNDANCY` frames, oldest first. `baseline` is the tick of the newest snapshot
@@ -577,6 +580,10 @@ impl InputFrame {
     pub fn slot(&self) -> u8 {
         self.slot
     }
+    /// The collective lever as a share of its travel, 0..=1.
+    pub fn collective(&self) -> f32 {
+        f32::from(self.collective) / 255.0
+    }
 }
 
 /// Indices into a vehicle's damage: the four sides of the body, then the wheels front left,
@@ -633,6 +640,9 @@ pub const THRUST_LINKED: u8 = 1 << 2;
 pub const THRUST_GLIDE: u8 = 1 << 3;
 /// A hen's: neither foot is on the ground.
 pub const THRUST_AIR: u8 = 1 << 4;
+/// A helicopter's (which sends its rotor's speed as `air`): the rotor is turning slower than
+/// `HELI_LOW_ROTOR` of its governed speed with a pilot aboard, and its lift is going.
+pub const THRUST_LOW_ROTOR: u8 = 1 << 5;
 
 /// One hotbar slot: `[item, count, ammo]`. `item` is `ITEM_NONE` for an empty slot; `ammo` is the
 /// rounds left in the magazine of a gun.

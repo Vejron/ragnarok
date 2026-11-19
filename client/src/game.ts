@@ -75,7 +75,7 @@ import { ChaseCam } from './render/chase'
 import { PerfReadout } from './render/perf'
 import { Screenshots, type TiledBuilding } from './screenshot'
 import { LookWorker } from './render/lookworker'
-import { encodeHands, encodeRtc, KIND_AMV, KIND_CB90, KIND_MISSILE, KIND_PBV, KIND_STRF, KIND_STRV, KIND_SUBMARINE, KIND_TANK, LIMB_ALL, LIMB_ARMS, LIMB_LEGS, TURRET_ALT, TURRET_EMPTY } from './net/codec'
+import { encodeHands, encodeRtc, KIND_AMV, KIND_CB90, KIND_MISSILE, KIND_PBV, KIND_STRF, KIND_STRV, KIND_SUBMARINE, KIND_TANK, LIMB_ALL, LIMB_ARMS, LIMB_LEGS, THRUST_LOW_ROTOR, TURRET_ALT, TURRET_EMPTY } from './net/codec'
 import { TankMusic } from './music'
 import { VoiceChat } from './voice'
 import { PlaneModel } from './render/plane'
@@ -88,6 +88,7 @@ import { prompt } from './prompt'
 import { Surroundings } from './surroundings'
 import { Cameras } from './cameras'
 import { rideView, seatView, type SeatView } from './seats'
+import { CollectiveLever } from './sim/collective'
 import { loadRoosterModel } from './render/rooster'
 import { loadAnimalModels } from './render/animal'
 import { VehicleSounds } from './vehicleaudio'
@@ -409,6 +410,9 @@ export class Game {
   private readonly bricks: Bricklayer
   /** The vehicle seat the server says the local player sits in; null when on foot. */
   private seat: { vehicle: number; kind: number; index: number } | null = null
+  /** A helicopter pilot's collective lever, and the seat (`vehicle:index`) it was last taken up in. */
+  private readonly lever = new CollectiveLever()
+  private leverSeat: string | null = null
   /** The ski lift's chair the server says the local player rides (LIFTS.md); null when not on one. */
   private lifted: { lift: number; chair: number; seat: number } | null = null
   /** The Titan's fist the local player is held in, and where the server last had them. */
@@ -928,6 +932,7 @@ export class Game {
       pitch: toMrad(sample.pitch + this.sway[1]),
       view: this.viewTick(),
       slot: sample.slot,
+      collective: this.workLever(sample.buttons),
     }
     // In a car the soldier does not walk, and nor does a dead one; the frame is kept for replay
     // in case it steps out or respawns.
@@ -949,6 +954,34 @@ export class Game {
     if (this.recent.length > INPUT_REDUNDANCY) this.recent.shift()
     this.transport.send(encodeInput(this.recent, this.replica.baseline))
     this.moveFists(sample.buttons)
+  }
+
+  /** What a helicopter's pilot reads off its rotor gauge: the lever, the rotor's speed and the climb (`HudStats.rotor`). */
+  private rotorGauge(vehicle: number): HudStats['rotor'] {
+    const thrust = this.driver?.driving === vehicle ? this.driver.thrust : null
+    return {
+      lever: this.lever.value,
+      speed: thrust?.air ?? this.vehicles.placed.get(vehicle)?.air ?? 0,
+      climb: this.vehicles.fx(vehicle)?.velocity.y ?? 0,
+      low: ((thrust?.flags ?? 0) & THRUST_LOW_ROTOR) !== 0,
+    }
+  }
+
+  /**
+   * A helicopter pilot's collective lever for this tick, as the input carries it: taken up where it
+   * should start on the tick they take the seat, then moved by jump and run. 0 in any other seat.
+   */
+  private workLever(buttons: number): number {
+    const seat = this.seat
+    const levered = seat !== null && seat.index >= 0 && seatView(seat.kind, seat.index).lever === true
+    const key = levered ? `${seat.vehicle}:${seat.index}` : null
+    if (key !== this.leverSeat) {
+      this.leverSeat = key
+      const ride = seat ? this.vehicles.placed.get(seat.vehicle) : undefined
+      const height = ride ? ride.y - (this.terrain?.heightAt(ride.x, ride.z) ?? ride.y) : 0
+      this.lever.take(ride?.air ?? 0, height)
+    }
+    return levered ? this.lever.step(buttons) : 0
   }
 
   /**
@@ -1567,6 +1600,7 @@ export class Game {
       air: gauges?.includes('air') ? (this.driver?.thrust?.air ?? null) : gauges?.includes('wind') && seat ? this.sailing(seat.vehicle, now) : null,
       stamina: !seated && able ? { left: 1 - local.spent / STAMINA_FULL, winded: local.winded } : null,
       breath: !seated && player.alive && player.breath < 1 ? player.breath : null,
+      rotor: gauges?.includes('rotor') && seat ? this.rotorGauge(seat.vehicle) : null,
       speed: seated
         ? (fx && view && MOVERS.has(view.role) ? Math.hypot(fx.velocity.x, fx.velocity.y, fx.velocity.z) * 3.6 : null)
         : local.skis && able ? Math.hypot(local.knock[0], local.knock[1]) * 3.6 : null,

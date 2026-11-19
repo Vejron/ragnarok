@@ -35,7 +35,17 @@ fn join(game: &mut Game) -> (u32, mpsc::Receiver<Outgoing>) {
 fn press(game: &mut Game, id: u32, seq: &mut u32, axes: (i8, i8), buttons: u16, ticks: u32) {
     for _ in 0..ticks {
         *seq += 1;
-        game.handle(Command::Input(id, 0, vec![InputFrame { seq: *seq, strafe: axes.0, forward: axes.1, yaw: 0, buttons, pitch: 0, view: 0, slot: 0 }]));
+        game.handle(Command::Input(id, 0, vec![InputFrame { seq: *seq, strafe: axes.0, forward: axes.1, yaw: 0, buttons, pitch: 0, view: 0, slot: 0, collective: 0 }]));
+        game.step();
+    }
+}
+
+/// Feeds one frame per tick with a helicopter pilot's collective lever at `lever` (0..=1), looking ahead.
+fn collective(game: &mut Game, id: u32, seq: &mut u32, lever: f32, ticks: u32) {
+    for _ in 0..ticks {
+        *seq += 1;
+        let collective = (lever * 255.0).round() as u8;
+        game.handle(Command::Input(id, 0, vec![InputFrame { seq: *seq, collective, ..Default::default() }]));
         game.step();
     }
 }
@@ -145,9 +155,9 @@ fn the_driver_steers_and_passengers_ride_along() {
     for _ in 0..180 {
         seq_a += 1;
         seq_b += 1;
-        game.handle(Command::Input(driver, 0, vec![InputFrame { seq: seq_a, strafe: 0, forward: 127, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 }]));
+        game.handle(Command::Input(driver, 0, vec![InputFrame { seq: seq_a, strafe: 0, forward: 127, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0, collective: 0 }]));
         // A passenger's stick does nothing.
-        game.handle(Command::Input(rider, 0, vec![InputFrame { seq: seq_b, strafe: 127, forward: -127, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 }]));
+        game.handle(Command::Input(rider, 0, vec![InputFrame { seq: seq_b, strafe: 127, forward: -127, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0, collective: 0 }]));
         game.step();
     }
     let end = game.world.physics.car_pose(vid).unwrap();
@@ -220,18 +230,23 @@ fn a_pilot_lifts_off_with_one_passenger() {
     assert_eq!(game.world.entities.of::<Seats>(vid)[..], [Some(pilot), Some(rider)], "two seats, and the pilot first");
     assert!(game.world.entities.of::<Player>(third).seat.is_none());
 
-    // Jump climbs: a second of rotor spin-up is not needed, the lift is immediate.
-    press(&mut game, pilot, &mut seq_a, (0, 0), BUTTON_JUMP, 120);
+    // With the lever up, the rotor spins up before it lifts off, then it climbs.
+    collective(&mut game, pilot, &mut seq_a, 1.0, 60);
+    let spinning = game.world.physics.car_pose(vid).unwrap();
+    assert!(spinning.position[1] < start.position[1] + 0.5, "still on the ground at {}", spinning.position[1]);
+    collective(&mut game, pilot, &mut seq_a, 1.0, 60 * 5);
     let end = game.world.physics.car_pose(vid).unwrap();
-    assert!(end.position[1] > start.position[1] + 3.0, "climbed from {} to {}", start.position[1], end.position[1]);
+    assert!(end.position[1] > start.position[1] + 12.0, "climbed from {} to {}", start.position[1], end.position[1]);
     assert_eq!(game.world.entities.of::<Player>(rider).character.position, end.position, "the passenger goes up with it");
     let drive = game.told(pilot, vid).and_then(|heli| heli.drive).expect("the pilot gets the motion");
-    assert!(drive.vy > 100, "climbing at over 1 m/s: {drive:?}");
+    assert!(drive.vy > 500, "climbing at over 5 m/s: {drive:?}");
+    let thrust = game.told(pilot, vid).and_then(|heli| heli.thrust).expect("everyone is told the rotor's speed");
+    assert!(thrust.air > 245, "{thrust:?}");
 
-    // Let go of the stick: it hovers where it is.
-    idle(&mut game, pilot, &mut seq_a, 240);
+    // The lever where it hovers: it settles and holds its height.
+    collective(&mut game, pilot, &mut seq_a, HELI_HOVER_LEVER, 60 * 6);
     let hover = game.world.physics.car_pose(vid).unwrap();
-    idle(&mut game, pilot, &mut seq_a, 60);
+    collective(&mut game, pilot, &mut seq_a, HELI_HOVER_LEVER, 60);
     let later = game.world.physics.car_pose(vid).unwrap();
     assert!((later.position[1] - hover.position[1]).abs() < 0.5, "hovering: {} -> {}", hover.position[1], later.position[1]);
 }
@@ -308,8 +323,8 @@ fn a_driven_car_knocks_back_a_player_in_its_way() {
     for _ in 0..240 {
         seq_a += 1;
         seq_b += 1;
-        game.handle(Command::Input(driver, 0, vec![InputFrame { seq: seq_a, strafe: 0, forward: 127, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 }]));
-        game.handle(Command::Input(victim, 0, vec![InputFrame { seq: seq_b, strafe: 0, forward: 0, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 }]));
+        game.handle(Command::Input(driver, 0, vec![InputFrame { seq: seq_a, strafe: 0, forward: 127, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0, collective: 0 }]));
+        game.handle(Command::Input(victim, 0, vec![InputFrame { seq: seq_b, strafe: 0, forward: 0, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0, collective: 0 }]));
         game.step();
         let character = game.world.entities.of::<Player>(victim).character;
         peak_knock = peak_knock.max(character.knock[0].hypot(character.knock[1]));
@@ -357,8 +372,8 @@ fn driver_and_roof_rider(game: &mut Game) -> RoofScene {
     for _ in 0..30 {
         seq_a += 1;
         seq_b += 1;
-        game.handle(Command::Input(driver, 0, vec![InputFrame { seq: seq_a, strafe: 0, forward: 0, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 }]));
-        game.handle(Command::Input(rider, 0, vec![InputFrame { seq: seq_b, strafe: 0, forward: 0, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 }]));
+        game.handle(Command::Input(driver, 0, vec![InputFrame { seq: seq_a, strafe: 0, forward: 0, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0, collective: 0 }]));
+        game.handle(Command::Input(rider, 0, vec![InputFrame { seq: seq_b, strafe: 0, forward: 0, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0, collective: 0 }]));
         game.step();
     }
     RoofScene { vid, driver, rider, start: [pose.position[0], pose.position[2]], seqs: (seq_a, seq_b), _inboxes: (a, b) }
@@ -372,8 +387,8 @@ fn a_player_on_the_roof_rides_along() {
     for _ in 0..240 {
         seq_a += 1;
         seq_b += 1;
-        game.handle(Command::Input(driver, 0, vec![InputFrame { seq: seq_a, strafe: 0, forward: 127, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 }]));
-        game.handle(Command::Input(rider, 0, vec![InputFrame { seq: seq_b, strafe: 0, forward: 0, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 }]));
+        game.handle(Command::Input(driver, 0, vec![InputFrame { seq: seq_a, strafe: 0, forward: 127, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0, collective: 0 }]));
+        game.handle(Command::Input(rider, 0, vec![InputFrame { seq: seq_b, strafe: 0, forward: 0, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0, collective: 0 }]));
         game.step();
     }
     let car = game.world.physics.car_pose(vid).unwrap();
@@ -394,8 +409,8 @@ fn jumping_off_a_moving_car_keeps_its_speed() {
     for _ in 0..180 {
         seq_a += 1;
         seq_b += 1;
-        game.handle(Command::Input(driver, 0, vec![InputFrame { seq: seq_a, strafe: 0, forward: 127, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 }]));
-        game.handle(Command::Input(rider, 0, vec![InputFrame { seq: seq_b, strafe: 0, forward: 0, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 }]));
+        game.handle(Command::Input(driver, 0, vec![InputFrame { seq: seq_a, strafe: 0, forward: 127, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0, collective: 0 }]));
+        game.handle(Command::Input(rider, 0, vec![InputFrame { seq: seq_b, strafe: 0, forward: 0, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0, collective: 0 }]));
         game.step();
     }
     let speed = game.world.physics.car_pose(vid).unwrap().velocity;
@@ -403,14 +418,14 @@ fn jumping_off_a_moving_car_keeps_its_speed() {
     assert!(speed > 6.0, "the car is moving at {speed}");
     seq_a += 1;
     seq_b += 1;
-    game.handle(Command::Input(driver, 0, vec![InputFrame { seq: seq_a, strafe: 0, forward: 127, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 }]));
-    game.handle(Command::Input(rider, 0, vec![InputFrame { seq: seq_b, strafe: 0, forward: 0, yaw: 0, buttons: BUTTON_JUMP, pitch: 0, view: 0, slot: 0 }]));
+    game.handle(Command::Input(driver, 0, vec![InputFrame { seq: seq_a, strafe: 0, forward: 127, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0, collective: 0 }]));
+    game.handle(Command::Input(rider, 0, vec![InputFrame { seq: seq_b, strafe: 0, forward: 0, yaw: 0, buttons: BUTTON_JUMP, pitch: 0, view: 0, slot: 0, collective: 0 }]));
     game.step();
     // The jitter buffer holds one frame back, so the jump is applied on the next tick.
     seq_a += 1;
     seq_b += 1;
-    game.handle(Command::Input(driver, 0, vec![InputFrame { seq: seq_a, strafe: 0, forward: 127, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 }]));
-    game.handle(Command::Input(rider, 0, vec![InputFrame { seq: seq_b, strafe: 0, forward: 0, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 }]));
+    game.handle(Command::Input(driver, 0, vec![InputFrame { seq: seq_a, strafe: 0, forward: 127, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0, collective: 0 }]));
+    game.handle(Command::Input(rider, 0, vec![InputFrame { seq: seq_b, strafe: 0, forward: 0, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0, collective: 0 }]));
     game.step();
     let left = game.world.entities.of::<Player>(rider).character;
     assert_eq!(left.ride, 0);
@@ -672,7 +687,7 @@ fn a_pilot_and_a_gunner_take_a_plane_off_and_a_third_stays_behind() {
     let yaw = shared::quant::to_mrad(start.yaw());
     for _ in 0..60 * 7 {
         seq += 1;
-        game.handle(Command::Input(pilot, 0, vec![InputFrame { seq, strafe: 0, forward: -60, yaw, buttons: BUTTON_JUMP, pitch: 0, view: 0, slot: 0 }]));
+        game.handle(Command::Input(pilot, 0, vec![InputFrame { seq, strafe: 0, forward: -60, yaw, buttons: BUTTON_JUMP, pitch: 0, view: 0, slot: 0, collective: 0 }]));
         game.step();
     }
     let flying = game.world.physics.car_pose(vid).unwrap();
@@ -735,8 +750,8 @@ fn a_roadster_driver_boosts_on_run_hops_on_jump_and_brakes_on_crouch() {
 
     press(&mut game, id, &mut seq, (0, 0), BUTTON_CROUCH, 3);
     assert!(game.world.entities.of::<Vehicle>(vid).controls.handbrake);
-    // Nothing else carries a tank, but a hen's or a tupp's stamina and a drone's battery.
-    assert!(game.seen_vehicles().iter().filter(|(_, v)| !matches!(v.kind.as_ref().unwrap().kind, KIND_ROADSTER | KIND_HEN | KIND_TUPP | KIND_DRONE)).all(|(_, v)| v.thrust.is_none()));
+    // Nothing else carries a tank, but a hen's or a tupp's stamina, a drone's battery and a helicopter's rotor speed.
+    assert!(game.seen_vehicles().iter().filter(|(_, v)| !matches!(v.kind.as_ref().unwrap().kind, KIND_ROADSTER | KIND_HEN | KIND_TUPP | KIND_DRONE | KIND_HELI)).all(|(_, v)| v.thrust.is_none()));
 }
 
 /// A game with one pine just in front of where a vehicle of `kind` is set down facing it, and the

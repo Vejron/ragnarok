@@ -58,7 +58,7 @@ fn builder(game: &mut Game, x: f32, z: f32) -> u32 {
 /// One tick of `buttons` with slot 0 in hand, facing -Z and looking `pitch` radians up.
 fn press(game: &mut Game, id: u32, seq: &mut u32, buttons: u16, pitch: f32) {
     *seq += 1;
-    game.handle(Command::Input(id, 0, vec![InputFrame { seq: *seq, strafe: 0, forward: 0, yaw: 0, buttons, pitch: to_mrad(pitch), view: 0, slot: 0 }]));
+    game.handle(Command::Input(id, 0, vec![InputFrame { seq: *seq, strafe: 0, forward: 0, yaw: 0, buttons, pitch: to_mrad(pitch), view: 0, slot: 0, collective: 0 }]));
     game.step();
 }
 
@@ -332,7 +332,7 @@ fn a_car_at_speed_breaks_the_bricks_it_drives_into() {
     game.world.entities.get_mut::<crate::game::Seats>(vid).unwrap()[0] = Some(driver);
     game.world.entities.get_mut::<Player>(driver).unwrap().seat = Some(crate::game::Seat { vehicle: vid, index: 0, remote: false, from: None });
     for seq in 1..=TICK_RATE * 6 {
-        game.handle(Command::Input(driver, 0, vec![InputFrame { seq, strafe: 0, forward: 127, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 }]));
+        game.handle(Command::Input(driver, 0, vec![InputFrame { seq, strafe: 0, forward: 127, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0, collective: 0 }]));
         game.step();
     }
     assert!(game.world.construct.len() < built, "the car drove 6 s into a wall and broke nothing");

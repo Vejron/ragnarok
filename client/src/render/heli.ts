@@ -7,7 +7,7 @@ import type { VehicleModel } from './car'
 
 export const HELI_MODEL_URL = `${import.meta.env.BASE_URL}models/heli.glb`
 
-/** Main rotor speed with the pilot aboard, rad/s, and how fast it spins up or down, rad/s². */
+/** Main rotor speed at its governed speed, rad/s, and how fast the drawn speed follows the real one, rad/s². */
 const ROTOR_SPEED = 28
 const ROTOR_ACCEL = 14
 const TAIL_ROTOR_RATIO = 1.6
@@ -50,6 +50,8 @@ export class HeliModel implements VehicleModel {
   private readonly gunRest: number
   private readonly paint: Material
   private rotorSpeed = 0
+  /** The rotor's speed as the physics has it, a share of governed (`Thrust.air`), or null if not told. */
+  private rotorShare: number | null = null
   private lastUpdate = performance.now()
   /** `performance.now()` of the last round, for the barrels' kick. */
   private firedAt = -Infinity
@@ -76,9 +78,15 @@ export class HeliModel implements VehicleModel {
 
   }
 
+  /** The rotor's speed as the physics has it, a share of its governed speed (`Thrust.air`), or null if not known. */
+  setRotor(share: number | null) {
+    this.rotorShare = share
+  }
+
   /**
-   * Places the helicopter and animates it. The rotor spins up while seat 0 is taken. `turret` is the nose
-   * gun's angles in the hull frame. `steer` is unused: its lean and turn are in the orientation itself.
+   * Places the helicopter and animates it. The rotor turns at the speed `setRotor` was last given, or
+   * before any spins up while seat 0 is taken. `turret` is the nose gun's angles in the hull frame.
+   * `steer` is unused: its lean and turn are in the orientation itself.
    */
   update(
     position: readonly [number, number, number],
@@ -92,7 +100,7 @@ export class HeliModel implements VehicleModel {
     this.lastUpdate = now
     this.root.position.set(...position)
     this.root.quaternion.set(...rotation)
-    const target = (seats[0] ?? 0) !== 0 ? ROTOR_SPEED : 0
+    const target = this.rotorShare !== null ? this.rotorShare * ROTOR_SPEED : (seats[0] ?? 0) !== 0 ? ROTOR_SPEED : 0
     const step = ROTOR_ACCEL * dt
     this.rotorSpeed += Math.max(-step, Math.min(step, target - this.rotorSpeed))
     this.rotor.rotation.y += this.rotorSpeed * dt

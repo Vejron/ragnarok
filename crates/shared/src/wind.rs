@@ -24,6 +24,20 @@ pub const RUN: f32 = 0.7;
 /// The furthest a boom swings out over the side, radians.
 const BOOM_MAX: f32 = 1.4;
 
+/// How hard the wind blows over the land, m/s, and how far its gusts take it either side of that, as a
+/// share. A helicopter flies in it (the sim's `vehicle::flight`); the client has no need of it.
+pub const SPEED: f32 = 6.0;
+pub const GUSTS: f32 = 0.3;
+
+/// How hard the wind blows at `tick`, m/s: a slow swell and a quicker gust on top, both whole within the
+/// loop, so it does not jump as the loop comes round.
+pub fn speed(tick: u32) -> f32 {
+    let t = (tick % LOOP_TICKS) as f32 * TICK_DT;
+    let tau = std::f32::consts::TAU;
+    let swell = 0.6 * (tau * t / 32.0).sin() + 0.4 * (tau * t / 8.0 + 1.3).sin();
+    SPEED * (1.0 + GUSTS * swell)
+}
+
 /// Which way the wind blows at `tick`, a unit `[x, z]`.
 pub fn wind(tick: u32) -> [f32; 2] {
     let t = (tick % LOOP_TICKS) as f32 * TICK_DT;

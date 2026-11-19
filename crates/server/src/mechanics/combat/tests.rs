@@ -40,7 +40,7 @@ fn hold(game: &mut Game, id: u32, seq: &mut u32, yaw: f32, buttons: u16, ticks: 
     let aim = aim_for(game, id, 0);
     for _ in 0..ticks {
         *seq += 1;
-        game.handle(Command::Input(id, 0, vec![InputFrame { seq: *seq, strafe: 0, forward: 0, yaw: to_mrad(yaw), buttons, pitch: to_mrad(aim), view: 0, slot: 0 }]));
+        game.handle(Command::Input(id, 0, vec![InputFrame { seq: *seq, strafe: 0, forward: 0, yaw: to_mrad(yaw), buttons, pitch: to_mrad(aim), view: 0, slot: 0, collective: 0 }]));
         game.step();
     }
 }
@@ -76,7 +76,7 @@ fn give(game: &mut Game, id: u32, slot: usize, item: u8, count: u8) {
 /// One tick of `buttons` with `slot` selected, looking `pitch` radians up.
 fn press(game: &mut Game, id: u32, seq: &mut u32, buttons: u16, slot: u8, pitch: f32) {
     *seq += 1;
-    game.handle(Command::Input(id, 0, vec![InputFrame { seq: *seq, strafe: 0, forward: 0, yaw: 0, buttons, pitch: to_mrad(pitch), view: 0, slot }]));
+    game.handle(Command::Input(id, 0, vec![InputFrame { seq: *seq, strafe: 0, forward: 0, yaw: 0, buttons, pitch: to_mrad(pitch), view: 0, slot, collective: 0 }]));
     game.step();
 }
 
@@ -122,7 +122,7 @@ fn the_ak5_hurts_what_it_points_at_and_credits_the_shooter() {
 #[test]
 fn a_shot_at_the_ground_hits_nobody_and_ends_on_it() {
     let (mut game, shooter, target, _, _) = duel();
-    game.world.entities.get_mut::<Player>(shooter).unwrap().input = InputFrame { seq: 1, strafe: 0, forward: 0, yaw: 0, buttons: BUTTON_FIRE, pitch: to_mrad(-0.8), view: 0, slot: 0 };
+    game.world.entities.get_mut::<Player>(shooter).unwrap().input = InputFrame { seq: 1, strafe: 0, forward: 0, yaw: 0, buttons: BUTTON_FIRE, pitch: to_mrad(-0.8), view: 0, slot: 0, collective: 0 };
     game.world.shots.clear();
     fire_gun(&mut game.world, shooter, ak5());
     for _ in 0..10 {
@@ -139,7 +139,7 @@ fn a_shot_goes_where_the_shoulder_camera_crosshair_is() {
     let (mut game, shooter, _, _, _) = duel();
     // The pivot is to the right; a target whose centre is on that line is under the crosshair,
     // and one 5 m off to the side is not.
-    game.world.entities.get_mut::<Player>(shooter).unwrap().input = InputFrame { seq: 1, strafe: 0, forward: 0, yaw: 0, buttons: BUTTON_FIRE, pitch: 0, view: 0, slot: 0 };
+    game.world.entities.get_mut::<Player>(shooter).unwrap().input = InputFrame { seq: 1, strafe: 0, forward: 0, yaw: 0, buttons: BUTTON_FIRE, pitch: 0, view: 0, slot: 0, collective: 0 };
     let c = game.world.entities.of::<Player>(shooter).character;
     let pivot_y = c.position[1] + ON_FOOT_HEIGHT;
     let eye = [c.position[0], c.position[1] + EYE_HEIGHT, c.position[2]];
@@ -299,12 +299,12 @@ fn a_rocket_flies_and_bursts_on_the_target_and_hurts_it() {
     let (mut game, shooter, target, mut seq, _) = duel();
     // Down the sight a rocket flies along the look direction from the eye, so it is the target that stands in its line.
     game.world.entities.get_mut::<Player>(target).unwrap().character.position[0] = 100.0;
-    game.world.entities.get_mut::<Player>(shooter).unwrap().input = InputFrame { seq: 0, strafe: 0, forward: 0, yaw: 0, buttons: BUTTON_ALT, pitch: 0, view: 0, slot: 0 };
+    game.world.entities.get_mut::<Player>(shooter).unwrap().input = InputFrame { seq: 0, strafe: 0, forward: 0, yaw: 0, buttons: BUTTON_ALT, pitch: 0, view: 0, slot: 0, collective: 0 };
     fire_rocket(&mut game.world, shooter, ITEM_CARL_GUSTAF);
     // 20 m at 45 m/s is under half a second.
     for _ in 0..40 {
         seq += 1;
-        game.handle(Command::Input(shooter, 0, vec![InputFrame { seq, strafe: 0, forward: 0, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 }]));
+        game.handle(Command::Input(shooter, 0, vec![InputFrame { seq, strafe: 0, forward: 0, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0, collective: 0 }]));
         game.step();
         if game.world.entities.of::<crate::entities::Health>(target).hp < PLAYER_MAX_HP {
             break;
@@ -321,11 +321,11 @@ fn a_rocket_flies_and_bursts_on_the_target_and_hurts_it() {
 fn a_rocket_into_a_wall_next_to_you_hurts_you_and_credits_nobody() {
     let (mut game, shooter, _, mut seq, _) = duel();
     // Straight down at the feet: bursts a metre or so away.
-    game.world.entities.get_mut::<Player>(shooter).unwrap().input = InputFrame { seq: 1, strafe: 0, forward: 0, yaw: 0, buttons: BUTTON_ALT, pitch: to_mrad(-1.4), view: 0, slot: 0 };
+    game.world.entities.get_mut::<Player>(shooter).unwrap().input = InputFrame { seq: 1, strafe: 0, forward: 0, yaw: 0, buttons: BUTTON_ALT, pitch: to_mrad(-1.4), view: 0, slot: 0, collective: 0 };
     fire_rocket(&mut game.world, shooter, ITEM_CARL_GUSTAF);
     for _ in 0..4 {
         seq += 1;
-        game.handle(Command::Input(shooter, 0, vec![InputFrame { seq, strafe: 0, forward: 0, yaw: 0, buttons: 0, pitch: to_mrad(-1.4), view: 0, slot: 0 }]));
+        game.handle(Command::Input(shooter, 0, vec![InputFrame { seq, strafe: 0, forward: 0, yaw: 0, buttons: 0, pitch: to_mrad(-1.4), view: 0, slot: 0, collective: 0 }]));
         game.step();
     }
     assert!(game.world.entities.of::<crate::entities::Health>(shooter).hp < PLAYER_MAX_HP, "hit by your own blast");
@@ -346,7 +346,7 @@ fn the_ak5_chips_a_vehicle_and_a_wreck_kills_the_crew() {
     // The eye is above the roof; look a little down at the car.
     for _ in 0..3 {
         seq += 1;
-        game.handle(Command::Input(shooter, 0, vec![InputFrame { seq, strafe: 0, forward: 0, yaw: 0, buttons: BUTTON_FIRE, pitch: to_mrad(-0.05), view: 0, slot: 0 }]));
+        game.handle(Command::Input(shooter, 0, vec![InputFrame { seq, strafe: 0, forward: 0, yaw: 0, buttons: BUTTON_FIRE, pitch: to_mrad(-0.05), view: 0, slot: 0, collective: 0 }]));
         game.step();
     }
     let max = shared::protocol::vehicle_hp(shared::protocol::KIND_JEEP);
@@ -401,7 +401,7 @@ fn a_wreck_cannot_be_boarded_and_comes_back_whole() {
 #[test]
 fn a_rocket_in_flight_is_in_the_snapshot() {
     let (mut game, shooter, _, mut seq, _) = duel();
-    game.world.entities.get_mut::<Player>(shooter).unwrap().input = InputFrame { seq: 0, strafe: 0, forward: 0, yaw: 0, buttons: BUTTON_ALT, pitch: 0, view: 0, slot: 0 };
+    game.world.entities.get_mut::<Player>(shooter).unwrap().input = InputFrame { seq: 0, strafe: 0, forward: 0, yaw: 0, buttons: BUTTON_ALT, pitch: 0, view: 0, slot: 0, collective: 0 };
     fire_rocket(&mut game.world, shooter, ITEM_CARL_GUSTAF);
     hold(&mut game, shooter, &mut seq, 0.0, 0, 1);
     let rockets = game.seen_projectiles();
@@ -428,7 +428,7 @@ fn shoot_at_a_target_that_has_moved(lag: u32) -> u8 {
     let view = game.world.tick.wrapping_sub(lag);
     assert!(view <= tick_before + 8, "the test means to look at a moment around the move");
     seq += 1;
-    game.handle(Command::Input(shooter, 0, vec![InputFrame { seq, strafe: 0, forward: 0, yaw: 0, buttons: BUTTON_FIRE, pitch: to_mrad(aim_for(&game, shooter, 0)), view: view as u16, slot: 0 }]));
+    game.handle(Command::Input(shooter, 0, vec![InputFrame { seq, strafe: 0, forward: 0, yaw: 0, buttons: BUTTON_FIRE, pitch: to_mrad(aim_for(&game, shooter, 0)), view: view as u16, slot: 0, collective: 0 }]));
     settle(&mut game, shooter, &mut seq);
     game.world.entities.of::<crate::entities::Health>(target).hp
 }
@@ -655,7 +655,7 @@ fn a_carl_gustaf_fires_three_rockets_a_reload_apart_and_is_gone() {
 #[test]
 fn a_carl_gustaf_launch_is_announced_where_the_rocket_leaves() {
     let (mut game, shooter, _, _, _) = duel();
-    game.world.entities.get_mut::<Player>(shooter).unwrap().input = InputFrame { seq: 0, strafe: 0, forward: 0, yaw: 0, buttons: BUTTON_ALT, pitch: 0, view: 0, slot: 0 };
+    game.world.entities.get_mut::<Player>(shooter).unwrap().input = InputFrame { seq: 0, strafe: 0, forward: 0, yaw: 0, buttons: BUTTON_ALT, pitch: 0, view: 0, slot: 0, collective: 0 };
     game.world.shots.clear();
     fire_rocket(&mut game.world, shooter, ITEM_CARL_GUSTAF);
     let shot = game.world.shots.iter().find(|s| s.weapon == WEAPON_LAUNCHER).expect("the launch is announced");
@@ -852,7 +852,7 @@ fn a_car_at_speed_fells_the_tree_it_drives_into() {
     game.world.clear_pickups();
     let (_, driver) = driver_in_the_car(&mut game);
     for seq in 1..=TICK_RATE * 6 {
-        game.handle(Command::Input(driver, 0, vec![InputFrame { seq, strafe: 0, forward: 127, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 }]));
+        game.handle(Command::Input(driver, 0, vec![InputFrame { seq, strafe: 0, forward: 127, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0, collective: 0 }]));
         game.step();
     }
     assert!(!game.world.destroyed.is_empty(), "the car drove 6 s and felled nothing");
@@ -1118,7 +1118,7 @@ fn two_shotgun_blasts_kill_at_point_blank_and_credit_the_shooter() {
 #[test]
 fn a_shotgun_pull_announces_every_pellet() {
     let (mut game, shooter, _, _, _) = duel();
-    game.world.entities.get_mut::<Player>(shooter).unwrap().input = InputFrame { seq: 1, strafe: 0, forward: 0, yaw: 0, buttons: BUTTON_FIRE, pitch: to_mrad(AIM_20M), view: 0, slot: 4 };
+    game.world.entities.get_mut::<Player>(shooter).unwrap().input = InputFrame { seq: 1, strafe: 0, forward: 0, yaw: 0, buttons: BUTTON_FIRE, pitch: to_mrad(AIM_20M), view: 0, slot: 4, collective: 0 };
     game.world.shots.clear();
     fire_gun(&mut game.world, shooter, def(ITEM_SHOTGUN).unwrap());
     let gun = def(ITEM_SHOTGUN).unwrap();
@@ -1748,7 +1748,7 @@ fn knocked_down_a_soldier_is_thrown_and_can_do_nothing_until_they_are_up() {
         // Up when the count runs out, and free to shoot then: a frame is played a tick after it is
         // sent, so the trigger is let go a little before.
         let buttons = if down_of(&game, target) > 3 { BUTTON_FIRE | BUTTON_JUMP } else { 0 };
-        game.handle(Command::Input(target, 0, vec![InputFrame { seq, strafe: 0, forward: -127, yaw: 0, buttons, pitch: 0, view: 0, slot: 0 }]));
+        game.handle(Command::Input(target, 0, vec![InputFrame { seq, strafe: 0, forward: -127, yaw: 0, buttons, pitch: 0, view: 0, slot: 0, collective: 0 }]));
         game.step();
         flew += 1;
         assert!(flew < 600, "never got up");
@@ -1762,7 +1762,7 @@ fn knocked_down_a_soldier_is_thrown_and_can_do_nothing_until_they_are_up() {
     hold(&mut game, target, &mut seq, 0.0, 0, 1);
     for _ in 0..30 {
         seq += 1;
-        game.handle(Command::Input(target, 0, vec![InputFrame { seq, strafe: 0, forward: 127, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 }]));
+        game.handle(Command::Input(target, 0, vec![InputFrame { seq, strafe: 0, forward: 127, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0, collective: 0 }]));
         game.step();
     }
     assert!(game.world.entities.of::<Player>(target).character.position[2] < up[2] - 1.0);

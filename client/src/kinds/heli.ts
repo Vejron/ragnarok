@@ -5,7 +5,7 @@ import { HeliModel, loadHeliModel } from '@/render/heli'
 import { HELI_DISTANCE } from '@/render/scene'
 import { HELI_GUN_COOLDOWN_TICKS, HELI_GUN_PITCH_MAX, HELI_GUN_PITCH_MIN, HELI_GUN_YAW_LIMIT } from '@/sim/consts'
 import { TURBOSHAFT } from './engines'
-import { PLAIN_CHOP, DRIVE, type VehicleKind } from './kind'
+import { PLAIN_CHOP, type VehicleKind } from './kind'
 
 export const HELI: VehicleKind = {
   kind: KIND_HELI,
@@ -15,7 +15,7 @@ export const HELI: VehicleKind = {
     distance: HELI_DISTANCE,
     reload: HELI_GUN_COOLDOWN_TICKS,
     downwash: { reach: 18, radius: 6 },
-    seats: [{ rig: DRIVE, role: 'pilot', board: 'E: fly' }, { rig: { name: 'gun', hull: [HELI_GUN_YAW_LIMIT, HELI_GUN_PITCH_MIN, HELI_GUN_PITCH_MAX] }, role: 'gunner', board: 'E: man the nose gun' }],
+    seats: [{ rig: { name: 'pilot' }, role: 'pilot', board: 'E: fly', lever: true, gauges: ['rotor'] }, { rig: { name: 'gun', hull: [HELI_GUN_YAW_LIMIT, HELI_GUN_PITCH_MIN, HELI_GUN_PITCH_MAX] }, role: 'gunner', board: 'E: man the nose gun' }],
   },
   sound: {
     chop: PLAIN_CHOP,

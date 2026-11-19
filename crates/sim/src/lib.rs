@@ -148,6 +148,8 @@ pub struct Physics {
     waters: waters::Waters,
     /// The server tick the next step is, which the waves run on (`set_tick`); `step_cars` moves it on.
     tick: u32,
+    /// The share of the wind's strength a helicopter flies in: 1, or 0 in a test that wants still air.
+    breeze: f32,
 }
 
 /// Height of the top of the invisible boundary walls around the playable square, metres above
@@ -624,6 +626,7 @@ impl Physics {
             crops: cells::TileCells::default(),
             waters: waters::Waters::default(),
             tick: 0,
+            breeze: 1.0,
         }
     }
 
@@ -643,6 +646,12 @@ impl Physics {
     /// `None` where it is dry.
     pub fn water_surface(&self, x: f32, z: f32) -> Option<f32> {
         self.waters.surface(x, z, shared::waves::time(self.tick)).map(|surface| surface.height)
+    }
+
+    /// Test helper: stills the air a helicopter flies in.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn calm_wind(&mut self) {
+        self.breeze = 0.0;
     }
 
     /// Test helper: stills the waves on all open water.

@@ -39,7 +39,7 @@ fn a_client_rebuilds_exactly_what_the_server_has_near_it_in_a_busy_room() {
             let slot = (n % 3) as u8;
             let fire = if (t as usize + n * 7).is_multiple_of(40) { BUTTON_FIRE } else { 0 };
             let crouch = if n % 4 == 1 { BUTTON_CROUCH } else { 0 };
-            let frame = InputFrame { seq: t, strafe: if n % 2 == 0 { 90 } else { -90 }, forward: 127, yaw: (t as i16 * 9 + n as i16 * 300) % 3000, buttons: fire | crouch, pitch: 100, view: t as u16, slot };
+            let frame = InputFrame { seq: t, strafe: if n % 2 == 0 { 90 } else { -90 }, forward: 127, yaw: (t as i16 * 9 + n as i16 * 300) % 3000, buttons: fire | crouch, pitch: 100, view: t as u16, slot, collective: 0 };
             game.handle(Command::Input(id, t.saturating_sub(2), vec![frame]));
         }
         game.handle(Command::Input(observer, rebuilt, vec![InputFrame { seq: t, ..Default::default() }]));

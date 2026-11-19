@@ -26,7 +26,7 @@ fn join(game: &mut Game) -> u32 {
 fn fly(game: &mut Game, id: u32, seq: &mut u32, forward: i8, pitch: f32, buttons: u16, ticks: u32) {
     for _ in 0..ticks {
         *seq += 1;
-        let frame = InputFrame { seq: *seq, strafe: 0, forward, yaw: 0, buttons, pitch: shared::quant::to_mrad(pitch), view: 0, slot: 0 };
+        let frame = InputFrame { seq: *seq, strafe: 0, forward, yaw: 0, buttons, pitch: shared::quant::to_mrad(pitch), view: 0, slot: 0, collective: 0 };
         game.handle(Command::Input(id, 0, vec![frame]));
         game.step();
     }

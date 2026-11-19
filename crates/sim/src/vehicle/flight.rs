@@ -2,6 +2,7 @@
 //! angular velocity, the rotor and propeller are forces on the body, and wings lift it.
 
 use super::limbs::Planted;
+use super::water::smoothstep;
 use super::*;
 
 /// Share of full engine force at `speed` for a top speed of `max`: all of it up to [`FULL_POWER`]
@@ -285,42 +286,155 @@ pub(crate) fn jet(body: &mut RigidBody, gait: &Gait, jets: &shared::vehicles::Je
     flags | THRUST_LIFT
 }
 
-/// One tick of rotor flight for a powered helicopter body.
+/// One tick of a rotorcraft's flight; returns its `THRUST_*` flags. `rpm` is the rotor's speed, a share
+/// of what its governor holds, which this keeps; `power` is the share of its engine's power left
+/// (`CarCondition::power`, 0 with the engine shot dead); `wind` is the air's own velocity, m/s.
 ///
-/// The disc leans by setting the angular velocity that carries the hull's up axis towards the
-/// wanted lean (forward with the stick, sideways with the turn), and the yaw rate is set straight
-/// from the stick, like a tank's. The rotor then pushes along the up axis hard enough to hover
-/// however it leans, and holds a vertical speed set by the climb input. Everything is a function
-/// of the body's state and the controls alone, so the client can replay it.
-pub(crate) fn fly(body: &mut RigidBody, controls: CarControls, floor: f32, dt: f32) {
+/// The rotor's lift goes with the collective lever, the square of its speed and the air it meets: it
+/// loses lift climbing through its own disc and gains it descending or flaring, gains it near the ground
+/// (ground effect) and once it flies through clean air (translational lift), loses it sinking into its
+/// own downwash (vortex ring state) and past the speed its retreating blade stalls at. The thin air under
+/// the ceiling takes the engine's power away. It pushes along the hull's up axis, and the air drags on the hull along each of its
+/// axes. All of it is measured through the air, which the wind moves.
+///
+/// The rotor's speed is an energy balance. It takes power to hold up the helicopter, more to climb or to
+/// push through the air fast, and less at cruise than in a hover; the engine gives what it takes as far as
+/// its power goes, and spins it up from stopped. Asked for more, the rotor slows and its lift goes. With
+/// no engine, air coming up through the disc in a descent keeps the rotor turning (autorotation), and
+/// pulling the lever then spends its speed on a flare.
+///
+/// The flight controls fly the hull by torques, as far as the rotor has authority, which grows with its
+/// speed and its lift. The stick turns the hull (W/S pitch, A/D roll), and let go the stability
+/// augmentation only stops it turning: it stays at the lean it was left at. The pedals turn the nose
+/// towards where the pilot looks, the tail rotor also holding the main rotor's torque, and above a walking
+/// pace a turn asked for is banked into. The rotor turns the hull by itself as well: the tail rotor's push
+/// drifts it sideways, flapback lifts the nose with speed, transverse flow rolls it through translational
+/// lift and a stalling retreating blade rolls and pitches it up. Everything is a function of the body's
+/// state, the rotor's speed, the wind and the controls alone, so the client can replay it.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn fly(body: &mut RigidBody, rotor: &Rotorcraft, half_extents: [f32; 3], controls: CarControls, power: f32, rpm: &mut f32, wind: Vector, floor: f32, dt: f32) -> u8 {
     let rotation = *body.rotation();
     let up = rotation * Vector::Y;
     let nose = rotation * Vector::new(0.0, 0.0, -1.0);
+    let right = rotation * Vector::X;
+    let velocity = body.linvel();
+    let mass = body.mass();
+    let piloted = controls.powered;
+    let spin = rpm.clamp(0.0, 1.0);
+    let height = body.translation().y - floor;
+    // How it moves through the air.
+    let air = velocity - wind;
+    let climb = air.y;
+    let airspeed = Vector::new(air.x, 0.0, air.z).length();
+    let local = rotation.inverse() * air;
+    let ahead_air = (-local.z).max(0.0);
+    // The air through the disc, + going up along it: the vertical speed, and a share of what the lean adds.
+    let through = climb + (air.dot(up) - climb) * rotor.tilt_flow;
+
+    // The rotor's lift, m/s². Air going down through the disc (a climb, or a nose-down dash) flattens its
+    // angle onto the blades, and air coming up through it (a descent, or a flare) steepens it, the more
+    // so the slower they turn.
+    let pitch = controls.lift.clamp(0.0, 1.0) - through / (rotor.pitch_flow * spin.max(0.2));
+    let translational = 1.0 + rotor.etl_gain * smoothstep(0.3 * rotor.etl_speed, 1.2 * rotor.etl_speed, airspeed);
+    let ground = 1.0 + rotor.ground_effect * (1.0 - (height + rotor.hub).max(0.0) / (2.0 * rotor.radius)).max(0.0);
+    // Sinking into its own downwash: worst at a descent of about `hover_inflow`, gone well past it, where
+    // the air comes up through the disc cleanly, and flown out of with forward speed.
+    let sink = -climb / rotor.hover_inflow;
+    let ring = smoothstep(0.4, 0.8, sink) * (1.0 - smoothstep(1.4, 2.0, sink)) * (1.0 - smoothstep(0.3, 0.8, airspeed / rotor.hover_inflow));
+    let vortex = 1.0 - rotor.vortex * ring;
+    // Past the speed its retreating blade stalls at, the rotor loses lift and turns the hull.
+    let stalled = (ahead_air - rotor.stall_speed).max(0.0);
+    let stalling = 1.0 - (stalled / rotor.stall_speed).min(0.5);
+    let lift = rotor.thrust * pitch * spin * spin * translational * ground * vortex * stalling;
+
+    // Drag along each of the hull's axes, through the air.
+    let [side, vertical, fore] = rotor.drag;
+    let drag = rotation * Vector::new(-side * local.x * local.x.abs(), -vertical * local.y * local.y.abs(), -fore * local.z * local.z.abs());
+
+    // The power it takes, in shares of the hover's induced power: driving the air down through the disc,
+    // less the faster it flies across it and more as it climbs; pushing the hull through the air; and the
+    // blades' own drag. Air coming up through the disc faster than the rotor drives it down gives power
+    // back, which is what turns the rotor in autorotation.
+    let load = (lift / CAR_GRAVITY).abs();
+    let hover_flow = rotor.hover_inflow * load.sqrt();
+    let across = if hover_flow > 1e-3 { hover_flow * hover_flow / (airspeed * airspeed + hover_flow * hover_flow).sqrt() } else { 0.0 };
+    let induced = if through > 0.0 { ((0.5 * through).powi(2) + across * across).sqrt() - 0.5 * through } else { across };
+    let parasite = (-drag.dot(air) / (CAR_GRAVITY * rotor.hover_inflow)).max(0.0);
+    let need = load * (induced + through) / rotor.hover_inflow + parasite + rotor.profile * spin * spin * spin;
+    // The engine's governor gives what the rotor takes and spins it up towards its governed speed, as far
+    // as the air lets it: under the ceiling it fades to what a hover takes, and less above it.
+    let hovering = 1.0 + rotor.profile;
+    let thin = ((rotor.ceiling - height) / Rotorcraft::CEILING_FADE).clamp(-1.0, 1.0);
+    let most = if thin >= 0.0 { hovering + (rotor.power - hovering) * thin } else { hovering * (1.0 + 0.6 * thin) };
+    let available = if piloted { most * power.clamp(0.0, 1.0) } else { 0.0 };
+    let energy = 2.0 * rotor.inertia * spin.max(0.2);
+    let rise = ((1.0 - spin) * 4.0).min(rotor.spool);
+    let given = (need + energy * rise).clamp(0.0, available);
+    let braked = if piloted { 0.0 } else { rotor.brake };
+    *rpm = (spin + ((given - need) / energy - braked) * dt).clamp(0.0, 1.0);
+
+    // The controls, as angular accelerations about the hull's own axes: + about X lifts the nose, + about
+    // Y turns left and + about Z lifts the right side.
     let flat = Vector::new(nose.x, 0.0, nose.z);
     let heading = if flat.length() > 1e-3 { flat.normalize() } else { Vector::new(0.0, 0.0, -1.0) };
-    let right = heading.cross(Vector::Y);
-
+    let facing = (-heading.x).atan2(-heading.z);
+    let spin_local = rotation.inverse() * body.angvel();
+    let roll_now = right.y.clamp(-1.0, 1.0).asin();
+    // Hovering, the pedals turn the nose towards the look; with nobody at them the tail holds it still.
+    let looked = controls.aim.map(|[yaw, _]| yaw);
+    let hover_turn = looked.map_or(0.0, |yaw| (shared::quant::wrap_angle(yaw - facing) * rotor.yaw_gain).clamp(-rotor.yaw_rate, rotor.yaw_rate));
+    // Flying ahead through the air, it banks to bring its flight path round to the look, and the tail
+    // keeps the nose on that path: the turn its bank makes, and a swing back for any slip.
+    let cruising = smoothstep(rotor.coordinate_speed, 2.0 * rotor.coordinate_speed, ahead_air);
+    let track = (-air.x).atan2(-air.z);
+    let path_turn = looked.map_or(0.0, |yaw| shared::quant::wrap_angle(yaw - track) * rotor.yaw_gain);
+    let bank = (ahead_air.max(1.0) * path_turn / CAR_GRAVITY).atan().clamp(-rotor.bank_max, rotor.bank_max);
+    let slip = shared::quant::wrap_angle(facing - track);
+    let banked_turn = CAR_GRAVITY * roll_now.tan() / ahead_air.max(1.0) - slip * rotor.weathercock;
+    let turn = hover_turn + (banked_turn.clamp(-rotor.yaw_rate, rotor.yaw_rate) - hover_turn) * cruising;
+    // The stick asks for a pitch and roll rate, and let go for none. At speed the bank a turn takes is
+    // flown on top of the stick.
     let throttle = controls.throttle.clamp(-1.0, 1.0);
     let steer = controls.steer.clamp(-1.0, 1.0);
-    let lean = (Vector::Y + heading * (throttle * HELI_TILT) + right * (steer * HELI_BANK)).normalize();
-    let mut wanted = up.cross(lean) * HELI_LEVEL_GAIN;
-    // Clockwise seen from above is a negative rotation about +Y.
-    wanted.y = -steer * HELI_YAW_RATE;
-    let current = body.angvel();
-    body.set_angvel(current + (wanted - current) * (HELI_RESPONSE * dt).min(1.0), true);
+    let pitch_wanted = -throttle * rotor.pitch_rate;
+    let roll_wanted = -steer * rotor.roll_rate + ((bank - roll_now) * rotor.bank_gain).clamp(-rotor.roll_rate, rotor.roll_rate) * cruising;
+    let authority = rotor.cyclic_accel * spin * spin * (0.3 + 0.7 * load.min(1.0));
+    // Flown, the rate follows the stick; let go, the augmentation only damps it.
+    let gain = |stick: f32| if stick.abs() > 0.05 { rotor.rate_gain } else { rotor.hold_gain };
+    let pitching = ((pitch_wanted - spin_local.x) * gain(throttle)).clamp(-authority, authority);
+    let rolling = ((roll_wanted - spin_local.z) * gain(if cruising > 0.0 { 1.0 } else { steer })).clamp(-authority, authority);
+    // The main rotor's drag turns the hull against it (clockwise seen from above), and the tail rotor
+    // cancels that out of what it can give.
+    let reaction = -rotor.torque_yaw * given;
+    let tail_most = rotor.yaw_accel * spin * spin;
+    let tail = ((turn - spin_local.y) * rotor.rate_gain - reaction).clamp(-tail_most, tail_most);
+    let yawing = tail + reaction;
+    // What the rotor does to the hull by itself, scaled by how hard it works: flapback lifts the nose with
+    // speed, transverse flow rolls it right through translational lift, and a stalling retreating blade
+    // rolls it left and lifts the nose.
+    let working = spin * spin * load.min(1.5);
+    let flapping = rotor.flapback * ahead_air * working;
+    let transverse = -rotor.transverse * clean_band(airspeed, rotor.etl_speed) * working;
+    let stall_turn = rotor.blade_stall * stalled * working;
+    // As a torque on the hull box's own inertia, so that a knock from outside is fought, not undone.
+    let [hx, hy, hz] = half_extents;
+    let inertia = Vector::new(hy * hy + hz * hz, hx * hx + hz * hz, hx * hx + hy * hy) * (mass / 3.0);
+    let turning = Vector::new(pitching + flapping + stall_turn, yawing, rolling + transverse + stall_turn);
+    body.add_torque(rotation * (turning * inertia), true);
+    // The tail rotor's push to hold its yaw also pushes the helicopter sideways: + about Y swings the
+    // tail to the right, which it does by pushing to the right.
+    let drift = right * (tail * inertia.y / mass / rotor.tail_arm);
+    // A force rather than an impulse: it is integrated together with gravity.
+    body.add_force((up * lift + drag + drift) * mass, true);
 
-    // The climb input asks for a vertical speed; with none held it asks for zero, so letting go of
-    // the stick holds altitude. Climbing fades out below the ceiling and reverses above it.
-    let lift = controls.lift.clamp(-1.0, 1.0);
-    let headroom = ((HELI_CEILING - (body.translation().y - floor)) / 20.0).clamp(-1.0, 1.0);
-    let mut target = if lift > 0.0 { lift * HELI_CLIMB_SPEED * headroom.max(0.0) } else { lift * HELI_SINK_SPEED };
-    if headroom < 0.0 {
-        target = target.min(headroom * HELI_CLIMB_SPEED);
-    }
-    let extra = ((target - body.linvel().y) * HELI_VERT_GAIN).clamp(-HELI_VERT_ACCEL, HELI_VERT_ACCEL);
-    let accel = (CAR_GRAVITY + extra) / up.y.max(0.5);
-    // A force rather than an impulse: it is integrated together with gravity, so hovering is exact.
-    body.add_force(up * (accel * body.mass()), true);
+    let airborne = height > half_extents[1] + 0.3;
+    if piloted && airborne && *rpm < rotor.low_rotor { THRUST_LOW_ROTOR } else { 0 }
+}
+
+/// How far through the band of translational lift around `etl_speed` an `airspeed` is: 0 outside it,
+/// 1 in the middle, where the transverse flow rolls hardest and the airframe shudders.
+pub(crate) fn clean_band(airspeed: f32, etl_speed: f32) -> f32 {
+    smoothstep(0.3 * etl_speed, 0.6 * etl_speed, airspeed) * (1.0 - smoothstep(0.8 * etl_speed, 1.3 * etl_speed, airspeed))
 }
 
 /// One tick of an FPV drone with its motors running. It is flown by velocity: the stick and the look

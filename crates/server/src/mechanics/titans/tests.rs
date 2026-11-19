@@ -51,7 +51,7 @@ fn tick(game: &mut Game, vid: u32, pilot: u32, seq: &mut u32, buttons: u16, righ
 #[allow(clippy::too_many_arguments)]
 fn tick_hand(game: &mut Game, vid: u32, pilot: u32, seq: &mut u32, buttons: u16, hand: usize, at: Option<[f32; 3]>, closed: bool) {
     *seq += 1;
-    game.handle(Command::Input(pilot, 0, vec![InputFrame { seq: *seq, strafe: 0, forward: 0, yaw: 0, buttons, pitch: 0, view: 0, slot: 0 }]));
+    game.handle(Command::Input(pilot, 0, vec![InputFrame { seq: *seq, strafe: 0, forward: 0, yaw: 0, buttons, pitch: 0, view: 0, slot: 0, collective: 0 }]));
     let [x, y, z] = at.map_or([0; 3], |point| in_hull(game, vid, point));
     let (reach, grip) = [(HANDS_REACH_LEFT, HANDS_GRIP_LEFT), (HANDS_REACH_RIGHT, HANDS_GRIP_RIGHT)][hand];
     let flags = if at.is_some() { reach } else { 0 } | if closed { grip } else { 0 };
@@ -118,7 +118,7 @@ fn a_closed_hand_picks_a_soldier_up_carries_them_and_throws_them_when_it_opens()
     // They can still shoot from up there.
     let ammo = game.world.entities.of::<Player>(victim).hands.hotbar[0].ammo;
     for n in 0..30 {
-        game.handle(Command::Input(victim, 0, vec![InputFrame { seq: n + 1, strafe: 0, forward: 0, yaw: 0, buttons: BUTTON_FIRE, pitch: 0, view: 0, slot: 0 }]));
+        game.handle(Command::Input(victim, 0, vec![InputFrame { seq: n + 1, strafe: 0, forward: 0, yaw: 0, buttons: BUTTON_FIRE, pitch: 0, view: 0, slot: 0, collective: 0 }]));
         let pose = game.world.physics.car_pose(vid).unwrap();
         tick_hand(&mut game, vid, pilot, &mut seq, 0, 0, Some(pose.world_point([-TITAN_SHOULDER[0], 0.0, -15.0])), true);
     }
@@ -313,7 +313,7 @@ fn a_placed_titan_stands_is_boarded_from_between_its_feet_walks_and_sets_its_pil
     let mut press = |game: &mut Game, buttons: u16, forward: i8, ticks: u32| {
         for _ in 0..ticks {
             seq += 1;
-            game.handle(Command::Input(pilot, 0, vec![InputFrame { seq, strafe: 0, forward, yaw: 0, buttons, pitch: 0, view: 0, slot: 0 }]));
+            game.handle(Command::Input(pilot, 0, vec![InputFrame { seq, strafe: 0, forward, yaw: 0, buttons, pitch: 0, view: 0, slot: 0, collective: 0 }]));
             game.step();
         }
     };
@@ -552,7 +552,7 @@ fn a_titans_gun_hand_punches_but_never_grips() {
 /// One tick of `pilot` holding `buttons` and the stick `forward`, with no hands sent.
 fn drive(game: &mut Game, pilot: u32, seq: &mut u32, buttons: u16, forward: i8) {
     *seq += 1;
-    game.handle(Command::Input(pilot, 0, vec![InputFrame { seq: *seq, strafe: 0, forward, yaw: 0, buttons, pitch: 0, view: 0, slot: 0 }]));
+    game.handle(Command::Input(pilot, 0, vec![InputFrame { seq: *seq, strafe: 0, forward, yaw: 0, buttons, pitch: 0, view: 0, slot: 0, collective: 0 }]));
     game.step();
 }
 

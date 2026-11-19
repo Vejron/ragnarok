@@ -118,6 +118,7 @@ pub(super) const HEN: VehicleDef = VehicleDef {
         profile: Spec::BOX,
         springs: Springs::FIRM,
         airframe: None,
+        rotor: None,
         gait: Some(Gait::WALKER),
         arms: None,
         runners: None,

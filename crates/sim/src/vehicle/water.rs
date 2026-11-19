@@ -115,7 +115,7 @@ pub(crate) fn water_under(waters: &Waters, time: f32, body: &RigidBody, spec: &S
 }
 
 /// `0` at `low`, `1` at `high`, smoothly in between.
-fn smoothstep(low: f32, high: f32, x: f32) -> f32 {
+pub(crate) fn smoothstep(low: f32, high: f32, x: f32) -> f32 {
     let t = ((x - low) / (high - low).max(1e-3)).clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
 }

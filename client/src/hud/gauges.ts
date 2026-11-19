@@ -278,6 +278,11 @@ export class Gauges {
       const label = s.seat === 'helm' ? (s.air < 0.15 ? 'IN IRONS' : 'WIND') : wings ? (s.air < 0.15 ? 'GLIDE' : 'WINGS') : s.seat === 'sled' ? (s.air < 0.15 ? 'BOOST LOW' : 'BOOST') : s.air < 0.15 ? 'AIR LOW' : 'AIR'
       gauge(s.air, 'air', s.air < 0.15, label)
     }
+    if (s.rotor) {
+      const climb = `${s.rotor.climb >= 0 ? '+' : '−'}${Math.abs(s.rotor.climb).toFixed(1)} m/s`
+      gauge(s.rotor.lever, 'stamina', false, `COLLECTIVE ${Math.round(s.rotor.lever * 100)}%  ${climb}`)
+      gauge(s.rotor.speed, 'air', s.rotor.low, s.rotor.low ? 'LOW ROTOR' : `ROTOR ${Math.round(s.rotor.speed * 100)}%`)
+    }
     if (s.breath !== null) gauge(s.breath, 'breath', s.breath <= 0, s.breath <= 0 ? 'DROWNING' : 'BREATH')
     if (s.stamina && (s.stamina.left < 1 || s.stamina.winded)) gauge(s.stamina.left, 'stamina', s.stamina.winded, s.stamina.winded ? 'WINDED' : 'STAMINA')
     if (s.drone) {

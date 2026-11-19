@@ -86,6 +86,11 @@ export interface SoundInput {
   cut?: boolean
   /** A Roadster's `THRUST_*` nozzles firing: a roar of escaping air. */
   jets?: number
+  /**
+   * A helicopter's rotor speed, a share of its governed speed (`Thrust.air`): its blades beat with it,
+   * the engine running or not, so it is heard spinning up, drooping, spinning down and autorotating.
+   */
+  rotor?: number
 }
 
 /** Where an engine's revs are: rpm, how hard it pulls (0..1), and whether it is between gears. */
@@ -330,6 +335,12 @@ export function mixOf(input: SoundInput, engine: Engine, revs: RevState): SoundM
     mix.groundHz = 250 + 30 * moving
     mix.grit = QUIET_GRIT
   }
+  if (engine.name === 'rotor' && input.rotor !== undefined) {
+    // The blades beat as fast as they turn, and harder the more lift they make.
+    mix.chop = input.rotor * (9 + 6 * (powered ? revs.load : 0.3))
+    mix.chopLevel = clamp(input.rotor * 1.2)
+    mix.chopTone = 1
+  }
   if (!powered) return mix
 
   mix.rpm = revs.rpm
@@ -337,8 +348,8 @@ export function mixOf(input: SoundInput, engine: Engine, revs: RevState): SoundM
   mix.engine = engine.level
   mix.cut = input.cut === true && engine.name === 'rotary'
   if (engine.name === 'rotor') {
-    // The blades beat with the turbine's speed.
-    mix.chop = (revs.rpm / engine.redline) * (9 + 6 * revs.load)
+    // The blades beat with the rotor's speed, or failing that the turbine's.
+    mix.chop = (input.rotor ?? revs.rpm / engine.redline) * (9 + 6 * revs.load)
     mix.chopLevel = 1
     mix.chopTone = 1
   }

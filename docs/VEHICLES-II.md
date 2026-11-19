@@ -100,14 +100,14 @@ On taking the gunner seat, the camera starts where the barrel already points. Wh
 
 One helicopter stands among the vehicles. Walk up and press **E**: the first in is the pilot, the second takes the nose gun, and a third can't board.
 
-- **Pilot:** W/S lean the rotor forward and back, A/D turn (clockwise on D), **Space climbs**, **Shift sinks**. Let go of everything and it hovers where it is, whatever its speed. Top speed is about 25 m/s in a full lean, and it won't climb past 120 m.
+- **Pilot:** flown as [HELICOPTER.md](HELICOPTER.md) describes: the mouse turns it, W/S/A/D are the cyclic and Space/Shift move a collective lever that stays where it is left. (The first model, below, was an arcade one.)
 - **Gunner:** seat 1 works the chin gun of the Mi-24 (a four-barrel autocannon under the nose). The mouse aims it and a held click or **F** fires three explosive rounds a second; each flies and falls like a tank shell and bursts with a third of its radius and a third of its damage. **R** swaps between the pilot's and gunner's seats when the other is free, as in a tank. It swings 57° either side of the nose and from 43° down to 11° up, in the hull's frame, so the camera stops at those limits. As in a tank, their stick does nothing.
 - **Leaving:** E steps out beside the hull. In the air that is a fall; there is no fall damage yet.
-- **Empty:** with nobody in seat 0 the rotor is off and it drops like a stone, then sits where it lands.
+- **Empty:** with nobody in seat 0 the engine is off: the rotor spins down, and the helicopter comes down with it.
 
-### Flight model
+### Flight model (the first, arcade one)
 
-There are no wheels. `fly` in `physics/vehicle.rs` is a function of the body's state and the controls only, applied once per tick before the rigid-body step:
+Replaced by the model in [HELICOPTER.md](HELICOPTER.md). There are no wheels. `fly` in `physics/vehicle.rs` is a function of the body's state and the controls only, applied once per tick before the rigid-body step:
 
 1. **Lean.** The wanted up axis is straight up, tilted forward by `throttle × HELI_TILT` and sideways by `steer × HELI_BANK`. The angular velocity that carries the hull's up axis there is `up × wanted × HELI_LEVEL_GAIN`, and the body's angular velocity follows it at `HELI_RESPONSE` per second. With no stick it levels out, also after a knock.
 2. **Turn.** The yaw rate is set straight from the stick, `HELI_YAW_RATE` at full lock, as for a tank.

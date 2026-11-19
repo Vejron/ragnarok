@@ -133,6 +133,7 @@ pub(super) const SEAPLANE: VehicleDef = VehicleDef {
         profile: Spec::BOX,
         springs: Springs::FIRM,
         airframe: Some(SEAPLANE_AIRFRAME),
+        rotor: None,
         gait: None,
         arms: None,
         runners: None,

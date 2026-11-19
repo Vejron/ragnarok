@@ -97,7 +97,7 @@ const flag = (b: boolean | undefined) => (b ? 1 : 0)
 
 /** What a driver's `input` asks of a vehicle of `kind`, read as the server reads it (`CarControls::driven`). */
 export function controlsOf(input: InputFrame, kind: number): CarControls {
-  const c = ClientSim.controlsFor(kind, input.strafe, input.forward, input.yaw, input.pitch, input.buttons)
+  const c = ClientSim.controlsFor(kind, input.strafe, input.forward, input.yaw, input.pitch, input.buttons, input.collective)
   return { throttle: c[0]!, steer: c[1]!, handbrake: c[2] === 1, lift: c[3]!, powered: c[4] === 1, aim: c[5] === 1 ? [c[6]!, c[7]!] : null, boost: c[8] === 1, hop: c[9] === 1 }
 }
 

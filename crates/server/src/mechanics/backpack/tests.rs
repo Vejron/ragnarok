@@ -282,7 +282,7 @@ fn the_lamp_button_switches_the_headlamp_once_a_press_for_everyone_to_see() {
     let mut press = |game: &mut Game, buttons: u16, ticks: u32| {
         for _ in 0..ticks {
             seq += 1;
-            game.handle(Command::Input(id, 0, vec![InputFrame { seq, strafe: 0, forward: 0, yaw: 0, buttons, pitch: 0, view: 0, slot: 0 }]));
+            game.handle(Command::Input(id, 0, vec![InputFrame { seq, strafe: 0, forward: 0, yaw: 0, buttons, pitch: 0, view: 0, slot: 0, collective: 0 }]));
             game.step();
         }
     };

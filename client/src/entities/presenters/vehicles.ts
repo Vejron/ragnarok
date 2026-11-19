@@ -1,11 +1,12 @@
 import { Quaternion, Vector3 } from '@ragnarok/engine'
 import type { Node, PointLights } from '@ragnarok/engine'
-import { ARMS_CUT, DAMAGE_WHEELS, KIND_MISSILE, KIND_SHIP, KIND_SHIP_GUN, KIND_TITAN, THRUST_LIFT } from '@/net/codec'
+import { ARMS_CUT, DAMAGE_WHEELS, KIND_HELI, KIND_MISSILE, KIND_SHIP, KIND_SHIP_GUN, KIND_TITAN, THRUST_LIFT } from '@/net/codec'
 import type { Debris } from '@/render/debris'
 import type { Effects } from '@/render/effects'
 import type { Rounds } from '@/render/rounds'
 import type { Flinch } from '@/render/flinch'
 import { HenModel } from '@/render/hen'
+import { HeliModel } from '@/render/heli'
 import { VehicleFx, slamDust, type FxWorld } from '@/render/tyres'
 import { kindView } from '@/kinds'
 import { missileLaunch, tubeSmoke } from '@/render/launch'
@@ -280,6 +281,8 @@ export class Vehicles implements Presenter<Frame> {
     const [x, y, z] = position
     // A hen draws its wings and legs from its flags: the driver's own as predicted, at once.
     if (model instanceof HenModel) model.setFlags(jets)
+    // A helicopter's rotor turns as fast as the physics has it turning: spinning up, drooping or autorotating.
+    if (model instanceof HeliModel) model.setRotor(entity.thrust?.air ?? null)
     // A Titan's limbs are where the server has them.
     if (model instanceof TitanModel) model.setLimbs(entity.titan ?? null)
     // Rocked by the rounds striking it, about the ground under it; a Titan's legs bend to keep its feet
@@ -388,6 +391,7 @@ export class Vehicles implements Presenter<Frame> {
         cut,
         // A Titan in the air with its thrusters off is silent.
         jets: kind === KIND_TITAN ? placed.jets & THRUST_LIFT : placed.jets,
+        rotor: kind === KIND_HELI ? (placed.air ?? 0) : undefined,
       },
       position,
       [fx.velocity.x, fx.velocity.y, fx.velocity.z],

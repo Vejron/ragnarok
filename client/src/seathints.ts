@@ -35,7 +35,7 @@ const HINTS: Record<Seat, (stats: Stats) => string> = {
     return `Mouse turn the periscope · Hold right mouse to zoom · Click or F launch a missile · ${state}${canSwitchSeat ? SWITCH : ''}`
   },
   missile: () => 'Mouse steer (it banks and turns to where you look) · W/S pitch · A/D roll · Click or F detonate · E let it go',
-  pilot: ({ canSwitchSeat }) => `W/S lean forward and back · A/D turn · Space climb · Shift sink${LIGHTS}${canSwitchSeat ? SWITCH : ''}`,
+  pilot: ({ canSwitchSeat }) => `Mouse turn (it banks into the turn at speed) · W/S pitch · A/D roll (it holds the lean you leave it at: fly it back level) · Space raise collective · Shift lower it · Click or F rockets${LIGHTS}${canSwitchSeat ? SWITCH : ''}`,
   aviator: ({ canSwitchSeat }) => `Mouse steer (the plane turns to where you look) · Space throttle up · Shift throttle down · W/S/A/D by hand · Click or F fire · C bomb${LIGHTS}${canSwitchSeat ? SWITCH : ''}`,
   passenger: ({ canSwitchSeat }) => `Mouse look · Click or F fire your gun · Right mouse aim · 1-5 or wheel switch · R reload${canSwitchSeat ? ', or switch seat when it is full' : ''}`,
   gunner: ({ ammo, jammed, heat, reload, canSwitchSeat }) => {

@@ -224,7 +224,7 @@ impl ClientSim {
     #[wasm_bindgen(js_name = stepCharacter)]
     pub fn step_character(&self, state: &mut [f64], seq: u32, strafe: i8, forward: i8, yaw: i16, buttons: u16, pitch: i16, view: u16, slot: u8, dt: f32, speed_scale: f32, armed: bool) {
         let mut character = read(state);
-        let input = InputFrame { seq, strafe, forward, yaw, buttons, pitch, view, slot };
+        let input = InputFrame { seq, strafe, forward, yaw, buttons, pitch, view, slot, collective: 0 };
         let velocity = if character.ride == 0 { None } else { self.physics.obstacle_velocity(character.ride) };
         self.physics.step_character(&mut character, &input, dt, speed_scale, armed, velocity);
         if !character.grounded {
@@ -280,8 +280,8 @@ impl ClientSim {
     /// The controls (`CONTROLS_LEN` numbers) a driver's input asks of a vehicle of `kind`, as the
     /// server reads them (`CarControls::driven`).
     #[wasm_bindgen(js_name = controlsFor)]
-    pub fn controls_for(kind: u8, strafe: i8, forward: i8, yaw: i16, pitch: i16, buttons: u16) -> Vec<f32> {
-        let input = InputFrame { strafe, forward, yaw, pitch, buttons, ..Default::default() };
+    pub fn controls_for(kind: u8, strafe: i8, forward: i8, yaw: i16, pitch: i16, buttons: u16, collective: u8) -> Vec<f32> {
+        let input = InputFrame { strafe, forward, yaw, pitch, buttons, collective, ..Default::default() };
         controls_to(&CarControls::driven(kind, &input))
     }
 

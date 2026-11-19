@@ -118,6 +118,7 @@ pub(super) const TECHNICAL: VehicleDef = VehicleDef {
         // Half as stiff as a car's and with a long travel: it sags, pitches and rolls, and soaks up the bumps.
         springs: Springs { stiffness: 12.0, compression: 0.9, damping: 1.6, travel: 0.5 },
         airframe: None,
+        rotor: None,
         gait: None,
         arms: None,
         runners: None,

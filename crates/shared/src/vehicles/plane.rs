@@ -172,6 +172,7 @@ pub(super) const PLANE: VehicleDef = VehicleDef {
         profile: Spec::BOX,
         springs: Springs::FIRM,
         airframe: Some(PLANE_AIRFRAME),
+        rotor: None,
         gait: None,
         arms: None,
         runners: None,

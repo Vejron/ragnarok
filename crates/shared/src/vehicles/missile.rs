@@ -118,6 +118,7 @@ pub(super) const MISSILE: VehicleDef = VehicleDef {
         profile: Spec::BOX,
         springs: Springs::FIRM,
         airframe: None,
+        rotor: None,
         gait: None,
         arms: None,
         runners: None,

@@ -6,7 +6,7 @@ import { flatMotor } from './worlds'
 // The movement rules themselves are the server's (`crates/shared/src/movement.rs`, tested there) and
 // run here through the WASM build; what is left to test on this side is what the client feeds them.
 
-const frame = (seq: number, forward: number, buttons = 0) => ({ seq, strafe: 0, forward, yaw: 0, buttons, pitch: 0, view: 0, slot: 0 })
+const frame = (seq: number, forward: number, buttons = 0) => ({ seq, strafe: 0, forward, yaw: 0, buttons, pitch: 0, view: 0, slot: 0, collective: 0 })
 const standing = () => ({ position: [0, STANDING_Y, 0] as [number, number, number], yaw: 0, vy: 0, grounded: true, knock: [0, 0] as [number, number], ride: 0, prone: false, chute: false, spent: 0, winded: false, lost: 0, down: 0, skis: false, skiStrain: 0, swimming: false, ghost: false })
 
 describe('movement', () => {

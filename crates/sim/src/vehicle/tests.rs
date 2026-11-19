@@ -573,7 +573,7 @@ fn cars_are_solid_to_characters() {
     run(&mut physics, COAST, 60);
     let mut character = Character { position: [-4.0, STANDING_Y, 0.0], grounded: true, ..Default::default() };
     // Yaw -π/2 faces +X, into the car's flank.
-    let toward_car = InputFrame { seq: 1, strafe: 0, forward: 127, yaw: -1571, buttons: 0, pitch: 0, view: 0, slot: 0 };
+    let toward_car = InputFrame { seq: 1, strafe: 0, forward: 127, yaw: -1571, buttons: 0, pitch: 0, view: 0, slot: 0, collective: 0 };
     for _ in 0..180 {
         physics.move_character(&mut character, &toward_car, TICK_DT);
     }
@@ -814,23 +814,29 @@ fn with_heli(height: f32) -> Physics {
 
 const PILOTED: CarControls = CarControls { powered: true, ..CarControls::IDLE };
 
-/// A scripted flight for the fixture in `vehicle.spec.ts`: hover, climb, lean forward, turn, sink.
+/// A scripted flight for the fixture in `vehicle.spec.ts`, in the wind: spin up, lift off on full
+/// collective, tip the nose down and fly ahead, turn towards a look to the right while rolling left, then
+/// pull the nose up and sink.
 fn scripted_flight(tick: u32) -> CarControls {
-    match tick / 60 {
-        0 => PILOTED,
-        1 | 2 => CarControls { lift: 1.0, ..PILOTED },
-        3 | 4 => CarControls { throttle: 1.0, ..PILOTED },
-        5 | 6 => CarControls { throttle: 1.0, steer: 0.7, ..PILOTED },
-        _ => CarControls { throttle: -0.5, steer: -1.0, lift: -1.0, ..PILOTED },
+    let flying = |lift: f32, look: f32| CarControls { lift, aim: Some([look, 0.0]), ..PILOTED };
+    match tick / 30 {
+        0..=3 => flying(0.0, 0.0),
+        4..=7 => flying(1.0, 0.0),
+        8 => CarControls { throttle: 0.6, ..flying(0.7, 0.0) },
+        9..=11 => flying(0.7, 0.0),
+        12 => CarControls { steer: -0.5, ..flying(0.6, -1.0) },
+        13 => flying(0.6, -1.0),
+        14 => CarControls { throttle: -0.6, ..flying(0.4, -1.0) },
+        _ => flying(0.4, -1.0),
     }
 }
 
-/// `(tick, position)` of a helicopter started at `[0, 3, 0]`, mirrored in `vehicle.spec.ts`.
+/// `(tick, position)` of a helicopter started at `[0, 3, 0]` in the wind, mirrored in `vehicle.spec.ts`.
 const FLIGHT_CHECKPOINTS: [(u32, [f32; 3]); 4] = [
-    (90, [0.0, 3.6099, 0.0]),
-    (210, [0.0, 11.8079, -0.0842]),
-    (330, [0.1181, 13.1328, -8.3432]),
-    (480, [12.1913, 11.3589, -26.3039]),
+    (90, [0.0717, 0.7999, 0.0029]),
+    (210, [0.9357, 3.1621, 0.0317]),
+    (330, [6.8222, 15.8349, -0.7983]),
+    (480, [18.4246, 24.7133, -10.4861]),
 ];
 
 #[test]
@@ -1069,12 +1075,101 @@ fn a_drone_with_its_motors_off_falls() {
     assert!(pose.position[1] < 0.5, "{pose:?}");
 }
 
+/// A helicopter in the air over the airfield at `height` with its rotor at governed speed, flying ahead
+/// (towards -Z) at `speed`, in still air.
+fn flying_heli(height: f32, speed: f32) -> Physics {
+    let mut physics = Physics::new(&airfield()).unwrap();
+    physics.calm_wind();
+    physics.add_car(1, KIND_HELI, [0.0, height, 0.0], 0.0);
+    let motion = CarMotion { linvel: [0.0, 0.0, -speed], angvel: [0.0; 3], steer: 0.0, spin: 0.0 };
+    physics.set_car_state(1, [0.0, height, 0.0], [0.0, 0.0, 0.0, 1.0], motion, Some(1.0));
+    physics
+}
+
+/// A pilot holding the collective lever at `lever`, looking straight ahead, hands off the stick.
+fn lever(lever: f32) -> CarControls {
+    CarControls { lift: lever, aim: Some([0.0, 0.0]), ..PILOTED }
+}
+
+/// The helicopter's nose-up pitch and right-side-up roll, radians.
+fn attitude(pose: &CarPose) -> (f32, f32) {
+    let rotation = Rotation::from_xyzw(pose.rotation[0], pose.rotation[1], pose.rotation[2], pose.rotation[3]);
+    let nose = rotation * Vector::new(0.0, 0.0, -1.0);
+    let right = rotation * Vector::X;
+    (nose.y.clamp(-1.0, 1.0).asin(), right.y.clamp(-1.0, 1.0).asin())
+}
+
+/// A test pilot: works the stick to hold the helicopter at `pitch` (+ nose up) and `roll` (+ right side
+/// up), radians, on top of `controls`, as a person would by eye.
+fn holding(physics: &Physics, controls: CarControls, pitch: f32, roll: f32) -> CarControls {
+    let (pitch_now, roll_now) = attitude(&physics.car_pose(1).unwrap());
+    let angvel = physics.car_motion(1).unwrap().angvel;
+    let pose = physics.car_pose(1).unwrap();
+    let rotation = Rotation::from_xyzw(pose.rotation[0], pose.rotation[1], pose.rotation[2], pose.rotation[3]);
+    let local = rotation.inverse() * Vector::from(angvel);
+    // The stick asks for a rate: towards the wanted lean, less the rate it already has.
+    let throttle = (-((pitch - pitch_now) * 3.0 - local.x * 0.5) / 0.6).clamp(-1.0, 1.0);
+    let steer = (-((roll - roll_now) * 3.0 - local.z * 0.5) / 0.9).clamp(-1.0, 1.0);
+    CarControls { throttle, steer, ..controls }
+}
+
+/// Flies `ticks` with `pilot` deciding each tick's controls from the physics.
+fn fly_by(physics: &mut Physics, ticks: u32, pilot: impl Fn(&Physics) -> CarControls) -> CarPose {
+    for _ in 0..ticks {
+        let controls = pilot(physics);
+        physics.drive_car(1, controls, TICK_DT);
+        physics.step_cars(TICK_DT);
+    }
+    physics.car_pose(1).unwrap()
+}
+
+/// Flies `ticks` holding the lever at `at` and the hull level.
+fn hover(physics: &mut Physics, at: f32, ticks: u32) -> CarPose {
+    fly_by(physics, ticks, |physics| holding(physics, lever(at), 0.0, 0.0))
+}
+
+/// The helicopter's rotor speed (share of governed) and its `THRUST_*` flags.
+fn rotor(physics: &Physics) -> (f32, u8) {
+    physics.car_thrust(1).unwrap()
+}
+
 #[test]
-fn a_powered_helicopter_hovers() {
-    let mut physics = with_heli(10.0);
-    let pose = run(&mut physics, PILOTED, 60 * 5);
-    assert!((pose.position[1] - 10.0).abs() < 0.2 && pose.up_y > 0.999, "{pose:?}");
-    assert!(pose.velocity.iter().all(|v| v.abs() < 0.1), "{pose:?}");
+fn a_stopped_rotor_spins_up_before_it_lifts_off() {
+    let mut physics = with_heli(1.0);
+    assert_eq!(rotor(&physics).0, 0.0, "it starts with its rotor stopped");
+    let early = run(&mut physics, lever(1.0), 60);
+    assert!(early.position[1] < 1.0 && rotor(&physics).0 < 0.5, "{early:?} {:?}", rotor(&physics));
+    let late = fly_by(&mut physics, 60 * 4, |physics| holding(physics, lever(1.0), 0.0, 0.0));
+    assert!(late.position[1] > 3.0 && rotor(&physics).0 > 0.95, "{late:?} {:?}", rotor(&physics));
+}
+
+#[test]
+fn the_hover_lever_holds_its_height_out_of_ground_effect() {
+    let mut physics = flying_heli(40.0, 0.0);
+    let pose = hover(&mut physics, HELI_HOVER_LEVER, 60 * 10);
+    assert!((pose.position[1] - 40.0).abs() < 1.5 && pose.velocity[1].abs() < 0.2, "{pose:?}");
+    assert!(rotor(&physics).0 > 0.99, "{:?}", rotor(&physics));
+}
+
+#[test]
+fn the_tail_rotor_drifts_it_right_in_a_level_hover_and_a_little_bank_holds_it() {
+    let mut level = flying_heli(40.0, 0.0);
+    let drifted = hover(&mut level, HELI_HOVER_LEVER, 60 * 5);
+    assert!(drifted.position[0] > 1.0, "translating tendency: {drifted:?}");
+    let mut banked = flying_heli(40.0, 0.0);
+    let held = fly_by(&mut banked, 60 * 5, |physics| holding(physics, lever(HELI_HOVER_LEVER), 0.0, 0.03));
+    assert!(held.position[0].abs() < drifted.position[0] * 0.5, "{held:?} vs {drifted:?}");
+}
+
+#[test]
+fn the_ground_holds_up_a_rotor_close_over_it_on_less_lever() {
+    let low = HELI_HOVER_LEVER - 0.05;
+    let mut high = flying_heli(40.0, 0.0);
+    let aloft = hover(&mut high, low, 60 * 6);
+    assert!(aloft.position[1] < 38.0, "out of ground effect it sinks: {aloft:?}");
+    let mut near = flying_heli(2.5, 0.0);
+    let cushion = hover(&mut near, low, 60 * 6);
+    assert!(cushion.position[1] > 1.2 && cushion.velocity[1].abs() < 0.3, "the cushion holds it off the ground: {cushion:?}");
 }
 
 #[test]
@@ -1085,50 +1180,201 @@ fn an_unpowered_helicopter_falls_and_rests() {
 }
 
 #[test]
-fn it_climbs_and_sinks_on_the_lift_input() {
-    let mut physics = with_heli(10.0);
-    let up = run(&mut physics, CarControls { lift: 1.0, ..PILOTED }, 60 * 2);
-    assert!(up.position[1] > 14.0 && up.velocity[1] > 2.0, "{up:?}");
-    // It still has the speed of the climb to shed first.
-    let down = run(&mut physics, CarControls { lift: -1.0, ..PILOTED }, 60 * 6);
-    assert!(down.position[1] < up.position[1] - 3.0 && down.velocity[1] < -3.0, "{up:?} -> {down:?}");
+fn with_nobody_at_the_controls_the_rotor_spins_down() {
+    let mut physics = flying_heli(0.8, 0.0);
+    run(&mut physics, CarControls::IDLE, 60 * 5);
+    let slowing = rotor(&physics).0;
+    run(&mut physics, CarControls::IDLE, 60 * 10);
+    assert!(slowing < 0.7 && rotor(&physics).0 == 0.0, "{slowing} then {:?}", rotor(&physics));
 }
 
 #[test]
-fn leaning_forward_flies_forward_at_a_sensible_speed_without_losing_height() {
-    let mut physics = with_heli(20.0);
-    let pose = run(&mut physics, CarControls { throttle: 1.0, ..PILOTED }, 60 * 8);
-    assert!(pose.position[2] < -60.0 && pose.position[0].abs() < 1.0, "flies towards -Z: {pose:?}");
-    assert!(pose.forward_speed > 12.0 && pose.forward_speed < 30.0, "{pose:?}");
-    assert!((pose.position[1] - 20.0).abs() < 2.0, "holds altitude while leaning: {pose:?}");
-    assert!(pose.up_y > 0.85, "{pose:?}");
-    let back = run(&mut physics, CarControls { throttle: -1.0, ..PILOTED }, 60 * 3);
-    assert!(back.forward_speed < pose.forward_speed - 5.0, "{pose:?} -> {back:?}");
+fn full_collective_climbs_at_over_ten_metres_a_second() {
+    let mut physics = flying_heli(20.0, 0.0);
+    let pose = hover(&mut physics, 1.0, 60 * 6);
+    assert!(pose.velocity[1] > 10.0 && pose.velocity[1] < 15.0, "inflow limits the climb: {pose:?}");
+    assert!(rotor(&physics).0 > 0.97, "the engine has the power for it: {:?}", rotor(&physics));
 }
 
 #[test]
-fn the_stick_turns_it_like_a_tank_clockwise_on_the_right() {
-    let mut physics = with_heli(10.0);
-    let right = run(&mut physics, CarControls { steer: 1.0, ..PILOTED }, 60 * 2);
-    assert!(yaw(&right) < -1.0, "{}", yaw(&right));
-    let left = run(&mut physics, CarControls { steer: -1.0, ..PILOTED }, 60 * 4);
-    assert!(yaw(&left) > yaw(&right) + 1.0, "{} -> {}", yaw(&right), yaw(&left));
+fn lowering_the_lever_sinks_it_at_a_steady_rate() {
+    let mut physics = flying_heli(80.0, 0.0);
+    let pose = hover(&mut physics, 0.4, 60 * 6);
+    assert!(pose.velocity[1] < -2.0 && pose.velocity[1] > -6.0, "{pose:?}");
 }
 
 #[test]
-fn it_levels_out_after_a_knock() {
-    let mut physics = with_heli(15.0);
-    run(&mut physics, PILOTED, 30);
-    physics.set_car_roll(1, 0.8, [0.0, 15.0, 0.0]);
-    let pose = run(&mut physics, PILOTED, 60 * 3);
-    assert!(pose.up_y > 0.99, "{pose:?}");
+fn nose_down_it_tops_out_near_fifty_metres_a_second_and_nose_up_slows_it() {
+    let mut physics = flying_heli(40.0, 0.0);
+    let pose = fly_by(&mut physics, 60 * 24, |physics| holding(physics, lever(0.7), -0.45, 0.0));
+    assert!(pose.position[2] < -800.0, "flies towards -Z: {pose:?}");
+    assert!(pose.forward_speed > 45.0 && pose.forward_speed < 60.0, "{pose:?}");
+    assert!((pose.position[1] - 40.0).abs() < 40.0 && rotor(&physics).0 > 0.95, "{pose:?} {:?}", rotor(&physics));
+    let back = fly_by(&mut physics, 60 * 4, |physics| holding(physics, lever(0.4), 0.35, 0.0));
+    assert!(back.forward_speed < pose.forward_speed - 15.0, "pulling back flares it: {pose:?} -> {back:?}");
+}
+
+#[test]
+fn a_nose_down_dash_takes_more_collective_than_a_hover() {
+    let mut physics = flying_heli(60.0, 40.0);
+    let pose = fly_by(&mut physics, 60 * 4, |physics| holding(physics, lever(HELI_HOVER_LEVER), -0.35, 0.0));
+    assert!(pose.velocity[1] < -1.5, "it sinks on the hover lever: {pose:?}");
+}
+
+#[test]
+fn clean_air_lifts_it_on_the_same_lever() {
+    let mut still = flying_heli(40.0, 0.0);
+    let hovering = hover(&mut still, HELI_HOVER_LEVER, 60 * 3);
+    let mut moving = flying_heli(40.0, 25.0);
+    let flying = hover(&mut moving, HELI_HOVER_LEVER, 60 * 3);
+    assert!(flying.position[1] > hovering.position[1] + 1.5, "{hovering:?} {flying:?}");
+}
+
+#[test]
+fn let_go_at_speed_flapback_lifts_the_nose() {
+    let mut physics = flying_heli(60.0, 40.0);
+    let pose = run(&mut physics, lever(0.6), 60);
+    assert!(attitude(&pose).0 > 0.05, "{:?}", attitude(&pose));
+}
+
+#[test]
+fn through_translational_lift_the_transverse_flow_rolls_it_right() {
+    let mut physics = flying_heli(60.0, 0.6 * HELI_ETL_SPEED);
+    let pose = run(&mut physics, lever(HELI_HOVER_LEVER), 45);
+    assert!(attitude(&pose).1 < -0.03, "{:?}", attitude(&pose));
+}
+
+#[test]
+fn past_its_blade_stall_speed_it_rolls_left_and_pitches_up() {
+    let mut physics = flying_heli(80.0, 68.0);
+    let pose = run(&mut physics, lever(0.6), 30);
+    let (pitch, roll) = attitude(&pose);
+    assert!(pitch > 0.1 && roll > 0.05, "{pitch} {roll}");
+}
+
+#[test]
+fn hovering_it_turns_its_nose_towards_the_look() {
+    let mut physics = flying_heli(40.0, 0.0);
+    let pose = fly_by(&mut physics, 60 * 2, |physics| holding(physics, CarControls { aim: Some([-1.5, 0.0]), ..lever(HELI_HOVER_LEVER) }, 0.0, 0.03));
+    assert!((yaw(&pose) + 1.5).abs() < 0.1, "{}", yaw(&pose));
+    assert!(pose.position[0].abs() < 2.0 && pose.position[2].abs() < 2.0, "turns on the spot: {pose:?}");
+}
+
+#[test]
+fn a_turn_at_speed_banks_and_keeps_the_nose_on_the_flight_path() {
+    let mut physics = flying_heli(40.0, 30.0);
+    let look_right = |physics: &Physics| {
+        let controls = CarControls { aim: Some([-1.5, 0.0]), ..lever(0.6) };
+        // The pilot holds the nose a little down; the bank is the pedals' and the turn's.
+        CarControls { steer: 0.0, ..holding(physics, controls, -0.15, 0.0) }
+    };
+    let banking = fly_by(&mut physics, 60 * 2, look_right);
+    assert!(banking.up_y < 0.85, "banks into the turn: {banking:?}");
+    let pose = fly_by(&mut physics, 60 * 5, look_right);
+    let track = (-pose.velocity[0]).atan2(-pose.velocity[2]);
+    assert!(yaw(&pose) < -1.0 && pose.position[0] > 20.0, "turned right: {pose:?}");
+    assert!(shared::quant::wrap_angle(yaw(&pose) - track).abs() < 0.15, "nose on the path: {} vs {track}", yaw(&pose));
+}
+
+#[test]
+fn let_go_the_stick_leaves_it_at_the_bank_it_was_given() {
+    let mut physics = flying_heli(40.0, 0.0);
+    run(&mut physics, CarControls { steer: 1.0, ..lever(0.55) }, 30);
+    let let_go = run(&mut physics, lever(0.55), 60 * 2);
+    let (_, roll) = attitude(&let_go);
+    assert!(roll < -0.2, "still banked right: {roll}");
+    assert!(let_go.velocity[0] > 2.0, "and sliding right: {let_go:?}");
+    let level = hover(&mut physics, 0.55, 60 * 2);
+    assert!(attitude(&level).1.abs() < 0.05, "the pilot levels it: {:?}", attitude(&level));
+}
+
+#[test]
+fn a_knock_is_damped_out_but_the_pilot_levels_it() {
+    let mut physics = flying_heli(40.0, 0.0);
+    run(&mut physics, lever(HELI_HOVER_LEVER), 30);
+    physics.set_car_roll(1, 0.5, [0.0, 40.0, 0.0]);
+    let hands_off = run(&mut physics, lever(HELI_HOVER_LEVER), 60);
+    let spin = vec3::length(physics.car_motion(1).unwrap().angvel);
+    assert!(spin < 0.1 && attitude(&hands_off).1 > 0.3, "stops turning, still tilted: {spin} {:?}", attitude(&hands_off));
+    let level = hover(&mut physics, HELI_HOVER_LEVER, 60 * 2);
+    assert!(level.up_y > 0.99, "{level:?}");
+}
+
+#[test]
+fn asking_more_than_a_hurt_engine_gives_droops_the_rotor() {
+    let mut physics = flying_heli(40.0, 0.0);
+    physics.set_car_condition(1, CarCondition { power: 0.4, ..CarCondition::NEW });
+    hover(&mut physics, 1.0, 60 * 3);
+    let (speed, flags) = rotor(&physics);
+    assert!(speed < 0.9 && flags & THRUST_LOW_ROTOR != 0, "{speed} {flags}");
+}
+
+#[test]
+fn with_the_engine_dead_it_autorotates_and_a_flare_sets_it_down() {
+    let mut physics = flying_heli(150.0, 20.0);
+    physics.set_car_condition(1, CarCondition { power: 0.0, ..CarCondition::NEW });
+    let mut slowest = 1.0f32;
+    let mut fastest_descent = 0.0f32;
+    let mut touchdown = None;
+    for _ in 0..60 * 30 {
+        let pose = physics.car_pose(1).unwrap();
+        let height = pose.position[1] - 0.8;
+        // Lever down and the nose a little down to keep its speed; near the ground the nose up to flare
+        // off the speed, then level and the lever up to cushion the landing.
+        let controls = if height > 25.0 {
+            holding(&physics, lever(0.1), -0.08, 0.0)
+        } else if height > 6.0 {
+            holding(&physics, lever(0.1), 0.35, 0.0)
+        } else {
+            holding(&physics, lever(1.0), 0.0, 0.0)
+        };
+        if height > 25.0 {
+            slowest = slowest.min(rotor(&physics).0);
+            fastest_descent = fastest_descent.max(-pose.velocity[1]);
+        }
+        let after = run(&mut physics, controls, 1);
+        if after.position[1] < 0.85 {
+            touchdown = Some(pose);
+            break;
+        }
+    }
+    assert!(slowest > 0.85, "the upflow keeps the rotor turning: {slowest}");
+    // Hardest just after the engine stops, before the air coming up through the disc holds it.
+    assert!(fastest_descent < 18.0, "{fastest_descent}");
+    let touchdown = touchdown.expect("it lands");
+    assert!(touchdown.velocity[1] > -4.0 && touchdown.up_y > 0.9, "{touchdown:?}");
+}
+
+#[test]
+fn sinking_fast_into_its_own_downwash_loses_lift_and_flying_ahead_escapes_it() {
+    let mut still = flying_heli(80.0, 0.0);
+    let vertical = hover(&mut still, 0.0, 60 * 3);
+    let mut moving = flying_heli(80.0, 20.0);
+    let ahead = hover(&mut moving, 0.0, 60 * 3);
+    assert!(vertical.velocity[1] < ahead.velocity[1] - 3.0, "{vertical:?} {ahead:?}");
+}
+
+#[test]
+fn hovering_level_in_the_wind_it_drifts_downwind() {
+    let mut physics = flying_heli(40.0, 0.0);
+    let mut windy = Physics::new(&airfield()).unwrap();
+    windy.add_car(1, KIND_HELI, [0.0, 40.0, 0.0], 0.0);
+    let still = CarMotion { linvel: [0.0; 3], angvel: [0.0; 3], steer: 0.0, spin: 0.0 };
+    windy.set_car_state(1, [0.0, 40.0, 0.0], [0.0, 0.0, 0.0, 1.0], still, Some(1.0));
+    let calm = hover(&mut physics, HELI_HOVER_LEVER, 60 * 8);
+    let blown = hover(&mut windy, HELI_HOVER_LEVER, 60 * 8);
+    let [wx, wz] = shared::wind::wind(0);
+    let along = |pose: &CarPose| pose.position[0] * wx + pose.position[2] * wz;
+    assert!(along(&blown) > along(&calm) + 3.0, "{calm:?} {blown:?}");
 }
 
 #[test]
 fn the_ceiling_stops_the_climb() {
-    let mut physics = with_heli(HELI_CEILING - 30.0);
-    let pose = run(&mut physics, CarControls { lift: 1.0, ..PILOTED }, 60 * 20);
-    assert!(pose.position[1] > HELI_CEILING - 10.0 && pose.position[1] < HELI_CEILING + 8.0, "{pose:?}");
+    let mut physics = flying_heli(HELI_CEILING - 30.0, 0.0);
+    let pose = hover(&mut physics, 1.0, 60 * 20);
+    // A full-collective climb carries it a little past before the drooping rotor gives it up.
+    assert!(pose.position[1] > HELI_CEILING - 10.0 && pose.position[1] < HELI_CEILING + 15.0, "{pose:?}");
+    assert!(rotor(&physics).1 & THRUST_LOW_ROTOR != 0, "the engine has run out of air: {:?}", rotor(&physics));
 }
 
 #[test]
@@ -1137,10 +1383,14 @@ fn the_ceiling_is_measured_from_the_ground_under_it() {
     let side = 41u32;
     let plateau = WorldFile { ground: shared::terrain::Ground { origin: -10_000, cell: 500, side, heights: vec![60_000; (side * side) as usize] }, ..flat() };
     let mut physics = Physics::new(&plateau).unwrap();
+    physics.calm_wind();
     physics.add_car(1, KIND_HELI, [0.0, 610.0, 0.0], 0.0);
-    let pose = run(&mut physics, CarControls { lift: 1.0, ..PILOTED }, 60 * 20);
+    let still = CarMotion { linvel: [0.0; 3], angvel: [0.0; 3], steer: 0.0, spin: 0.0 };
+    physics.set_car_state(1, [0.0, 610.0, 0.0], [0.0, 0.0, 0.0, 1.0], still, Some(1.0));
+    // A little bank against the tail rotor's drift keeps it over the plateau.
+    let pose = fly_by(&mut physics, 60 * 20, |physics| holding(physics, lever(1.0), 0.0, 0.03));
     let above = pose.position[1] - 600.0;
-    assert!(above > HELI_CEILING - 10.0 && above < HELI_CEILING + 8.0, "{pose:?}");
+    assert!(above > HELI_CEILING - 10.0 && above < HELI_CEILING + 15.0, "{pose:?}");
 }
 
 /// Flat ground six kilometres across, so a plane has room.
@@ -1869,22 +2119,23 @@ fn a_roadster_boosts_on_run_hops_on_jump_and_brakes_on_crouch() {
 }
 
 #[test]
-fn a_helicopter_climbs_on_jump_and_sinks_on_run() {
-    assert_eq!(CarControls::driven(KIND_HELI, &frame(BUTTON_JUMP)).lift, 1.0);
-    assert_eq!(CarControls::driven(KIND_HELI, &frame(BUTTON_RUN)).lift, -1.0);
-    assert_eq!(CarControls::driven(KIND_HELI, &frame(BUTTON_JUMP | BUTTON_RUN)).lift, 0.0);
-    assert!(CarControls::driven(KIND_HELI, &frame(0)).powered);
+fn a_helicopters_collective_is_the_lever_its_input_carries_not_jump_or_run() {
+    let set = |collective: u8, buttons: u16| CarControls::driven(KIND_HELI, &shared::protocol::InputFrame { collective, buttons, ..Default::default() });
+    assert_eq!(set(255, 0).lift, 1.0);
+    assert_eq!(set(0, BUTTON_JUMP).lift, 0.0);
+    assert!((set(128, BUTTON_RUN).lift - 128.0 / 255.0).abs() < 1e-6);
+    assert!(set(0, BUTTON_JUMP).powered && !set(0, BUTTON_JUMP).handbrake);
 }
 
 #[test]
-fn only_planes_and_drones_fly_towards_the_look() {
+fn only_aircraft_fly_towards_the_look() {
     let input = shared::protocol::InputFrame { forward: 127, strafe: 127, yaw: 500, pitch: -300, ..Default::default() };
-    for kind in [KIND_PLANE, KIND_SEAPLANE, KIND_DRONE, KIND_LOITER] {
+    for kind in [KIND_PLANE, KIND_SEAPLANE, KIND_DRONE, KIND_LOITER, KIND_HELI] {
         let controls = CarControls::driven(kind, &input);
         assert_eq!(controls.aim, Some([0.5, -0.3]), "kind {kind}");
         assert_eq!((controls.throttle, controls.steer), (1.0, 1.0));
     }
-    for kind in [KIND_JEEP, KIND_TANK, KIND_HELI, KIND_HEN] {
+    for kind in [KIND_JEEP, KIND_TANK, KIND_HEN] {
         assert_eq!(CarControls::driven(kind, &input).aim, None, "kind {kind}");
     }
 }
@@ -2646,3 +2897,5 @@ fn a_titan_walks_into_a_lake_on_its_bed_at_its_full_speed() {
     // Its feet are a stride apart, so it stands a little lower than on both under its hips.
     assert!((pose.position[1] - (TITAN_RIDE_HEIGHT - 10.0)).abs() < 1.5, "its hull rides its height over the bed, not the surface: {pose:?}");
 }
+
+

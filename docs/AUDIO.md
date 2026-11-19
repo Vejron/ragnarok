@@ -63,7 +63,7 @@ A kind's `sound.engine` (`Motor` in `sim/engine.ts`) has the engine's `synth`, i
 - **`electric`.** The revs are in step with the wheels, so it is silent at a standstill.
 - **`marine`.** A boat's propeller or waterjet (the submarine, the Stridsbåt 90). The throttle sets the revs, and the speed through the water hardly changes them. A hull rocking on the waves would otherwise wobble the note.
 - **`rotary`.** A plane: the revs follow the throttle, whose middle is cruise, and the airspeed. The blip switch cuts the load.
-- **`rotor`.** A governed turbine. It spools up when the pilot gets in, then holds its speed while the collective changes how hard it works.
+- **`rotor`.** A governed turbine. It spools up when the pilot gets in, then holds its speed while the collective changes how hard it works. The blades beat with the rotor's real speed (`Thrust.air`, `SoundInput.rotor`), so a rotor spinning up, drooping, spinning down or autorotating is heard with no engine running.
 - **`props`, `flat`.** Drones work harder to climb. A loitering drone and a missile are flat out.
 
 `Revs` follows one engine from frame to frame. `VehicleSounds` keeps one per vehicle in earshot, so a vehicle that comes into the nearest six is heard where its revs are.

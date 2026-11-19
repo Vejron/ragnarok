@@ -62,7 +62,7 @@ fn heli(game: &Game) -> u32 {
 fn aim_and_hold(game: &mut Game, id: u32, seq: &mut u32, yaw: f32, pitch: f32, buttons: u16, ticks: u32) {
     for _ in 0..ticks {
         *seq += 1;
-        game.handle(Command::Input(id, 0, vec![InputFrame { seq: *seq, strafe: 0, forward: 0, yaw: to_mrad(yaw), buttons, pitch: to_mrad(pitch), view: 0, slot: 0 }]));
+        game.handle(Command::Input(id, 0, vec![InputFrame { seq: *seq, strafe: 0, forward: 0, yaw: to_mrad(yaw), buttons, pitch: to_mrad(pitch), view: 0, slot: 0, collective: 0 }]));
         game.step();
     }
 }
@@ -226,8 +226,8 @@ fn the_three_seats_of_a_tank_work_apart() {
     seat(&mut game, cannon, vid, 1);
     for _ in 0..30 {
         seq += 1;
-        game.handle(Command::Input(gunner, 0, vec![InputFrame { seq, strafe: 0, forward: 0, yaw: to_mrad(hull), buttons: BUTTON_FIRE, pitch: 0, view: 0, slot: 0 }]));
-        game.handle(Command::Input(cannon, 0, vec![InputFrame { seq, strafe: 0, forward: 0, yaw: to_mrad(hull + 1.0), buttons: 0, pitch: 0, view: 0, slot: 0 }]));
+        game.handle(Command::Input(gunner, 0, vec![InputFrame { seq, strafe: 0, forward: 0, yaw: to_mrad(hull), buttons: BUTTON_FIRE, pitch: 0, view: 0, slot: 0, collective: 0 }]));
+        game.handle(Command::Input(cannon, 0, vec![InputFrame { seq, strafe: 0, forward: 0, yaw: to_mrad(hull + 1.0), buttons: 0, pitch: 0, view: 0, slot: 0, collective: 0 }]));
         game.step();
     }
     assert!(shown(&game, vid, Show::Pintle).shots >= 4, "the machine gun fires");

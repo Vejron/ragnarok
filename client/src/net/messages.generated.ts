@@ -51,6 +51,7 @@ export interface InputFrame {
   pitch: number
   view: number
   slot: number
+  collective: number
 }
 
 export interface ClientInput {
@@ -715,7 +716,7 @@ export function decodeMessage(r: readonly unknown[]): ServerMessage | undefined 
   }
 }
 
-export const writeInputFrame = (m: InputFrame): unknown[] => [m.seq, m.strafe, m.forward, m.yaw, m.buttons, m.pitch, m.view, m.slot]
+export const writeInputFrame = (m: InputFrame): unknown[] => [m.seq, m.strafe, m.forward, m.yaw, m.buttons, m.pitch, m.view, m.slot, m.collective]
 
 export const writeClientInput = (m: ClientInput): unknown[] => [C_INPUT, m.version, m.baseline, m.frames.map(writeInputFrame)]
 

@@ -38,6 +38,11 @@ export interface HudStats {
   seat: 'driver' | 'roadster' | 'sled' | 'helm' | 'pilot' | 'aviator' | 'walker' | 'titan' | 'hen' | 'tupp' | 'strv' | 'mortar' | 'drone' | 'loiter' | 'captain' | 'periscope' | 'missile' | 'passenger' | 'gunner' | 'roofgunner' | 'coxswain' | null
   /** A Roadster's driver: what is left in the air tank, 0..1; a snowmobile's: its boost; a hen's: its wings' stamina; a ship's helmsman: how well her sail draws; null elsewhere. */
   air: number | null
+  /**
+   * A helicopter's pilot: where the collective lever is and how fast the rotor turns, each 0..1 of full, the
+   * vertical speed, m/s (+ up), and whether the rotor is low (`THRUST_LOW_ROTOR`); null elsewhere.
+   */
+  rotor: { lever: number; speed: number; climb: number; low: boolean } | null
   /** On foot: stamina left, 0..1, and whether they are winded (running is walking, jumps are low); null elsewhere. */
   stamina: { left: number; winded: boolean } | null
   /** Air left, 0..1, while it is not full (holding the breath under the water, or getting it back); null when full. */

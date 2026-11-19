@@ -18,7 +18,7 @@ beforeAll(async () => {
 const stepCharacter = (step: Stepper, state: CharacterState, input: InputFrame, dt: number, speedScale = 1) => step(state, input, dt, speedScale, false)
 
 const standing = (): CharacterState => ({ position: [0, STANDING_Y, 0], yaw: 0, vy: 0, grounded: true, knock: [0, 0], ride: 0, prone: false, chute: false, spent: 0, winded: false, lost: 0, down: 0, skis: false, skiStrain: 0, swimming: false, ghost: false })
-const forward = (seq: number, buttons = 0): InputFrame => ({ seq, strafe: 0, forward: 127, yaw: 0, buttons, pitch: 0, view: 0, slot: 0 })
+const forward = (seq: number, buttons = 0): InputFrame => ({ seq, strafe: 0, forward: 127, yaw: 0, buttons, pitch: 0, view: 0, slot: 0, collective: 0 })
 
 /** What the server would compute: the same inputs from the same start. */
 function serverRun(inputs: InputFrame[]): CharacterState {
@@ -122,7 +122,7 @@ describe('vehicles in the soldier\'s world', () => {
     motor.setVehicles([car(0)])
     let state: CharacterState = { ...standing(), position: [-4, STANDING_Y, 0] }
     // Yaw -π/2 faces +X, into the car's flank.
-    const towardCar = (seq: number): InputFrame => ({ seq, strafe: 0, forward: 127, yaw: -1571, buttons: 0, pitch: 0, view: 0, slot: 0 })
+    const towardCar = (seq: number): InputFrame => ({ seq, strafe: 0, forward: 127, yaw: -1571, buttons: 0, pitch: 0, view: 0, slot: 0, collective: 0 })
     for (let i = 0; i < 180; i++) state = motor.step(state, towardCar(i), TICK_DT)
     expect(state.position[0]).toBeLessThan(-0.9 - 0.35 + 0.1)
     expect(state.position[0]).toBeGreaterThan(-3)
@@ -135,7 +135,7 @@ describe('vehicles in the soldier\'s world', () => {
     const motor = await flatMotor()
     motor.setVehicles([{ ...car(0), kind: KIND_TANK }])
     let state: CharacterState = { ...standing(), position: [-4, STANDING_Y, 0] }
-    const towardTank = (seq: number): InputFrame => ({ seq, strafe: 0, forward: 127, yaw: -1571, buttons: 0, pitch: 0, view: 0, slot: 0 })
+    const towardTank = (seq: number): InputFrame => ({ seq, strafe: 0, forward: 127, yaw: -1571, buttons: 0, pitch: 0, view: 0, slot: 0, collective: 0 })
     for (let i = 0; i < 180; i++) state = motor.step(state, towardTank(i), TICK_DT)
     // The tank's half width is 1.3 m: the soldier stops there, not at the car's 0.9 m.
     expect(state.position[0]).toBeLessThan(-TANK_HALF_EXTENTS[0] - 0.35 + 0.1)
@@ -153,7 +153,7 @@ describe('the soldier\'s world', () => {
     expect(state.grounded).toBe(true)
 
     state = { ...standing(), position: [0, 3, 0], grounded: false }
-    for (let i = 0; i < 120; i++) state = motor.step(state, { seq: i, strafe: 0, forward: 0, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 }, TICK_DT)
+    for (let i = 0; i < 120; i++) state = motor.step(state, { seq: i, strafe: 0, forward: 0, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0, collective: 0 }, TICK_DT)
     expect(state.grounded).toBe(true)
     expect(state.position[1]).toBeCloseTo(STANDING_Y, 1)
   })
@@ -161,7 +161,7 @@ describe('the soldier\'s world', () => {
   // Mirrors `lying_down_keeps_the_feet_on_the_ground` and `crawling_is_slower_than_walking` in physics/tests.rs.
   it("lies down and crawls like the server", async () => {
     const motor = await flatMotor()
-    const lying = (seq: number, forward: number): InputFrame => ({ seq, strafe: 0, forward, yaw: 0, buttons: BUTTON_PRONE, pitch: 0, view: 0, slot: 0 })
+    const lying = (seq: number, forward: number): InputFrame => ({ seq, strafe: 0, forward, yaw: 0, buttons: BUTTON_PRONE, pitch: 0, view: 0, slot: 0, collective: 0 })
     let state = standing()
     for (let i = 0; i < 30; i++) state = motor.step(state, lying(i + 1, 0), TICK_DT)
     expect(state.prone).toBe(true)
@@ -174,7 +174,7 @@ describe('the soldier\'s world', () => {
 describe('knockback and cars', () => {
   it('a hit that only the server knew about is picked up from the snapshot and keeps sliding', () => {
     const predictor = new Predictor(flat, standing())
-    const idle = (seq: number): InputFrame => ({ seq, strafe: 0, forward: 0, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 })
+    const idle = (seq: number): InputFrame => ({ seq, strafe: 0, forward: 0, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0, collective: 0 })
     for (let seq = 1; seq <= 6; seq++) predictor.apply(idle(seq))
     // By input 3 a car had thrown the player 4 m/s towards +X and up.
     const hit: CharacterState = { position: [0.2, STANDING_Y + 0.3, 0], yaw: 0, vy: 3, grounded: false, knock: [4, 0], ride: 0, prone: false, chute: false, spent: 0, winded: false, lost: 0, down: 0, skis: false, skiStrain: 0, swimming: false, ghost: false }
@@ -187,7 +187,7 @@ describe('knockback and cars', () => {
 
   it('knockback fades out on the ground', () => {
     let state: CharacterState = { ...standing(), knock: [6, 0] }
-    for (let seq = 1; seq <= 240; seq++) state = stepCharacter(flat, state, { seq, strafe: 0, forward: 0, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 }, TICK_DT)
+    for (let seq = 1; seq <= 240; seq++) state = stepCharacter(flat, state, { seq, strafe: 0, forward: 0, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0, collective: 0 }, TICK_DT)
     expect(state.knock).toEqual([0, 0])
     expect(state.position[0]).toBeGreaterThan(0.5)
   })
@@ -202,7 +202,7 @@ describe('riding a car', () => {
     onCar = motor.stepper
   })
   const riding = (): CharacterState => ({ ...standing(), ride: 7 })
-  const frame = (buttons: number, seq = 1): InputFrame => ({ seq, strafe: 0, forward: 0, yaw: 0, buttons, pitch: 0, view: 0, slot: 0 })
+  const frame = (buttons: number, seq = 1): InputFrame => ({ seq, strafe: 0, forward: 0, yaw: 0, buttons, pitch: 0, view: 0, slot: 0, collective: 0 })
 
   it('keeps the car\'s speed when jumping off, like the server', () => {
     const state = stepCharacter(onCar, riding(), frame(BUTTON_JUMP), TICK_DT)
@@ -248,7 +248,7 @@ describe('cross-language physics', () => {
   const scripted = (seq: number): InputFrame => {
     const yaw = -1571 + (((seq * 13) % 1200) - 600)
     const buttons = seq % 90 === 30 ? BUTTON_JUMP : seq > 150 ? BUTTON_RUN : 0
-    return { seq, strafe: (seq % 7) * 10 - 30, forward: 127, yaw, buttons, pitch: 0, view: 0, slot: 0 }
+    return { seq, strafe: (seq % 7) * 10 - 30, forward: 127, yaw, buttons, pitch: 0, view: 0, slot: 0, collective: 0 }
   }
 
   it('WASM prediction lands where the native server does', async () => {
@@ -306,7 +306,7 @@ describe('cross-language terrain', () => {
     ])
     for (let seq = 1; seq <= 240; seq++) {
       const buttons = seq === 50 ? BUTTON_RUN | BUTTON_JUMP : seq < 150 ? BUTTON_RUN : 0
-      const input = { seq, strafe: (seq % 5) * 10 - 20, forward: seq < 150 ? 127 : 0, yaw: Math.trunc(seq / 3) % 200, buttons, pitch: 0, view: 0, slot: 0 }
+      const input = { seq, strafe: (seq % 5) * 10 - 20, forward: seq < 150 ? 127 : 0, yaw: Math.trunc(seq / 3) % 200, buttons, pitch: 0, view: 0, slot: 0, collective: 0 }
       state = motor.step(state, input, TICK_DT)
       const expected = checkpoints.get(seq)
       if (!expected) continue
@@ -326,7 +326,7 @@ describe('cross-language terrain', () => {
     ])
     for (let seq = 1; seq <= 240; seq++) {
       const buttons = seq === 70 ? BUTTON_JUMP : seq >= 100 && seq < 180 ? BUTTON_CROUCH : 0
-      state = motor.step(state, { seq, strafe: 0, forward: seq >= 180 ? -127 : 0, yaw: (seq * 2) % 300, buttons, pitch: 0, view: 0, slot: 0 }, TICK_DT)
+      state = motor.step(state, { seq, strafe: 0, forward: seq >= 180 ? -127 : 0, yaw: (seq * 2) % 300, buttons, pitch: 0, view: 0, slot: 0, collective: 0 }, TICK_DT)
       const expected = checkpoints.get(seq)
       if (!expected) continue
       state.position.forEach((value, axis) => expect(Math.abs(value - expected[axis]!), `tick ${seq} axis ${axis}`).toBeLessThan(0.01))

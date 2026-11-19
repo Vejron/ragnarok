@@ -23,7 +23,7 @@ import { TankModel } from '@/render/tank'
 import type { VehicleFx } from '@/render/tyres'
 import { TuppModel } from '@/render/tupp'
 import { WalkerModel } from '@/render/walker'
-import { PASSENGER_DISTANCE, ROOF_AIM_BACK, ROOF_AIM_UP, STRV_AIM_BACK, STRV_AIM_UP, WALKER_AIM_BACK, WALKER_AIM_UP, PASSENGER_HEIGHT, PASSENGER_SHOULDER, PLANE_AIM_MAX_PITCH, PLANE_CRUISE_SPEED, SIGHT_EYE_UP, STRV_BARREL_MAX, STRV_BARREL_MIN, SUB_MAST_HEIGHT, SUB_SAIL_Z, TITAN_HEAD_DOWN, TITAN_HEAD_TURN, TITAN_HEAD_UP, TUPP_HEAD_LIMIT, TUPP_HEAD_PITCH_MAX, TUPP_HEAD_PITCH_MIN, WALKER_GUN_PITCH_MAX, WALKER_GUN_PITCH_MIN, WALKER_TORSO_LIMIT } from '@/sim/consts'
+import { HELI_ETL_SPEED, PASSENGER_DISTANCE, ROOF_AIM_BACK, ROOF_AIM_UP, STRV_AIM_BACK, STRV_AIM_UP, WALKER_AIM_BACK, WALKER_AIM_UP, PASSENGER_HEIGHT, PASSENGER_SHOULDER, PLANE_AIM_MAX_PITCH, PLANE_CRUISE_SPEED, SIGHT_EYE_UP, STRV_BARREL_MAX, STRV_BARREL_MIN, SUB_MAST_HEIGHT, SUB_SAIL_Z, TITAN_HEAD_DOWN, TITAN_HEAD_TURN, TITAN_HEAD_UP, TUPP_HEAD_LIMIT, TUPP_HEAD_PITCH_MAX, TUPP_HEAD_PITCH_MIN, WALKER_GUN_PITCH_MAX, WALKER_GUN_PITCH_MIN, WALKER_TORSO_LIMIT } from '@/sim/consts'
 import type { InputController } from '@/sim/input'
 import { layTube } from '@/sim/lob'
 import type { Rig, SeatView } from '@/seats'
@@ -32,6 +32,12 @@ import type { Rig, SeatView } from '@/seats'
 const PLANE_VIEW_EASE = 5
 const PLANE_PULLBACK = 3
 const PLANE_VIEW_ROLL = 0.3
+/** How quickly a helicopter pilot's view follows the mouse, per second, and how far up or down it may look, radians. */
+const PILOT_VIEW_EASE = 8
+const PILOT_PITCH = 1.2
+/** How far the view shakes passing through translational lift, metres, and how fast, per second. */
+const ETL_SHUDDER = 0.05
+const ETL_SHUDDER_HZ = 11
 /** The sight sits this far above the gun's pivot, on the mantlet. */
 const SIGHT_RAY_START = 6
 const SIGHT_RANGE_MAX = 1500
@@ -43,6 +49,15 @@ const LAY_PITCH = -1.48
 const LAY_HEIGHT = 90
 /** The ray that finds the ground under a mortar's mark starts this far above the gun, metres, and looks twice as far down. */
 const LAY_RAY_UP = 300
+
+/** `0` at `low`, `1` at `high`, smoothly in between. */
+const smoothstep = (low: number, high: number, x: number) => {
+  const t = Math.min(1, Math.max(0, (x - low) / (high - low)))
+  return t * t * (3 - 2 * t)
+}
+
+/** How far through the band of translational lift around `etl` m/s a speed is, as the sim's `clean_band`. */
+export const etlBand = (speed: number, etl: number) => smoothstep(0.3 * etl, 0.6 * etl, speed) * (1 - smoothstep(0.8 * etl, 1.3 * etl, speed))
 
 /** A mounted gun the camera can sit behind: a tank's, a helicopter's nose gun, a plane's ring, a Pak's. */
 interface Barrel {
@@ -112,7 +127,7 @@ export class Cameras {
     private readonly input: InputController,
     private readonly castRay: (origin: [number, number, number], direction: [number, number, number], max: number) => { t: number } | null,
   ) {
-    this.rigs = { drive: this.drive(), gun: this.gun(), fpv: this.fpv(), aviator: this.aviator(), tanker: this.tanker(), walker: this.walker(), titan: this.titan(), pintle: this.pintle(), mortar: this.mortar(), passenger: this.passenger(), periscope: this.periscope() }
+    this.rigs = { drive: this.drive(), gun: this.gun(), fpv: this.fpv(), aviator: this.aviator(), pilot: this.pilot(), tanker: this.tanker(), walker: this.walker(), titan: this.titan(), pintle: this.pintle(), mortar: this.mortar(), passenger: this.passenger(), periscope: this.periscope() }
   }
 
   /** The rig the camera is in, if the local player is seated. */
@@ -272,6 +287,34 @@ export class Cameras {
           const top = new Vector3(0, 1, 0).applyQuaternion(model.root.quaternion)
           this.scene.camera.rotateZ(-Math.atan2(-right.y, top.y) * PLANE_VIEW_ROLL)
         }
+      },
+    }
+  }
+
+  /**
+   * Behind a helicopter, looking where the mouse looks: its pedals turn the nose towards that, so the
+   * view does not ease back behind the hull the way a car's does. The view takes none of its lean.
+   */
+  private pilot(): RigImpl {
+    const view: [number, number] = [0, 0]
+    return {
+      enter: ({ ride }) => {
+        this.input.yaw = ride.yaw
+        this.input.pitch = 0
+        view[0] = ride.yaw
+        view[1] = 0
+      },
+      frame: ({ ride, dt, distance, motion, now }) => {
+        this.input.clampPitch(-PILOT_PITCH, PILOT_PITCH)
+        const ease = 1 - Math.exp(-PILOT_VIEW_EASE * dt)
+        view[0] += wrapAngle(this.input.yaw - view[0]) * ease
+        view[1] += (this.input.pitch - view[1]) * ease
+        // The airframe shudders as the rotor flies into clean air (the ground speed stands in for the airspeed).
+        const speed = motion ? Math.hypot(motion.velocity.x, motion.velocity.z) : 0
+        const shudder = ETL_SHUDDER * etlBand(speed, HELI_ETL_SPEED)
+        const phase = (now / 1000) * ETL_SHUDDER_HZ * Math.PI * 2
+        const shake = shudder > 0 ? [shudder * Math.sin(phase), shudder * Math.sin(phase * 1.37 + 1), 0] : undefined
+        this.scene.follow([ride.x, ride.y + 0.4, ride.z], view[0], view[1], distance, 0, CAMERA_HEIGHT, shake)
       },
     }
   }

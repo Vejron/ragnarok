@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { beforeAll, describe, expect, it } from 'vitest'
+import { beforeAll, describe, expect, it, vi } from 'vitest'
 import { boxOf, triangleCount } from './helpers'
 import { HeliModel, parseHeliModel } from '@/render/heli'
 import { HELI_GUN_LENGTH, HELI_GUN_PIVOT } from '@/sim/consts'
@@ -66,5 +66,22 @@ describe('HeliModel', () => {
     expect(Math.abs(rotor.rotation.y)).toBeGreaterThan(0)
     expect(heli.gunner).toBe(7)
     heli.dispose()
+  })
+
+  it('turns its rotor as fast as the physics says, whoever sits in it', () => {
+    let now = 1000
+    const clock = vi.spyOn(performance, 'now').mockImplementation(() => now)
+    const heli = new HeliModel(1)
+    const rotor = named(heli, 'rotor')
+    // A pilot aboard, but the rotor not yet turning: it stays still.
+    heli.setRotor(0)
+    for (let k = 0; k < 30; k++, now += 16) heli.update([0, 0, 0], IDENTITY, 0, [3, 0], null)
+    expect(rotor.rotation.y).toBe(0)
+    // Nobody aboard, but still turning (autorotating, or spinning down): it turns.
+    heli.setRotor(0.8)
+    for (let k = 0; k < 30; k++, now += 16) heli.update([0, 0, 0], IDENTITY, 0, [0, 0], null)
+    expect(Math.abs(rotor.rotation.y)).toBeGreaterThan(0)
+    heli.dispose()
+    clock.mockRestore()
   })
 })

@@ -54,7 +54,7 @@ fn frames(game: &mut Game, players: &mut [(u32, u32)], buttons: u16, yaw: f32, t
     for _ in 0..ticks {
         for (id, seq) in players.iter_mut() {
             *seq += 1;
-            game.handle(Command::Input(*id, 0, vec![InputFrame { seq: *seq, strafe: 0, forward: 0, yaw: shared::quant::to_mrad(yaw), buttons, pitch: 0, view: 0, slot: 0 }]));
+            game.handle(Command::Input(*id, 0, vec![InputFrame { seq: *seq, strafe: 0, forward: 0, yaw: shared::quant::to_mrad(yaw), buttons, pitch: 0, view: 0, slot: 0, collective: 0 }]));
         }
         game.step();
     }

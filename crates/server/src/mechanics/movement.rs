@@ -74,7 +74,7 @@ mod tests {
     fn press(game: &mut Game, id: u32, seq: &mut u32, buttons: u16, slot: u8, ticks: u32) {
         for _ in 0..ticks {
             *seq += 1;
-            game.handle(Command::Input(id, 0, vec![InputFrame { seq: *seq, strafe: 0, forward: 0, yaw: 0, buttons, pitch: 0, view: 0, slot }]));
+            game.handle(Command::Input(id, 0, vec![InputFrame { seq: *seq, strafe: 0, forward: 0, yaw: 0, buttons, pitch: 0, view: 0, slot, collective: 0 }]));
             game.step();
         }
     }

@@ -3,29 +3,68 @@
 use super::*;
 
 /// The helicopter: a hull flown by a pilot (seat 0) with a gunner (seat 1) on the nose gun. There are no
-/// wheels; the rotor is a thrust along the hull's up axis, and the pilot leans the hull to go
-/// anywhere. Same body axes as the car.
+/// wheels; the rotor is a thrust along the hull's up axis, the cyclic leans the hull to go anywhere,
+/// the pedals turn it towards where the pilot looks and the collective lever sets the lift. Same body
+/// axes as the car.
 pub const HELI_SEATS: usize = 2;
 pub const HELI_HALF_EXTENTS: [f32; 3] = [1.0, 0.8, 2.4];
-/// How far the rotor disc leans at full stick: tangent of the angle, forward and sideways.
-pub const HELI_TILT: f32 = 0.5;
-pub const HELI_BANK: f32 = 0.35;
-/// Yaw rate at full stick, rad/s.
-pub const HELI_YAW_RATE: f32 = 1.4;
-/// Vertical speed the climb input asks for and the descent input asks for, m/s. With neither
-/// held the rotor holds altitude, whatever speed it had. `HELI_VERT_GAIN` (per second) turns the
-/// speed error into an acceleration, which never exceeds `HELI_VERT_ACCEL`, m/s².
-pub const HELI_CLIMB_SPEED: f32 = 6.0;
-pub const HELI_SINK_SPEED: f32 = 4.0;
-pub const HELI_VERT_GAIN: f32 = 1.5;
-pub const HELI_VERT_ACCEL: f32 = 5.0;
-/// Climbing fades out over the last 20 m below this height above the terrain, and above it the rotor
-/// pushes down. Every flier's ceiling is measured from the terrain under it, not from y = 0.
+/// How fast jump and run move the pilot's collective lever, share of its travel per second.
+pub const HELI_LEVER_RATE: f32 = 0.6;
+/// The lever that hovers a fully crewed helicopter out of ground effect, measured by
+/// `the_hover_lever_holds_it_steady_out_of_ground_effect`. A pilot who takes the seat in the air starts on it.
+pub const HELI_HOVER_LEVER: f32 = 0.53;
+/// The thinning air takes the engine's power away over the last 40 m below this height above the
+/// terrain, until it only just hovers there. Every flier's ceiling is measured from the terrain under it,
+/// not from y = 0.
 pub const HELI_CEILING: f32 = 120.0;
-/// How firmly the hull levels out (rad/s of correction per unit of lean error), and how fast the
-/// angular velocity follows it, per second.
-pub const HELI_LEVEL_GAIN: f32 = 4.0;
-pub const HELI_RESPONSE: f32 = 8.0;
+/// Under this share of its governed speed the rotor is low, and the pilot is warned.
+pub const HELI_LOW_ROTOR: f32 = 0.9;
+/// Through the air at about this speed, m/s, the rotor flies into clean air (translational lift), and
+/// the airframe shudders on the way.
+pub const HELI_ETL_SPEED: f32 = 10.0;
+
+/// How the helicopter flies: a light attack helicopter with power to spare, about 50 m/s flat out,
+/// that climbs at over 10 m/s and autorotates down from an engine failure. Its stability augmentation
+/// only damps its rates: the pilot holds its attitude.
+const FLIGHT: Rotorcraft = Rotorcraft {
+    thrust: 1.9 * CAR_GRAVITY,
+    pitch_flow: 30.0,
+    tilt_flow: 0.35,
+    hover_inflow: 14.0,
+    radius: 6.0,
+    hub: 1.0,
+    ground_effect: 0.15,
+    etl_speed: HELI_ETL_SPEED,
+    etl_gain: 0.1,
+    vortex: 0.4,
+    power: 2.6,
+    profile: 0.15,
+    spool: 0.3,
+    inertia: 2.0,
+    brake: 0.1,
+    low_rotor: HELI_LOW_ROTOR,
+    drag: [0.006, 0.003, 0.0019],
+    pitch_rate: 0.6,
+    roll_rate: 0.9,
+    rate_gain: 8.0,
+    hold_gain: 3.0,
+    cyclic_accel: 6.0,
+    yaw_gain: 2.5,
+    yaw_rate: 1.6,
+    yaw_accel: 4.0,
+    torque_yaw: 0.8,
+    coordinate_speed: 10.0,
+    bank_max: 0.7,
+    bank_gain: 3.0,
+    weathercock: 2.0,
+    tail_arm: 7.0,
+    flapback: 0.008,
+    transverse: 0.25,
+    stall_speed: 58.0,
+    blade_stall: 0.3,
+    lever_rate: HELI_LEVER_RATE,
+    ceiling: HELI_CEILING,
+};
 /// The nose gun: a four-barrel autocannon on a chin mount. `HELI_GUN_PIVOT` is the mount in the hull
 /// frame and `HELI_GUN_LENGTH` how far the muzzle is from it. The gunner's look direction aims it, within
 /// `HELI_GUN_YAW_LIMIT` either side of the nose and `HELI_GUN_PITCH_MIN..=HELI_GUN_PITCH_MAX` (radians, the
@@ -73,7 +112,7 @@ pub(super) const HELI: VehicleDef = VehicleDef {
     body: ROTOR,
     spec: Spec {
         half_extents: HELI_HALF_EXTENTS,
-        // 3.8 m³ of hull is about 1.1 tonnes. Nothing below uses the wheel fields.
+        // 15.4 m³ of hull is about 4.6 tonnes. Nothing below uses the wheel fields.
         density: 300.0,
         wheel_radius: 0.0,
         track_half: 0.0,
@@ -87,12 +126,14 @@ pub(super) const HELI: VehicleDef = VehicleDef {
         steer_axles: Spec::FRONT_STEER,
         turn_rate: 0.0,
         lift: Lift::Rotor,
-        // Air drag is what limits the speed: the rotor's lean gives about 4.9 m/s², so about 25 m/s.
-        linear_damping: 0.2,
+        // The rotor's own drag model (`FLIGHT.drag`) holds it back, not a damping.
+        linear_damping: 0.0,
         com_drop: 0.0,
-        tank: None,
-        buttons: Buttons::Drive,
-        aims: false,
+        // The rotor's speed: it starts stopped.
+        tank: Some(0.0),
+        buttons: Buttons::Collective,
+        // The pedals turn it towards where its pilot looks.
+        aims: true,
         solids: &[],
         tongue: 0.0,
         slide: 0.0,
@@ -107,6 +148,7 @@ pub(super) const HELI: VehicleDef = VehicleDef {
         profile: Spec::BOX,
         springs: Springs::FIRM,
         airframe: None,
+        rotor: Some(FLIGHT),
         gait: None,
         arms: None,
         runners: None,

@@ -50,7 +50,7 @@ fn falls_and_lands_on_the_ground() {
 fn walks_forward_at_walk_speed() {
     let physics = Physics::new(&flat_world()).unwrap();
     let mut character = standing();
-    let forward = InputFrame { seq: 1, strafe: 0, forward: 127, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 };
+    let forward = InputFrame { seq: 1, strafe: 0, forward: 127, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0, collective: 0 };
     for _ in 0..TICK_RATE {
         physics.move_character(&mut character, &forward, TICK_DT);
     }
@@ -69,7 +69,7 @@ fn stony_ground_slows_a_walker_by_its_grade_on_the_server_and_streamed_alike() {
     let server = Physics::new(&WorldFile::assemble(&manifest, [(0, 0, tile.clone())])).unwrap();
     let mut streamed = Physics::streamed(&manifest);
     streamed.add_tile(&manifest, 0, 0, &tile).unwrap();
-    let forward = InputFrame { seq: 1, strafe: 0, forward: 127, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 };
+    let forward = InputFrame { seq: 1, strafe: 0, forward: 127, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0, collective: 0 };
     let walked = |physics: &Physics, z: f32| {
         let mut character = Character { position: [0.0, STANDING_Y, z], grounded: true, ..Default::default() };
         for _ in 0..TICK_RATE {
@@ -86,8 +86,8 @@ fn stony_ground_slows_a_walker_by_its_grade_on_the_server_and_streamed_alike() {
 #[test]
 fn sliding_carries_a_runner_much_further_than_crouch_walking() {
     let physics = Physics::new(&flat_world()).unwrap();
-    let held = InputFrame { seq: 1, strafe: 0, forward: 127, yaw: 0, buttons: BUTTON_RUN | BUTTON_CROUCH, pitch: 0, view: 0, slot: 0 };
-    let press = InputFrame { seq: 1, strafe: 0, forward: 127, yaw: 0, buttons: BUTTON_RUN | BUTTON_CROUCH | BUTTON_SLIDE, pitch: 0, view: 0, slot: 0 };
+    let held = InputFrame { seq: 1, strafe: 0, forward: 127, yaw: 0, buttons: BUTTON_RUN | BUTTON_CROUCH, pitch: 0, view: 0, slot: 0, collective: 0 };
+    let press = InputFrame { seq: 1, strafe: 0, forward: 127, yaw: 0, buttons: BUTTON_RUN | BUTTON_CROUCH | BUTTON_SLIDE, pitch: 0, view: 0, slot: 0, collective: 0 };
     let distance = |first: &InputFrame| {
         let mut character = standing();
         physics.move_character(&mut character, first, TICK_DT);
@@ -103,7 +103,7 @@ fn sliding_carries_a_runner_much_further_than_crouch_walking() {
 fn a_long_sprint_runs_out_of_stamina_and_slows_to_a_walk() {
     let physics = Physics::new(&flat_world()).unwrap();
     let mut character = standing();
-    let sprint = InputFrame { seq: 1, strafe: 0, forward: 127, yaw: 0, buttons: BUTTON_RUN, pitch: 0, view: 0, slot: 0 };
+    let sprint = InputFrame { seq: 1, strafe: 0, forward: 127, yaw: 0, buttons: BUTTON_RUN, pitch: 0, view: 0, slot: 0, collective: 0 };
     let ticks = STAMINA_FULL.div_ceil(STAMINA_RUN_DRAIN);
     for _ in 0..ticks - 1 {
         physics.move_character(&mut character, &sprint, TICK_DT);
@@ -141,7 +141,7 @@ fn a_winded_jump_is_lower_than_a_rested_one() {
 fn jumps_and_comes_back_down() {
     let physics = Physics::new(&flat_world()).unwrap();
     let mut character = standing();
-    physics.move_character(&mut character, &InputFrame { seq: 1, strafe: 0, forward: 0, yaw: 0, buttons: BUTTON_JUMP, pitch: 0, view: 0, slot: 0 }, TICK_DT);
+    physics.move_character(&mut character, &InputFrame { seq: 1, strafe: 0, forward: 0, yaw: 0, buttons: BUTTON_JUMP, pitch: 0, view: 0, slot: 0, collective: 0 }, TICK_DT);
     assert!(!character.grounded);
     let mut peak: f32 = 0.0;
     for _ in 0..120 {
@@ -160,7 +160,7 @@ fn a_fence_stops_a_soldier_and_a_power_pole_stops_them_and_a_ray() {
     let power = Line { kind: LINE_POWER, points: vec![[0, -500], [0, -9000]], base: vec![0, 0], end: false };
     let world = WorldFile { lines: vec![(0, 0, fence), (0, 0, power)], ..flat_world() };
     let physics = Physics::new(&world).unwrap();
-    let toward = |yaw| InputFrame { seq: 1, strafe: 0, forward: 127, yaw, buttons: BUTTON_RUN, pitch: 0, view: 0, slot: 0 };
+    let toward = |yaw| InputFrame { seq: 1, strafe: 0, forward: 127, yaw, buttons: BUTTON_RUN, pitch: 0, view: 0, slot: 0, collective: 0 };
     let mut character = standing();
     for _ in 0..TICK_RATE * 2 {
         physics.move_character(&mut character, &toward(-1571), TICK_DT);
@@ -191,7 +191,7 @@ fn a_tombstone_stops_a_soldier_and_a_ray_across_its_face_and_not_beside_or_over_
     let def = GRAVE_KINDS[GRAVE_HEADSTONE as usize];
     let world = WorldFile { graves: vec![Grave { x: 300, z: 0, base: 0, yaw: 1571, kind: GRAVE_HEADSTONE }], ..flat_world() };
     let physics = Physics::new(&world).unwrap();
-    let toward = |yaw| InputFrame { seq: 1, strafe: 0, forward: 127, yaw, buttons: BUTTON_RUN, pitch: 0, view: 0, slot: 0 };
+    let toward = |yaw| InputFrame { seq: 1, strafe: 0, forward: 127, yaw, buttons: BUTTON_RUN, pitch: 0, view: 0, slot: 0, collective: 0 };
     let mut character = standing();
     for _ in 0..TICK_RATE * 2 {
         physics.move_character(&mut character, &toward(-1571), TICK_DT);
@@ -219,7 +219,7 @@ fn a_wall_stops_a_soldier_and_a_ray_until_its_piece_is_broken() {
     let fence = Line { kind: LINE_FENCE, points: vec![[-500, -300], [-500, 300]], base: vec![0, 0], end: true };
     let world = WorldFile { lines: vec![(0, 0, wall), (0, 0, fence)], ..flat_world() };
     let mut physics = Physics::new(&world).unwrap();
-    let east = InputFrame { seq: 1, strafe: 0, forward: 127, yaw: -1571, buttons: BUTTON_RUN, pitch: 0, view: 0, slot: 0 };
+    let east = InputFrame { seq: 1, strafe: 0, forward: 127, yaw: -1571, buttons: BUTTON_RUN, pitch: 0, view: 0, slot: 0, collective: 0 };
     let walk = |physics: &Physics, z: f32| {
         let mut character = Character { position: [0.0, STANDING_Y, z], ..standing() };
         for _ in 0..TICK_RATE * 2 {
@@ -271,7 +271,7 @@ fn walls_block_movement() {
     let physics = Physics::new(&world_with_wall()).unwrap();
     let mut character = standing();
     // Yaw -π/2 faces +X, towards the wall.
-    let toward_wall = InputFrame { seq: 1, strafe: 0, forward: 127, yaw: -1571, buttons: BUTTON_RUN, pitch: 0, view: 0, slot: 0 };
+    let toward_wall = InputFrame { seq: 1, strafe: 0, forward: 127, yaw: -1571, buttons: BUTTON_RUN, pitch: 0, view: 0, slot: 0, collective: 0 };
     for _ in 0..TICK_RATE * 2 {
         physics.move_character(&mut character, &toward_wall, TICK_DT);
     }
@@ -298,7 +298,7 @@ fn a_ray_names_the_building_and_destroying_it_opens_the_wall() {
     assert!(physics.cast_ray_object([0.0, 1.0, 0.0], [1.0, 0.0, 0.0], 20.0).is_none());
 
     let mut character = standing();
-    let toward_wall = InputFrame { seq: 1, strafe: 0, forward: 127, yaw: -1571, buttons: BUTTON_RUN, pitch: 0, view: 0, slot: 0 };
+    let toward_wall = InputFrame { seq: 1, strafe: 0, forward: 127, yaw: -1571, buttons: BUTTON_RUN, pitch: 0, view: 0, slot: 0, collective: 0 };
     for _ in 0..TICK_RATE * 2 {
         physics.move_character(&mut character, &toward_wall, TICK_DT);
     }
@@ -360,7 +360,7 @@ fn world_triangles_no_building_claims_stay_one_collider() {
 fn boundary_walls_keep_players_in() {
     let physics = Physics::new(&flat_world()).unwrap();
     let mut character = standing();
-    let forward = InputFrame { seq: 1, strafe: 0, forward: 127, yaw: 0, buttons: BUTTON_RUN, pitch: 0, view: 0, slot: 0 };
+    let forward = InputFrame { seq: 1, strafe: 0, forward: 127, yaw: 0, buttons: BUTTON_RUN, pitch: 0, view: 0, slot: 0, collective: 0 };
     for _ in 0..TICK_RATE * 20 {
         physics.move_character(&mut character, &forward, TICK_DT);
     }
@@ -372,7 +372,7 @@ fn boundary_walls_keep_players_in() {
 pub fn scripted_input(seq: u32) -> InputFrame {
     let yaw = -1571 + ((seq as i32 * 13) % 1200 - 600) as i16;
     let buttons = if seq % 90 == 30 { BUTTON_JUMP } else if seq > 150 { BUTTON_RUN } else { 0 };
-    InputFrame { seq, strafe: (seq % 7) as i8 * 10 - 30, forward: 127, yaw, buttons, pitch: 0, view: 0, slot: 0 }
+    InputFrame { seq, strafe: (seq % 7) as i8 * 10 - 30, forward: 127, yaw, buttons, pitch: 0, view: 0, slot: 0, collective: 0 }
 }
 
 /// `(tick, position)` after `scripted_input`, mirrored in `predict.spec.ts`.
@@ -422,7 +422,7 @@ fn walking_down_and_up_a_slope_stays_grounded() {
         let mut character = Character { position: [0.0, ground + STANDING_Y, start_z], grounded: true, ..Default::default() };
         let mut airborne = 0;
         for seq in 0..TICK_RATE * 4 {
-            let input = InputFrame { seq, strafe: 0, forward: input_z, yaw: 0, buttons: BUTTON_RUN, pitch: 0, view: 0, slot: 0 };
+            let input = InputFrame { seq, strafe: 0, forward: input_z, yaw: 0, buttons: BUTTON_RUN, pitch: 0, view: 0, slot: 0, collective: 0 };
             physics.move_character(&mut character, &input, TICK_DT);
             airborne += !character.grounded as u32;
         }
@@ -462,7 +462,7 @@ fn a_hill_is_slower_up_than_down() {
         let ground = world.ground.height_at(0.0, 0.0);
         let mut character = Character { position: [0.0, ground + STANDING_Y, 0.0], grounded: true, ..Default::default() };
         for seq in 0..TICK_RATE {
-            let input = InputFrame { seq, strafe: 0, forward, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 };
+            let input = InputFrame { seq, strafe: 0, forward, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0, collective: 0 };
             physics.move_character(&mut character, &input, TICK_DT);
         }
         character.position[2].abs()
@@ -482,7 +482,7 @@ fn ramp_world() -> WorldFile {
 /// Running downhill with strafing, a jump and a stop: `ramp_world`'s fixture input.
 pub fn ramp_input(seq: u32) -> InputFrame {
     let buttons = if seq == 50 { BUTTON_RUN | BUTTON_JUMP } else if seq < 150 { BUTTON_RUN } else { 0 };
-    InputFrame { seq, strafe: (seq % 5) as i8 * 10 - 20, forward: if seq < 150 { 127 } else { 0 }, yaw: (seq as i16 / 3) % 200, buttons, pitch: 0, view: 0, slot: 0 }
+    InputFrame { seq, strafe: (seq % 5) as i8 * 10 - 20, forward: if seq < 150 { 127 } else { 0 }, yaw: (seq as i16 / 3) % 200, buttons, pitch: 0, view: 0, slot: 0, collective: 0 }
 }
 
 /// `(tick, position)` after `ramp_input` from `RAMP_START`, mirrored in `predict.spec.ts`.
@@ -621,7 +621,7 @@ const SKI_CHECKPOINTS: [(u32, [f32; 3]); 3] = [
 /// Skiing `ramp_world`: down the slope turning a little, a jump, a tuck, a snowplow.
 pub fn ski_input(seq: u32) -> InputFrame {
     let buttons = if seq == 70 { BUTTON_JUMP } else if (100..180).contains(&seq) { BUTTON_CROUCH } else { 0 };
-    InputFrame { seq, strafe: 0, forward: if seq >= 180 { -127 } else { 0 }, yaw: (seq as i16 * 2) % 300, buttons, pitch: 0, view: 0, slot: 0 }
+    InputFrame { seq, strafe: 0, forward: if seq >= 180 { -127 } else { 0 }, yaw: (seq as i16 * 2) % 300, buttons, pitch: 0, view: 0, slot: 0, collective: 0 }
 }
 
 #[test]
@@ -720,7 +720,7 @@ fn simulation_is_deterministic() {
     let run = || {
         let mut character = standing();
         for seq in 0..300u32 {
-            let input = InputFrame { seq, strafe: 90, forward: 127, yaw: (seq as i16 * 7) % 3000, buttons: if seq % 50 == 0 { BUTTON_JUMP } else { 0 }, pitch: 0, view: 0, slot: 0 };
+            let input = InputFrame { seq, strafe: 90, forward: 127, yaw: (seq as i16 * 7) % 3000, buttons: if seq % 50 == 0 { BUTTON_JUMP } else { 0 }, pitch: 0, view: 0, slot: 0, collective: 0 };
             physics.move_character(&mut character, &input, TICK_DT);
         }
         character
@@ -744,7 +744,7 @@ fn world_with_low_roof() -> WorldFile {
 }
 
 fn held(buttons: u16, forward: i8) -> InputFrame {
-    InputFrame { seq: 1, strafe: 0, forward, yaw: 0, buttons, pitch: 0, view: 0, slot: 0 }
+    InputFrame { seq: 1, strafe: 0, forward, yaw: 0, buttons, pitch: 0, view: 0, slot: 0, collective: 0 }
 }
 
 #[test]
@@ -817,7 +817,7 @@ fn walls_follow_the_edge_of_an_l_shaped_world() {
     let physics = Physics::new(&l_shaped_world()).unwrap();
     let mut character = standing();
     character.position = [-50.0, 1.0, 50.0];
-    let east = InputFrame { seq: 1, strafe: 0, forward: 127, yaw: -1571, buttons: BUTTON_RUN, pitch: 0, view: 0, slot: 0 };
+    let east = InputFrame { seq: 1, strafe: 0, forward: 127, yaw: -1571, buttons: BUTTON_RUN, pitch: 0, view: 0, slot: 0, collective: 0 };
     for _ in 0..TICK_RATE * 20 {
         physics.move_character(&mut character, &east, TICK_DT);
     }

@@ -2,7 +2,7 @@
 // change the Rust and run `npm run gen:consts`. Client-only constants live in consts.ts.
 
 /** Wire schema version. Bumped on any incompatible protocol or world-format change. */
-export const PROTOCOL_VERSION = 89
+export const PROTOCOL_VERSION = 90
 
 /**
  * Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
@@ -1728,41 +1728,37 @@ export const GOLF_CART_SEAT_HEADS = [[-0.28, 0.82, 0.25], [0.28, 0.82, 0.25]] as
 
 /**
  * The helicopter: a hull flown by a pilot (seat 0) with a gunner (seat 1) on the nose gun. There are no
- * wheels; the rotor is a thrust along the hull's up axis, and the pilot leans the hull to go
- * anywhere. Same body axes as the car.
+ * wheels; the rotor is a thrust along the hull's up axis, the cyclic leans the hull to go anywhere,
+ * the pedals turn it towards where the pilot looks and the collective lever sets the lift. Same body
+ * axes as the car.
  */
 export const HELI_SEATS = 2
 export const HELI_HALF_EXTENTS = [1.0, 0.8, 2.4] as const
 
-/** How far the rotor disc leans at full stick: tangent of the angle, forward and sideways. */
-export const HELI_TILT = 0.5
-export const HELI_BANK = 0.35
-
-/** Yaw rate at full stick, rad/s. */
-export const HELI_YAW_RATE = 1.4
+/** How fast jump and run move the pilot's collective lever, share of its travel per second. */
+export const HELI_LEVER_RATE = 0.6
 
 /**
- * Vertical speed the climb input asks for and the descent input asks for, m/s. With neither
- * held the rotor holds altitude, whatever speed it had. `HELI_VERT_GAIN` (per second) turns the
- * speed error into an acceleration, which never exceeds `HELI_VERT_ACCEL`, m/s².
+ * The lever that hovers a fully crewed helicopter out of ground effect, measured by
+ * `the_hover_lever_holds_it_steady_out_of_ground_effect`. A pilot who takes the seat in the air starts on it.
  */
-export const HELI_CLIMB_SPEED = 6.0
-export const HELI_SINK_SPEED = 4.0
-export const HELI_VERT_GAIN = 1.5
-export const HELI_VERT_ACCEL = 5.0
+export const HELI_HOVER_LEVER = 0.53
 
 /**
- * Climbing fades out over the last 20 m below this height above the terrain, and above it the rotor
- * pushes down. Every flier's ceiling is measured from the terrain under it, not from y = 0.
+ * The thinning air takes the engine's power away over the last 40 m below this height above the
+ * terrain, until it only just hovers there. Every flier's ceiling is measured from the terrain under it,
+ * not from y = 0.
  */
 export const HELI_CEILING = 120.0
 
+/** Under this share of its governed speed the rotor is low, and the pilot is warned. */
+export const HELI_LOW_ROTOR = 0.9
+
 /**
- * How firmly the hull levels out (rad/s of correction per unit of lean error), and how fast the
- * angular velocity follows it, per second.
+ * Through the air at about this speed, m/s, the rotor flies into clean air (translational lift), and
+ * the airframe shudders on the way.
  */
-export const HELI_LEVEL_GAIN = 4.0
-export const HELI_RESPONSE = 8.0
+export const HELI_ETL_SPEED = 10.0
 
 /**
  * The nose gun: a four-barrel autocannon on a chin mount. `HELI_GUN_PIVOT` is the mount in the hull
@@ -2674,6 +2670,9 @@ export const FRONT_STEER = 1
 
 /** The `sweep` of a hull whose underside is flat from end to end. */
 export const FLAT = 0.0
+
+/** Over how many metres below the ceiling the thinning air takes the engine's power away. */
+export const CEILING_FADE = 40.0
 
 /**
  * The sports car (`KIND_SPORTS`): a low two-seater with small wheels and a big engine. Quick in a

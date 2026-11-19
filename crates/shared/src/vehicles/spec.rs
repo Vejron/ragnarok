@@ -81,7 +81,8 @@ pub struct Spec {
     /// wheels through hard corners; zero leaves the box's own.
     pub com_drop: f32,
     /// A full tank of what its tricks run on: a Roadster's air, or a hen's wings' stamina. `None` for
-    /// everything else. A walker with one has wings (see `flap`).
+    /// everything else. A walker with one has wings (see `flap`). A helicopter keeps its rotor's speed
+    /// here, as a share of the speed its governor holds, and this is the speed it starts at: stopped.
     pub tank: Option<f32>,
     /// What its driver's buttons do (see `CarControls::driven`).
     pub buttons: Buttons,
@@ -131,6 +132,8 @@ pub struct Spec {
     pub springs: Springs,
     /// How its wings fly, for a `Lift::Wing` kind. `None` for everything else.
     pub airframe: Option<Airframe>,
+    /// How its rotor flies it, for a `Lift::Rotor` kind. `None` for everything else.
+    pub rotor: Option<Rotorcraft>,
     /// What holds back a kind that slides on runners (a sled): its friction and its air drag, which
     /// set how fast it runs downhill. `None` for a kind on wheels, which rolls with only a light brake
     /// when coasting.
@@ -459,6 +462,111 @@ pub struct Airframe {
     pub floats: Option<Floats>,
 }
 
+/// How a rotorcraft (`Lift::Rotor`) flies: its rotor, its engine and the help its flight controls
+/// give. Accelerations are per unit of the helicopter's mass, so they do not change with its weight,
+/// and power is in shares of what the rotor's induced flow takes to hover at full governed speed.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Rotorcraft {
+    /// The rotor's lift at full collective, governed speed, in still air and out of ground effect, m/s².
+    /// The lever sets the blades' pitch as a share of full, and the lift goes with it.
+    pub thrust: f32,
+    /// How a vertical speed changes the blades' pitch, m/s: climbing at this speed takes a full lever's
+    /// worth away, and descending adds it, as the air coming up through the disc meets the blades at a
+    /// steeper angle. It damps the helicopter's rise and fall, and holds it up in autorotation.
+    pub pitch_flow: f32,
+    /// How much of the air the hull's lean drives through the disc, beyond its vertical speed, reaches the
+    /// blades, 0..=1: a nose-up flare scoops air up through the disc, which lifts the helicopter and spins
+    /// the rotor up, and a nose-down dash pushes air down through it, which takes more collective.
+    pub tilt_flow: f32,
+    /// The speed the rotor drives its downwash through its disc in a hover at full weight, m/s, which
+    /// sets the power it takes to hold it up (and less once it flies across clean air).
+    pub hover_inflow: f32,
+    /// The rotor disc's radius, metres, and how high above the hull's centre its hub is.
+    pub radius: f32,
+    pub hub: f32,
+    /// The lift the ground gives a rotor close over it, as a share of `thrust` with the hub on the ground;
+    /// it fades out by two radii up.
+    pub ground_effect: f32,
+    /// Translational lift: through the air at about `etl_speed`, m/s, the rotor meets clean air and gives
+    /// `etl_gain` more lift for the same collective.
+    pub etl_speed: f32,
+    pub etl_gain: f32,
+    /// The share of its lift a rotor sinking into its own downwash loses (vortex ring state), at a
+    /// vertical descent of about `hover_inflow` with little forward speed. Flying out of it ends it.
+    pub vortex: f32,
+    /// The engine's most power, in shares of the hover's induced power.
+    pub power: f32,
+    /// The power the blades' own drag takes at governed speed, which grows with the cube of their speed.
+    pub profile: f32,
+    /// How fast the engine can spin the rotor up, share of governed speed per second.
+    pub spool: f32,
+    /// How many seconds of hover power the spinning rotor stores at governed speed, which goes with the
+    /// square of its speed: how long it holds up when asked for more than the engine gives, and what a
+    /// flare has to spend.
+    pub inertia: f32,
+    /// How fast the rotor brakes to a stop with nobody at the controls, share of governed speed per second.
+    pub brake: f32,
+    /// Under this share of its governed speed in the air the rotor is low, and the pilot is warned.
+    pub low_rotor: f32,
+    /// Air drag along each of the hull's axes, sideways, up and down, and fore and aft, per metre:
+    /// the deceleration is the coefficient times the square of the speed along that axis.
+    pub drag: [f32; 3],
+    /// The cyclic: how fast full stick pitches and rolls the hull, rad/s. The rate follows what is asked
+    /// for at `rate_gain` per second, never with more than `cyclic_accel`, rad/s², which falls with the
+    /// rotor's speed and its lift. Let go, the stability augmentation only damps the rate, at `hold_gain`
+    /// per second: the hull stays at whatever lean it was left at, and what the rotor does by itself
+    /// slowly turns it, until the pilot flies it back.
+    pub pitch_rate: f32,
+    pub roll_rate: f32,
+    pub rate_gain: f32,
+    pub hold_gain: f32,
+    pub cyclic_accel: f32,
+    /// The pedals turn the nose towards where the pilot looks: the yaw rate asked for per radian off it,
+    /// per second, and never more than `yaw_rate`, rad/s. The tail rotor's most turning, rad/s², falls
+    /// with the rotor's speed.
+    pub yaw_gain: f32,
+    pub yaw_rate: f32,
+    pub yaw_accel: f32,
+    /// How hard the main rotor's drag turns the hull the other way, rad/s² per share of hover power the
+    /// engine gives. The tail rotor cancels it out of what it has.
+    pub torque_yaw: f32,
+    /// Flying ahead at this speed through the air, m/s, and fully by twice it, the helicopter turns as an
+    /// aeroplane does: the look sets where it flies, it banks into the turn (never past `bank_max`,
+    /// radians, closing on it at `bank_gain` per second for each radian short) and its tail keeps the nose
+    /// on its flight path, swinging it back by `weathercock` per second for each radian it slips. Slower it
+    /// turns on the spot.
+    pub coordinate_speed: f32,
+    pub bank_max: f32,
+    pub bank_gain: f32,
+    pub weathercock: f32,
+    /// How far behind the rotor the tail rotor is, metres. Its push, which holds the main rotor's torque,
+    /// also pushes the whole helicopter sideways (translating tendency): it drifts in a hover unless it is
+    /// banked a little against it.
+    pub tail_arm: f32,
+    /// Flapback: the disc tilts back as the advancing blade lifts more, pitching the nose up, rad/s² per
+    /// m/s of forward airspeed.
+    pub flapback: f32,
+    /// Transverse flow: passing through translational lift, the back of the disc works in the front's
+    /// downwash and the rotor rolls the hull to the right, at most this much, rad/s².
+    pub transverse: f32,
+    /// Retreating blade stall: past this airspeed, m/s, the blade going backwards stalls. The hull rolls
+    /// towards that side (the left) and pitches up, `blade_stall` rad/s² for each m/s over, and the rotor
+    /// loses lift.
+    pub stall_speed: f32,
+    pub blade_stall: f32,
+    /// How fast jump and run move the collective lever, share of its travel per second.
+    pub lever_rate: f32,
+    /// The thinning air takes the engine's power away over the last `CEILING_FADE` metres below this
+    /// height over the ground under it, until it has only enough to hover there: climbing on, the rotor
+    /// droops.
+    pub ceiling: f32,
+}
+
+impl Rotorcraft {
+    /// Over how many metres below the ceiling the thinning air takes the engine's power away.
+    pub const CEILING_FADE: f32 = 40.0;
+}
+
 /// A seaplane's pontoons: where they are under the hull and how deep they sit.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Floats {
@@ -523,8 +631,11 @@ pub struct Swim {
 /// What a driver's buttons do, beyond the stick (steer and throttle) every vehicle takes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Buttons {
-    /// Jump is the handbrake; a helicopter also climbs on jump and sinks on run.
+    /// Jump is the handbrake; a plane's throttle and a boat's or a submarine's lift are on jump and run.
     Drive,
+    /// A helicopter's: the input's `collective` is the lever, which the client moves while jump or run
+    /// is held and leaves where it was let go. There is no handbrake.
+    Collective,
     /// A Roadster's: run boosts, jump hops (then hovers), and crouch is the handbrake.
     Stunt,
     /// A hen's: jump leaps, then flaps or glides. There is no handbrake.

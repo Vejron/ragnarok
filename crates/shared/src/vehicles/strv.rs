@@ -114,6 +114,7 @@ pub(super) const STRV: VehicleDef = VehicleDef {
         profile: PROFILE,
         springs: Springs::FIRM,
         airframe: None,
+        rotor: None,
         gait: None,
         arms: None,
         runners: None,

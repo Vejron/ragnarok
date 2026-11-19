@@ -21,6 +21,8 @@ export type Rig =
   | { name: 'fpv'; pitch: readonly [number, number]; link: number; belly?: true }
   /** Behind a plane, following the mouse's aim at an easy pace. */
   | { name: 'aviator' }
+  /** Behind a helicopter, looking where the mouse looks, which its pedals turn the nose to meet. */
+  | { name: 'pilot' }
   /**
    * Behind a gun fixed in the hull, which the hull aims and which only elevates: a Strv S's, or with
    * `pitch` and the camera's `eye` (back, up) a Stridsbåt 90's machine guns.
@@ -49,8 +51,13 @@ export interface SeatView {
   sight?: true
   /** Its occupant stands rather than sits: a technical's gunner, on their feet in the bed behind the gun. */
   stand?: true
+  /**
+   * Its occupant works a collective lever (`CollectiveLever`): jump raises it and run lowers it, and it
+   * stays where it is let go. The input carries it as `collective`.
+   */
+  lever?: true
   /** The gauges the HUD shows from it. */
-  gauges?: readonly ('air' | 'eggs' | 'cockpit' | 'range' | 'ammo' | 'pintle' | 'heat' | 'wind' | 'tubes')[]
+  gauges?: readonly ('air' | 'eggs' | 'cockpit' | 'range' | 'ammo' | 'pintle' | 'heat' | 'wind' | 'tubes' | 'rotor')[]
   /** The arc drawn ahead of what it fires: a mortar's bomb, or where a plane's bomb would land. */
   arc?: 'mortar' | 'bombs'
 }

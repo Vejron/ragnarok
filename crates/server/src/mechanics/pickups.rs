@@ -249,7 +249,7 @@ mod tests {
         for tick in 0..3 {
             *seq += 1;
             let buttons = if tick == 0 { BUTTON_USE } else { 0 };
-            game.handle(Command::Input(id, 0, vec![InputFrame { seq: *seq, strafe: 0, forward: 0, yaw: 0, buttons, pitch: 0, view: 0, slot }]));
+            game.handle(Command::Input(id, 0, vec![InputFrame { seq: *seq, strafe: 0, forward: 0, yaw: 0, buttons, pitch: 0, view: 0, slot, collective: 0 }]));
             game.step();
         }
     }

@@ -44,7 +44,7 @@ fn frame(game: &mut Game, players: &mut [(u32, u32)], axes: (i8, i8), buttons: u
     for (id, seq) in players.iter_mut() {
         *seq += 1;
         let [yaw, pitch] = look.map(shared::quant::to_mrad);
-        game.handle(Command::Input(*id, 0, vec![InputFrame { seq: *seq, strafe: axes.0, forward: axes.1, yaw, buttons, pitch, view: 0, slot: 0 }]));
+        game.handle(Command::Input(*id, 0, vec![InputFrame { seq: *seq, strafe: axes.0, forward: axes.1, yaw, buttons, pitch, view: 0, slot: 0, collective: 0 }]));
     }
     game.step();
 }

@@ -726,7 +726,7 @@ mod tests {
         let Some(Outgoing::Reliable(welcome)) = drain(&mut inbox).into_iter().next() else { panic!("no welcome") };
         assert_eq!(decode::<Welcome>(&welcome).unwrap().id, id);
 
-        game.handle(Command::Input(id, 0, vec![InputFrame { seq: 1, strafe: 0, forward: 127, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 }, InputFrame { seq: 2, strafe: 0, forward: 127, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0 }]));
+        game.handle(Command::Input(id, 0, vec![InputFrame { seq: 1, strafe: 0, forward: 127, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0, collective: 0 }, InputFrame { seq: 2, strafe: 0, forward: 127, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0, collective: 0 }]));
         game.step();
         game.step();
         let snapshots: Vec<Snapshot> = drain(&mut inbox)
@@ -1137,7 +1137,7 @@ mod tests {
         for t in 1..=ticks {
             for (n, id) in ids.iter().enumerate() {
                 let fire = if (t as usize + n).is_multiple_of(30) { BUTTON_FIRE } else { 0 };
-                let frame = InputFrame { seq: t, strafe: if n % 2 == 0 { 100 } else { -100 }, forward: 127, yaw: (t as i16 * 7 + n as i16 * 50) % 3000, buttons: BUTTON_RUN | fire, pitch: 0, view: t as u16, slot: 0 };
+                let frame = InputFrame { seq: t, strafe: if n % 2 == 0 { 100 } else { -100 }, forward: 127, yaw: (t as i16 * 7 + n as i16 * 50) % 3000, buttons: BUTTON_RUN | fire, pitch: 0, view: t as u16, slot: 0, collective: 0 };
                 game.handle(Command::Input(*id, t.saturating_sub(2), vec![frame]));
             }
             let started = Instant::now();

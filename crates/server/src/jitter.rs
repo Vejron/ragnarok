@@ -69,7 +69,7 @@ impl JitterBuffer {
         let mut repeat = self.last;
         repeat.buttons &= !(BUTTON_JUMP | BUTTON_USE | BUTTON_FIRE | BUTTON_SLIDE | BUTTON_RELOAD | BUTTON_CHUTE | BUTTON_AMMO | BUTTON_LAMP | BUTTON_SKIS);
         if self.starved > STARVE_LIMIT {
-            repeat = InputFrame { seq: repeat.seq, strafe: 0, forward: 0, yaw: repeat.yaw, buttons: 0, pitch: repeat.pitch, view: repeat.view, slot: repeat.slot };
+            repeat = InputFrame { seq: repeat.seq, strafe: 0, forward: 0, yaw: repeat.yaw, buttons: 0, pitch: repeat.pitch, view: repeat.view, slot: repeat.slot, collective: repeat.collective };
         }
         Consumed { input: repeat, fresh: false }
     }
@@ -85,7 +85,7 @@ mod tests {
     use super::*;
 
     fn frame(seq: u32) -> InputFrame {
-        InputFrame { seq, strafe: 0, forward: 127, yaw: 0, buttons: BUTTON_JUMP, pitch: 0, view: 0, slot: 0 }
+        InputFrame { seq, strafe: 0, forward: 127, yaw: 0, buttons: BUTTON_JUMP, pitch: 0, view: 0, slot: 0, collective: 0 }
     }
 
     #[test]

@@ -46,7 +46,7 @@ async function run(
   motor.dispose()
 }
 
-const frame = (buttons: number, rest: Partial<InputFrame> = {}): InputFrame => ({ seq: 1, strafe: 0, forward: 0, yaw: 0, buttons, pitch: 0, view: 0, slot: 0, ...rest })
+const frame = (buttons: number, rest: Partial<InputFrame> = {}): InputFrame => ({ seq: 1, strafe: 0, forward: 0, yaw: 0, buttons, pitch: 0, view: 0, slot: 0, collective: 0, ...rest })
 
 const COAST: CarControls = { throttle: 0, steer: 0, handbrake: false, lift: 0, powered: false }
 const FORWARD: CarControls = { ...COAST, throttle: 1 }
@@ -85,22 +85,25 @@ const checkpoints: [number, number, [number, number, number]][] = [
 
 /** Same as `scripted_flight` in vehicle.rs. */
 const PILOTED: CarControls = { ...COAST, powered: true }
+const flying = (lift: number, look: number): CarControls => ({ ...PILOTED, lift, aim: [look, 0] })
 const flight = (tick: number): CarControls => {
-  switch (Math.floor(tick / 60)) {
-    case 0: return PILOTED
-    case 1: case 2: return { ...PILOTED, lift: 1 }
-    case 3: case 4: return { ...PILOTED, throttle: 1 }
-    case 5: case 6: return { ...PILOTED, throttle: 1, steer: 0.7 }
-    default: return { ...PILOTED, throttle: -0.5, steer: -1, lift: -1 }
-  }
+  const step = Math.floor(tick / 30)
+  if (step <= 3) return flying(0, 0)
+  if (step <= 7) return flying(1, 0)
+  if (step === 8) return { ...flying(0.7, 0), throttle: 0.6 }
+  if (step <= 11) return flying(0.7, 0)
+  if (step === 12) return { ...flying(0.6, -1), steer: -0.5 }
+  if (step === 13) return flying(0.6, -1)
+  if (step === 14) return { ...flying(0.4, -1), throttle: -0.6 }
+  return flying(0.4, -1)
 }
 
-/** `FLIGHT_CHECKPOINTS` in vehicle.rs: a helicopter started at [0, 3, 0]. */
+/** `FLIGHT_CHECKPOINTS` in vehicle.rs: a helicopter started at [0, 3, 0] in the wind, its rotor stopped. */
 const flightCheckpoints: [number, [number, number, number]][] = [
-  [90, [0, 3.6099, 0]],
-  [210, [0, 11.8079, -0.0842]],
-  [330, [0.1181, 13.1328, -8.3432]],
-  [480, [12.1913, 11.3589, -26.3039]],
+  [90, [0.0717, 0.7999, 0.0029]],
+  [210, [0.9357, 3.1621, 0.0317]],
+  [330, [6.8222, 15.8349, -0.7983]],
+  [480, [18.4246, 24.7133, -10.4861]],
 ]
 
 /** Same as `scripted_drone` in vehicle.rs. */
@@ -226,10 +229,10 @@ describe('helicopter prediction', () => {
     await run(KIND_HELI, [0, 3, 0], 480, flight, flightCheckpoints)
   })
 
-  it('jump climbs and run sinks, as on the server', () => {
-    expect(controlsOf(frame(BUTTON_JUMP), KIND_HELI)).toMatchObject({ lift: 1, powered: true })
-    expect(controlsOf(frame(BUTTON_RUN), KIND_HELI)).toMatchObject({ lift: -1 })
-    expect(controlsOf(frame(BUTTON_JUMP | BUTTON_RUN), KIND_HELI)).toMatchObject({ lift: 0 })
+  it('reads the collective lever from the input, not jump or run, as on the server', () => {
+    expect(controlsOf(frame(0, { collective: 255 }), KIND_HELI)).toMatchObject({ lift: 1, powered: true, handbrake: false })
+    expect(controlsOf(frame(BUTTON_JUMP), KIND_HELI)).toMatchObject({ lift: 0 })
+    expect(controlsOf(frame(BUTTON_RUN, { collective: 51 }), KIND_HELI).lift).toBeCloseTo(0.2, 6)
   })
 })
 
@@ -329,7 +332,7 @@ describe('vehicles on a slope', () => {
 describe('driving a predicted vehicle', () => {
   /** A driver's input that goes forward, swings left and right and brakes. */
   const input = (seq: number): InputFrame => ({
-    seq, strafe: Math.round(Math.sin(seq / 25) * 100), forward: seq < 200 ? 127 : -127, yaw: 0, pitch: 0, view: 0, slot: 0, buttons: seq % 150 === 0 ? 1 : 0,
+    seq, strafe: Math.round(Math.sin(seq / 25) * 100), forward: seq < 200 ? 127 : -127, yaw: 0, pitch: 0, view: 0, slot: 0, collective: 0, buttons: seq % 150 === 0 ? 1 : 0,
   })
 
   /** What the server would send after `ticks` of the inputs: quantized as on the wire. */

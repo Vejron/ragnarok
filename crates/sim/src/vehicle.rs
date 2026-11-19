@@ -22,7 +22,7 @@ use rapier3d::control::{DynamicRayCastVehicleController, WheelTuning};
 use rapier3d::prelude::*;
 use shared::consts::*;
 use shared::armor::{Part, State, unpack};
-use shared::protocol::{DAMAGE_PARTS, DAMAGE_SLOTS, DAMAGE_WHEELS, THRUST_AIR, THRUST_BOOST, THRUST_GLIDE, THRUST_LIFT, WHEEL_GONE, is_drone, vehicle_hp};
+use shared::protocol::{DAMAGE_PARTS, DAMAGE_SLOTS, DAMAGE_WHEELS, THRUST_AIR, THRUST_BOOST, THRUST_GLIDE, THRUST_LIFT, THRUST_LOW_ROTOR, WHEEL_GONE, is_drone, vehicle_hp};
 
 
 mod boat;
@@ -42,7 +42,7 @@ use sail::sail;
 use water::{wade, water_under};
 pub use spec::half_extents;
 pub use limbs::{Hand, LIMB_GROUP, LimbsPose};
-pub(super) use spec::{Airframe, Arms, Buttons, Floats, Gait, Lift, Role, Runners, Shape, Solid, Spec, spec};
+pub(super) use spec::{Airframe, Arms, Buttons, Floats, Gait, Lift, Role, Rotorcraft, Runners, Shape, Solid, Spec, spec};
 
 
 /// How quickly a tank's yaw rate follows the stick, rad/s².
@@ -114,9 +114,10 @@ pub struct CarControls {
     /// -1 (left) ..= 1 (right). A helicopter turns instead, and a plane rolls.
     pub steer: f32,
     pub handbrake: bool,
-    /// -1 (sink) ..= 1 (climb). A helicopter has it, and a Titan, which crouches on sink.
+    /// -1 (sink) ..= 1 (climb): a plane's throttle, a boat's or submarine's, and a Titan's, which crouches
+    /// on sink. A helicopter's is its collective lever, 0 (down) ..= 1 (full up).
     pub lift: f32,
-    /// The rotor or the propeller is turning, i.e. a pilot is aboard. Only a helicopter and a plane have it.
+    /// A pilot is aboard and the engine runs. A helicopter's rotor turns on without it, slowing.
     pub powered: bool,
     /// Where a plane's pilot points the mouse, `[yaw, pitch]` in radians (yaw 0 faces -Z, + turns left):
     /// the plane turns towards it, banking into the turn. `None` flies on in a straight line.
@@ -215,12 +216,13 @@ impl CarControls {
             steer: shared::quant::from_axis(input.strafe),
             throttle: shared::quant::from_axis(input.forward),
             powered: true,
-            // A plane and a drone fly towards where their pilot looks.
+            // A plane and a drone fly towards where their pilot looks, and a helicopter turns to it.
             aim: spec.aims.then(|| [shared::quant::from_mrad(input.yaw), shared::quant::from_mrad(input.pitch())]),
             ..CarControls::IDLE
         };
         match spec.buttons {
             Buttons::Drive => CarControls { handbrake: held(BUTTON_JUMP), lift: f32::from(held(BUTTON_JUMP)) - f32::from(held(BUTTON_RUN)), ..stick },
+            Buttons::Collective => CarControls { lift: input.collective(), ..stick },
             Buttons::Stunt => CarControls { handbrake: held(BUTTON_CROUCH), boost: held(BUTTON_RUN), hop: held(BUTTON_JUMP), ..stick },
             Buttons::Leap => CarControls { hop: held(BUTTON_JUMP), ..stick },
             Buttons::Sled => CarControls { handbrake: held(BUTTON_JUMP), boost: held(BUTTON_RUN), ..stick },
@@ -324,7 +326,8 @@ pub(super) struct Car {
     condition: CarCondition,
     /// A mortar's tow: the car it is hitched to, and the joint that holds it there.
     towed_by: Option<(u32, ImpulseJointHandle)>,
-    /// A Roadster's air tank, 0..=`ROADSTER_AIR`, or a hen's or a tupp's stamina, 0..=`HEN_STAMINA`; `None` for anything else.
+    /// A Roadster's air tank, 0..=`ROADSTER_AIR`, a hen's or a tupp's stamina, 0..=`HEN_STAMINA`, or a
+    /// helicopter's rotor speed, 0..=1 of governed; `None` for anything else.
     tank: Option<f32>,
     /// The `THRUST_*` nozzles that fired in the last step.
     firing: u8,
@@ -981,6 +984,8 @@ impl Physics {
         self.apply_removals();
         let waves = shared::waves::time(self.tick);
         let wind = shared::wind::wind(self.tick);
+        // The air a helicopter flies through, m/s.
+        let breeze = Vector::new(wind[0], 0.0, wind[1]) * (shared::wind::speed(self.tick) * self.breeze);
         self.tick = self.tick.wrapping_add(1);
         if self.cars.is_empty() {
             return;
@@ -993,11 +998,18 @@ impl Physics {
             .filter_map(|(&id, car)| Some((id, self.terrain_below(self.bodies.get(car.body)?.translation()))))
             .collect();
         let floor = |id: &u32| floors.get(id).copied().unwrap_or(0.0);
-        for (id, car) in self.cars.iter().filter(|(_, car)| matches!(car.spec.lift, Lift::Rotor | Lift::Drone | Lift::Loiter | Lift::Missile)) {
+        for (id, car) in self.cars.iter_mut().filter(|(_, car)| matches!(car.spec.lift, Lift::Rotor | Lift::Drone | Lift::Loiter | Lift::Missile)) {
             if let Some(body) = self.bodies.get_mut(car.body) {
                 // Forces persist from step to step until reset.
                 body.reset_forces(false);
-                // Unpowered, or with its engine shot dead, the rotor stops and it falls.
+                // A rotor flies whether or not its engine runs: it spins down, or autorotates.
+                if let Some(rotor) = &car.spec.rotor {
+                    body.reset_torques(false);
+                    let rpm = car.tank.get_or_insert(0.0);
+                    car.firing = fly(body, rotor, car.spec.half_extents, car.flight, car.condition.power, rpm, breeze, floor(id), dt);
+                    continue;
+                }
+                // Unpowered, or with its engine shot dead, it falls.
                 if !car.flight.powered || car.condition.power == 0.0 {
                     continue;
                 }
@@ -1007,8 +1019,6 @@ impl Physics {
                     glide(body, LOITER_GLIDE, car.flight, floor(id), dt);
                 } else if car.spec.lift == Lift::Missile {
                     glide(body, MISSILE_GLIDE, car.flight, floor(id), dt);
-                } else {
-                    fly(body, car.flight, floor(id), dt);
                 }
             }
         }
