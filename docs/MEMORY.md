@@ -51,6 +51,7 @@ One mesh held most of everything: a tile's merged buildings. In the town that is
 - **The tile worker keeps a tile's roads and rails only.** It kept everything the tile was made from to drape the roads again on dented ground, and with it the buildings' faces and openings worked out from that.
 - **The tile file is let go once the physics has read it**, and the buildings' cells are copies, not views that kept the file alive (and were cloned whole to the worker).
 - **The multisampled colour is a transient attachment** (`TRANSIENT_ATTACHMENT`, where the browser has it), as are the reflection's multisampled colour and depth: cleared, drawn and discarded within a pass, they are given no memory. The footprint fell by about 120 MB, run alternately with and without; the frame's time did not move (within 0.1 ms).
+- **The sun's shadow maps are `depth16unorm`**: two 2048² maps are 16 MB, not 32. Sixteen bits over a map's depth range are steps of 6 mm (near) and 12 mm (far), with no acne at either and no change in the frame's time.
 - **Maps that only grew**: the renderer's pipeline cache by material (now weak), `HullMarks.lastHp` and `SkiTracks.spray` (now forgotten with the vehicle or skier).
 - **The service worker's cache rule named `minimap.png`**; the file is `minimap.webp`, so the minimap was in no cache.
 
@@ -68,7 +69,6 @@ Per frame, measured playing alone:
 
 - **`Character.update` (21 KB a frame) and `considerLevels` (17 KB)** are the largest that are left, and neither shows what it allocates by reading it: probably numbers boxed in code the engine has not optimised. Find out with a CPU profile before changing them.
 - **The entity paths** (`blend` makes a new entity for each one between snapshots, the vehicle presenters, the snapshot decode) need a run against a server with bots.
-- **The shadow map** is 64 MB as `depth32float` at 4096². `depth16unorm` would halve it; its precision over the shadow's reach is not checked.
 - **The 34 tile textures** (87 MB) are uncompressed RGBA8 with mipmaps. A cover map at fewer texels a metre, or a compressed format, changes the picture.
 - **The vertex layout** is 64 bytes for every mesh though a building uses 48 and terrain 32. One layout is what lets every mesh share one buffer.
 - **The window glass** is still a soup (28% of its vertices are unique), and is rewritten in place when a pane breaks.

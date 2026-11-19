@@ -183,6 +183,71 @@ code, cost nothing either (vindeln: forest 2.93 and 2.94 ms, vista 2.52 and 2.52
 - **A level without the tufts from 40 m was dropped**: timed alternately in `home`, it made no difference
   in the forest (0.01 ms) and the vista was 0.07 ms dearer with it (it is a draw a kind more per tile).
 
+### 7. Passes with nothing to draw, and work thrown away
+
+A survey of the frame found work that bought nothing. `home`, quality high (2268 × 1258), ms per frame:
+
+| view | before | after |
+|---|---|---|
+| forest | 3.04 | 2.90 |
+| vista | 2.66 | 2.59 |
+| water | 3.32 | 3.12 |
+| night | 3.31 | 3.20 |
+
+- **The effects pass and the half-resolution smoke pass ran every frame**, whatever was alive: the
+  particle pools are always in the scene, and the passes were gated on that. The effects pass reloads
+  and stores the whole image, and the smoke pass clears a target and blends it over. An `Effect` now
+  says when it is `idle` (an empty pool, no flashes, no trails), and a pass that every effect is idle
+  for is left out. This is most of the gain: the `effects` part was 0.10 to 0.14 ms with nothing in
+  the air.
+- **The sky panorama** is drawn only in a frame where a material in view binds it (`MaterialResources.watch`).
+- **The shafts' target was cleared** every frame they were off, though the output pass does not read it then.
+- **`select()` runs both of its sides.** The water chose between a lake's chop and a stream's bands
+  with it, so every pixel of either paid for both. It branches now.
+- **The fog's tint** (the sky behind it: an arccosine and a table read) was worked out where the fog
+  amount was 0, which is everything nearer than the fog's start.
+- **A pixel's own screen position** was found by a `viewProj` multiply per pixel in the foliage and
+  the water. `Surface.pixel` hands a shader material the rasteriser's.
+- **The grass's char** is the same over a blade and was looked up per pixel; its vertex stage, which
+  already looks it up, hands it down. Bare stones skip the waterline's noise.
+
+### 8. No `discard` in the main view's shaders
+
+The mirror image is cut off at the water by a `discard`, behind a uniform test, and that statement
+was in the standard shader and in every shader material. The standard shader also discards along the
+ragged edges of worn paths and asphalt. A tiled GPU decides whether it can skip hidden pixels by the
+pipeline, not by the pixel: a shader that can discard is shaded for every hidden layer, whether or
+not it ever does. So the ground, the buildings and the grass paid for overdraw.
+
+Taking the four statements out as a probe: forest 2.89 to 2.64 ms, vista 2.55 to 2.38. Built properly:
+
+- The mirror image draws with modules of its own that hold the clip (`standardWgsl(…, reflect)`,
+  `mirrorCode`), picked by `pipelineFor`'s variant 3. The main view's hold none.
+- Only a worn or asphalt material's pipeline has the edge discard (`edges`).
+- **An override constant does not do it.** `if (REFLECT && …) { discard; }` with `REFLECT` false in
+  the main pipelines gained 0.04 ms where the probe gained 0.25: the statement has to be absent from
+  the shader's text.
+
+`home`, alternated: forest 2.93 to 2.78 ms, vista 2.65 to 2.45, water 3.31 to 3.02. The roads and
+paths keep their discard, which is the rest of the probe's gain: an edge that fades by alpha or by
+colour into the ground it already samples would win it back.
+
+### 9. The water's shader, part by part
+
+On `vindeln`'s shore the water is 1.8 ms of a 3.6 ms frame. With each part knocked out in turn (the
+picture wrong, the timing honest), ms saved: the chop and the gusts 0.75, the swell's slope 0.31, the
+lace and the froth 0.29, the mirrored sky 0.20, the ground's light 0.15, the caustics 0.15, the wakes
+0.10. What could be saved with the picture unchanged was:
+
+- **The gusts per vertex.** They are patches tens of metres across; two noises a pixel became two a vertex.
+- **The lace and the froth only where there is foam** to break up: the shore's line, a breaking crest, a wake.
+- **The caustics only through clear water**, and the chop's two finest octaves only where they have
+  not faded out with distance.
+
+`vindeln`, water view: 3.60 to 3.17 ms. What is left is mostly the chop's two broad octaves and the
+swell. Making the chop once a frame into a tiling texture, as the sky panorama is, would take most of
+the remaining 0.5 ms, but a tiling chop repeats and would change how the water looks: not built.
+
 ## Smoke
 
 Smoke is cheap here because it is drawn at half resolution: 200 puffs 3 to 5 m wide across the whole
@@ -205,6 +270,17 @@ thing added per pixel, and took the 200 puffs from 0.11 to 0.13 ms.
   shadow map (RENDERING.md, "Far shadows") is the cheap half of the idea: it is redrawn only every
   fourth frame.
 
+- **The multisampled depth, not stored.** The main pass stores its 4× depth so a pass can copy one
+  sample out for the effects, the ink and the shafts. Discarding it and skipping the copy (the picture
+  broken) is the most that could be won: forest 2.74 to 2.65 ms, vista 2.41 to 2.30. A second colour
+  attachment holding depth would give part of that back and cost the ink its exact edges.
+- **No depth pre-pass for the trees:** forest 0.28 ms slower, vista the same. It stays.
+- **The trees' switch nearer (60 m) or further (160 m):** both slower, by 0.03 to 0.09 ms.
+- **A cheaper mirror image** (one sample a pixel, one shadow tap): the whole reflection is 0.01 to
+  0.04 ms in `home` and on `vindeln`'s shore, so there is nothing to win.
+- **Bloom's last upsample done by the output pass:** it would read nine taps a full-size pixel in
+  place of nine a half-size one. Not built.
+
 ## Shadows: two maps, stepped sun, gap-free filter
 
 `vindeln`, quality high, ms the shadows cost (`--parts shadows`), and the whole frame:
@@ -222,6 +298,7 @@ saves 0.05 ms.
 - **GPU culling into indirect draws, and Hi-Z occlusion:** not built. The renderer's CPU time is about
   0.3 ms, WebGPU has no multi-draw-indirect (each indirect draw is still a call), and the pre-pass
   already makes hidden tree pixels cheap.
-- **Every tree a solid, with no impostors:** 0.3 ms cheaper still on this GPU, at 0.5 M more triangles
-  in a town's trees and more in a forest. Weaker GPUs pay more for triangles, and the CPU loop over
+- **Every tree a solid, with no impostors:** 0.3 ms cheaper on this GPU before the leafy crowns, at
+  0.5 M more triangles in a town's trees and more in a forest. With the leafy crowns it is 3 to 5 ms
+  dearer in `home` (`--parts solids`), so the impostors now earn their place here too. Weaker GPUs pay more for triangles, and the CPU loop over
   trees grows with the square of the distance, so the impostor stays past 80 m.

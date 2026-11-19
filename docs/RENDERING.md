@@ -25,6 +25,7 @@ game.frame()
         ├─ effects half     smoke at half resolution into its own target (`halfResolution` effects)
         ├─ effects pass     that target laid over, then particles, ribbons + flashes, depth read-only,
         │                   then the overlay (the gunsight), over everything; the image resolves
+        │                   (both left out while every effect is `idle` and there is no overlay)
         ├─ bloom            bright extract → mip chain → add back (when `scene.bloom`)
         └─ output pass      ink from depth, bloom, tone mapping, sRGB     → canvas
                             then the HUD's flat sprites, in the same pass (a pass of its own
@@ -628,6 +629,10 @@ Its own README gives the benchmark against three's two renderers, from when a co
 - Editing the client while a headless run is going can make Vite reload the page under it. The
   DevTools replies in flight are then lost, so the bench gives up on each after two minutes.
 - WGSL traps:
+  - `select(a, b, c)` works out both `a` and `b`. Choose between two costly things with `if`.
+  - A `discard` anywhere in a shader costs every pixel drawn with it a tiled GPU's hidden-surface
+    removal, even behind a test that is never true, or a false `override` constant. Keep it out of
+    the text of the main view's shaders ([GPU-PERFORMANCE.md](GPU-PERFORMANCE.md), step 8).
   - `from` is a reserved word.
   - A variable named `length` (or another builtin's name) shadows the builtin for the rest of its
     scope.
