@@ -120,6 +120,29 @@ one, a blast or a Titan. It is drawn as the bridge railing brought down to 0.75 
 - galvanised square posts;
 - two square rails, at 0.69 m and 0.4 m.
 
+### Scraping along it
+
+A car that grazes the rail is turned aside, as by a real one, and drives on:
+
+- **It pushes only straight across, and level.** `sim::fences::RailHooks` rewrites each contact
+  with a rail piece so it pushes square to the rail's line, towards the car's side. Without it, a
+  car scraping along caught its front corner on the square end of the next 2 m piece, where two
+  pieces meet, and stopped dead at speed. A car hitting it square on was also pushed out over its
+  top, since at 30 m/s a car moves further in a tick than the rail is thick.
+- **It is slippery** (friction 0.05).
+- **It breaks only under a blow.** A piece of any wall breaks by the speed it takes out of the car in
+  one tick (`run_down_trees`), not by the car's own speed. A scraping car, or one leaning on the rail
+  as it swings round, loses little to it. Before this, any touch above 7 m/s knocked a piece out and
+  left the next piece's end in the car's way. The rail has 90 health, so it takes a 15 m/s blow.
+
+A sports car at 108 km/h (`a_car_grazing_a_guard_rail_slides_along_it_unhurt_and_a_square_hit_breaks_it`):
+
+| Angle into the rail | What happens |
+|---|---|
+| up to 17° | slides along, unhurt, nothing breaks |
+| 29° | slides along, loses 18 of 100 health |
+| 57° or more | the rail breaks and the car is wrecked |
+
 ## How the asphalt hides its shoulder and the ground
 
 A paved road is two ribbons: the gravel shoulder (the casing) and the asphalt (the fill). Before

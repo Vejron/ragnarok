@@ -452,7 +452,10 @@ was found):
 - **A road over a cutting gets a deck.** Where a path goes under a road OSM does not map as a
   bridge, the terrain has a trench across the road. A drivable road over a dip in the ground
   narrower than 24 m and more than 1.5 m deep gets a deck flush with the road, with no railings
-  (`cuttings`, `Pylons::Flush`); the way under it stays open.
+  (`cuttings`, `Pylons::Flush`); the way under it stays open. A path or road OSM has in a short
+  tunnel under a road is first dug out to leave headroom under that deck, with ramps down to it
+  (TERRAIN-SHAPING.md, "Underpasses"), and a guard rail or fence across the road stands on the deck
+  (BARRIERS.md).
 - **No pier stands on a road** or a track that goes under the bridge.
 - **A ramp comes down to the deck's lip** over the ground (0.12 m), not to within 0.4 m of it.
 

@@ -1167,13 +1167,15 @@ pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::B
     // Nor does a deck over a cutting, whose road is among the roads already.
     rail_bridges.extend(shared);
     let (flush, bridges): (Vec<_>, Vec<_>) = bridges.into_iter().partition(|bridge| bridge.3 == Pylons::Flush);
+    // A guard rail or a fence over a cutting stands on its deck, not down in it.
+    let decks: Vec<(Vec<P>, f64)> = flush.iter().map(|(points, width, ..)| (points.clone(), *width)).collect();
     rail_bridges.extend(flush);
     // The stones follow a graveyard's paths and stand off every road: the roads as they are drawn, not cut at the tiles.
     let ways: Vec<(Vec<P>, f64)> = if yards.is_empty() { Vec::new() } else { roads.iter().map(|(points, width, _)| (points.clone(), *width)).collect() };
     let mut built = assemble(frame, half, tile_size, mask, buildings, roads, &paints, bridges, rails, rail_bridges, ski, covers, trees, &mapped, ground, water);
     if let Some(ground) = &kept {
         lay_lifts(&mut built, &lifts, half, ground);
-        lay_lines(&mut built, &lines, half, tile_size, ground);
+        lay_lines(&mut built, &lines, &decks, half, tile_size, ground);
         crate::graves::lay(&mut built, &yards, &ways, half, ground);
         let stones: usize = built.tiles.values().map(|tile| tile.graves.len()).sum();
         eprintln!("graveyards: {} from OpenStreetMap, {stones} tombstones", yards.len());
@@ -1950,6 +1952,41 @@ fn open_at_roads(points: &[P], roads: &[(Vec<P>, f64, u8)]) -> Vec<Vec<P>> {
     runs
 }
 
+/// The steepest a guard rail's foot rises or falls from one post to the next, rise over run: steeper
+/// than any road, so a steeper drop is the rail running out over a cutting.
+const GUARDRAIL_STEEPEST: f64 = 0.25;
+/// The shortest stretch of guard rail kept between two such drops, metres: a shorter one is the
+/// bottom of the cutting.
+const GUARDRAIL_SHORTEST: f64 = 10.0;
+
+/// A guard rail's line cut where its foot (`foot(x, z)`, metres, sampled every `step` metres) drops
+/// or climbs more steeply than `GUARDRAIL_STEEPEST`, with the pieces shorter than `GUARDRAIL_SHORTEST`
+/// left out: where it would run down into a cutting with no deck over it, it stops at the edge.
+fn over_level(points: &[P], step: f64, foot: &impl Fn(f64, f64) -> f64) -> Vec<Vec<P>> {
+    let samples = bridge::resample(points, step);
+    if samples.is_empty() {
+        return Vec::new();
+    }
+    let along: Vec<f64> = samples.iter().scan((0.0, samples[0]), |(run, last), &p| {
+        *run += (p[0] - last[0]).hypot(p[1] - last[1]);
+        *last = p;
+        Some(*run)
+    }).collect();
+    let heights: Vec<f64> = samples.iter().map(|p| foot(p[0], p[1])).collect();
+    let mut runs = Vec::new();
+    let mut from = 0;
+    for k in 1..=samples.len() {
+        let steep = k < samples.len() && (heights[k] - heights[k - 1]).abs() > GUARDRAIL_STEEPEST * (along[k] - along[k - 1]).max(1.0);
+        if k == samples.len() || steep {
+            if along[k - 1] - along[from] >= GUARDRAIL_SHORTEST {
+                runs.push(samples[from..k].to_vec());
+            }
+            from = k;
+        }
+    }
+    runs
+}
+
 /// `points` (centimetres) with points added so that none is more than `step` metres from the next:
 /// one at every post of a fence, and a wall cut into pieces that break on their own.
 fn every(points: &[[i32; 2]], step: f32) -> Vec<[i32; 2]> {
@@ -1973,12 +2010,21 @@ fn every(points: &[[i32; 2]], step: f32) -> Vec<[i32; 2]> {
 /// already. A fence or wall is cut at tile borders like a road, and has a point at every post
 /// (`LineKindDef::step`), each piece between two being what breaks. A power line is its poles, each span in the tile of
 /// its first pole, so every pole is in one tile only and a span never needs two.
-fn lay_lines(built: &mut Built, lines: &[(u8, Vec<P>)], half: f64, tile_size: f64, ground: &Ground) {
+///
+/// A line stands on the ground, or on the roadway where it crosses a deck over a cutting (`decks`:
+/// each deck's line and width, `bridge::flush_top`). A guard rail is cut where its foot would drop
+/// more steeply than any road climbs (`GUARDRAIL_STEEPEST`): it would be down in a cutting with no
+/// deck over it.
+fn lay_lines(built: &mut Built, lines: &[(u8, Vec<P>)], decks: &[(Vec<P>, f64)], half: f64, tile_size: f64, ground: &Ground) {
     let inner = half - EDGE_MARGIN;
     let Built { manifest, tiles } = built;
+    let foot = |x: f64, z: f64| {
+        let on_deck = decks.iter().filter_map(|(points, width)| bridge::flush_top(points, *width, ground, [x, z])).fold(f64::NAN, f64::max);
+        if on_deck.is_finite() { on_deck } else { f64::from(ground.height_at(x as f32, z as f32)) }
+    };
     let mut put = |key: (u16, u16), kind: u8, points: Vec<[i32; 2]>, end: bool| {
         if let Some(tile) = tiles.get_mut(&key) {
-            let base = points.iter().map(|&[x, z]| cm(f64::from(ground.height_at(x as f32 / 100.0, z as f32 / 100.0)))).collect();
+            let base = points.iter().map(|&[x, z]| cm(foot(f64::from(x) / 100.0, f64::from(z) / 100.0))).collect();
             tile.lines.push(Line { kind, points, base, end });
         }
     };
@@ -1987,8 +2033,10 @@ fn lay_lines(built: &mut Built, lines: &[(u8, Vec<P>)], half: f64, tile_size: f6
             LINE_POWER => POLE_SPAN,
             LINE_POWER_MAJOR => PYLON_SPAN,
             _ => {
-                for run in clip_polyline(points, inner) {
-                    let step = line_kind_def(*kind).map_or(f32::MAX, |def| def.step);
+                let step = line_kind_def(*kind).map_or(f32::MAX, |def| def.step);
+                let runs = clip_polyline(points, inner);
+                let runs = if *kind == LINE_GUARDRAIL { runs.iter().flat_map(|run| over_level(run, f64::from(step), &foot)).collect() } else { runs };
+                for run in runs {
                     per_tile(manifest, half, tile_size, &run, |key, points| {
                         let points = every(&points, step);
                         if points.len() > 1 {
@@ -2486,7 +2534,7 @@ pub fn synthetic_city(half: f64, tile_size: f64, ground: Ground, water: Placed) 
     let paints = vec![Lanes::default(); roads.len()];
     let mut built = assemble(Frame::default(), half, tile_size, None, buildings, roads, &paints, bridges, rails, Vec::new(), Vec::new(), covers, trees, &[], ground, water);
     if let Some(ground) = kept {
-        lay_lines(&mut built, &lines, half, tile_size, &ground);
+        lay_lines(&mut built, &lines, &[], half, tile_size, &ground);
         crate::graves::lay(&mut built, &yards, &ways, half, &ground);
     }
     lay_crops(&mut built, &fields, half, tile_size);
@@ -2872,7 +2920,7 @@ mod tests {
         let manifest = Manifest { version: WORLD_VERSION, half_extent: cm(150.0), tile_size: cm(100.0), ..Default::default() };
         let mut built = Built { manifest, tiles: [(0, 1), (1, 1), (2, 1)].into_iter().map(|key| (key, Tile::default())).collect() };
         let lines = vec![(LINE_POWER, vec![[-140.0, 10.0], [140.0, 10.0]]), (LINE_FENCE, vec![[-140.0, 20.0], [140.0, 20.0]])];
-        lay_lines(&mut built, &lines, 150.0, 100.0, &Ground::default());
+        lay_lines(&mut built, &lines, &[], 150.0, 100.0, &Ground::default());
         let power: Vec<&Line> = built.tiles.values().flat_map(|tile| &tile.lines).filter(|line| line.kind == LINE_POWER).collect();
         // Six spans of 46.7 m: poles at -140, -93, -47, 0, 47, 93, 140.
         assert_eq!(power.iter().map(|line| line.points.len() - usize::from(!line.end)).sum::<usize>(), 7, "{power:?}");
@@ -3191,6 +3239,23 @@ mod tests {
         // Flush with the road: nothing stands a metre over the deck, as a railing would.
         let top = pieces.iter().flat_map(|piece| piece.tris.iter().flatten()).map(|v| v[1]).fold(f64::MIN, f64::max);
         assert!(top < 10.0 + 24.0 * 0.05 + CUT_MARGIN * 0.05 + 0.5, "no railing: {top}");
+        // A guard rail down the road's middle stands on the deck over the trench, not down in it,
+        // and one beside the road, with no deck under it, stops at the trench.
+        let manifest = Manifest { version: WORLD_VERSION, half_extent: cm(150.0), tile_size: cm(300.0), ..Default::default() };
+        let mut built = Built { manifest, tiles: [((0, 0), Tile::default())].into_iter().collect() };
+        let rails = vec![(LINE_GUARDRAIL, vec![[-20.0, 0.0], [60.0, 0.0]]), (LINE_GUARDRAIL, vec![[-20.0, 20.0], [60.0, 20.0]])];
+        lay_lines(&mut built, &rails, &[(points.clone(), *width)], 150.0, 300.0, &ground);
+        let laid: Vec<&Line> = built.tiles[&(0, 0)].lines.iter().collect();
+        let on_road: Vec<&&Line> = laid.iter().filter(|line| line.points[0][1] == 0).collect();
+        assert_eq!(on_road.len(), 1, "one rail along the road: {laid:?}");
+        let road_level = |x: f64| x * 0.05 + 10.0;
+        for (point, base) in on_road[0].points.iter().zip(&on_road[0].base) {
+            let x = f64::from(point[0]) / 100.0;
+            assert!((f64::from(*base) / 100.0 - road_level(x)).abs() < 0.3, "at {x}: {base} against the road's {}", road_level(x));
+        }
+        let beside: Vec<&&Line> = laid.iter().filter(|line| line.points[0][1] != 0).collect();
+        assert_eq!(beside.len(), 2, "cut at the trench: {beside:?}");
+        assert!(beside.iter().all(|line| line.points.iter().all(|p| (f64::from(p[0]) / 100.0 - 20.0).abs() >= 3.0)), "{beside:?}");
     }
 
     #[test]

@@ -414,11 +414,24 @@ const FENCE_KEEP: f32 = 0.95;
 
 /// Fells the trees and breaks the walls a car is driving into. Speed is taken from before the step, as the impact
 /// itself has already slowed the car by now; a tree that goes down gives some of it back.
+/// A piece of a wall or guard rail is broken by the blow it takes instead: the speed it took out of
+/// the car this tick. A car scraping along one, or leaning on it as it turns, loses little to it and
+/// slides on, where its own speed would knock the piece out and catch its nose on the next.
 /// (A tank never touches a tree: see `plow_trees`.)
 fn run_down_trees(world: &mut World, before: &BTreeMap<u32, CarPose>) {
+    let mut blows: std::collections::HashMap<(u32, Obj), f32> = std::collections::HashMap::new();
+    for impact in world.physics.car_impacts() {
+        if let Some(object @ Obj::Line(_)) = impact.object {
+            let blow = blows.entry((impact.car, object)).or_default();
+            *blow = blow.max(impact.dv);
+        }
+    }
     for (vid, object) in world.physics.car_tree_contacts() {
         let (Some(pose), Some(vehicle)) = (before.get(&vid), world.entities.get::<Vehicle>(vid)) else { continue };
-        let speed = pose.velocity[0].hypot(pose.velocity[2]);
+        let speed = match object {
+            Obj::Line(_) => blows.get(&(vid, object)).copied().unwrap_or(0.0),
+            _ => pose.velocity[0].hypot(pose.velocity[2]),
+        };
         let (kind, wrecked) = (vehicle.kind, world.entities.dead(vid));
         if speed < TREE_RAM_MIN_SPEED || wrecked || is_drone(kind) {
             continue;

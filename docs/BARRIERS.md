@@ -24,7 +24,14 @@ vehicles go through it anyway.
 ## Pieces
 
 The importer puts a point at every post: at most 3 m apart, 4 m for a game fence (`LineKindDef::step`,
-`every` in `assemble.rs`), with the ground height under each. The stretch between two points is a
+`every` in `assemble.rs`), with the ground height under each. Where a line crosses a road's deck
+over a cutting (an underpass, `Pylons::Flush`), the height is the deck's roadway instead
+(`bridge::flush_top`), so a guard rail down a divided road runs on across the deck, not down into the
+cutting under it. The client stands such a post on its `base` too, where that is more than half a metre
+over the ground (`ON_DECK` in `lines.ts`); elsewhere it stands on the drawn ground, dented by craters
+as it is. A guard rail whose foot would drop more steeply than 1 in 4 from one post to the next runs
+out over a cutting with no deck: it is cut there, and a piece shorter than 10 m left between two such
+drops, down in the cutting, is left out (`over_level`). The stretch between two points is a
 **piece**, and a piece is what breaks. `shared::world::line_pieces` numbers them: piece `segment` of
 the tile's line number `line` is `ObjId { col, row, index: line << 16 | segment }`. The server, the
 physics and the client all work from the tile's own lines in the tile's order, so they agree without
@@ -65,8 +72,11 @@ predicted car would have stopped dead on it until the server's correction came, 
 tree; this way the prediction is right, and all the client is corrected by is the 5 %.
 
 **A wall is in the trees' group** (`TREE_GROUP`), so it behaves as a trunk does: light vehicles
-collide with it and break it at speed (`run_down_trees`), heavy ones leave it out of what they touch
-and plough it.
+collide with it and break it with a hard enough blow (`run_down_trees`), heavy ones leave it out of
+what they touch and plough it. The blow is the speed the piece takes out of the car in one tick, not
+the car's own speed, so a car scraping along a wall does not knock it down. A guard rail also pushes
+only square across its line and level (`sim::fences::RailHooks`), so a car slides along it past the
+joints between its pieces (docs/ROADS.md).
 
 The bots' grid shuts every cell a piece runs within 0.75 m of, and opens again when the piece goes
 (`Physics::take_changed`).

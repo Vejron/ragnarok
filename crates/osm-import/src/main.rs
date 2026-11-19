@@ -286,7 +286,7 @@ fn terrain(args: &Args, place: &Place, mask: Option<&std::collections::BTreeSet<
         model(e, n)
     });
     let (cells, moved) = shaping.moved();
-    eprintln!("shaping: {} buildings, {} streams, {} roads and rails; {cells} m² of ground moved {:.2} m on average", features.pads.len(), features.streams.len(), features.ways.len(), moved / cells.max(1) as f64);
+    eprintln!("shaping: {} buildings, {} streams, {} roads and rails, {} underpasses; {cells} m² of ground moved {:.2} m on average", features.pads.len(), features.streams.len(), features.ways.len(), features.passages.len(), moved / cells.max(1) as f64);
     let shaped = |x: f64, z: f64| {
         let (e, n) = place.source(x, z);
         source.mean(e, n, half_cell).map(|height| f64::from(height) + relief.at(e, n) + shaping.mean(x, z, half_cell))

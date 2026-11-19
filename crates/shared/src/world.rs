@@ -461,7 +461,7 @@ pub const LINE_KINDS: [LineKindDef; 5] = [
     LineKindDef { kind: LINE_FENCE_HIGH, height: 2.05, half: 0.06, step: 4.0, hp: 10, wall: false },
     LineKindDef { kind: LINE_WALL, height: 1.0, half: 0.25, step: 3.0, hp: 60, wall: true },
     LineKindDef { kind: LINE_WALL_HIGH, height: 2.4, half: 0.3, step: 3.0, hp: 200, wall: true },
-    LineKindDef { kind: LINE_GUARDRAIL, height: 0.75, half: 0.1, step: 2.0, hp: 40, wall: true },
+    LineKindDef { kind: LINE_GUARDRAIL, height: 0.75, half: 0.1, step: 2.0, hp: 90, wall: true },
 ];
 
 /// The definition of a fence or wall kind; `None` for a power line.

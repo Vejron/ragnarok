@@ -328,9 +328,22 @@ function pole(kind: number, x: number, y: number, z: number, yaw: number): Geome
   return parts
 }
 
-/** Ground height under `(x, z)`: the tile's own, or the line's where the world is flat. */
-function groundAt(ground: TileGround | null, x: number, z: number, fallback: number): number {
-  return ground ? heightIn(ground, x, z) : fallback
+/**
+ * How far over the ground a fence's or rail's foot (`Line.base`) must be to stand on a deck rather
+ * than on the ground, metres: a guard rail across a road's deck over a cutting stands on the roadway,
+ * not down in the cutting.
+ */
+const ON_DECK = 0.5
+
+/**
+ * Where a post of a fence, wall or rail stands, `(x, z)` with its foot at `base`: on the tile's own
+ * ground (dented by craters as it is), or on `base` where that is a deck well over the ground, or
+ * where the world is flat.
+ */
+function groundAt(ground: TileGround | null, x: number, z: number, base: number): number {
+  if (!ground) return base
+  const under = heightIn(ground, x, z)
+  return base > under + ON_DECK ? base : under
 }
 
 /**

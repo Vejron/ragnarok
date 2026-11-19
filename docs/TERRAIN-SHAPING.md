@@ -10,7 +10,7 @@ measurement.
 
 ## What is shaped
 
-The model is read onto a 1 m raster, only in 32 m blocks some feature reaches, and three shapers run
+The model is read onto a 1 m raster, only in 32 m blocks some feature reaches, and four shapers run
 over it in this order:
 
 1. **Building pads.** The ground inside a building's outline is pulled to its low quartile, by up to
@@ -36,6 +36,22 @@ over it in this order:
    Narrow ways run first, so the wider way wins where two meet. A road over a stream fills its
    channel back in, as over a culvert, and the drawn stream already stops at the road
    (`assemble::culverted`). Bridges, tunnels and ways with a negative `layer` are left alone.
+4. **Underpasses.** A footway, cycleway or road in a short tunnel (`tunnel=yes` or a negative
+   `layer`, no more than 60 m from portal to portal once the pieces OSM cuts it into are joined)
+   that a road crosses over is dug out last. The height model has such a passage far too shallow,
+   or not at all: the laser took the road's embankment for the ground, and grading the road filled
+   in what dip there was. So:
+   - The road's level over it is the lower of the highest ground along the road within 12 m either
+     side of the crossing, which bridges whatever dip the model has under it.
+   - The floor runs straight from portal to portal, but never higher than the headroom (3 m for a
+     path, 4.7 m for a road) and the deck's thickness (0.7 m) under the lowest road over it.
+   - The ways leading in at each portal come down to the floor at a 6 % grade, for up to 60 m.
+   - The floor is the way's width and half a metre either side, with banks of 1 in 1 beside it.
+     Nothing is dug more than 5 m below the model, and the ground is only ever lowered.
+
+   The road over it then gets its deck from `assemble::cuttings`, which finds the dug passage as a
+   trench across the road. With the headroom, the deck is a slab over the passage, where a deck lower
+   over the ground would have been built solid down to it and closed the passage.
 
 The result is kept as an offset from the model. Each ground sample adds the mean offset over its
 own cell (`Shaping::mean`), and so do the detail slopes (`detail.rs`), so a 4 m ground and its 1 m
@@ -48,7 +64,7 @@ It is on for every world. `--raw-ground` builds a world from the model as it is,
 after comparison. The import prints how much ground moved:
 
 ```
-shaping: 3120 buildings, 85 streams, 1904 roads and rails; 912345 m² of ground moved 0.21 m on average
+shaping: 3120 buildings, 85 streams, 1904 roads and rails, 18 underpasses; 912345 m² of ground moved 0.21 m on average
 ```
 
 ## Why not a new height model from the raw laser

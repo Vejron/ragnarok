@@ -24,7 +24,8 @@ const MAX_GRADE: f64 = 0.06;
 /// Slope of the ramp that brings a deck still above ground at its end down to the ground.
 const RAMP_GRADE: f64 = 0.06;
 const MAX_RAMP: f64 = 150.0;
-const THICKNESS: f64 = 0.7;
+/// How deep a deck's slab is, from its roadway to its underside, metres.
+pub(crate) const THICKNESS: f64 = 0.7;
 /// The deck's top is this far above the ground where it meets it.
 const LIFT: f64 = 0.12;
 /// Deck sections this close to the ground are solid down to it; higher ones stand on piers.
@@ -317,6 +318,42 @@ fn clearance(kind: u8) -> f64 {
         ROAD_PATH | ROAD_PAVED_PATH => 3.5,
         _ => 5.5,
     }
+}
+
+/// The height of the roadway of a deck over a cutting (`Pylons::Flush`, along `points`, `width` wide)
+/// at `p`, metres, or `None` where `p` is not over the deck. Such a deck runs straight from the ground
+/// at one end to the ground at the other (`build`), so what stands on its road, a guard rail down the
+/// middle, stands on it rather than down in the cutting.
+pub(crate) fn flush_top(points: &[P], width: f64, ground: &Ground, p: P) -> Option<f64> {
+    if points.len() < 2 {
+        return None;
+    }
+    let height = |q: P| f64::from(ground.height_at(q[0] as f32, q[1] as f32));
+    let (h0, h1) = (height(points[0]), height(points[points.len() - 1]));
+    let total: f64 = points.windows(2).map(|pair| (pair[1][0] - pair[0][0]).hypot(pair[1][1] - pair[0][1])).sum();
+    let mut run = 0.0;
+    // The nearest point of the deck's line: how far, how far along, and whether `p` is past an end.
+    let mut best: Option<(f64, f64, bool)> = None;
+    for pair in points.windows(2) {
+        let (a, b) = (pair[0], pair[1]);
+        let (dx, dz) = (b[0] - a[0], b[1] - a[1]);
+        let length = dx.hypot(dz);
+        if length > 0.0 {
+            let t = ((p[0] - a[0]) * dx + (p[1] - a[1]) * dz) / (length * length);
+            let d = (p[0] - a[0] - t.clamp(0.0, 1.0) * dx).hypot(p[1] - a[1] - t.clamp(0.0, 1.0) * dz);
+            let beyond = (t < 0.0 && run == 0.0) || (t > 1.0 && run + length >= total - 1e-9);
+            if best.is_none_or(|(known, ..)| d < known) {
+                best = Some((d, run + t.clamp(0.0, 1.0) * length, beyond));
+            }
+        }
+        run += length;
+    }
+    // Past either end of the deck is the road on the ground again.
+    let (d, along, beyond) = best?;
+    if beyond || d > width / 2.0 + EDGE_BEAM_WIDTH {
+        return None;
+    }
+    Some((h0 + (h1 - h0) * along / total.max(1e-9) + LIFT).max(height(p) + LIFT))
 }
 
 /// Builds the bridge along `points` (metres, centre line) of road `width`. `measured` holds deck

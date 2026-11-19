@@ -14,10 +14,12 @@
 use crate::{Obj, TREE_GROUP, fence_groups};
 use rapier3d::prelude::*;
 use shared::quant::from_cm;
-use shared::world::{LINE_POWER, LINE_POWER_MAJOR, Line, LinePiece, line_pieces};
+use shared::world::{LINE_GUARDRAIL, LINE_POWER, LINE_POWER_MAJOR, Line, LinePiece, line_pieces};
 
 /// How far a wall's piece reaches past each of its ends, metres, so that a corner is closed.
 const WALL_LAP: f32 = 0.1;
+/// The friction of a guard rail's smooth steel, so a car scraping along it slides on.
+const GUARDRAIL_FRICTION: f32 = 0.05;
 
 /// The collider of one piece of a fence or wall: a box from under the ground (`SUNK`) to its top,
 /// turned to the piece's line and tilted to the slope it stands on.
@@ -32,7 +34,33 @@ fn piece_collider(piece: &LinePiece) -> Collider {
     let centre = Vector::new((piece.a[0] + piece.b[0]) / 2.0, (piece.base[0] + piece.base[1]) / 2.0 - SUNK + half_height, (piece.a[1] + piece.b[1]) / 2.0);
     let lap = if def.wall { WALL_LAP } else { 0.0 };
     let groups = if def.wall { InteractionGroups::new(TREE_GROUP, Group::ALL, InteractionTestMode::And) } else { fence_groups() };
-    ColliderBuilder::cuboid(length / 2.0 + lap, half_height, def.half).position(Pose::from_parts(centre, turn)).collision_groups(groups).build()
+    let builder = ColliderBuilder::cuboid(length / 2.0 + lap, half_height, def.half);
+    // A guard rail is slippery steel, and pushes only across its line (`RailHooks`).
+    let builder = if def.kind == LINE_GUARDRAIL { builder.friction(GUARDRAIL_FRICTION).active_hooks(ActiveHooks::MODIFY_SOLVER_CONTACTS) } else { builder };
+    builder.position(Pose::from_parts(centre, turn)).collision_groups(groups).build()
+}
+
+/// What makes a guard rail forgiving: each of its pieces pushes only straight across its own line,
+/// level, towards the side the other body's middle is on.
+/// - **Never along it.** The pieces are separate boxes with square ends. A car scraping along the
+///   rail would catch its corner on the end of the next piece where two meet and stop dead at speed,
+///   where a real rail is one long beam that turns the car aside. A car meeting the bare end of a
+///   rail is turned aside the same way.
+/// - **Never up.** The rail is thinner than a fast car moves in a tick, so a car hitting it square
+///   would be pushed out over its top and thrown into the air.
+pub struct RailHooks;
+
+impl PhysicsHooks for RailHooks {
+    fn modify_solver_contacts(&self, context: &mut ContactModificationContext) {
+        let (Some(one), Some(two)) = (context.colliders.get(context.collider1), context.colliders.get(context.collider2)) else { return };
+        let rail = if one.active_hooks().contains(ActiveHooks::MODIFY_SOLVER_CONTACTS) { one } else { two };
+        let along = rail.rotation() * Vector::X;
+        let across = Vector::new(-along.z, 0.0, along.x).normalize_or_zero();
+        // A manifold's normal points from its first collider to its second.
+        let side = (two.translation() - one.translation()).dot(across);
+        let Some(manifold) = context.rigid_mut() else { return };
+        *manifold.normal = if side < 0.0 { -across } else { across };
+    }
 }
 
 /// The colliders of the fences and walls of `lines` (each tile's, with its `(col, row)`), piece by

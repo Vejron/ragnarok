@@ -1019,3 +1019,47 @@ fn a_low_car_driven_fast_over_a_kerb_is_unhurt() {
         assert_eq!(game.world.entities.of::<Vehicle>(vid).damage, [0; shared::protocol::DAMAGE_SLOTS], "kind {kind}");
     }
 }
+
+/// A sports car run along a guard rail at `speed` m/s, `angle` radians into it: whether any piece of
+/// the rail broke, its speed after 1.5 s, and the health it lost.
+fn graze_a_guard_rail(speed: f32, angle: f32) -> (bool, f32, u8) {
+    use shared::world::LINE_GUARDRAIL;
+    let points: Vec<[i32; 2]> = (0..=60).map(|i| [i * 200, 100]).collect();
+    let map = WorldFile {
+        version: WORLD_VERSION,
+        half_extent: 30_000,
+        spawns: vec![[0, 20_000]],
+        lines: vec![(2, 3, shared::world::Line { kind: LINE_GUARDRAIL, base: vec![0; points.len()], points, end: true })],
+        ..Default::default()
+    };
+    let mut game = Game::new(map, 0).unwrap();
+    game.world.clear_pickups();
+    let [hx, _, _] = sim::half_extents(KIND_SPORTS);
+    // Heading along +x, turned `angle` towards the rail (towards -z), about a metre clear of it.
+    let vid = add_vehicle(&mut game.world, KIND_SPORTS, [10.0, 1.0, 1.0 + 0.1 + hx + 1.0], -std::f32::consts::FRAC_PI_2 + angle);
+    for _ in 0..60 {
+        Vehicles.on_tick(&mut game.world, TICK_DT);
+    }
+    let hp = game.world.entities.of::<Health>(vid).hp;
+    game.world.physics.kick_car(vid, [speed * angle.cos(), 0.0, -speed * angle.sin()]);
+    let mut broke = false;
+    for _ in 0..90 {
+        Vehicles.on_tick(&mut game.world, TICK_DT);
+        broke |= !game.world.destroyed.is_empty();
+    }
+    let velocity = game.world.physics.car_pose(vid).unwrap().velocity;
+    (broke, velocity[0].hypot(velocity[2]), hp - game.world.entities.of::<Health>(vid).hp)
+}
+
+#[test]
+fn a_car_grazing_a_guard_rail_slides_along_it_unhurt_and_a_square_hit_breaks_it() {
+    // Up to about 17 degrees at 108 km/h the rail turns the car aside: no piece breaks, the car
+    // keeps its health and most of its speed, and never catches on a joint between two pieces.
+    for angle in [0.05, 0.15, 0.3] {
+        let (broke, after, lost) = graze_a_guard_rail(30.0, angle);
+        assert!(!broke && lost == 0 && after > 13.0, "at {angle} rad: broke {broke}, {after} m/s, lost {lost} hp");
+    }
+    // Nearly square on, it is a crash: the rail gives way and the car is wrecked, not thrown over it.
+    let (broke, after, lost) = graze_a_guard_rail(30.0, 1.5);
+    assert!(broke && lost > 50 && after < 10.0, "square on: broke {broke}, {after} m/s, lost {lost} hp");
+}

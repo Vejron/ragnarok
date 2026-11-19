@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { buildLines } from '@/render/lines'
-import { LINE_FENCE, LINE_FENCE_HIGH, LINE_POWER, LINE_WALL, LINE_WALL_HIGH, lineKindDef, linePieceIndex, type Line } from '@/world'
+import { LINE_FENCE, LINE_FENCE_HIGH, LINE_GUARDRAIL, LINE_POWER, LINE_WALL, LINE_WALL_HIGH, lineKindDef, linePieceIndex, type Line } from '@/world'
 
 describe('fences, walls and power lines', () => {
   it('draws a pole at the last point only where the line ends there', () => {
@@ -12,6 +12,19 @@ describe('fences, walls and power lines', () => {
     expect(wires!.geometry.vertexCount).toBe(3 * 2 * 11 * 2)
     // Hung from the crossarm, nine metres up and more.
     expect(Math.min(...Array.from(wires!.geometry.positions.filter((_, i) => i % 3 === 1)))).toBeGreaterThan(9)
+  })
+
+  it('stands a guard rail on a deck over a cutting, and a fence on the ground under it', () => {
+    // Flat ground at 2 m, with the rail's foot at 6 m in its middle: a deck over a cutting.
+    const ground = { x0: -10, z0: -10, cell: 1, side: 21, heights: new Float32Array(21 * 21).fill(2) }
+    const lowest = (line: Line) => {
+      const [posts] = buildLines([line], ground)
+      return Math.min(...Array.from(posts!.geometry.positions.filter((_, i) => i % 3 === 1 && Math.abs(posts!.geometry.positions[i - 1]!) < 0.5)))
+    }
+    const rail: Line = { kind: LINE_GUARDRAIL, points: [[-4, 0], [-2, 0], [0, 0], [2, 0], [4, 0]], base: [2, 4, 6, 4, 2], end: true }
+    expect(lowest(rail)).toBeGreaterThan(5)
+    // A foot within a few centimetres of the ground (rounding, a dent) is on the ground.
+    expect(lowest({ ...rail, base: [2, 2, 2.2, 2, 2] })).toBeLessThan(2.1)
   })
 
   it('strings wire on a fence and netting on a game fence', () => {

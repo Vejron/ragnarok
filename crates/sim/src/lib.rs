@@ -685,7 +685,7 @@ impl Physics {
             &mut self.multibody_joints,
             &mut self.soft_bodies,
             &mut self.ccd,
-            &(),
+            &fences::RailHooks,
             &(),
         );
     }
