@@ -206,6 +206,14 @@ export class Renderer {
   /** Tints lit surfaces by how many lights their light-grid cell lists, instead of lighting them. */
   showLightGrid = false
   /**
+   * Draw what is opaque nearest first, in bands of `NEAR_BAND` metres, before sorting by state. A GPU
+   * that shades triangles as they come (not a tiled one, which finds each pixel's front surface first)
+   * shades every hidden layer drawn before the one in front of it; nearest first, most are rejected by
+   * depth. A tiled GPU gains nothing by it (within 0.03 ms on Apple's) and the bands break up batches
+   * (139 draws became 237 in a town), so `create` turns it on only where the adapter is not Apple's.
+   */
+  nearFirst = false
+  /**
    * Multiplies the distances at which instanced meshes change to their coarser levels
    * (`InstancedMesh.levels`): under 1 they come nearer, for a slower GPU.
    */
@@ -398,6 +406,7 @@ export class Renderer {
     const device = await adapter.requestDevice({ requiredFeatures, requiredLimits })
     const renderer = new Renderer(canvas, device, options)
     renderer.xrCompatible = forHeadset !== null
+    renderer.nearFirst = adapter.info.vendor !== 'apple'
     return renderer
   }
 
@@ -620,8 +629,8 @@ export class Renderer {
     this.resources.watchSeen = false
     this.collect(scene)
     this.effects.sort((a, b) => a.renderOrder - b.renderOrder)
-    this.opaque.sort(byStateThenGeometry)
-    this.prepass.sort(byStateThenGeometry)
+    this.opaque.sort(this.nearFirst ? byNearBandThenState : byStateThenGeometry)
+    this.prepass.sort(this.nearFirst ? byNearBandThenState : byStateThenGeometry)
     this.transparent.sort(byOrderThenFarToNear)
     this.overlay.sort(byOrderThenFarToNear)
     this.held.sort(byOrderThenFarToNear)
@@ -1730,6 +1739,14 @@ export class Renderer {
 function smoothstep(edge0: number, edge1: number, x: number) {
   const t = Math.min(1, Math.max(0, (x - edge0) / (edge1 - edge0)))
   return t * t * (3 - 2 * t)
+}
+
+/** How deep a band of `Renderer.nearFirst` is, metres: draws in one band still batch by state. */
+const NEAR_BAND = 64
+
+/** Nearest band first (`depth` is the distance to the mesh's middle, squared), then as `byStateThenGeometry`. */
+function byNearBandThenState(a: DrawItem, b: DrawItem) {
+  return a.order - b.order || Math.floor(Math.sqrt(a.depth) / NEAR_BAND) - Math.floor(Math.sqrt(b.depth) / NEAR_BAND) || a.pipeline - b.pipeline || a.group - b.group || a.slot.firstIndex - b.slot.firstIndex
 }
 
 function byStateThenGeometry(a: DrawItem, b: DrawItem) {

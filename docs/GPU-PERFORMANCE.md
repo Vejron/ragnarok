@@ -248,6 +248,14 @@ lace and the froth 0.29, the mirrored sky 0.20, the ground's light 0.15, the cau
 swell. Making the chop once a frame into a tiling texture, as the sky panorama is, would take most of
 the remaining 0.5 ms, but a tiling chop repeats and would change how the water looks: not built.
 
+### 10. Opaque draws nearest first (`Renderer.nearFirst`)
+
+For GPUs that are not tiled (integrated Intel and AMD), which shade every hidden layer drawn before
+the one in front of it: opaque draws go nearest first in bands of 64 m, and by state within a band,
+so they mostly still batch (a town's 139 draws became 237). On Apple's GPU it changes nothing
+(within 0.03 ms either way), so it is off there and on for every other adapter. What it wins
+elsewhere is not measured: the bench has only been run on a Mac.
+
 ## Smoke
 
 Smoke is cheap here because it is drawn at half resolution: 200 puffs 3 to 5 m wide across the whole
