@@ -56,6 +56,8 @@ const SUN_RADIUS = 0.0095
 const MOON_SHAFTS = 0.3
 const HDR_FORMAT: GPUTextureFormat = 'rgba16float'
 const DEPTH_FORMAT: GPUTextureFormat = 'depth32float'
+/** The sun's shadow maps: 16 bits over a map's depth range (400 m near, 800 m far) are steps of 6 and 12 mm. */
+const SHADOW_FORMAT: GPUTextureFormat = 'depth16unorm'
 
 /**
  * The usage of an attachment that is cleared when its pass begins and discarded when it ends, and
@@ -476,7 +478,7 @@ export class Renderer {
         layout: this.shadowLayout,
         vertex: { module: this.shadowModule, entryPoint, buffers: [VERTEX_LAYOUT] },
         primitive: { topology: 'triangle-list', cullMode },
-        depthStencil: { format: DEPTH_FORMAT, depthWriteEnabled: true, depthCompare: 'less', depthBias: 1, depthBiasSlopeScale: 1.5 },
+        depthStencil: { format: SHADOW_FORMAT, depthWriteEnabled: true, depthCompare: 'less', depthBias: 1, depthBiasSlopeScale: 1.5 },
       }),
     )
     this.shadowPipelines = shadowPipelines('vs')
@@ -1710,7 +1712,7 @@ export class Renderer {
     return this.device.createTexture({
       label: 'shadow map',
       size: [size, size],
-      format: DEPTH_FORMAT,
+      format: SHADOW_FORMAT,
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
     })
   }
