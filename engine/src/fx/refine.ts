@@ -159,6 +159,7 @@ export class MeshRefiner extends Effect {
       indices: new Uint32Array(capacity * TRIS * 3),
       uploadOnce: true,
     })
+    this.geometry.gpuFilled = true
   }
 
   /** The geometries it refines now. */
@@ -194,8 +195,10 @@ export class MeshRefiner extends Effect {
     if (this.wroteTo && (this.wroteTo[0] !== ctx.vertices || this.wroteTo[1] !== ctx.indices)) this.dirty = true
     if (!this.dirty) return
     const slot = this.geometry.gpu as GeometrySlot | undefined
-    // Its slot is made when its mesh is first drawn; until then there is nowhere to put it.
-    if (!slot) return
+    // Its slot is made when its mesh is first drawn; until then there is nowhere to put it. A slot
+    // left from another device's arena is not a place in this one: written there, the output would
+    // land on whatever other meshes hold those vertices now.
+    if (!slot || slot.owner.vertexBuffer !== ctx.vertices) return
     const gpu = (this.gpu ??= new RefineGpu(ctx.device, this.capacity))
     if (this.sourcesChanged) {
       gpu.upload(this.taken)

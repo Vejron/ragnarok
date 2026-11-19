@@ -89,7 +89,8 @@ export class GeometryArena {
       return null
     }
     // Its arrays are gone and the copy was another device's: nothing to draw until it is made again.
-    if (geometry.released) return null
+    // One filled on the GPU is given room all the same: its arrays never held what is drawn.
+    if (geometry.released && !geometry.gpuFilled) return null
     const vertexCount = geometry.vertexCount
     const indexCount = geometry.indexCount
     if (slot && (slot.vertexCount !== vertexCount || slot.indexCount !== indexCount)) {
@@ -109,7 +110,7 @@ export class GeometryArena {
       this.live.add(geometry)
     }
     slot.version = geometry.version
-    this.write(geometry, slot)
+    if (!geometry.released) this.write(geometry, slot)
     if (geometry.uploadOnce) geometry.release()
     return slot
   }

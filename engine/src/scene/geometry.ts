@@ -62,6 +62,12 @@ export class Geometry {
    * whoever made it makes it again. Its counts and bounds stay.
    */
   uploadOnce: boolean
+  /**
+   * Its vertices and indices are written on the GPU, not from its arrays (`MeshRefiner`). So on another
+   * device (after a lost one, or a change of multisampling) it is given room again though its arrays were
+   * let go, and whoever fills it fills it again.
+   */
+  gpuFilled = false
   /** @internal vertex ranges (first, count pairs) collapsed since the last upload. */
   collapsedRanges: number[] = []
   /** The vertices and indices it had when its arrays were let go; -1 while it holds them. */

@@ -618,6 +618,15 @@ Its own README gives the benchmark against three's two renderers, from when a co
   `Geometry.collapseRange`), and it is not uploaded to a new device. Whoever makes one must make it
   again when the renderer is replaced (`Scene.onRendererReplaced`), as the tiles and the trees'
   impostors are.
+- A new renderer (the multisampling changed, or the device was lost) is a new device, and its first
+  frame is where what crosses devices goes wrong. Two faults were found by switching quality beside
+  water: the wave field destroyed the wake map's placeholder in the frame whose bind group held it,
+  so the whole frame was refused ("Destroyed texture used in a submit") and what it made once was
+  lost (the sky's tables: a black sky); and the refined water mesh, whose arrays are let go, was
+  given no room in the new arena and wrote its vertices at its old place in it, over other meshes
+  (shards across the ground and the water). A texture goes after the submit, and a geometry filled
+  on the GPU says so (`Geometry.gpuFilled`). To check: stand by a lake, `__game.setQuality('low')`
+  then `'high'`, with `console.error` watched.
 - Two dev servers sharing one `node_modules` share Vite's dependency cache; give the second its own
   `cacheDir`, or the two builds' dependency bundles clash.
 - GPU timings come from `client/scripts/gpu-bench.mjs`

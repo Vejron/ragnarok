@@ -70,6 +70,20 @@ describe('GeometryArena', () => {
     expect(arena.usedBytes).toBe(0)
   })
 
+  it('gives a released geometry that is filled on the GPU room on another arena', () => {
+    const geometry = new Geometry({ positions: new Float32Array(9), uploadOnce: true })
+    geometry.gpuFilled = true
+    const first = new GeometryArena(fakeDevice())
+    const old = first.sync(geometry)
+    expect(geometry.released).toBe(true)
+    const arena = new GeometryArena(fakeDevice())
+    const slot = arena.sync(geometry)
+    expect(slot).not.toBeNull()
+    expect(slot).not.toBe(old)
+    expect(slot!.owner).toBe(arena)
+    expect(slot!.vertexCount).toBe(3)
+  })
+
   it('collapses a range of a released geometry by writing over the copy it holds', () => {
     const writes: [number, number][] = []
     const device = fakeDevice()

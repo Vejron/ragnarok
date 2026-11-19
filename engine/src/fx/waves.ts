@@ -356,13 +356,19 @@ export class WaveField extends Effect {
     this.area[1] = z0
   }
 
+  /** The placeholder's GPU copy that the map replaced, to destroy once the frame that may hold it is submitted. */
+  private stale: GPUTexture | null = null
+
   prepare(ctx: EffectContext, encoder: GPUCommandEncoder) {
     if (this.gpu && this.gpu.device !== ctx.device) this.gpu = null
     if (!this.gpu) {
       this.gpu = new WaveGpu(ctx.device, this.grid)
       // Hand the material the GPU's map in place of the placeholder; the new version makes it bind again.
+      // The placeholder's own GPU copy, if the material has bound it, is in this frame's bind group: the
+      // water was listed before this ran. Destroyed now, the whole frame would be refused, and with it
+      // what the frame makes once (the sky's tables, the refined mesh). It goes after the submit.
       const old = this.texture.gpu as TextureSlot | undefined
-      if (old?.device === ctx.device) old.texture.destroy()
+      if (old?.device === ctx.device) this.stale = old.texture
       this.texture.version++
       this.texture.gpu = { texture: this.gpu.map, view: this.gpu.map.createView(), version: this.texture.version, device: ctx.device } satisfies TextureSlot
     }
@@ -413,6 +419,11 @@ export class WaveField extends Effect {
 
   override get idle() {
     return true
+  }
+
+  override afterSubmit() {
+    this.stale?.destroy()
+    this.stale = null
   }
 
   draw(): number {
