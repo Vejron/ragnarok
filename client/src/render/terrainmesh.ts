@@ -105,6 +105,17 @@ export interface Pixels {
 }
 
 /**
+ * Whether the terrain splits the cell at `column`, `row` of its sample grid along the diagonal from
+ * its first corner to its last (`(column, row)` to `(column + 1, row + 1)`) rather than across, where
+ * it is meshed in full: RTIN's smallest triangles alternate, so the diagonals meet in the middle of
+ * every two cells by two. Anything drawn on the ground's cells that must meet the terrain along the
+ * same lines (the water's shoreline) splits them so too.
+ */
+export function splitsAlongMainDiagonal(column: number, row: number): boolean {
+  return ((column + row) & 1) === 0
+}
+
+/**
  * One tile's terrain as indexed triangles, in world coordinates, with UVs running 0..1 over the tile
  * for its cover texture and relief map (`reliefPixels`), which carry its colour and its shading.
  *

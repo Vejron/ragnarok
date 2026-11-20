@@ -72,7 +72,17 @@ const STREAM_FOAM_DEPTH = 0.08
 const MIRROR_NEAR = 1.5
 const MIRROR_FAR = 8
 /** The water fades out from this depth to the shoreline, metres: whatever of a cell lies past it is not drawn. */
-const SHORE_FADE = 0.04
+const SHORE_FADE = 0.06
+/**
+ * The shoreline wanders in from where the depth crosses zero by up to this much depth, metres, by a
+ * noise a few metres across: the depth is interpolated over the ground's cells, so without it the
+ * shore is a run of straight pieces a cell long. Only ever in, since the ground hides the water past
+ * the zero line anyway.
+ */
+const SHORE_WANDER = 0.06
+/** And it laps in and out by up to this much depth over again, metres, every `SHORE_LAP_PERIOD` seconds or so. */
+const SHORE_LAP = 0.04
+const SHORE_LAP_PERIOD = 9
 /** Along-stream speed of the flow, metres per second. */
 const FLOW_SPEED = 1.4
 /**
@@ -674,8 +684,19 @@ fn surface(s: Surface) -> vec4f {
   let glints = select(1.0, 0.35, stream);
   color += params.sun * (spark * 0.8 + pow(sunward, 24.0) * 0.12) * glints;
 
+  // The shoreline: where the depth less the wander and the lap crosses zero (\`SHORE_WANDER\`). The
+  // lap runs along the shore out of step, so the water creeps up the bank here as it falls back there.
+  var wander = 0.0;
+  var lap = 0.0;
+  if (depth < ${(FOAM_DEPTH + SHORE_WANDER + SHORE_LAP).toFixed(2)}) {
+    let n = vnoise(world * 0.4).x * 0.65 + vnoise(world * 1.7 + vec2f(13.1, 7.7)).x * 0.35;
+    let reach = select(1.0, 0.4, stream);
+    wander = ${SHORE_WANDER.toFixed(3)} * reach * (0.5 + 0.5 * n);
+    lap = ${SHORE_LAP.toFixed(3)} * reach * (0.5 + 0.5 * sin(time * ${((2 * Math.PI) / SHORE_LAP_PERIOD).toFixed(3)} + n * 6.0));
+  }
+  let edge = depth - wander - lap;
   let shore = select(${FOAM_DEPTH.toFixed(2)}, ${STREAM_FOAM_DEPTH.toFixed(2)}, stream) * (1.0 + 0.23 * sin(time * 1.3 + world.x * 0.6 + world.y * 0.45));
-  let foam = 1.0 - smoothstep(shore * 0.55, shore, depth);
+  let foam = 1.0 - smoothstep(shore * 0.55, shore, edge);
   // Whitecaps: the high, steep crests break, in ragged patches.
   let steep = length(big.yz);
   let crest = smoothstep(0.45, 0.9, big.x) * smoothstep(0.15, 0.4, steep);
@@ -729,12 +750,12 @@ fn surface(s: Surface) -> vec4f {
     let drift = smoothstep(-0.25, 0.35, bands(world * 0.09, 0.0) + bands(world * 0.31, 0.0) * 0.4);
     let crack = smoothstep(0.9, 0.99, 1.0 - abs(sin(world.x * 0.13 + 2.0 * sin(world.y * 0.08))));
     let ice = mix(vec3f(0.74, 0.86, 0.93), vec3f(0.92, 0.95, 0.98), drift) * (1.0 - crack * 0.14 * (1.0 - drift));
-    return vec4f(ice * ground * 1.15 + mirror * fresnel * 0.2 * (1.0 - drift), smoothstep(-${SHORE_FADE.toFixed(2)}, 0.0, depth));
+    return vec4f(ice * ground * 1.15 + mirror * fresnel * 0.2 * (1.0 - drift), smoothstep(-${SHORE_FADE.toFixed(2)}, 0.0, depth - wander));
   }
-  var alpha = max(smoothstep(0.0, 0.1, depth) * mix(0.62, 0.9, deep), max(max(cap, wash), rush) * 0.9);
+  var alpha = max(smoothstep(0.0, 0.1, edge) * mix(0.62, 0.9, deep), max(max(cap, wash), rush) * 0.9);
   alpha = clamp(alpha - clear * 0.12 + fresnel * 0.35 + spark * 0.4 * glints, 0.0, 1.0);
   // Past the shoreline, where the cell's far corner is dry ground, nothing: not even the mirror's sheen.
-  alpha *= smoothstep(-${SHORE_FADE.toFixed(2)}, 0.0, depth);
+  alpha *= smoothstep(-${SHORE_FADE.toFixed(2)}, 0.0, edge);
   return vec4f(color, alpha);
 }
 `

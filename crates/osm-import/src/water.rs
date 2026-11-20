@@ -32,7 +32,17 @@ const SHORE_SLOPE: f64 = 0.8;
 /// The most a bank sample's ground is raised to meet `SHORE_SLOPE`, metres: enough to lift a bank
 /// level with the water clear of it, never a dyke.
 const BANK_RAISE: f64 = 0.2;
-/// The surface carried onto a bank sample sits at least this far under its ground, centimetres...
+/// How steeply a bank higher than the water is cut down to it, metres a metre, past its first
+/// sample spacing out from the outline (which rises at `SHORE_SLOPE`, as the bed falls). A high
+/// bank left as the height model has it would meet the water at the nearest wet sample instead,
+/// so the drawn shoreline would step along the sample grid rather than follow the outline.
+const BANK_STEEP: f64 = 1.5;
+/// A bank is cut down to `BANK_STEEP` out to this many sample spacings from the outline...
+const BANK_CUT_CELLS: f64 = 2.0;
+/// ...and the cut eases back into the height model over this much further out, metres.
+const BANK_FADE: f64 = 3.0;
+/// The surface carried onto a bank sample whose distance from the outline is not known sits this
+/// far under its ground, centimetres...
 const BANK_DROP_CM: i32 = 10;
 /// ...and dips under the water beside it by no more than this, centimetres, where its ground is too
 /// low to rise out of the water at `SHORE_SLOPE`.
@@ -373,9 +383,11 @@ impl Surface {
                 }
             }
         }
-        // The dry samples next to the water: the lowest level beside each and how far outside
-        // the outline they are, NaN elsewhere.
+        // The dry samples near the water: the lowest level beside each and how far outside the
+        // outline they are, NaN elsewhere. Those next to the water take its level; those further
+        // out take the lowest a bank sample beside them took, a ring at a time.
         let mut bank = vec![[f32::NAN; 2]; n];
+        let mut ring: Vec<usize> = Vec::new();
         for (at, b) in bank.iter_mut().enumerate() {
             if body[at] != NONE || !measured[at].is_finite() {
                 continue;
@@ -385,6 +397,24 @@ impl Surface {
                     *b = [if b[0].is_nan() { level[nb] } else { b[0].min(level[nb]) }, measured[at]];
                 }
             }
+            if !b[0].is_nan() {
+                ring.push(at);
+            }
+        }
+        while !ring.is_empty() {
+            let mut next = Vec::new();
+            for &at in &ring {
+                for (nb, _) in neighbours(at, side) {
+                    if body[nb] != NONE || !measured[nb].is_finite() || !bank[nb][0].is_nan() && bank[nb][0] <= bank[at][0] {
+                        continue;
+                    }
+                    if bank[nb][0].is_nan() {
+                        next.push(nb);
+                    }
+                    bank[nb] = [bank[at][0], measured[nb]];
+                }
+            }
+            ring = next;
         }
         Self { grid, body, level, depth, reach, flow, foam, stir, lane, bank }
     }
@@ -398,16 +428,18 @@ impl Surface {
 
     /// The ground elevation at a grid position given the height model's there: under water, the
     /// bed, cut `depth` below the surface whatever the model says (it is flat over open water, and
-    /// on a bank sample inside the polygon it is higher than the surface). A dry sample next to the
-    /// water is raised, by no more than `BANK_RAISE`, to rise from the waterline at `SHORE_SLOPE`,
-    /// so a bank level with the water still meets it on the outline.
+    /// on a bank sample inside the polygon it is higher than the surface). A dry sample near the
+    /// water rises from the waterline in proportion to its distance outside the outline, as the bed
+    /// falls inside it, so the ground crosses the surface on the outline whatever the height model
+    /// does between samples: one too low is raised, by no more than `BANK_RAISE`, to `SHORE_SLOPE`;
+    /// one too high is cut down to `BANK_STEEP`, the cut easing out `BANK_FADE` further on.
     pub fn bed(&self, x: f64, z: f64, elevation: Option<f64>) -> Option<f64> {
         let Some(at) = self.index(x, z) else { return elevation };
         match self.body[at] {
             NONE => {
                 let [level, outside] = self.bank[at];
                 match elevation {
-                    Some(model) if !level.is_nan() => Some(model.max((level as f64 + SHORE_SLOPE * outside as f64).min(model + BANK_RAISE))),
+                    Some(model) if !level.is_nan() => Some(bank_height(model, level as f64, outside as f64, self.grid.cell as f64 / 100.0)),
                     _ => elevation,
                 }
             }
@@ -459,7 +491,7 @@ impl Surface {
                 }
                 if let Some(level) = near {
                     let outside = self.bank[at][1];
-                    let under = if outside.is_nan() { BANK_DROP_CM } else { ((SHORE_SLOPE * outside as f64 * 100.0).round() as i32).clamp(BANK_DROP_CM, BANK_DIP_CM) };
+                    let under = if outside.is_nan() { BANK_DROP_CM } else { ((SHORE_SLOPE * outside as f64 * 100.0).round() as i32).min(BANK_DIP_CM) };
                     out[at] = level.min(ground.heights[at] - under);
                 }
             }
@@ -552,9 +584,27 @@ impl Grid {
     }
 }
 
+/// The ground of a dry sample `outside` metres out from the outline of water at `level`, metres,
+/// where the height model has `model` and the samples are `cell` metres apart (see `Surface::bed`).
+fn bank_height(model: f64, level: f64, outside: f64, cell: f64) -> f64 {
+    let raised = model.max((level + SHORE_SLOPE * outside).min(model + BANK_RAISE));
+    let ceiling = level + SHORE_SLOPE * outside.min(cell) + BANK_STEEP * (outside - cell).max(0.0);
+    let shaped = raised.min(ceiling);
+    // How much of the height model comes back, from none at `BANK_CUT_CELLS` out to all of it
+    // `BANK_FADE` further on.
+    let t = ((outside - BANK_CUT_CELLS * cell) / BANK_FADE).clamp(0.0, 1.0);
+    let keep = t * t * (3.0 - 2.0 * t);
+    shaped + (model - shaped) * keep
+}
+
+/// How far out from an outline dry samples measure their distance to it, metres, for `bank_height`.
+fn bank_band(cell: f64) -> f64 {
+    BANK_CUT_CELLS * cell + BANK_FADE
+}
+
 /// The distance of every wet sample from the bank, metres, measured to the outlines themselves:
 /// infinite where no bank is found (water whose outline lies wholly outside the grid). Dry samples
-/// within `SHORE_BAND` cells of an outline carry their distance outside it too, infinite elsewhere.
+/// within `bank_band` of an outline carry their distance outside it too, infinite elsewhere.
 ///
 /// Samples near an outline measure to its nearest edge, but a wet one only to an edge with dry
 /// ground beyond it, so where a lake's polygon meets a river's the line between them is no shore.
@@ -564,6 +614,8 @@ fn shore_distance(map: &Map, grid: Grid, body: &[u32]) -> Vec<f32> {
     let side = grid.side as usize;
     let cell_m = grid.cell as f64 / 100.0;
     let band = SHORE_BAND * cell_m;
+    // Dry samples measure further out, for the bank to be shaped (`bank_height`).
+    let dry_band = band.max(bank_band(cell_m));
     let mut dist = vec![f32::INFINITY; side * side];
     let mut nearest = vec![[f64::NAN; 2]; side * side];
     let to_index = |v: f64| (v * 100.0 - grid.origin as f64) / grid.cell as f64;
@@ -575,7 +627,7 @@ fn shore_distance(map: &Map, grid: Grid, body: &[u32]) -> Vec<f32> {
     for ring in map.bodies.iter().flat_map(|b| &b.rings) {
         let mut a = *ring.last().unwrap();
         for &b in ring {
-            let span = |lo: f64, hi: f64| ((to_index(lo - band).floor() as i64).max(0), (to_index(hi + band).ceil() as i64).min(last));
+            let span = |lo: f64, hi: f64| ((to_index(lo - dry_band).floor() as i64).max(0), (to_index(hi + dry_band).ceil() as i64).min(last));
             let (i0, i1) = span(a[0].min(b[0]), a[0].max(b[0]));
             let (j0, j1) = span(a[1].min(b[1]), a[1].max(b[1]));
             let along = [b[0] - a[0], b[1] - a[1]];
@@ -587,7 +639,7 @@ fn shore_distance(map: &Map, grid: Grid, body: &[u32]) -> Vec<f32> {
                     let p = [a[0] + along[0] * t, a[1] + along[1] * t];
                     let d = (s[0] - p[0]).hypot(s[1] - p[1]);
                     let at = j as usize * side + i as usize;
-                    if d > band || d as f32 >= dist[at] {
+                    if d > if body[at] == NONE { dry_band } else { band } || d as f32 >= dist[at] {
                         continue;
                     }
                     if body[at] != NONE {
@@ -1625,17 +1677,22 @@ mod tests {
     /// A round pond 9.3 m across on a 1 m grid, its outline falling anywhere between samples, in
     /// ground flat at 5 m.
     fn pond() -> (Surface, Ground, Vec<i32>) {
+        pond_in(|_, _| 5.0)
+    }
+
+    /// The same pond in ground where the height model is `model(x, z)`, metres; 5 m inside it.
+    fn pond_in(model: impl Fn(f64, f64) -> f64) -> (Surface, Ground, Vec<i32>) {
         let ring: Vec<P> = (0..48).map(|k| {
             let a = k as f64 / 48.0 * std::f64::consts::TAU;
             [0.3 + 9.3 * a.cos(), -0.2 + 9.3 * a.sin()]
         }).collect();
         let map = Map { bodies: vec![Body { kind: Kind::Lake, rings: vec![ring], level: None }], streams: Vec::new() };
         let grid = Grid { origin: -1_500, cell: 100, side: 31 };
-        let surface = Surface::new(&map, grid, |_, _| Some(5.0));
+        let surface = Surface::new(&map, grid, |x, z| Some(model(x, z)));
         let heights = (0..31 * 31)
             .map(|at| {
                 let (x, z) = (grid.x(at % 31), grid.x(at / 31));
-                (surface.bed(x, z, Some(5.0)).unwrap() * 100.0).round() as i32
+                (surface.bed(x, z, Some(model(x, z))).unwrap() * 100.0).round() as i32
             })
             .collect();
         let ground = Ground { origin: -1_500, cell: 100, side: 31, heights };
@@ -1643,14 +1700,16 @@ mod tests {
         (surface, ground, levels)
     }
 
-    #[test]
-    fn a_ponds_shoreline_follows_its_outline_not_the_samples() {
-        let (_, ground, levels) = pond();
+    /// How far from the pond's outline the drawn shoreline falls, metres, at worst, and how many
+    /// times it crosses an edge between samples: where the water's depth crosses zero (where the
+    /// client fades the water out), and where the ground rises through the water's level (where it
+    /// hides the water) if that is inside the outline. Ground that rises past the outline hides
+    /// nothing the fade has not already taken.
+    fn shoreline_off_the_pond(ground: &Ground, levels: &[i32]) -> (f64, usize) {
         let depth = |at: usize| if levels[at] == NO_WATER { -1.0 } else { f64::from(levels[at] - ground.heights[at]) / 100.0 };
+        let above = |at: usize| f64::from(ground.heights[at]) / 100.0 - 5.0;
         let x = |i: usize| -15.0 + i as f64;
-        // Where the depth crosses zero along each edge between samples, as the client draws it, the
-        // shoreline is on the circle.
-        let mut crossings = 0;
+        let (mut worst, mut crossings) = (0.0f64, 0);
         for j in 0..31 {
             for i in 0..31 {
                 for (di, dj) in [(1, 0), (0, 1)] {
@@ -1658,19 +1717,54 @@ mod tests {
                         continue;
                     }
                     let (a, b) = (j * 31 + i, (j + dj) * 31 + i + di);
-                    let (da, db) = (depth(a), depth(b));
-                    if (da > 0.0) == (db > 0.0) {
-                        continue;
+                    for (hiding, da, db) in [(false, depth(a), depth(b)), (true, -above(a), -above(b))] {
+                        if (da > 0.0) == (db > 0.0) {
+                            continue;
+                        }
+                        let t = da / (da - db);
+                        let p = [x(i) + t * di as f64, x(j) + t * dj as f64];
+                        let off = (p[0] - 0.3).hypot(p[1] + 0.2) - 9.3;
+                        worst = worst.max(if hiding { -off } else { off.abs() });
+                        crossings += 1;
                     }
-                    let t = da / (da - db);
-                    let p = [x(i) + t * di as f64, x(j) + t * dj as f64];
-                    let off = (p[0] - 0.3).hypot(p[1] + 0.2) - 9.3;
-                    assert!(off.abs() < 0.2, "the shoreline is {off:.2} m off the outline at {p:?}");
-                    crossings += 1;
                 }
             }
         }
-        assert!(crossings > 60, "{crossings}");
+        (worst, crossings)
+    }
+
+    #[test]
+    fn a_ponds_shoreline_follows_its_outline_not_the_samples() {
+        let (_, ground, levels) = pond();
+        let (off, crossings) = shoreline_off_the_pond(&ground, &levels);
+        assert!(off < 0.2, "the shoreline is {off:.2} m off the outline");
+        assert!(crossings > 120, "{crossings}");
+    }
+
+    #[test]
+    fn a_high_banked_ponds_shoreline_follows_its_outline() {
+        let r = |x: f64, z: f64| (x - 0.3).hypot(z + 0.2);
+        // A bank that stands 3 m over the water at the outline, as a river's cut bank does...
+        let (_, ground, levels) = pond_in(|x, z| if r(x, z) < 9.3 { 5.0 } else { 8.0 });
+        let (off, crossings) = shoreline_off_the_pond(&ground, &levels);
+        assert!(off < 0.2 && crossings > 120, "the shoreline is {off:.2} m off the cliff's outline ({crossings} crossings)");
+        // Further out the bank is as the height model has it.
+        assert_eq!(ground.heights[15 * 31 + 30], 800, "the cliff's top 14.7 m out");
+        // ...and one that climbs from the waterline at 2 m a metre.
+        let (_, ground, levels) = pond_in(|x, z| 5.0 + 2.0 * (r(x, z) - 9.3).max(0.0));
+        let (off, crossings) = shoreline_off_the_pond(&ground, &levels);
+        assert!(off < 0.2 && crossings > 120, "the shoreline is {off:.2} m off the slope's outline ({crossings} crossings)");
+    }
+
+    #[test]
+    fn a_bank_is_cut_down_to_the_water_and_eased_back_into_the_ground() {
+        let heights: Vec<f64> = (0..=80).map(|k| bank_height(9.0, 5.0, k as f64 * 0.1, 1.0)).collect();
+        assert!((heights[0] - 5.0).abs() < 1e-9, "it meets the water on the outline");
+        assert!((heights[10] - 5.0 - SHORE_SLOPE).abs() < 1e-9, "one sample out it rises as the bed falls");
+        assert!(heights.windows(2).all(|w| w[1] >= w[0]), "always rising");
+        assert!(heights.windows(2).all(|w| w[1] - w[0] <= 0.1 * BANK_STEEP + 0.15), "no step: {heights:?}");
+        assert_eq!(*heights.last().unwrap(), 9.0, "back to the height model past the band");
+        assert_eq!(bank_height(6.7, 5.0, 2.0, 1.0), 6.7, "a bank under the cut is left as it is");
     }
 
     #[test]
@@ -1691,7 +1785,7 @@ mod tests {
         // A bank level with the water is lifted to meet it, by no more than `BANK_RAISE`.
         let ring = surface.bed(9.6 + 0.3, -0.2, Some(5.0)).unwrap();
         assert!(ring > 5.0 && ring <= 5.0 + BANK_RAISE + 1e-9, "{ring}");
-        assert_eq!(surface.bed(14.0, 0.0, Some(5.0)), Some(5.0), "further out the ground is untouched");
+        assert_eq!(surface.bed(15.0, 0.0, Some(5.0)), Some(5.0), "further out the ground is untouched");
     }
 
     #[test]

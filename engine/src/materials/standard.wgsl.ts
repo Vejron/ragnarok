@@ -135,11 +135,12 @@ ${edges ? `    if (!asphalt.keep) {
     rgb = mix(stones.rgb, rgb, marks.earth);
     stones.tilt *= 1.0 - marks.earth;
   }
-  // The shore: the stones' map has in blue how far over the water near it the ground is (0 to 1 m).
-  // Up to about 0.3 m it is wet, darker and with a sheen, its edge uneven as the waves leave it.
+  // The shore: the stones' map has in blue how far over the water near it the ground is (-1 to 3 m,
+  // the client's \`SHORE_ABOVE\`). Up to about 0.3 m it is wet, darker and with a sheen, its edge
+  // uneven as the waves leave it.
   var wet = 0.0;
   if ((flags & MAT_STONES) != 0u && stonesTexel.b < 0.999) {
-    let above = stonesTexel.b + (marshValue(in.world.xz * 0.9) - 0.5) * 0.14;
+    let above = stonesTexel.b * 4.0 - 1.0 + (marshValue(in.world.xz * 0.9) - 0.5) * 0.14;
     wet = (1.0 - smoothstep(0.2, 0.36, above)) * (1.0 - marks.earth);
     rgb *= mix(1.0, 0.6, wet);
   }

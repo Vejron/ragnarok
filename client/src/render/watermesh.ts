@@ -2,6 +2,7 @@ import type { TileGround } from '@/sim/terrain'
 import { NO_WATER, type Stream } from '@/world'
 import { FLOW_STEP, REACH_STEP } from '@/sim/waves'
 import type { Height } from './shade'
+import { splitsAlongMainDiagonal } from './terrainmesh'
 
 /*
  * A tile's water as plain arrays: built in the tile worker (`tile.worker.ts`) or, without
@@ -168,7 +169,10 @@ export function surfaceBuffers(water: Float32Array, ground: TileGround, reach?: 
           }
         }
       }
-      indices.push(p00, p10, p01, p10, p11, p01)
+      // Split as the terrain splits the cell, so the line where the ground rises out of the water
+      // and the line where the water fades out at zero depth are the same line.
+      if (splitsAlongMainDiagonal(column, row)) indices.push(p00, p10, p11, p00, p11, p01)
+      else indices.push(p00, p10, p01, p10, p11, p01)
     }
   }
   if (indices.length === 0) return null

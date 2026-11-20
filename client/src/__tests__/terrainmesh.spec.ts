@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { Terrain, type TileGround } from '@/sim/terrain'
-import { reliefPixels, terrainBuffers, terrainLevel, TERRAIN_LOD_ERRORS, TERRAIN_LOD_RANGES, type TerrainBuffers } from '@/render/terrainmesh'
+import { surfaceBuffers } from '@/render/watermesh'
+import { NO_WATER } from '@/world'
+import { reliefPixels, splitsAlongMainDiagonal, terrainBuffers, terrainLevel, TERRAIN_LOD_ERRORS, TERRAIN_LOD_RANGES, type TerrainBuffers } from '@/render/terrainmesh'
 
 /** A 65 × 65 grid 1 m apart: rolling ground with a ditch, a bank and a little noise, or flat. */
 function ground(side = 65, shape: 'rolling' | 'flat' = 'rolling', x0 = 0): TileGround {
@@ -175,5 +177,37 @@ describe('terrain level of detail', () => {
     expect(terrainLevel(TERRAIN_LOD_RANGES[0] - 5, 1)).toBe(1)
     expect(terrainLevel(TERRAIN_LOD_RANGES[0] - 30, 1)).toBe(0)
     expect(terrainLevel(1000, 0)).toBe(2)
+  })
+})
+
+/** For every cell of a 1 m grid that `indices` covers with two triangles, whether they share its first-to-last corner diagonal. */
+function diagonals(positions: Float32Array, indices: Uint32Array, x0: number, z0: number) {
+  const cells = new Map<string, boolean>()
+  for (let i = 0; i < indices.length; i += 3) {
+    const xs = [0, 1, 2].map((k) => positions[indices[i + k]! * 3]! - x0)
+    const zs = [0, 1, 2].map((k) => positions[indices[i + k]! * 3 + 2]! - z0)
+    const [c, r] = [Math.min(...xs), Math.min(...zs)]
+    if (Math.max(...xs) - c !== 1 || Math.max(...zs) - r !== 1) continue
+    const has = (x: number, z: number) => xs.some((xx, k) => xx === x && zs[k] === z)
+    cells.set(`${c},${r}`, has(c, r) && has(c + 1, r + 1))
+  }
+  return cells
+}
+
+describe('the water on the terrain', () => {
+  it('splits each cell along the diagonal the full terrain splits it along', () => {
+    const g = ground()
+    const terrain = diagonals(terrainBuffers(g, 0).positions, terrainBuffers(g, 0).indices, g.x0, g.z0)
+    for (const [cell, main] of terrain) {
+      const [c, r] = cell.split(',').map(Number)
+      expect(main, cell).toBe(splitsAlongMainDiagonal(c!, r!))
+    }
+    // A pond over the middle of the tile, a metre over the ground.
+    const water = new Float32Array(g.side * g.side).fill(NO_WATER)
+    for (let row = 20; row < 45; row++) for (let column = 18; column < 47; column++) water[row * g.side + column] = g.heights[row * g.side + column]! + 1
+    const surface = surfaceBuffers(water, g)!
+    const wet = diagonals(surface.positions, surface.indices, g.x0, g.z0)
+    expect(wet.size).toBeGreaterThan(500)
+    for (const [cell, main] of wet) expect(main, cell).toBe(terrain.get(cell))
   })
 })

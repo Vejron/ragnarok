@@ -14,9 +14,18 @@ import { shoreLevelAt, shoreOf, WET_HEIGHT, type Shore } from './shore'
  */
 
 /**
+ * The range of heights above the water near it that the stones texture's blue channel spans, metres
+ * (`stonesTexture`; the terrain's shader reads it back in `engine/src/materials/standard.wgsl.ts`).
+ * Wider than the wet band, so the texture's filtering interpolates the height between texels rather
+ * than a value clamped at both: a bank rises a metre and more across a texel.
+ */
+export const SHORE_ABOVE: readonly [number, number] = [-1, 3]
+
+/**
  * The tile's stony ground and shore as a texture for the terrain's shader: how stony in red, a boulder
- * field's blocks in green, and in blue how far above the water near it the ground is (0 to 1 m, all of
- * it where it is higher or there is none), for the wet band along the shore. Null when the tile has neither.
+ * field's blocks in green, and in blue how far above the water near it the ground is (over
+ * `SHORE_ABOVE`, all of it where it is higher or there is none), for the wet band along the shore.
+ * Null when the tile has neither.
  */
 export function stonesTexture(stones: Uint8Array | undefined, shore: Shore | null, ground: TileGround): Texture | null {
   if (!stones && !shore) return null
@@ -34,8 +43,13 @@ export function stonesTexture(stones: Uint8Array | undefined, shore: Shore | nul
       if (shore) {
         const x = x0 + ((i + 0.5) / n) * size, z = z0 + ((j + 0.5) / n) * size
         const level = shoreLevelAt(shore, x, z)
-        const ground = heights[Math.min(side - 1, Math.round((z - z0) / cell)) * side + Math.min(side - 1, Math.round((x - x0) / cell))]!
-        if (!Number.isNaN(level)) above = Math.min(1, Math.max(0, ground - level))
+        // The ground at the texel's centre as the terrain draws it, between its samples.
+        const u = Math.min(side - 1, Math.max(0, (x - x0) / cell)), v = Math.min(side - 1, Math.max(0, (z - z0) / cell))
+        const c = Math.min(side - 2, Math.floor(u)), r = Math.min(side - 2, Math.floor(v))
+        const [fu, fv] = [u - c, v - r]
+        const at = (dc: number, dr: number) => heights[(r + dr) * side + c + dc]!
+        const ground = (at(0, 0) * (1 - fu) + at(1, 0) * fu) * (1 - fv) + (at(0, 1) * (1 - fu) + at(1, 1) * fu) * fv
+        if (!Number.isNaN(level)) above = Math.min(1, Math.max(0, (ground - level - SHORE_ABOVE[0]) / (SHORE_ABOVE[1] - SHORE_ABOVE[0])))
       }
       data[k * 4 + 2] = Math.round(above * 255)
       data[k * 4 + 3] = 255

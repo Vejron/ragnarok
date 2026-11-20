@@ -36,6 +36,7 @@ pub mod props;
 pub mod region;
 pub mod riverflow;
 pub mod roof;
+pub mod shoreline;
 pub mod square;
 pub mod species;
 pub mod thin;

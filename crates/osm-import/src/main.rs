@@ -213,8 +213,15 @@ fn water_map(args: &Args, place: &Place, pieces: Option<&[[f64; 4]]>) -> Result<
     polygons(&found.lakes, water::Kind::Lake, &mut map);
     polygons(&found.rivers, water::Kind::River, &mut map);
     map.streams = found.streams.iter().map(|line| local(line)).collect();
+    // Every shore wanders and curves as a real one does, not in OSM's straight sides (`shoreline.rs`).
+    let mut coast: Vec<Vec<[f64; 2]>> = found.coast.iter().map(|chain| local(chain)).collect();
+    {
+        let mut rings: Vec<&mut Vec<[f64; 2]>> = map.bodies.iter_mut().flat_map(|body| body.rings.iter_mut()).collect();
+        let mut lines: Vec<&mut Vec<[f64; 2]>> = coast.iter_mut().collect();
+        osm_import::shoreline::smooth(&mut rings, &mut lines);
+    }
     // The sea: the coastline in [east, north] metres, closed along the edge of the grid.
-    let coast: Vec<Vec<[f64; 2]>> = found.coast.iter().map(|chain| local(chain).into_iter().map(|[x, z]| [x, -z]).collect()).collect();
+    let coast: Vec<Vec<[f64; 2]>> = coast.into_iter().map(|chain| chain.into_iter().map(|[x, z]| [x, -z]).collect()).collect();
     let seas = osm_import::osm_water::sea(&coast, reach);
     for rings in &seas {
         let rings = rings.iter().map(|ring| open(ring.iter().map(|&[x, y]| [x, -y]).collect())).collect();
