@@ -46,6 +46,18 @@ export const FLOW_BIAS = 10
 export interface WaterBuffers {
   positions: Float32Array
   custom: Float32Array
+  /**
+   * On a lake or river with foam on it (`TileData.foam`), each vertex's uv: 0, then how much of the
+   * surface is under foam there, 0 to 1. The shader reads uv's x as which mesh it is (`WaterRefine`'s is 1).
+   */
+  uvs?: Float32Array
+  /**
+   * On a lake or river, which way the still surface faces at each vertex: straight up on a lake, and on
+   * a river leaning as the surface falls along it and stands in waves where it runs fast (`TileData.water`
+   * is shaped by the current). The shader lights the surface by it; the mesh's own triangles are too
+   * coarse to.
+   */
+  normals?: Float32Array
   indices: Uint32Array
   /** A lake's or river's surface rather than a stream's ribbon: the wave field moves it (`WaterRefine`). */
   surface?: boolean
@@ -56,14 +68,17 @@ export interface WaterBuffers {
  * touch water are triangulated. Depth is `water - ground` at the vertices and interpolates across
  * a cell, so the shoreline (depth 0) falls between a wet and a dry sample, and islands stay dry
  * because their ground is above the level. `reach` (`TileData.reach`) is how wide the water is at each
- * sample, which the waves grow with, and `flow` (`TileData.flow`) which way it runs. Null when the tile has no water.
+ * sample, which the waves grow with, `flow` (`TileData.flow`) which way it runs and `foam`
+ * (`TileData.foam`) how much foam it carries. Null when the tile has no water.
  */
-export function surfaceBuffers(water: Float32Array, ground: TileGround, reach?: Uint8Array, flow?: Int8Array): WaterBuffers | null {
+export function surfaceBuffers(water: Float32Array, ground: TileGround, reach?: Uint8Array, flow?: Int8Array, foam?: Uint8Array): WaterBuffers | null {
   const { x0, z0, cell, side, heights } = ground
   if (water.length !== side * side) return null
   const positions = new Float32Array(side * side * 3)
   const depths = new Float32Array(side * side)
   const flows = new Float32Array(side * side * 3)
+  const foamy = foam && foam.length === water.length
+  const foams = foamy ? new Float32Array(side * side) : undefined
   for (let row = 0; row < side; row++) {
     for (let column = 0; column < side; column++) {
       const at = row * side + column
@@ -77,10 +92,35 @@ export function surfaceBuffers(water: Float32Array, ground: TileGround, reach?: 
       const flowing = flow && flow.length === 2 * water.length
       flows[at * 3 + 1] = flowing ? flow[at * 2]! * FLOW_STEP : 0
       flows[at * 3 + 2] = (flowing ? flow[at * 2 + 1]! * FLOW_STEP : 0) - FLOW_BIAS
+      if (foams) foams[at] = foam![at]! / 255
     }
   }
   const indices: number[] = []
   const wet = (at: number) => depths[at]! > 0
+  // The still surface's slope at each wet sample, from the wet samples either side of it. Only running
+  // water has one: a lake is level.
+  const normals = new Float32Array(side * side * 3)
+  const running = flow && flow.length === 2 * water.length
+  const speedAt = (at: number) => Math.hypot(flows[at * 3 + 1]!, flows[at * 3 + 2]! + FLOW_BIAS)
+  for (let row = 0; row < side; row++) {
+    for (let column = 0; column < side; column++) {
+      const at = row * side + column
+      let sx = 0
+      let sz = 0
+      if (running && wet(at)) {
+        const fall = (back: number | null, ahead: number | null) => {
+          const from = back !== null && wet(back) ? back : at
+          const to = ahead !== null && wet(ahead) ? ahead : at
+          return from === to ? 0 : (water[to]! - water[from]!) / ((to === at || from === at ? 1 : 2) * cell)
+        }
+        sx = fall(column > 0 ? at - 1 : null, column < side - 1 ? at + 1 : null)
+        sz = fall(row > 0 ? at - side : null, row < side - 1 ? at + side : null)
+      }
+      const length = Math.hypot(sx, 1, sz)
+      // `|| 0`: a level surface faces (0, 1, 0), not (-0, 1, -0).
+      normals.set([-sx / length || 0, 1 / length, -sz / length || 0], at * 3)
+    }
+  }
   for (let row = 0; row < side - 1; row++) {
     for (let column = 0; column < side - 1; column++) {
       const p00 = row * side + column
@@ -92,27 +132,41 @@ export function surfaceBuffers(water: Float32Array, ground: TileGround, reach?: 
       let level = -Infinity
       for (const p of [p00, p01, p10, p11]) if (water[p] !== NO_WATER) level = Math.max(level, water[p]!)
       for (const p of [p00, p01, p10, p11]) positions[p * 3 + 1] = water[p] === NO_WATER ? level : water[p]!
+      // And they run as the fastest wet corner does (their own samples have no current), so a river is
+      // a river up to its shoreline and does not fade to still water across its last cell.
+      if (running) {
+        let fastest = -1
+        for (const p of [p00, p01, p10, p11]) if (wet(p) && (fastest < 0 || speedAt(p) > speedAt(fastest))) fastest = p
+        for (const p of [p00, p01, p10, p11]) {
+          if (fastest >= 0 && !wet(p) && speedAt(p) < speedAt(fastest)) {
+            flows[p * 3 + 1] = flows[fastest * 3 + 1]!
+            flows[p * 3 + 2] = flows[fastest * 3 + 2]!
+          }
+        }
+      }
       indices.push(p00, p10, p01, p10, p11, p01)
     }
   }
   if (indices.length === 0) return null
   const split = Math.ceil(cell / WAVE_CELL - 1e-6)
-  if (split > 1) return subdivided(positions, depths, flows, Uint32Array.from(indices), side, cell, split)
-  return { positions, custom: surfaceCustom(depths, flows), indices: Uint32Array.from(indices), surface: true }
+  if (split > 1) return subdivided(positions, depths, flows, foams, normals, Uint32Array.from(indices), side, cell, split)
+  return { positions, custom: surfaceCustom(depths, flows), ...(foams ? { uvs: surfaceUvs(foams) } : {}), normals, indices: Uint32Array.from(indices), surface: true }
 }
 
 /**
  * The cells of a surface mesh (two triangles a cell, as `surfaceBuffers` lists them, over a grid
  * `side` samples across) each cut into `split` × `split`, their heights and depths blended from the
- * cell's corners, and so are their flows (a lake's reach). Neighbouring cells repeat their shared edge's
+ * cell's corners, and so are their flows (a lake's reach), `foams` and `normals`. Neighbouring cells repeat their shared edge's
  * vertices, which the waves move alike.
  */
-function subdivided(positions: Float32Array, depths: Float32Array, flows: Float32Array, cells: Uint32Array, side: number, cell: number, split: number): WaterBuffers {
+function subdivided(positions: Float32Array, depths: Float32Array, flows: Float32Array, foams: Float32Array | undefined, normals: Float32Array, cells: Uint32Array, side: number, cell: number, split: number): WaterBuffers {
   const n = split + 1
   const count = cells.length / 6
   const out = new Float32Array(count * n * n * 3)
   const deep = new Float32Array(count * n * n)
   const flow = new Float32Array(count * n * n * 3)
+  const foam = foams ? new Float32Array(count * n * n) : undefined
+  const facing = new Float32Array(count * n * n * 3)
   const indices = new Uint32Array(count * split * split * 6)
   let vertex = 0
   let index = 0
@@ -133,6 +187,9 @@ function subdivided(positions: Float32Array, depths: Float32Array, flows: Float3
         const v = j / split
         out.set([x0 + u * cell, blend((p) => positions[p * 3 + 1]!, u, v), z0 + v * cell], vertex * 3)
         for (let k = 0; k < 3; k++) flow[vertex * 3 + k] = blend((p) => flows[p * 3 + k]!, u, v)
+        // Not made unit length again: the shader does that.
+        for (let k = 0; k < 3; k++) facing[vertex * 3 + k] = blend((p) => normals[p * 3 + k]!, u, v)
+        if (foam) foam[vertex] = blend((p) => foams![p]!, u, v)
         deep[vertex++] = blend((p) => depths[p]!, u, v)
       }
     }
@@ -145,7 +202,7 @@ function subdivided(positions: Float32Array, depths: Float32Array, flows: Float3
       }
     }
   }
-  return { positions: out, custom: surfaceCustom(deep, flow), indices, surface: true }
+  return { positions: out, custom: surfaceCustom(deep, flow), ...(foam ? { uvs: surfaceUvs(foam) } : {}), normals: facing, indices, surface: true }
 }
 
 /**
@@ -160,6 +217,13 @@ function surfaceCustom(depths: Float32Array, flows: Float32Array): Float32Array 
     out[i * 4 + 2] = flows[i * 3 + 1]!
     out[i * 4 + 3] = flows[i * 3 + 2]!
   }
+  return out
+}
+
+/** The uv attribute of a surface with foam on it: 0, then the foam (see `WaterBuffers.uvs`). */
+function surfaceUvs(foams: Float32Array): Float32Array {
+  const out = new Float32Array(foams.length * 2)
+  for (let i = 0; i < foams.length; i++) out[i * 2 + 1] = foams[i]!
   return out
 }
 

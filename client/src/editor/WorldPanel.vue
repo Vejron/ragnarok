@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { activate, buses, cell, chooseRegion, clearAll, dirty, grid, groomedPaths, name, newWorld, openWater, openWorld, painted, region, remove, save, winter, worlds } from './state'
+import { activate, buses, cell, chooseRegion, clearAll, dirty, grid, groomedPaths, name, newWorld, openWater, openWorld, painted, region, remove, riverTint, save, tintAll, winter, worlds } from './state'
+import { RIVER_TINT } from '@/sim/consts.generated'
 import type { Region } from './grid'
 
 const tile = computed(() => grid.value?.tile ?? 256)
@@ -18,6 +19,9 @@ const regions: { label: string; value: Region }[] = [
   { label: 'Sweden (Lantmäteriet)', value: 'sweden' },
   { label: 'France (IGN)', value: 'france' },
 ]
+
+/** The importer's own river colour, as the colour input wants it. */
+const usualRiverTint = '#' + RIVER_TINT.map((part) => part.toString(16).padStart(2, '0')).join('')
 </script>
 
 <template>
@@ -64,6 +68,23 @@ const regions: { label: string; value: Region }[] = [
       label="Public transport (buses)"
       title="Bus lines along the major roads, with stops, and buses that run them. Generate the world again to apply."
       @update:model-value="(v: boolean | 'indeterminate') => { buses = checked(v); dirty = true }"
+    />
+    <label class="flex items-center gap-2 text-sm" title="The colour of the rivers where they are deep; shallow water shows the bed through it. Generate the world again to apply.">
+      <input
+        type="color"
+        class="h-6 w-8 cursor-pointer rounded border border-default bg-transparent p-0"
+        :value="riverTint ?? usualRiverTint"
+        @input="(e: Event) => { riverTint = (e.target as HTMLInputElement).value; dirty = true }"
+      >
+      River water colour
+      <UButton v-if="riverTint" label="Usual" size="xs" color="neutral" variant="ghost" @click="() => { riverTint = null; dirty = true }" />
+    </label>
+    <UCheckbox
+      :model-value="tintAll"
+      label="Lakes and sea in the river's colour"
+      class="ml-6"
+      title="Without it they are a clear blue. Generate the world again to apply."
+      @update:model-value="(v: boolean | 'indeterminate') => { tintAll = checked(v); dirty = true }"
     />
     <p class="text-sm text-muted">{{ painted.size }} tiles, {{ ((painted.size * tile * tile) / 1e6).toFixed(2) }} km²</p>
 

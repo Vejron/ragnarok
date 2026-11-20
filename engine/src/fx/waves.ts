@@ -52,6 +52,10 @@ export const MOST_STAMPS = 64
 const STAMP_FLOATS = 12
 /** Bytes between the uniforms of one step and the next (WebGPU's dynamic offset alignment). */
 const UNIFORM_STRIDE = 256
+/** Floats the uniforms of one step take (`Sim` in the shader). */
+const SIM_FLOATS = 20
+/** Texels a side of the current's map (`WaveField.setFlow`). */
+export const FLOW_GRID = 64
 /** Seconds with nothing pressing in after which the water has settled and the steps stop. */
 const SETTLE = 10
 
@@ -65,6 +69,9 @@ struct Sim {
   step: vec4f,
   // How far through the frame's steps this one starts and ends (0 to 1), for stamps whose depth changes.
   share: vec4f,
+  // The current's map: its corner (world x, z), one over its side (1/metres), and the m/s one step of
+  // a byte in it stands for (0 with no current).
+  flow: vec4f,
 }
 
 struct Stamp {
@@ -99,6 +106,20 @@ const BREAK_STEEP = vec2f(0.5, 1.0);
 @group(0) @binding(1) var<storage, read> stamps: array<Stamp>;
 @group(0) @binding(2) var before: texture_2d<f32>;
 @group(0) @binding(3) var after: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(4) var flowMap: texture_2d<f32>;
+@group(0) @binding(5) var flowSampler: sampler;
+
+// The current that carries the water at \`world\`, m/s (x, z): none without a map of it, or off the map.
+fn drift(world: vec2f) -> vec2f {
+  if (sim.flow.w <= 0.0) {
+    return vec2f(0.0);
+  }
+  let uv = (world - sim.flow.xy) * sim.flow.z;
+  if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) {
+    return vec2f(0.0);
+  }
+  return (textureSampleLevel(flowMap, flowSampler, uv, 0.0).xy * 255.0 - 128.0) * sim.flow.w;
+}
 
 // The water before this step at texel \`c\` of this step's field: moved with the field, still beyond its edge.
 fn was(c: vec2i) -> vec4f {
@@ -108,6 +129,15 @@ fn was(c: vec2i) -> vec4f {
     return vec4f(0.0);
   }
   return textureLoad(before, s, 0);
+}
+
+// The water before this step at \`p\`, in texels of this step's field (a texel's middle is at its index):
+// blended from the four round it.
+fn wasBetween(p: vec2f) -> vec4f {
+  let i = floor(p);
+  let f = p - i;
+  let c = vec2i(i);
+  return mix(mix(was(c), was(c + vec2i(1, 0)), f.x), mix(was(c + vec2i(0, 1)), was(c + vec2i(1, 1)), f.x), f.y);
 }
 
 // How far out the water a stamp pushes aside heaps up, metres: further for a wider hull.
@@ -152,6 +182,11 @@ fn displaced(stamp: Stamp, p: vec2f, depth: f32) -> f32 {
 // of it up (its bow wave), and back up where it left, so it never holds a channel open behind it. A
 // splash knocks its hole in once. Waves running into the field's edge are soaked up rather than
 // thrown back.
+//
+// In a current (\`drift\`) the water is carried along: each texel takes the water that was upstream of it
+// a step ago, and a stamp pushes by how it moves through that water, not over the ground. So something
+// standing still in a river (a boulder under the surface) keeps pushing the water that runs onto it,
+// and its waves trail away downstream, while a boat drifting with the river makes none.
 @compute @workgroup_size(8, 8)
 fn advance(@builtin(global_invocation_id) id: vec3u) {
   let n = sim.shift.w;
@@ -159,24 +194,38 @@ fn advance(@builtin(global_invocation_id) id: vec3u) {
   if (c.x >= n || c.y >= n) {
     return;
   }
-  let here = was(c);
-  let l = was(c - vec2i(1, 0));
-  let r = was(c + vec2i(1, 0));
-  let u = was(c - vec2i(0, 1));
-  let d = was(c + vec2i(0, 1));
+  let world = sim.frame.xy + (vec2f(c) + 0.5) * sim.frame.z;
+  let carried = drift(world);
+  var here = was(c);
+  var l = was(c - vec2i(1, 0));
+  var r = was(c + vec2i(1, 0));
+  var u = was(c - vec2i(0, 1));
+  var d = was(c + vec2i(0, 1));
+  if (dot(carried, carried) > 0.0001) {
+    // All five from where this water was: the texel and its neighbours moved together. Carrying the
+    // middle alone feeds the waves instead of moving them, and the field fills with noise.
+    let source = vec2f(c) - carried * sim.step.x / sim.frame.z;
+    here = wasBetween(source);
+    l = wasBetween(source - vec2f(1.0, 0.0));
+    r = wasBetween(source + vec2f(1.0, 0.0));
+    u = wasBetween(source - vec2f(0.0, 1.0));
+    d = wasBetween(source + vec2f(0.0, 1.0));
+  }
   let edge = f32(min(min(c.x, c.y), min(n - 1 - c.x, n - 1 - c.y)));
   let soak = 1.0 - smoothstep(0.0, 16.0, edge);
   let keep = sim.step.y * (1.0 - soak * 0.2);
   var h = here.x + (here.x - here.y) * keep + sim.frame.w * (l.x + r.x + u.x + d.x - 4.0 * here.x);
   h *= 1.0 - soak * 0.05;
   var foam = mix(here.z, (l.z + r.z + u.z + d.z) * 0.25, 0.12) * sim.step.z;
-  let world = sim.frame.xy + (vec2f(c) + 0.5) * sim.frame.z;
   // What stamps move the water by this step: it is moved, not thrown, so it goes into the height a step
   // before as well, and the water then flows back from the shape it was pushed into as waves.
   var pushed = 0.0;
   for (var i = 0; i < sim.shift.z; i++) {
     let stamp = stamps[i];
-    let moved = stamp.motion.xy * sim.step.x;
+    var moved = stamp.motion.xy * sim.step.x;
+    if (stamp.motion.z <= 0.5) {
+      moved -= carried * sim.step.x;
+    }
     let sd = outline(stamp, world).x;
     if (sd > rimOut(stamp) + length(moved)) {
       continue;
@@ -231,7 +280,9 @@ fn surface(@builtin(global_invocation_id) id: vec3u) {
  * camera: a damped wave equation on a grid of heights, stepped at a fixed rate. Hulls and bodies moving
  * through it (`stamp`) push the water aside as they go, so one moving fast raises a bow wave and a V of
  * waves behind it at the angle its speed and the waves' make; something landing in it (`splash`) sends
- * out rings. Foam builds where the water is churned or steep, spreads and fades.
+ * out rings. Foam builds where the water is churned or steep, spreads and fades. In a river the water
+ * is carried along by the current (`setFlow`), and what stands still in it makes waves as what moves
+ * through still water does.
  *
  * Each frame's result is `texture` (height, slope x, slope z, foam, in metres), covering `area`, for a
  * water material to read. The grid stays put in whole texels as the camera moves, so nothing crawls.
@@ -257,6 +308,9 @@ export class WaveField extends Effect {
   private readonly shift: [number, number] = [0, 0]
   private quiet = Infinity
   private gpu: WaveGpu | null = null
+  /** The current's map (`setFlow`), where it lies and what a byte's step is worth; null with none. */
+  private flow: { bytes: Uint8Array<ArrayBuffer>; area: [number, number, number]; step: number } | null = null
+  private flowChanged = false
 
   constructor(params: WaveFieldParams = {}) {
     super()
@@ -286,6 +340,17 @@ export class WaveField extends Effect {
   /** How many steps the next `prepare` will take. */
   get pending() {
     return this.steps
+  }
+
+  /**
+   * The current that carries the water: `bytes` is `FLOW_GRID` × `FLOW_GRID` texels of rgba, row by row
+   * from the corner `(x0, z0)` over a square `side` metres wide, the velocity's x in red and z in green,
+   * each `128 + v / step` (so `step` is the m/s a count stands for). Null for still water. The map need
+   * not cover the field: water off it is still.
+   */
+  setFlow(bytes: Uint8Array<ArrayBuffer> | null, x0 = 0, z0 = 0, side = 1, step = 0) {
+    this.flow = bytes ? { bytes, area: [x0, z0, side], step } : null
+    this.flowChanged = true
   }
 
   /** Moves `stamp` through the water for this frame; past `MOST_STAMPS` it is dropped. */
@@ -362,6 +427,7 @@ export class WaveField extends Effect {
   prepare(ctx: EffectContext, encoder: GPUCommandEncoder) {
     if (this.gpu && this.gpu.device !== ctx.device) this.gpu = null
     if (!this.gpu) {
+      this.flowChanged = true
       this.gpu = new WaveGpu(ctx.device, this.grid)
       // Hand the material the GPU's map in place of the placeholder; the new version makes it bind again.
       // The placeholder's own GPU copy, if the material has bound it, is in this frame's bind group: the
@@ -376,6 +442,8 @@ export class WaveField extends Effect {
     if (this.steps > 0) {
       const device = ctx.device
       if (this.readyCount) device.queue.writeBuffer(gpu.stamps, 0, this.ready, 0, this.readyCount * STAMP_FLOATS)
+      if (this.flowChanged && this.flow) device.queue.writeTexture({ texture: gpu.flow }, this.flow.bytes, { bytesPerRow: FLOW_GRID * 4 }, [FLOW_GRID, FLOW_GRID])
+      this.flowChanged = false
       const dt = 1 / RATE
       const keep = 1 - this.damping * dt
       const foamKeep = Math.exp(-dt / this.foamFade)
@@ -397,6 +465,10 @@ export class WaveField extends Effect {
         f[11] = i === 0 ? 1 : 0
         f[12] = i / this.steps
         f[13] = (i + 1) / this.steps
+        f[16] = this.flow?.area[0] ?? 0
+        f[17] = this.flow?.area[1] ?? 0
+        f[18] = this.flow ? 1 / this.flow.area[2] : 0
+        f[19] = this.flow?.step ?? 0
         device.queue.writeBuffer(gpu.uniforms, i * UNIFORM_STRIDE, f)
       }
       this.shift[0] = 0
@@ -437,7 +509,9 @@ class WaveGpu {
   readonly map: GPUTexture
   readonly stamps: GPUBuffer
   readonly uniforms: GPUBuffer
-  readonly uniform = new Float32Array(16)
+  readonly uniform = new Float32Array(SIM_FLOATS)
+  /** The current's map (`WaveField.setFlow`). */
+  readonly flow: GPUTexture
   readonly advance: GPUComputePipeline
   readonly surface: GPUComputePipeline
   /** Step from state i into the other; read state i into the map. */
@@ -454,14 +528,18 @@ class WaveGpu {
     this.map = texture('waves map', GPUTextureUsage.COPY_SRC)
     this.stamps = device.createBuffer({ label: 'wave stamps', size: MOST_STAMPS * STAMP_FLOATS * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST })
     this.uniforms = device.createBuffer({ label: 'waves', size: MOST_STEPS * UNIFORM_STRIDE, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
+    this.flow = device.createTexture({ label: 'waves flow', size: [FLOW_GRID, FLOW_GRID], format: 'rgba8unorm', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST })
+    const flowSampler = device.createSampler({ label: 'waves flow', magFilter: 'linear', minFilter: 'linear' })
     const compute = GPUShaderStage.COMPUTE
     const layout = device.createBindGroupLayout({
       label: 'waves',
       entries: [
-        { binding: 0, visibility: compute, buffer: { type: 'uniform', hasDynamicOffset: true, minBindingSize: 64 } },
+        { binding: 0, visibility: compute, buffer: { type: 'uniform', hasDynamicOffset: true, minBindingSize: SIM_FLOATS * 4 } },
         { binding: 1, visibility: compute, buffer: { type: 'read-only-storage' } },
         { binding: 2, visibility: compute, texture: { sampleType: 'unfilterable-float' } },
         { binding: 3, visibility: compute, storageTexture: { access: 'write-only', format: 'rgba16float' } },
+        { binding: 4, visibility: compute, texture: { sampleType: 'float' } },
+        { binding: 5, visibility: compute, sampler: { type: 'filtering' } },
       ],
     })
     const module = device.createShaderModule({ label: 'waves', code: WAVES_WGSL })
@@ -472,10 +550,12 @@ class WaveGpu {
       label: 'waves',
       layout,
       entries: [
-        { binding: 0, resource: { buffer: this.uniforms, size: 64 } },
+        { binding: 0, resource: { buffer: this.uniforms, size: SIM_FLOATS * 4 } },
         { binding: 1, resource: { buffer: this.stamps } },
         { binding: 2, resource: from.createView() },
         { binding: 3, resource: to.createView() },
+        { binding: 4, resource: this.flow.createView() },
+        { binding: 5, resource: flowSampler },
       ],
     })
     this.stepGroups = [group(this.states[0]!, this.states[1]!), group(this.states[1]!, this.states[0]!)]

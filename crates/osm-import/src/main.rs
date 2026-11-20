@@ -439,6 +439,13 @@ fn photo(args: &Args, place: &Place, mask: Option<&std::collections::BTreeSet<(u
 /// power of two, so a 256 m tile is `2^k + 1` samples a side, which the client simplifies best.
 const DEFAULT_CELL: f64 = 4.0;
 
+/// The sRGB colour `"#rrggbb"` names.
+fn colour(text: &str) -> Option<[u8; 3]> {
+    let hex = text.strip_prefix('#').filter(|hex| hex.len() == 6 && hex.is_ascii())?;
+    let part = |at: usize| u8::from_str_radix(&hex[at..at + 2], 16).ok();
+    Some([part(0)?, part(2)?, part(4)?])
+}
+
 /// What an editor world's `area.json` asks of the build, past its tiles.
 #[derive(Default, serde::Deserialize)]
 struct AreaOptions {
@@ -453,6 +460,12 @@ struct AreaOptions {
     /// still sail.
     #[serde(default)]
     open_water: bool,
+    /// The colour of the rivers' deep water, `"#rrggbb"` (`Manifest::river_tint`); nothing for the
+    /// usual brown-green.
+    river_tint: Option<String>,
+    /// Colour the lakes and the sea as the rivers are too (`Manifest::tint_all`).
+    #[serde(default)]
+    tint_all_water: bool,
     /// The orienteering map to build from (`--ocad`), if any.
     ocad: Option<PathBuf>,
     /// Metres to move that map, east and south, where it was drawn a little off.
@@ -661,6 +674,10 @@ fn main() -> Result<()> {
         }
         built
     };
+    if let Some(tint) = &options.river_tint {
+        built.manifest.river_tint = colour(tint).with_context(|| format!("river_tint {tint:?} is not a colour like \"#57522a\""))?;
+    }
+    built.manifest.tint_all = options.tint_all_water;
     if winter {
         built.manifest.theme = shared::world::THEME_WINTER;
         built.manifest.open_water = options.open_water;

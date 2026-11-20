@@ -17,18 +17,18 @@ describe('waves', () => {
     }
   })
 
-  it('stand in a rapid as the sim’s do, and lie flat on a calm river', async () => {
+  it('surge in a rapid as the sim’s do, across the current, and lie flat on a calm river', async () => {
     await init()
-    for (const [x, z, time, speed] of [[0, 0, 0, 4], [3.7, -12.2, 21.4, 2.6], [-140, 88, 63.9, 3.1], [512, -301, 7.25, 1.2]] as const) {
-      const [height, slopeX, slopeZ, rise] = ClientSim.churnAt(x, z, time, speed)
-      const ours = churn(x, z, time, speed)
+    for (const [x, z, time, flowX, flowZ] of [[0, 0, 0, 4, 0], [3.7, -12.2, 21.4, 1.6, -2.1], [-140, 88, 63.9, -2.2, 2.2], [512, -301, 7.25, 0.3, 1.5]] as const) {
+      const [height, slopeX, slopeZ, rise] = ClientSim.churnAt(x, z, time, flowX, flowZ)
+      const ours = churn(x, z, time, flowX, flowZ)
       expect(ours.height).toBeCloseTo(height!, 4)
       expect(ours.slopeX).toBeCloseTo(slopeX!, 4)
       expect(ours.slopeZ).toBeCloseTo(slopeZ!, 4)
       expect(ours.rise).toBeCloseTo(rise!, 4)
     }
-    expect(churn(3, 4, 10, 1).height).toBe(0)
-    expect(Math.abs(churn(3.7, -12.2, 0, 4).height)).toBeLessThanOrEqual(CHURN_HEIGHT)
+    expect(churn(3, 4, 10, 1, 0).height).toBe(0)
+    expect(Math.abs(churn(3.7, -12.2, 0, 4, 0).height)).toBeLessThanOrEqual(CHURN_HEIGHT)
   })
 
   it('run on a looping clock', () => {

@@ -11,8 +11,10 @@ const LINE: BusLine = { points: [[0, 0], [300, 0], [300, 400]], stops: [0, 300, 
 describe('bus lines', () => {
   it('come with the manifest, in metres', () => {
     const cm = (line: BusLine) => [line.points.map(([x, z]) => [x * 100, z * 100]), line.stops.map((stop) => stop * 100), line.signs.map(([x, z]) => [Math.round(x * 100), Math.round(z * 100)])]
-    const world = decodeManifest(encode([WORLD_VERSION, [0, 0, 0], 50_000, 25_600, [], [], 0, 0, [], false, [cm(LINE)]]))
+    const world = decodeManifest(encode([WORLD_VERSION, [0, 0, 0], 50_000, 25_600, [], [], 0, 0, [], false, [cm(LINE)], [87, 82, 42], true]))
     expect(world.busLines).toEqual([LINE])
+    expect(world.riverTint).toBe(0x57522a)
+    expect(world.tintAll).toBe(true)
   })
 
   it('are followed by distance along them, as the server follows them', () => {

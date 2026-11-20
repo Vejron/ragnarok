@@ -5,9 +5,19 @@
 //! The data has no surface height or depth. The height model is flat over water, so the surface
 //! of a body is the median elevation of the height model inside it, and its bed is cut below that
 //! with a depth that grows with the distance from the shore and with the size of the body.
+//!
+//! A river is different in three ways. Its surface falls along its course (`river_levels`). It
+//! carries one discharge from end to end, and its bed is cut shallower where that water must run
+//! faster to get through: in its rapids (`Stretch::shallows`), where it is also rough, with bars,
+//! boulders and a chute left deep for boats (`Stretch::relief`). And its current is solved over that
+//! bed as a flow (`riverflow`), so it speeds up through a narrows, parts round an island and turns
+//! back in the bay below a point.
 
+use rayon::prelude::*;
 use shared::terrain::Ground;
 use shared::world::{FLOW_STEP, NO_WATER, REACH_STEP};
+
+use crate::riverflow;
 
 type P = [f64; 2];
 
@@ -40,6 +50,13 @@ pub enum Kind {
 
 /// Depth of the sea at its farthest from land, metres (the most a bed may sit below y = 0).
 const SEA_DEPTH: f64 = 12.0;
+/// The share of a river's width that counts as open water for the wind's swell (`Tile::reach`). A
+/// river is sheltered by its banks and its water is moving, so the wind raises only a small chop
+/// on it: its waves come from the current instead.
+const RIVER_REACH: f32 = 0.25;
+/// The most open water a river counts as having however wide it is, metres: enough for the two
+/// shortest swells and no more.
+const RIVER_REACH_MAX: f32 = 30.0;
 /// The sea reaches `SEA_DEPTH` no closer than this to land, metres, so a world that only touches
 /// the sea does not get a cliff off its beach.
 const SEA_SHELF: f64 = 600.0;
@@ -104,14 +121,16 @@ pub struct Placed {
     /// Which way and how fast the water runs at each sample, `x` then `z` in `FLOW_STEP`s (`Tile::flow`);
     /// empty when nothing flows.
     pub flow: Vec<i8>,
+    /// How much of the surface is under foam at each sample, in 255ths (`Tile::foam`); empty when none is.
+    pub foam: Vec<u8>,
     pub streams: Vec<Vec<P>>,
 }
 
 impl Placed {
     /// The finished water of `map` over `ground`, whose y = 0 is `datum` in the height model.
     pub fn new(map: &Map, surface: &Surface, datum: f64, ground: &Ground) -> Self {
-        let (levels, reach, flow) = if surface.is_empty() { (Vec::new(), Vec::new(), Vec::new()) } else { (surface.levels(datum, ground), surface.reaches(), surface.flows()) };
-        Self { levels, reach, flow, streams: surface.trim_streams(&map.streams) }
+        let (levels, reach, flow, foam) = if surface.is_empty() { (Vec::new(), Vec::new(), Vec::new(), Vec::new()) } else { (surface.levels(datum, ground), surface.reaches(), surface.flows(), surface.foams()) };
+        Self { levels, reach, flow, foam, streams: surface.trim_streams(&map.streams) }
     }
 
     /// How deep the water is at a local position over `ground` (the grid `levels` lies on), metres,
@@ -147,6 +166,8 @@ pub struct Grid {
 }
 
 const NONE: u32 = u32::MAX;
+/// What `river_levels` calls every river sample's body, whichever polygon it came from.
+const RIVER: u32 = u32::MAX - 1;
 
 /// Which body covers each ground sample, its surface and its depth.
 pub struct Surface {
@@ -163,6 +184,9 @@ pub struct Surface {
     /// The water's velocity at each sample, `[x, z]` m/s: down a river's course, fastest where it falls
     /// steeply and in the middle, still at its banks; still on lakes, the sea and dry samples.
     flow: Vec<[f32; 2]>,
+    /// How much of the surface is under foam at each sample, 0 to 1: what a river's rapids make,
+    /// carried downstream; none on lakes, the sea and dry samples.
+    foam: Vec<f32>,
     /// On each dry sample next to the water, the lowest surface beside it, metres above the datum,
     /// and how far outside the outline it is, metres; NaN elsewhere. `bed` shapes the bank with it.
     bank: Vec<[f32; 2]>,
@@ -210,8 +234,7 @@ impl Surface {
             }
         }
         let mut level: Vec<f32> = body.iter().map(|&b| if b == NONE { f32::NAN } else { flat[b as usize] as f32 }).collect();
-        let mut flow = vec![[0.0f32; 2]; n];
-        river_levels(map, grid, &body, &model, &mut level, &mut flow);
+        let stretches = river_levels(map, grid, &body, &model, &mut level);
         let side = grid.side as usize;
         let cell_m = grid.cell as f64 / 100.0;
         // Metres from the bank of every wet sample, measured to the drawn outline itself rather
@@ -219,6 +242,120 @@ impl Surface {
         // depth crosses zero) follows the outline between samples. Also filled in on the dry
         // samples next to the water, for `bed` to shape the bank.
         let measured = shore_distance(map, grid, &body);
+        let shore: Vec<f32> = measured.iter().zip(&body).map(|(&d, &b)| if b == NONE { 0.0 } else if d.is_finite() { d } else { OPEN_SHORE }).collect();
+        let width = local_radius(&body, &shore, side, cell_m);
+        let mut farthest = vec![0.0f64; map.bodies.len()];
+        for (at, &b) in body.iter().enumerate() {
+            if b != NONE {
+                farthest[b as usize] = farthest[b as usize].max(shore[at] as f64);
+            }
+        }
+        // The bowl under each sample: deepest where the water reaches furthest from its banks.
+        // The bank shelves in from the waterline at `SHORE_SLOPE` rather than dropping
+        // `SHORE_DEPTH` at once, so the first sample in is not at the foot of a wall.
+        let shelf = |at: usize| SHORE_SLOPE * shore[at] as f64;
+        let bowl: Vec<f32> = (0..n)
+            .map(|at| match body[at] {
+                NONE => 0.0,
+                b => match map.bodies[b as usize].kind {
+                    Kind::Sea => Kind::sea_depth(shore[at] as f64, farthest[b as usize]),
+                    kind => kind.depth(shore[at] as f64, width[at] as f64),
+                }
+                .min(shelf(at)) as f32,
+            })
+            .collect();
+        // The share of its bowl each sample keeps: less in a river's rapids, where the same water
+        // runs faster and so shallower.
+        let mut shallow = vec![1.0f32; n];
+        let cut: Vec<(f64, f64)> = stretches.iter().map(|stretch| stretch.shallows(cell_m, &bowl, &mut shallow)).collect();
+        let carried: Vec<f64> = cut.iter().map(|&(carried, _)| carried).collect();
+        // A river's bed is then roughened (bars, pools and boulders) round a chute left open for
+        // boats, so the current has something to gather in and break over.
+        let mut depth: Vec<f32> = (0..n).map(|at| bowl[at] * shallow[at]).collect();
+        let banks = Banks { bowl: &bowl, shore: &shore, width: &width };
+        let chutes: Vec<Vec<usize>> = stretches.iter().map(|stretch| stretch.relief(grid, &banks, &mut depth)).collect();
+        let reach = (0..n)
+            .map(|at| match body[at] {
+                NONE => 0.0,
+                b => match map.bodies[b as usize].kind {
+                    Kind::Sea => shared::waves::OPEN_SEA,
+                    Kind::Lake => 2.0 * farthest[b as usize] as f32,
+                    Kind::River => (RIVER_REACH * 2.0 * width[at]).min(RIVER_REACH_MAX),
+                },
+            })
+            .collect();
+        // Each flowing stretch's current is solved over the bed just cut: a stretch at a time on
+        // its own thread, each one the same every run.
+        let mut flow = vec![[0.0f32; 2]; n];
+        let mut foam = vec![0.0f32; n];
+        let solved: Vec<(Run, f64)> = stretches
+            .par_iter()
+            .zip(&carried)
+            .map(|(stretch, &carried)| {
+                let started = std::time::Instant::now();
+                (stretch.current(grid, &depth, &banks, carried), started.elapsed().as_secs_f64())
+            })
+            .collect();
+        // A bed too rough to pass its river's water at the depth it was cut to was cut deeper.
+        for (stretch, (run, _)) in stretches.iter().zip(&solved) {
+            for (&at, &bed) in stretch.members.iter().zip(&run.bed) {
+                depth[at] = bed;
+            }
+        }
+        let foams: Vec<Vec<f32>> = stretches.par_iter().zip(&solved).map(|(stretch, (run, _))| stretch.foam(grid, &depth, &run.current.flow)).collect();
+        for ((((stretch, (Run { current, deeper, .. }, seconds)), cover), &(_, step)), chute) in stretches.iter().zip(&solved).zip(&foams).zip(&cut).zip(&chutes) {
+            for ((&at, &velocity), &cover) in stretch.members.iter().zip(&current.flow).zip(cover) {
+                flow[at] = velocity;
+                foam[at] = cover;
+            }
+            if stretch.length >= RIVER_REPORTED {
+                let speeds = || current.flow.iter().map(|v| v[0].hypot(v[1]));
+                let fastest = speeds().fold(0.0f32, f32::max);
+                let rapid = speeds().filter(|&speed| speed >= 2.5).count() as f64 * cell_m * cell_m;
+                let shallowest = stretch.members.iter().map(|&at| shallow[at]).fold(1.0f32, f32::min);
+                let chute = chute.iter().map(|&at| depth[at]).fold(f32::MAX, f32::min);
+                let foamy = cover.iter().filter(|&&cover| cover >= 0.1).count() as f64 * cell_m * cell_m;
+                eprintln!(
+                    "water: a river falls {:.1} m over {:.0} m, carrying {:.0} m³/s at up to {fastest:.1} m/s, {rapid:.0} m² of it at 2.5 m/s or more and {foamy:.0} m² under foam; its steepest rapid keeps {:.0}% of its depth, its rapids' rough bed was cut {deeper:.2} times deeper to carry it, the chute down it is nowhere shallower than {chute:.1} m, and its bed's mean depth steps {step:.2} m at most from one {RIVER_BIN:.0} m to the next ({} in {} steps, {seconds:.1} s)",
+                    stretch.drop,
+                    stretch.length,
+                    stretch.discharge(cell_m, &depth, &current.flow),
+                    shallowest * 100.0,
+                    if current.settled { "settled" } else { "still shifting" },
+                    current.steps,
+                );
+            }
+        }
+        // The current then shapes the surface it ran under: the water stands higher where it is
+        // braked and lower where it runs fast, and a rapid stands in waves. The bed stays where it
+        // was cut, so the water over it is deeper or shallower by as much.
+        for (stretch, (run, _)) in stretches.iter().zip(&solved) {
+            for (&at, [lift, wave]) in stretch.members.iter().zip(stretch.shape(grid, &depth, run)) {
+                // Water a boat can pass (the chute's) stays deep enough for one, and shallower
+                // water is not lowered: a boulder's top stays as far under as it was put. The
+                // waves stand on whatever the lift leaves.
+                let deep = (depth[at] + lift).max(depth[at].min(RAPID_DEPTH)) + wave;
+                // The same water passes, so it runs slower where it stands deeper.
+                if deep > 0.0 {
+                    flow[at] = flow[at].map(|v| v * depth[at] / deep);
+                }
+                level[at] += deep - depth[at];
+                depth[at] = deep;
+            }
+        }
+        // A river is never quite still: where its current is too slow to write down (in the slack
+        // water along a bank) it is written as one step of `Tile::flow` down the course. The water
+        // there is then a river's to the eye, not a lake's, and what floats on it creeps on.
+        for (stretch, (run, _)) in stretches.iter().zip(&solved) {
+            if run.current.flow.iter().all(|v| v[0] == 0.0 && v[1] == 0.0) {
+                continue;
+            }
+            for (&at, course) in stretch.members.iter().zip(&stretch.course) {
+                if flow[at][0].abs() < 0.5 * FLOW_STEP && flow[at][1].abs() < 0.5 * FLOW_STEP {
+                    flow[at] = course.map(|part| part as f32 * FLOW_STEP);
+                }
+            }
+        }
         // The dry samples next to the water: the lowest level beside each and how far outside
         // the outline they are, NaN elsewhere.
         let mut bank = vec![[f32::NAN; 2]; n];
@@ -232,45 +369,7 @@ impl Surface {
                 }
             }
         }
-        let shore: Vec<f32> = measured.iter().zip(&body).map(|(&d, &b)| if b == NONE { 0.0 } else if d.is_finite() { d } else { OPEN_SHORE }).collect();
-        let width = local_radius(&body, &shore, side, cell_m);
-        let mut farthest = vec![0.0f64; map.bodies.len()];
-        for (at, &b) in body.iter().enumerate() {
-            if b != NONE {
-                farthest[b as usize] = farthest[b as usize].max(shore[at] as f64);
-            }
-        }
-        let depth = (0..n)
-            .map(|at| match body[at] {
-                NONE => 0.0,
-                b => {
-                    let bowl = match map.bodies[b as usize].kind {
-                        Kind::Sea => Kind::sea_depth(shore[at] as f64, farthest[b as usize]),
-                        kind => kind.depth(shore[at] as f64, width[at] as f64),
-                    };
-                    // The bank shelves in from the waterline at `SHORE_SLOPE` rather than dropping
-                    // `SHORE_DEPTH` at once, so the first sample in is not at the foot of a wall.
-                    bowl.min(SHORE_SLOPE * shore[at] as f64) as f32
-                }
-            })
-            .collect();
-        let reach = (0..n)
-            .map(|at| match body[at] {
-                NONE => 0.0,
-                b => match map.bodies[b as usize].kind {
-                    Kind::Sea => shared::waves::OPEN_SEA,
-                    Kind::Lake => 2.0 * farthest[b as usize] as f32,
-                    Kind::River => 2.0 * width[at],
-                },
-            })
-            .collect();
-        // The current is smoothed over the stretch, then slowed towards the banks.
-        blur_flow(&mut flow, side, (FLOW_BLUR / cell_m).round().max(1.0) as usize);
-        for at in 0..n {
-            let bank = if body[at] == NONE { 0.0 } else { (shore[at] / width[at].max(cell_m as f32)).clamp(0.0, 1.0).sqrt() };
-            flow[at] = flow[at].map(|v| v * bank);
-        }
-        Self { grid, body, level, depth, reach, flow, bank }
+        Self { grid, body, level, depth, reach, flow, foam, bank }
     }
 
     fn index(&self, x: f64, z: f64) -> Option<usize> {
@@ -379,6 +478,13 @@ impl Surface {
     pub fn flows(&self) -> Vec<i8> {
         let step = |v: f32| (v / FLOW_STEP).round().clamp(-127.0, 127.0) as i8;
         let out: Vec<i8> = self.flow.iter().flat_map(|&[x, z]| [step(x), step(z)]).collect();
+        if out.iter().all(|&v| v == 0) { Vec::new() } else { out }
+    }
+
+    /// The foam on the water at every ground sample, in 255ths, as `Tile::foam` lays it out; empty
+    /// when there is none.
+    pub fn foams(&self) -> Vec<u8> {
+        let out: Vec<u8> = self.foam.iter().map(|&cover| (cover * 255.0).round().clamp(0.0, 255.0) as u8).collect();
         if out.iter().all(|&v| v == 0) { Vec::new() } else { out }
     }
 
@@ -587,18 +693,538 @@ const RIVER_BIN: f64 = 20.0;
 const RIVER_MIN_SAMPLES: usize = 200;
 /// A stretch at least this long, metres, has its fall reported.
 const RIVER_REPORTED: f64 = 500.0;
-/// A river's current is measured on its fall over this many `RIVER_BIN`s up and down its course.
+/// A river's fall is measured over this many `RIVER_BIN`s up and down its course.
 const FLOW_SLOPE_BINS: f64 = 3.0;
-/// The current's speed in the middle of a river is this many m/s times the square root of how
-/// steeply it falls there (Manning's law with the depth and roughness folded in), and never slower
-/// than `FLOW_MIN` nor faster than `FLOW_MAX`, m/s: a calm pool still drifts, a rapid runs at a run.
-const FLOW_K: f64 = 25.0;
-const FLOW_MIN: f64 = 0.3;
-const FLOW_MAX: f64 = 4.0;
+/// A river that flows counts as falling at least this steeply, metres a metre (15 cm a kilometre),
+/// so a level stretch drawn with a centre line still drifts at a few decimetres a second.
+const FLOW_MIN_SLOPE: f64 = 1.5e-4;
 /// A stretch without centre lines to tell its direction flows only if it falls at least this far, metres.
 const FLOW_MIN_DROP: f64 = 0.3;
-/// The current is smoothed over this far, metres, so it bends round with the river.
-const FLOW_BLUR: f64 = 8.0;
+/// How fast a river's water moves through its usual cross-section, m/s. With the width and depth
+/// there it sets the water the river carries, and its rapids are cut to carry the same.
+const USUAL_SPEED: f64 = 0.4;
+/// A rapid keeps at least this share of its bowl's depth, so a small river's rapid is shallow enough
+/// to run but never dry...
+const RAPID_SHARE: f32 = 0.25;
+/// ...and no more of it than this many metres needs keeping: enough for a boat's draft (the
+/// deepest, the AMV's, is 1.2 m) down the middle of a wide river.
+const RAPID_DEPTH: f32 = 1.2;
+/// No current is written faster than this, m/s. A rapid runs at up to about 4 m/s; only a gap a
+/// few samples wide, where the outline pinches a channel, squeezes the water harder.
+const FLOW_MAX: f32 = 5.0;
+/// A rapid's bed is made no more than this many times deeper to carry the river's water past its
+/// bars and boulders.
+const DEEPENED: f32 = 1.4;
+/// Water comes into a stretch and leaves it over this many `RIVER_BIN`s at each end of its course.
+const FLOW_END_BINS: f64 = 1.0;
+/// The current lifts or lowers a river's surface by no more than this, metres: a pinch the solver
+/// squeezes the water through would otherwise stand it a storey high.
+const SURFACE_LIFT_MAX: f64 = 0.4;
+/// The surface takes its shape from the current over this many `RIVER_BIN`s in from where the
+/// water comes in and leaves, so it meets the even surface at the stretch's ends without a step.
+const SURFACE_END_BINS: f64 = 3.0;
+/// A rapid's standing waves rise this high from the even surface to a crest, metres, where the
+/// water runs fastest and thinnest...
+const TRAIN_HEIGHT: f64 = 0.25;
+/// ...times something between these, by the patch of the rapid they stand in: most of a rapid's
+/// waves are low and a few stand twice as high as the rest...
+const TRAIN_UNEVEN: [f64; 2] = [0.2, 2.2];
+/// ...in patches about this far across, metres.
+const TRAIN_PATCH: f64 = 9.0;
+/// A crest lies this far up or down the river from an even line across it, metres, wandering
+/// along its length about once in `TRAIN_WANDERS` metres.
+const TRAIN_WANDER: f64 = 1.6;
+const TRAIN_WANDERS: f64 = 7.0;
+/// ...and never more than this share of the water's depth.
+const TRAIN_DEPTH_SHARE: f64 = 0.4;
+/// The water stands in waves where it runs fast (`shared::waves::CHURN_SPEEDS`, whose surge the sim
+/// adds to them) and is also thin for its speed: from the first of these Froude numbers (its speed over
+/// `√(g · depth)`), fully from the second. A deep run at the same speed stays smooth.
+const TRAIN_FROUDES: [f64; 2] = [0.5, 0.9];
+/// The lengths the standing waves come in, metres, crest to crest. A wave stands on water that
+/// runs as fast as the wave would travel, which is `2π · speed² / g` long; the water takes the two
+/// lengths nearest that. A length under `TRAIN_SAMPLES` samples of the grid is left out.
+const TRAIN_LENGTHS: [f64; 3] = [4.0, 5.2, 6.8];
+/// A standing wave needs this many samples of the grid to its length to show.
+const TRAIN_SAMPLES: f64 = 4.0;
+
+/// A rapid's bed swings between its mean depth divided by this and times it, from bar to pool...
+const RAPID_SWING: f64 = 2.2;
+/// ...and a pool's by this, which leaves it all but the smooth bowl it was.
+const POOL_SWING: f64 = 1.15;
+/// A river that falls less steeply than the first of these, metres a metre, is a pool for
+/// `POOL_SWING`, and one that falls more steeply than the second is all rapid for `RAPID_SWING`.
+const RAPID_SLOPES: [f64; 2] = [0.0005, 0.004];
+/// How wide a river's bars and pools are, metres: the big ones, and the small ones on them. Each
+/// is drawn out along the current to about `BAR_DRAWN` times as long.
+const BAR_WIDTHS: [f64; 2] = [40.0, 10.0];
+/// How far up and down the course a bar's shape is averaged, in its widths each way.
+const BAR_DRAWN: f64 = 1.5;
+/// A river strews boulders where it falls more steeply than the first of these, metres a metre,
+/// and as thickly as it ever does from the second.
+const BOULDER_SLOPES: [f64; 2] = [0.003, 0.008];
+/// One boulder may lie in each square this wide, metres...
+const BOULDER_SPACING: f64 = 10.0;
+/// ...and in the steepest water this share of the squares hold one.
+const BOULDER_COVER: f64 = 0.7;
+/// A boulder (or a few lying together) is a lump this far across from its middle, metres: no
+/// smaller, or the current's 2 m cells would miss it.
+const BOULDER_RADII: [f64; 2] = [1.2, 2.6];
+/// A boulder's top lies this far under the surface, metres.
+const BOULDER_TOPS: [f64; 2] = [0.15, 0.4];
+/// The chute down a river reaches this far to each side of its line, metres, and fades out over
+/// half as much again.
+const CHUTE_HALF: f64 = 4.0;
+/// How strongly the chute's line keeps to deep water: a step over a bed this deep, metres, costs it
+/// about twice a step over a bottomless one, and one over a bed a third as deep nine times as much
+/// again, so it will not cut a bend along the shallow bank inside it.
+const CHUTE_KEEPS_DEEP: f64 = 3.0;
+
+/// What `Stretch::relief` reads of the water round a river, each under every sample of the grid.
+struct Banks<'a> {
+    /// The bowl cut under the sample, metres deep.
+    bowl: &'a [f32],
+    /// How far the sample is from the bank, metres.
+    shore: &'a [f32],
+    /// How far the water round the sample reaches from its banks, metres.
+    width: &'a [f32],
+}
+
+/// 0 below `from`, 1 above `to`, and eased between them.
+fn smoothstep(from: f64, to: f64, x: f64) -> f64 {
+    let t = ((x - from) / (to - from)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// A number from 0 to 1 for the grid square `(i, j)`, the same every run and unlike its
+/// neighbours' or another `seed`'s.
+fn chance(i: i64, j: i64, seed: u64) -> f64 {
+    let mut h = (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ (j as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F) ^ seed.wrapping_mul(0x1656_67B1_9E37_79F9);
+    for _ in 0..2 {
+        h ^= h >> 32;
+        h = h.wrapping_mul(0xD6E8_FEB8_6659_FD93);
+    }
+    ((h ^ (h >> 32)) >> 11) as f64 / (1u64 << 53) as f64
+}
+
+/// A smooth noise of the place, -1 to 1, that turns about once over each unit of `x` and `z`; the
+/// same every run.
+fn noise(x: f64, z: f64, seed: u64) -> f64 {
+    let (i, j) = (x.floor(), z.floor());
+    let (fx, fz) = (smoothstep(0.0, 1.0, x - i), smoothstep(0.0, 1.0, z - j));
+    let corner = |di: i64, dj: i64| 2.0 * chance(i as i64 + di, j as i64 + dj, seed) - 1.0;
+    let near = corner(0, 0) + (corner(1, 0) - corner(0, 0)) * fx;
+    let far = corner(0, 1) + (corner(1, 1) - corner(0, 1)) * fx;
+    near + (far - near) * fz
+}
+
+/// The noise that shapes a river's bars at `place` (local metres `[x, z]`), -1 to 1: `noise` with
+/// features `width` m across, averaged along the line of the `course` there (a unit direction), so
+/// a bar or a pool lies drawn out along the current as the water leaves it. Each `seed`'s noise is
+/// turned a different way, or the grid it is made on would show in the bed.
+fn drawn_out(place: [f64; 2], course: [f64; 2], width: f64, seed: u64) -> f64 {
+    const TAPS: i32 = 3;
+    let (sin, cos) = (seed as f64 * 1.1).sin_cos();
+    let mut sum = 0.0;
+    for tap in -TAPS..=TAPS {
+        let along = f64::from(tap) / f64::from(TAPS) * BAR_DRAWN * width;
+        let (x, z) = (place[0] + course[0] * along, place[1] + course[1] * along);
+        sum += noise((x * cos - z * sin) / width, (x * sin + z * cos) / width, seed);
+    }
+    sum / f64::from(2 * TAPS + 1)
+}
+
+/// The bed at `place` (local metres `[x, z]`), `depth` m under the surface, with whatever boulder
+/// lies there: a lump that rises to its top (`BOULDER_TOPS`) at its middle. A bed already
+/// shallower than a boulder's top is left alone. Where the river falls at `slope` there are none
+/// below `BOULDER_SLOPES`.
+fn boulders(place: [f64; 2], slope: f64, depth: f32) -> f32 {
+    let cover = BOULDER_COVER * smoothstep(BOULDER_SLOPES[0], BOULDER_SLOPES[1], slope);
+    if cover <= 0.0 {
+        return depth;
+    }
+    let pick = |range: [f64; 2], t: f64| range[0] + (range[1] - range[0]) * t;
+    let square = place.map(|v| (v / BOULDER_SPACING).floor() as i64);
+    let mut bed = f64::from(depth);
+    for (di, dj) in (-1..=1).flat_map(|dj| (-1..=1).map(move |di| (di, dj))) {
+        let (i, j) = (square[0] + di, square[1] + dj);
+        if chance(i, j, 3) >= cover {
+            continue;
+        }
+        // Its middle keeps clear of the square's edges, so the lump stays within the next square.
+        let middle = [(i as f64 + 0.2 + 0.6 * chance(i, j, 4)) * BOULDER_SPACING, (j as f64 + 0.2 + 0.6 * chance(i, j, 5)) * BOULDER_SPACING];
+        let (radius, top) = (pick(BOULDER_RADII, chance(i, j, 6)), pick(BOULDER_TOPS, chance(i, j, 7)));
+        let out = (place[0] - middle[0]).hypot(place[1] - middle[1]) / radius;
+        if out < 1.0 && f64::from(depth) > top {
+            bed = bed.min(top + (f64::from(depth) - top) * out * out);
+        }
+    }
+    bed as f32
+}
+
+/// A connected stretch of a river that flows, measured along its course: what its bed's depth and
+/// its current (`riverflow`) are worked out from.
+struct Stretch {
+    /// Its samples, as indices into the grid.
+    members: Vec<usize>,
+    /// How far along the course each member is, in `RIVER_BIN`s from the end it was measured from.
+    along: Vec<f64>,
+    /// How steeply the surface falls at each member, metres a metre, never under `FLOW_MIN_SLOPE`.
+    slope: Vec<f64>,
+    /// The unit direction downstream at each member, `[x, z]` (zero where the course has none).
+    course: Vec<[f64; 2]>,
+    /// The stretch's length along its course and its surface's fall over it, metres.
+    length: f64,
+    drop: f64,
+}
+
+/// What `Stretch::current` found.
+struct Run {
+    /// The water's velocity at each member (`riverflow::solve`), scaled to carry the river's water.
+    current: riverflow::Current,
+    /// The bed's depth at each member, metres: deeper than it was cut where it passed too little.
+    bed: Vec<f32>,
+    /// How many times deeper a rapid's bed was made.
+    deeper: f32,
+}
+
+/// A cross-section of a river, over one `RIVER_BIN` of its course.
+struct Section {
+    /// How wide the water is across all its channels, metres.
+    width: f64,
+    /// Its bowl's mean depth, metres.
+    depth: f64,
+    /// How steeply the surface falls there, metres a metre.
+    slope: f64,
+}
+
+impl Stretch {
+    /// The stretch's cross-sections, one for each `RIVER_BIN` along its course, over the bowl
+    /// `bowl` cut under every sample of the grid: each one's wetted width, mean depth and slope.
+    /// The width and depth are taken over the bin and the one either side of it, since one bin
+    /// alone cuts a bend or a fork raggedly.
+    fn sections(&self, cell_m: f64, bowl: &[f32]) -> Vec<Section> {
+        let bins = self.along.iter().map(|&a| a as usize).max().unwrap_or(0) + 1;
+        // Each bin's wet area, m², the volume over it, m³, and its samples' slopes summed.
+        let mut sums = vec![[0.0f64; 3]; bins];
+        for (k, &at) in self.members.iter().enumerate() {
+            let bin = &mut sums[self.along[k] as usize];
+            *bin = [bin[0] + cell_m * cell_m, bin[1] + f64::from(bowl[at]) * cell_m * cell_m, bin[2] + self.slope[k]];
+        }
+        (0..bins)
+            .map(|k| {
+                let near = &sums[k.saturating_sub(1)..(k + 2).min(bins)];
+                let (area, volume) = near.iter().fold((0.0, 0.0), |(a, v), bin| (a + bin[0], v + bin[1]));
+                let own = (sums[k][0] / (cell_m * cell_m)).max(1.0);
+                Section { width: area / (near.len() as f64 * RIVER_BIN), depth: if area > 0.0 { volume / area } else { 0.0 }, slope: (sums[k][2] / own).max(FLOW_MIN_SLOPE) }
+            })
+            .collect()
+    }
+
+    /// The water the stretch is made to carry, m³/s: what runs at `USUAL_SPEED` through its usual
+    /// cross-section, the median of `sections` by area.
+    fn carries(sections: &[Section]) -> f64 {
+        let mut areas: Vec<f64> = sections.iter().map(|section| section.width * section.depth).collect();
+        areas.sort_by(f64::total_cmp);
+        USUAL_SPEED * areas[areas.len() / 2]
+    }
+
+    /// Writes into `shallow` the share of its bowl's depth (`bowl`, under every sample of the
+    /// grid) each sample keeps, and returns the water the stretch carries, m³/s. By Manning's law
+    /// that water passes a cross-section `width` wide that falls at `slope` at the mean depth
+    /// `(carried · n / (width · √slope))^(3/5)`: little in a wide, steep rapid, more where the
+    /// river is squeezed, and more than the bowl holds in a pool, which keeps its bowl. Every
+    /// channel of a cross-section keeps the same share, so the water has no deep way round a rapid.
+    ///
+    /// With the water carried comes the biggest step in the bed's mean depth from one cross-section
+    /// to the next, metres: what a depth taken from each place's own slope might leave as a ledge.
+    fn shallows(&self, cell_m: f64, bowl: &[f32], shallow: &mut [f32]) -> (f64, f64) {
+        let sections = self.sections(cell_m, bowl);
+        let carried = Self::carries(&sections);
+        let centres: Vec<f64> = (0..sections.len()).map(|k| k as f64 + 0.5).collect();
+        let kept: Vec<f64> = sections
+            .iter()
+            .map(|section| {
+                if section.width <= 0.0 || section.depth <= 0.0 {
+                    return 1.0;
+                }
+                let needed = (carried * riverflow::MANNING_N / (section.width * section.slope.sqrt())).powf(0.6);
+                (needed / section.depth).min(1.0)
+            })
+            .collect();
+        for (&at, &along) in self.members.iter().zip(&self.along) {
+            shallow[at] = interpolate(&centres, &kept, along) as f32;
+        }
+        let means: Vec<f64> = sections.iter().zip(&kept).map(|(section, kept)| section.depth * kept).collect();
+        let step = means.windows(2).map(|pair| (pair[1] - pair[0]).abs()).fold(0.0, f64::max);
+        (carried, step)
+    }
+
+    /// Roughens the stretch's bed. `depth` holds, under every sample of the grid, the smooth bed
+    /// `shallows` asked for (its share of the bowl), and leaves with:
+    ///
+    /// - bars and pools: the depth swung up and down by a smooth noise of the place, widely where
+    ///   the river falls as a rapid (`RAPID_SWING`) and hardly at all in a pool (`POOL_SWING`);
+    /// - boulders where the river falls steeply (`BOULDER_SLOPES`): lumps that rise to just under
+    ///   the surface, never through it, so the river's outline is what was drawn;
+    /// - each cross-section still passing the river's water: its depths are scaled so that the
+    ///   mean of `depth^(5/3)`, which is what Manning's law lets through, is the smooth bed's;
+    /// - a chute: a lane down the deepest way from end to end (`chute`), with no boulder in it and
+    ///   never shallower than `RAPID_DEPTH` where the bowl is deep enough, so a boat still gets
+    ///   up a wide river's rapid.
+    ///
+    /// The noise is of the place alone, so the bed is the same every run. It returns the
+    /// samples along the chute's line, as indices into the grid.
+    fn relief(&self, grid: Grid, banks: &Banks, depth: &mut [f32]) -> Vec<usize> {
+        let side = grid.side as usize;
+        let cell_m = grid.cell as f64 / 100.0;
+        let place = |at: usize| [grid.x((at % side) as u32), grid.x((at / side) as u32)];
+        let smooth: Vec<f32> = self.members.iter().map(|&at| depth[at]).collect();
+        let mut bars: Vec<f32> = self
+            .members
+            .iter()
+            .zip(&smooth)
+            .zip(&self.course)
+            .zip(&self.slope)
+            .map(|(((&at, &smooth), &course), &slope)| {
+                let rapid = smoothstep(RAPID_SLOPES[0], RAPID_SLOPES[1], slope);
+                let swing = POOL_SWING.ln() + (RAPID_SWING.ln() - POOL_SWING.ln()) * rapid;
+                let wave = 2.2 * (0.7 * drawn_out(place(at), course, BAR_WIDTHS[0], 1) + 0.5 * drawn_out(place(at), course, BAR_WIDTHS[1], 2));
+                smooth * (swing * wave.clamp(-1.0, 1.0)).exp() as f32
+            })
+            .collect();
+        let mut rough: Vec<f32> = self.members.iter().zip(&bars).zip(&self.slope).map(|((&at, &bar), &slope)| boulders(place(at), slope, bar)).collect();
+        // What each `RIVER_BIN` lets through, before and after: the sums of `depth^(5/3)`.
+        let bins = self.along.iter().map(|&a| a as usize).max().unwrap_or(0) + 1;
+        let mut through = vec![[0.0f64; 2]; bins];
+        for ((&along, &smooth), &rough) in self.along.iter().zip(&smooth).zip(&rough) {
+            let bin = &mut through[along as usize];
+            *bin = [bin[0] + f64::from(smooth).powf(5.0 / 3.0), bin[1] + f64::from(rough).powf(5.0 / 3.0)];
+        }
+        let centres: Vec<f64> = (0..bins).map(|k| k as f64 + 0.5).collect();
+        let scales: Vec<f64> = through.iter().map(|&[smooth, rough]| if rough > 0.0 { (smooth / rough).powf(0.6).clamp(0.6, 1.6) } else { 1.0 }).collect();
+        for ((bar, rough), &along) in bars.iter_mut().zip(&mut rough).zip(&self.along) {
+            let scale = interpolate(&centres, &scales, along) as f32;
+            *bar *= scale;
+            *rough *= scale;
+        }
+        let (lane, line) = self.chute(side, cell_m, &bars, banks.width);
+        for (k, &at) in self.members.iter().enumerate() {
+            let open = bars[k].max((banks.bowl[at] * RAPID_SHARE).min(RAPID_DEPTH));
+            let bed = rough[k] + (open.max(rough[k]) - rough[k]) * lane[k];
+            depth[at] = bed.min((SHORE_SLOPE * f64::from(banks.shore[at])) as f32);
+        }
+        line.iter().map(|&k| self.members[k]).collect()
+    }
+
+    /// How far inside the chute each member is, 1 in it and 0 clear of it, and the members along
+    /// its line. The chute follows the
+    /// cheapest way through the water from one end of the course to the other over the bed `bars`
+    /// (at each member), where a step costs its length and far more the shallower it is
+    /// (`CHUTE_KEEPS_DEEP`): so it keeps to the deep water and wanders from bank to bank with
+    /// it, as a river's deepest line does. It is `CHUTE_HALF` to each side, or half the water's
+    /// own reach from its banks (`width`, under every sample of the grid) where that is less.
+    fn chute(&self, side: usize, cell_m: f64, bars: &[f32], width: &[f32]) -> (Vec<f32>, Vec<usize>) {
+        use std::cmp::Reverse;
+        use std::collections::BinaryHeap;
+        let mut lane = vec![0.0f32; self.members.len()];
+        let last = self.along.iter().cloned().fold(0.0, f64::max);
+        // Which member each sample of the grid is.
+        let mut member = vec![NONE; side * side];
+        for (k, &at) in self.members.iter().enumerate() {
+            member[at] = k as u32;
+        }
+        let mut cost = vec![u32::MAX; self.members.len()];
+        let mut from = vec![NONE; self.members.len()];
+        let mut queue = BinaryHeap::new();
+        for (k, _) in self.along.iter().enumerate().filter(|&(_, &along)| along < 0.5) {
+            cost[k] = 0;
+            queue.push(Reverse((0u32, k as u32)));
+        }
+        let mut end = None;
+        while let Some(Reverse((so_far, k))) = queue.pop() {
+            let k = k as usize;
+            if so_far > cost[k] {
+                continue;
+            }
+            if self.along[k] > last - 0.5 {
+                end = Some(k);
+                break;
+            }
+            for (next, step) in neighbours(self.members[k], side) {
+                let next = member[next];
+                if next == NONE {
+                    continue;
+                }
+                let shallow = 1.0 + (CHUTE_KEEPS_DEEP / (f64::from(bars[next as usize]) + 0.2)).powi(2);
+                let reached = so_far.saturating_add((f64::from(step) * 100.0 * shallow) as u32);
+                if reached < cost[next as usize] {
+                    cost[next as usize] = reached;
+                    from[next as usize] = k as u32;
+                    queue.push(Reverse((reached, next)));
+                }
+            }
+        }
+        let mut line = Vec::new();
+        while let Some(k) = end {
+            line.push(k);
+            let at = self.members[k];
+            let half = CHUTE_HALF.min(0.5 * f64::from(width[at])).max(cell_m);
+            let reach = (1.5 * half / cell_m).ceil() as i64;
+            let (i, j) = ((at % side) as i64, (at / side) as i64);
+            for (di, dj) in (-reach..=reach).flat_map(|dj| (-reach..=reach).map(move |di| (di, dj))) {
+                let (ni, nj) = (i + di, j + dj);
+                if ni < 0 || nj < 0 || ni >= side as i64 || nj >= side as i64 {
+                    continue;
+                }
+                let near = member[nj as usize * side + ni as usize];
+                if near != NONE {
+                    let inside = 1.0 - smoothstep(half, 1.5 * half, (di as f64).hypot(dj as f64) * cell_m);
+                    lane[near as usize] = lane[near as usize].max(inside as f32);
+                }
+            }
+            end = (from[k] != NONE).then(|| from[k] as usize);
+        }
+        (lane, line)
+    }
+
+    /// Where the stretch's water comes in and leaves (the two ends of its course, and where the
+    /// river runs off the grid), and the surface's fall at each member, as `riverflow::Channel`
+    /// wants them.
+    fn ends(&self, side: usize) -> (Vec<bool>, Vec<[f64; 2]>) {
+        let last = self.along.iter().cloned().fold(0.0, f64::max);
+        let open = self
+            .members
+            .iter()
+            .zip(&self.along)
+            .map(|(&at, &along)| {
+                let (i, j) = (at % side, at / side);
+                along < FLOW_END_BINS || along > last - FLOW_END_BINS || i == 0 || j == 0 || i == side - 1 || j == side - 1
+            })
+            .collect();
+        let fall = self.course.iter().zip(&self.slope).map(|(course, slope)| [course[0] * slope, course[1] * slope]).collect();
+        (open, fall)
+    }
+
+    /// The stretch's current over the bed `depth`, solved (`riverflow::solve`), carrying `carried`
+    /// m³/s, with the bed it then runs over, which is `depth` cut deeper where it must be.
+    ///
+    /// The solve finds how much water the fall drives over this bed, which is not quite what the
+    /// bed was cut for: its bars and boulders hold the water back, as a pool's bowl may, and the
+    /// chute lets more through. So what passes each sample is scaled to make the river's
+    /// `carried`. Where the bed passes too little and was cut shallower than its bowl, it is too
+    /// shallow: by Manning's law a bed `a` times deeper runs `a^(2/3)` times faster, so `a^(5/3)`
+    /// makes up the shortfall (never more than `DEEPENED`, nor deeper than the bowl), and the
+    /// current there is scaled by the rest. A pool keeps its bowl, and a bed that passes too much
+    /// its depth: there the current alone is scaled. Scaling the current is the solution for a
+    /// fall scaled by the square of the same factor, since the bed's hold and the water's momentum
+    /// both go by the speed squared.
+    fn current(&self, grid: Grid, depth: &[f32], banks: &Banks, carried: f64) -> Run {
+        let side = grid.side as usize;
+        let cell_m = grid.cell as f64 / 100.0;
+        let (open, fall) = self.ends(side);
+        let mut current = riverflow::solve(&riverflow::Channel { side, cell: cell_m, members: &self.members, depth, fall: &fall, open: &open });
+        let mut bed: Vec<f32> = self.members.iter().map(|&at| depth[at]).collect();
+        let driven = self.discharge(cell_m, depth, &current.flow);
+        let mut deeper = 1.0;
+        if driven > 0.0 {
+            let short = (carried / driven) as f32;
+            deeper = short.powf(0.6).clamp(1.0, DEEPENED);
+            for ((velocity, bed), &at) in current.flow.iter_mut().zip(&mut bed).zip(&self.members) {
+                let was = *bed;
+                *bed = (was * deeper).min(was.max(banks.bowl[at])).min((SHORE_SLOPE * f64::from(banks.shore[at])) as f32).max(was);
+                let scale = if was > 0.0 { short * was / *bed } else { short };
+                let speed = velocity[0].hypot(velocity[1]) * scale;
+                let capped = if speed > FLOW_MAX { FLOW_MAX / speed } else { 1.0 };
+                *velocity = velocity.map(|v| v * scale * capped);
+            }
+            // The surface's shape goes by the speed squared, as the fall that drives it does.
+            for lift in &mut current.lift {
+                *lift *= short * short;
+            }
+        }
+        Run { current, bed, deeper }
+    }
+
+    /// How the current `run` shapes the surface at each member, over the bed `depth`: how far it
+    /// lifts it above the even one it was solved under, metres (negative where it lowers it), and
+    /// how high a standing wave rises there on top of that.
+    ///
+    /// The two are these. The first is the pressure the solve found under its lid
+    /// (`riverflow::Current::lift`): the water piles up before a boulder, backs up above a narrows,
+    /// leans to the outside of a bend, and dips where it runs fast. The second is the waves that
+    /// stand in a rapid, where the water runs fast and thin: their crests lie across the current
+    /// (they are lines of equal distance along the course) and they stay where they are.
+    fn shape(&self, grid: Grid, depth: &[f32], run: &Run) -> Vec<[f32; 2]> {
+        let side = grid.side as usize;
+        let cell_m = grid.cell as f64 / 100.0;
+        let last = self.along.iter().cloned().fold(0.0, f64::max);
+        let lengths: Vec<f64> = TRAIN_LENGTHS.into_iter().filter(|&length| length >= TRAIN_SAMPLES * cell_m).collect();
+        // What the whole of a cross-section is lifted by is left out: how the surface falls along
+        // the course is the fitted profile's to say, and the solve's lid only knows it roughly.
+        let bins = last as usize + 1;
+        let (mut sum, mut count) = (vec![0.0f64; bins], vec![0.0f64; bins]);
+        for (&along, &lift) in self.along.iter().zip(&run.current.lift) {
+            sum[along as usize] += f64::from(lift);
+            count[along as usize] += 1.0;
+        }
+        let centres: Vec<f64> = (0..bins).filter(|&bin| count[bin] > 0.0).map(|bin| bin as f64 + 0.5).collect();
+        let means: Vec<f64> = (0..bins).filter(|&bin| count[bin] > 0.0).map(|bin| sum[bin] / count[bin]).collect();
+        self.members
+            .iter()
+            .enumerate()
+            .map(|(k, &at)| {
+                let along = self.along[k];
+                let inside = smoothstep(FLOW_END_BINS, FLOW_END_BINS + SURFACE_END_BINS, along.min(last - along));
+                let lift = f64::from(run.current.lift[k]) - interpolate(&centres, &means, along);
+                let lift = SURFACE_LIFT_MAX * (lift / SURFACE_LIFT_MAX).tanh();
+                let speed = f64::from(run.current.flow[k][0]).hypot(f64::from(run.current.flow[k][1]));
+                let deep = f64::from(depth[at]).max(0.05);
+                let stands = smoothstep(f64::from(shared::waves::CHURN_SPEEDS[0]), f64::from(shared::waves::CHURN_SPEEDS[1]), speed) * smoothstep(TRAIN_FROUDES[0], TRAIN_FROUDES[1], speed / (riverflow::G * deep).sqrt());
+                let mut wave = 0.0;
+                if let (true, Some(&longest)) = (stands > 0.0, lengths.last()) {
+                    // No two waves of a rapid are alike: they stand high in one patch of it and
+                    // barely show in the next, and a crest wanders up and down the river along
+                    // its length, so the rapid is not ruled with even bars.
+                    let (x, z) = (grid.x((at % side) as u32), grid.x((at / side) as u32));
+                    let patch = 0.5 + 0.5 * noise(x / TRAIN_PATCH, z / TRAIN_PATCH, 31);
+                    let uneven = TRAIN_UNEVEN[0] + (TRAIN_UNEVEN[1] - TRAIN_UNEVEN[0]) * patch * patch;
+                    // A crest is peaked and the trough between two is flat, and at the even
+                    // surface, so the waves take no water off a bed.
+                    let metres = along * RIVER_BIN + TRAIN_WANDER * noise(x / TRAIN_WANDERS, z / TRAIN_WANDERS, 32);
+                    let crest = |length: f64| (0.5 + 0.5 * (std::f64::consts::TAU * metres / length).cos()).powi(2);
+                    let fits = (std::f64::consts::TAU * speed * speed / riverflow::G).clamp(lengths[0], longest);
+                    let longer = lengths.iter().position(|&length| length >= fits).unwrap_or(lengths.len() - 1);
+                    let shorter = longer.saturating_sub(1);
+                    let share = if longer == shorter { 1.0 } else { (fits - lengths[shorter]) / (lengths[longer] - lengths[shorter]) };
+                    wave = (TRAIN_HEIGHT * stands * uneven).min(TRAIN_DEPTH_SHARE * deep) * (crest(lengths[shorter]) * (1.0 - share) + crest(lengths[longer]) * share);
+                }
+                [(inside * lift) as f32, (inside * wave) as f32]
+            })
+            .collect()
+    }
+
+    /// The foam the current `flow` (at each member) makes and carries over the bed `depth`
+    /// (`riverflow::foam`), 0 to 1 at each member.
+    fn foam(&self, grid: Grid, depth: &[f32], flow: &[[f32; 2]]) -> Vec<f32> {
+        let side = grid.side as usize;
+        let (open, fall) = self.ends(side);
+        riverflow::foam(&riverflow::Channel { side, cell: grid.cell as f64 / 100.0, members: &self.members, depth, fall: &fall, open: &open }, flow)
+    }
+
+    /// The water the stretch carries, m³/s, given the current at each member: the median, over
+    /// the `RIVER_BIN`s along its course, of what passes down each.
+    fn discharge(&self, cell_m: f64, depth: &[f32], flow: &[[f32; 2]]) -> f64 {
+        let bins = self.along.iter().map(|&a| a as usize).max().unwrap_or(0) + 1;
+        let mut through = vec![0.0f64; bins];
+        for (k, &at) in self.members.iter().enumerate() {
+            let down = f64::from(flow[k][0]) * self.course[k][0] + f64::from(flow[k][1]) * self.course[k][1];
+            through[self.along[k] as usize] += down * f64::from(depth[at]) * cell_m * cell_m / RIVER_BIN;
+        }
+        through.sort_by(f64::total_cmp);
+        through[bins / 2]
+    }
+}
 
 /// Gives every river a surface that falls along its course instead of one flat level: a whole
 /// river is often one polygon tens of kilometres long, and a level for all of it stands metres
@@ -610,10 +1236,15 @@ const FLOW_BLUR: f64 = 8.0;
 /// with the closest profile that only ever falls one way (isotonic regression, in whichever
 /// direction fits better). The surface is level across the river and steps down at rapids.
 ///
-/// It also writes the river's current into `flow`, m/s: along its course, downstream as its centre
-/// lines are drawn (or downhill where it has none), as fast as `FLOW_K` makes its fall over
-/// `FLOW_SLOPE_BINS` either way. `Surface::new` smooths it and slows it at the banks.
-fn river_levels(map: &Map, grid: Grid, body: &[u32], model: &[f32], level: &mut [f32], flow: &mut [[f32; 2]]) {
+/// It returns the stretches that flow, each with its course and how steeply it falls along it: downstream
+/// as its centre lines are drawn (or downhill where it has none), with the fall measured over
+/// `FLOW_SLOPE_BINS` either way. `Surface::new` cuts their beds and solves their currents from these.
+fn river_levels(map: &Map, grid: Grid, body: &[u32], model: &[f32], level: &mut [f32]) -> Vec<Stretch> {
+    let mut stretches = Vec::new();
+    // A long river is drawn as several polygons end to end. They are one water: every river
+    // sample counts as the same body here, so a stretch runs on through the seams between them.
+    let river: Vec<u32> = body.iter().map(|&b| if b != NONE && map.bodies[b as usize].kind == Kind::River { RIVER } else { NONE }).collect();
+    let body = &river[..];
     let side = grid.side as usize;
     let cell_m = grid.cell as f64 / 100.0;
     let n = body.len();
@@ -621,8 +1252,7 @@ fn river_levels(map: &Map, grid: Grid, body: &[u32], model: &[f32], level: &mut 
     let mut dist = vec![u32::MAX; n];
     let mut stack = Vec::new();
     for start in 0..n {
-        let b = body[start];
-        if seen[start] || b == NONE || map.bodies[b as usize].kind != Kind::River {
+        if seen[start] || body[start] == NONE {
             continue;
         }
         let mut members = Vec::new();
@@ -631,7 +1261,7 @@ fn river_levels(map: &Map, grid: Grid, body: &[u32], model: &[f32], level: &mut 
         while let Some(at) = stack.pop() {
             members.push(at);
             for (next, _) in neighbours(at, side) {
-                if !seen[next] && body[next] == b {
+                if !seen[next] && body[next] != NONE {
                     seen[next] = true;
                     stack.push(next);
                 }
@@ -671,7 +1301,7 @@ fn river_levels(map: &Map, grid: Grid, body: &[u32], model: &[f32], level: &mut 
         let error = |fit: &[f64]| fit.iter().zip(&medians).zip(&weights).map(|((f, m), w)| w * (f - m) * (f - m)).sum::<f64>();
         // Downstream is further along (+1) or back (-1): as its centre lines run, where they cross
         // it, and the surface then falls that way; otherwise the way it fits the ground better.
-        let drawn = downstream(map, grid, b, body, &dist);
+        let drawn = downstream(map, grid, body, &dist);
         let sense = match drawn {
             0 => if error(&falling) <= error(&rising) { 1.0 } else { -1.0 },
             vote => vote.signum() as f64,
@@ -681,45 +1311,42 @@ fn river_levels(map: &Map, grid: Grid, body: &[u32], model: &[f32], level: &mut 
             level[at] = interpolate(&centres, &profile, along(at)) as f32;
         }
         let drop = (profile[0] - profile[profile.len() - 1]).abs();
+        let length = bins as f64 * RIVER_BIN;
         if drawn != 0 || drop >= FLOW_MIN_DROP {
             // The chamfer's distance leans towards the eight grid directions; the current's direction
             // comes from a true one, marched out from the same end.
-            let course = march(&cross_section(end, body, side), side, |next| body[next] == b);
+            let marched = march(&cross_section(end, body, side), side, |next| body[next] != NONE);
+            let (mut slope, mut course) = (Vec::with_capacity(members.len()), Vec::with_capacity(members.len()));
             for &at in &members {
                 let a = along(at);
                 let fall = (interpolate(&centres, &profile, a - FLOW_SLOPE_BINS) - interpolate(&centres, &profile, a + FLOW_SLOPE_BINS)) * sense;
-                let slope = (fall / (2.0 * FLOW_SLOPE_BINS * RIVER_BIN)).max(0.0);
-                let speed = (FLOW_K * slope.sqrt()).clamp(FLOW_MIN, FLOW_MAX);
-                let [gx, gz] = gradient(at, side, &course, |next| body[next] == b);
-                let length = gx.hypot(gz);
-                if length > 0.0 {
-                    flow[at] = [(gx / length * speed * sense) as f32, (gz / length * speed * sense) as f32];
-                }
+                slope.push((fall / (2.0 * FLOW_SLOPE_BINS * RIVER_BIN)).max(FLOW_MIN_SLOPE));
+                let [gx, gz] = gradient(at, side, &marched, |next| body[next] != NONE);
+                let size = gx.hypot(gz);
+                course.push(if size > 0.0 { [gx / size * sense, gz / size * sense] } else { [0.0; 2] });
             }
-        }
-        let length = bins as f64 * RIVER_BIN;
-        if length >= RIVER_REPORTED {
-            let drop = (profile[0] - profile[profile.len() - 1]).abs();
-            let fastest = members.iter().map(|&at| flow[at][0].hypot(flow[at][1])).fold(0.0f32, f32::max);
-            let rapid = members.iter().filter(|&&at| flow[at][0].hypot(flow[at][1]) >= 2.5).count() as f64 * cell_m * cell_m;
-            eprintln!("water: a river falls {drop:.1} m over {length:.0} m, running at up to {fastest:.1} m/s, {rapid:.0} m² of it at 2.5 m/s or more");
+            let along = members.iter().map(|&at| along(at)).collect();
+            stretches.push(Stretch { members: members.clone(), along, slope, course, length, drop });
+        } else if length >= RIVER_REPORTED {
+            eprintln!("water: a river falls {drop:.1} m over {length:.0} m, and nothing tells which way it runs: it stands still");
         }
         for &at in &members {
             dist[at] = u32::MAX;
         }
     }
+    stretches
 }
 
 /// How a river stretch's centre lines (`Map::streams`, drawn downstream) run against `dist`, the
-/// distance along stretch `b`: positive where they run the way it grows, negative the other way, 0
+/// distance along the stretch (`u32::MAX` on the rest of `body`, the river samples): positive where they run the way it grows, negative the other way, 0
 /// where none crosses it.
-fn downstream(map: &Map, grid: Grid, b: u32, body: &[u32], dist: &[u32]) -> i64 {
+fn downstream(map: &Map, grid: Grid, body: &[u32], dist: &[u32]) -> i64 {
     let side = grid.side as usize;
     let index = |p: P| {
         let at = |v: f64| ((v * 100.0 - grid.origin as f64) / grid.cell as f64).round();
         let (i, j) = (at(p[0]), at(p[1]));
         let last = grid.side as f64 - 1.0;
-        (i >= 0.0 && j >= 0.0 && i <= last && j <= last).then(|| j as usize * side + i as usize).filter(|&at| body[at] == b && dist[at] != u32::MAX)
+        (i >= 0.0 && j >= 0.0 && i <= last && j <= last).then(|| j as usize * side + i as usize).filter(|&at| body[at] != NONE && dist[at] != u32::MAX)
     };
     let mut vote = 0i64;
     for line in &map.streams {
@@ -809,38 +1436,6 @@ fn march(seeds: &[usize], side: usize, inside: impl Fn(usize) -> bool) -> Vec<f6
         }
     }
     dist
-}
-
-/// Averages the current over a square `radius` samples either way, among the samples that flow, so
-/// it turns smoothly round a bend; still samples stay still.
-fn blur_flow(flow: &mut [[f32; 2]], side: usize, radius: usize) {
-    let moving: Vec<bool> = flow.iter().map(|v| v[0] != 0.0 || v[1] != 0.0).collect();
-    if !moving.iter().any(|&m| m) {
-        return;
-    }
-    // Two passes, along rows and then down columns, each a running sum of the moving samples.
-    let mut pass = |stride: usize, step: usize, lines: usize| {
-        let mut sums = vec![[0.0f64; 3]; side + 1];
-        for line in 0..lines {
-            let start = line * stride;
-            for k in 0..side {
-                let at = start + k * step;
-                let v = if moving[at] { [f64::from(flow[at][0]), f64::from(flow[at][1]), 1.0] } else { [0.0; 3] };
-                sums[k + 1] = [sums[k][0] + v[0], sums[k][1] + v[1], sums[k][2] + v[2]];
-            }
-            for k in 0..side {
-                let at = start + k * step;
-                if !moving[at] {
-                    continue;
-                }
-                let (lo, hi) = (k.saturating_sub(radius), (k + radius + 1).min(side));
-                let count = sums[hi][2] - sums[lo][2];
-                flow[at] = [((sums[hi][0] - sums[lo][0]) / count) as f32, ((sums[hi][1] - sums[lo][1]) / count) as f32];
-            }
-        }
-    };
-    pass(side, 1, side);
-    pass(1, side, side);
 }
 
 /// The eight samples around `at` that are on the grid, with the chamfer cost of the step to each
@@ -1150,6 +1745,17 @@ mod tests {
         surface.flow[surface.index(x, z).unwrap()]
     }
 
+    /// How deep the water is at a sample.
+    fn deep(surface: &Surface, x: f64, z: f64) -> f32 {
+        surface.depth[surface.index(x, z).unwrap()]
+    }
+
+    /// The water passing the cross-section at `x` of a river that runs along x, m³/s.
+    fn passing(surface: &Surface, x: f64) -> f64 {
+        let cell = surface.grid.cell as f64 / 100.0;
+        (-160..=160).map(|k| k as f64 * cell).map(|z| f64::from(current(surface, x, z)[0]) * f64::from(deep(surface, x, z)) * cell).sum()
+    }
+
     #[test]
     fn a_falling_river_flows_downhill_and_fastest_at_rapids() {
         // 20 m wide, the ground falling 1 m per km in x, with a 3 m rapid at x = 0.
@@ -1158,13 +1764,147 @@ mod tests {
         let calm = current(&surface, -200.0, 0.0);
         assert!(calm[0] > 0.5 && calm[0] < 1.2 && calm[1].abs() < 0.05, "a gentle stretch drifts downstream: {calm:?}");
         let rapid = current(&surface, 0.0, 0.0);
-        assert!(rapid[0] > 3.5 && rapid[0] <= FLOW_MAX as f32 + 1e-3, "the rapid runs: {rapid:?}");
+        assert!(rapid[0] > 2.0 * calm[0] && rapid[0] <= FLOW_MAX, "the rapid runs: {rapid:?}");
         let bank = current(&surface, -200.0, 8.0);
         assert!(bank[0] > 0.0 && bank[0] < 0.7 * calm[0], "slower by the bank: {bank:?} against {calm:?}");
         let flow = surface.flows();
         let at = surface.index(0.0, 0.0).unwrap();
         assert_eq!(flow.len(), 2 * surface.level.len());
         assert_eq!(flow[2 * at], (rapid[0] / FLOW_STEP).round() as i8, "written in FLOW_STEPs");
+    }
+
+    #[test]
+    fn a_rapid_is_shallow_and_fast_and_a_pool_is_deep_and_slow() {
+        // 40 m wide and nearly level, with a 3 m rapid at x = 0.
+        let map = river(vec![[-400.0, -20.0], [400.0, -20.0], [400.0, 20.0], [-400.0, 20.0]]);
+        let surface = Surface::new(&map, river_grid(), |x, z| Some(10.0 - if x < 0.0 { 0.0 } else { 3.0 } + 0.02 * noise(x, z)));
+        let (pool, rapid) = (deep(&surface, -250.0, 0.0), deep(&surface, 0.0, 0.0));
+        assert!(f64::from(pool) > 0.85 * Kind::River.max_depth(20.0), "the pool all but keeps its bowl: {pool}");
+        assert!(rapid < 0.4 * pool && rapid >= RAPID_SHARE * pool - 0.01, "the rapid is cut shallow, but not dry: {rapid} against {pool}");
+        let (slow, fast) = (current(&surface, -250.0, 0.0)[0], current(&surface, 0.0, 0.0)[0]);
+        assert!(fast > 2.5 * slow, "{fast} m/s over the rapid, {slow} m/s in the pool");
+        // The rapid makes foam, which the water carries on below it and never up.
+        let foam = surface.foams();
+        let cover = |x: f64| foam[surface.index(x, 0.0).unwrap()];
+        assert!(cover(-100.0) == 0 && cover(60.0) > 50 && cover(300.0) < cover(60.0) / 2, "{} above it, {} just below, {} far below", cover(-100.0), cover(60.0), cover(300.0));
+        // The same water passes both.
+        let through: Vec<f64> = [-250.0, -100.0, 0.0, 100.0, 250.0].map(|x| passing(&surface, x)).to_vec();
+        let mean = through.iter().sum::<f64>() / through.len() as f64;
+        assert!(through.iter().all(|q| (q - mean).abs() < 0.05 * mean), "{through:?}");
+        // Through the pool's cross-section it runs at about `USUAL_SPEED` (a little over: the
+        // discharge is set over the bowl, and the pool is trimmed a little under it).
+        let section: f64 = (-10..=10).map(|k| f64::from(deep(&surface, -250.0, k as f64 * 2.0)) * 2.0).sum();
+        assert!((mean / section - USUAL_SPEED).abs() < 0.2 * USUAL_SPEED, "{mean} m³/s through {section} m²");
+    }
+
+    /// A river 160 m wide and nearly level, with a 3 m rapid at x = 0.
+    fn wide_rapid() -> Surface {
+        let map = river(vec![[-400.0, -80.0], [400.0, -80.0], [400.0, 80.0], [-400.0, 80.0]]);
+        Surface::new(&map, river_grid(), |x, z| Some(10.0 - if x < 0.0 { 0.0 } else { 3.0 } + 0.02 * noise(x, z)))
+    }
+
+    #[test]
+    fn a_rapids_bed_has_bars_and_boulders_and_a_pools_is_smooth() {
+        let surface = wide_rapid();
+        // Along the middle of the river, where its bowl is as deep all the way.
+        let middle = |from: i32, to: i32| (from..=to).map(|k| deep(&surface, k as f64 * 2.0, 0.0)).collect::<Vec<f32>>();
+        let spread = |depths: &[f32]| depths.iter().cloned().fold(0.0, f32::max) / depths.iter().cloned().fold(f32::MAX, f32::min);
+        let pool = middle(-150, -100);
+        assert!(spread(&pool) < 1.35, "the pool's bed is all but smooth: {pool:?}");
+        // Across the rapid, clear of the banks.
+        let rapid: Vec<f32> = (-20..=20).flat_map(|i| (-25..=25).map(move |j| (i, j))).map(|(i, j)| deep(&surface, i as f64 * 2.0, j as f64 * 2.0)).collect();
+        let (shallowest, deepest) = (rapid.iter().cloned().fold(f32::MAX, f32::min), rapid.iter().cloned().fold(0.0, f32::max));
+        assert!(deepest > 2.5 * shallowest.max(0.5), "the rapid's bed has bars and pools: {shallowest} to {deepest}");
+        assert!(shallowest > 0.1 && shallowest < 0.6, "and boulders that all but break the surface: {shallowest}");
+    }
+
+    #[test]
+    fn a_deep_chute_runs_unbroken_down_a_big_rivers_rapid() {
+        let surface = wide_rapid();
+        let side = surface.grid.side as usize;
+        // Whatever a boat drawing `RAPID_DEPTH` can reach from the river's upper end.
+        let floats = |at: usize| surface.depth[at] >= RAPID_DEPTH - 0.01;
+        let mut reached = vec![false; side * side];
+        let mut stack: Vec<usize> = (0..side).map(|j| j * side + 10).filter(|&at| floats(at)).collect();
+        assert!(!stack.is_empty());
+        while let Some(at) = stack.pop() {
+            if std::mem::replace(&mut reached[at], true) {
+                continue;
+            }
+            stack.extend([at - 1, at + 1, at - side, at + side].into_iter().filter(|&next| !reached[next] && floats(next)));
+        }
+        assert!((0..side).any(|j| reached[j * side + side - 11]), "it gets down the rapid to the lower end");
+        // The rapid is not that deep all over: the chute is a lane through it.
+        let across: Vec<f32> = (-35..=35).map(|j| deep(&surface, 0.0, j as f64 * 2.0)).collect();
+        let open = across.iter().filter(|&&depth| depth >= RAPID_DEPTH - 0.01).count();
+        assert!(open >= 3 && open < across.len() / 2, "{open} of {} samples across the rapid float a boat: {across:?}", across.len());
+    }
+
+    #[test]
+    fn a_rough_bed_still_carries_the_rivers_discharge() {
+        let surface = wide_rapid();
+        let through: Vec<f64> = [-250.0, -100.0, -20.0, 0.0, 20.0, 100.0, 250.0].map(|x| passing(&surface, x)).to_vec();
+        let mean = through.iter().sum::<f64>() / through.len() as f64;
+        assert!(mean > 100.0 && through.iter().all(|q| (q - mean).abs() < 0.06 * mean), "{through:?}");
+    }
+
+    #[test]
+    fn a_river_runs_faster_through_a_narrows() {
+        // 60 m wide, pinched to 20 m for 60 m at x = 0; nearly level, drawn running east.
+        let ring = vec![[-400.0, -30.0], [-30.0, -30.0], [-30.0, -10.0], [30.0, -10.0], [30.0, -30.0], [400.0, -30.0], [400.0, 30.0], [30.0, 30.0], [30.0, 10.0], [-30.0, 10.0], [-30.0, 30.0], [-400.0, 30.0]];
+        let map = Map { streams: vec![vec![[-300.0, 0.0], [300.0, 0.0]]], ..river(ring) };
+        let surface = Surface::new(&map, river_grid(), |_, _| Some(5.0));
+        let (wide, narrow) = (current(&surface, -200.0, 0.0)[0], current(&surface, 0.0, 0.0)[0]);
+        assert!(wide > 0.2 && narrow > 2.0 * wide, "{narrow} m/s in the narrows, {wide} m/s above it");
+        let (above, within) = (passing(&surface, -200.0), passing(&surface, 0.0));
+        assert!((above - within).abs() < 0.05 * above, "{above} m³/s above it, {within} m³/s through it");
+    }
+
+    #[test]
+    fn the_current_parts_round_an_island_and_dies_at_the_bank() {
+        // 80 m wide with an island 30 m square in the middle of it, drawn running east.
+        let outer = vec![[-400.0, -40.0], [400.0, -40.0], [400.0, 40.0], [-400.0, 40.0]];
+        let island = vec![[-15.0, -15.0], [15.0, -15.0], [15.0, 15.0], [-15.0, 15.0]];
+        let mut map = Map { streams: vec![vec![[-300.0, 28.0], [300.0, 28.0]]], ..river(outer) };
+        map.bodies[0].rings.push(island);
+        let surface = Surface::new(&map, river_grid(), |_, _| Some(5.0));
+        let above = current(&surface, -200.0, 0.0);
+        let (north, south) = (current(&surface, -24.0, -14.0), current(&surface, -24.0, 14.0));
+        assert!(north[1] < -0.03 && south[1] > 0.03, "it parts before the island: {north:?} {south:?}");
+        let beside = current(&surface, 0.0, 28.0);
+        assert!(beside[0] > 1.2 * above[0], "and runs faster past it: {beside:?} against {above:?}");
+        let lee = current(&surface, 22.0, 0.0);
+        assert!(lee[0] < 0.3 * above[0], "the water behind it is all but still: {lee:?}");
+        let bank = current(&surface, -200.0, 38.0);
+        assert!(bank[0] > 0.0 && bank[0] < 0.5 * above[0], "as it is by the bank: {bank:?}");
+    }
+
+    #[test]
+    fn a_river_drawn_as_two_polygons_is_one_water() {
+        // The same 20 m river, falling 1 m per 100 m, as one polygon and cut in two at x = 0.
+        let whole = river(vec![[-400.0, -10.0], [400.0, -10.0], [400.0, 10.0], [-400.0, 10.0]]);
+        let mut halves = river(vec![[-400.0, -10.0], [0.0, -10.0], [0.0, 10.0], [-400.0, 10.0]]);
+        halves.bodies.push(Body { kind: Kind::River, rings: vec![vec![[0.0, -10.0], [400.0, -10.0], [400.0, 10.0], [0.0, 10.0]]], level: None });
+        let dem = |x: f64, z: f64| Some(10.0 - x / 100.0 + noise(x, z));
+        let (one, two) = (Surface::new(&whole, river_grid(), dem), Surface::new(&halves, river_grid(), dem));
+        for x in [-200.0, -2.0, 0.0, 2.0, 200.0] {
+            assert!((level(&one, x, 0.0) - level(&two, x, 0.0)).abs() < 0.02, "the same level at {x}");
+            let (a, b) = (current(&one, x, 0.0), current(&two, x, 0.0));
+            assert!(a[0] > 0.3 && (a[0] - b[0]).abs() < 0.05 * a[0], "the same current at {x}: {a:?} {b:?}");
+        }
+    }
+
+    #[test]
+    fn importing_a_river_twice_gives_the_same_current() {
+        let outer = vec![[-400.0, -40.0], [400.0, -40.0], [400.0, 40.0], [-400.0, 40.0]];
+        let island = vec![[-15.0, -15.0], [15.0, -15.0], [15.0, 15.0], [-15.0, 15.0]];
+        let mut map = river(outer);
+        map.bodies[0].rings.push(island);
+        let dem = |x: f64, z: f64| Some(10.0 - x / 200.0 + noise(x, z));
+        let twice = [0, 1].map(|_| Surface::new(&map, river_grid(), dem));
+        let flows = twice.each_ref().map(Surface::flows);
+        assert!(!flows[0].is_empty() && flows[0] == flows[1]);
+        assert_eq!(twice[0].foams(), twice[1].foams());
     }
 
     #[test]
@@ -1175,7 +1915,9 @@ mod tests {
         let map = Map { streams: vec![vec![[300.0, 0.0], [-300.0, 0.0]]], ..river(ring) };
         let surface = Surface::new(&map, river_grid(), level);
         let middle = current(&surface, 0.0, 0.0);
-        assert!((middle[0] + FLOW_MIN as f32).abs() < 0.05 && middle[1].abs() < 0.02, "drifts west, as drawn: {middle:?}");
+        assert!(middle[0] < -USUAL_SPEED as f32 && middle[0] > -2.0 * USUAL_SPEED as f32 && middle[1].abs() < 0.02, "drifts west, as drawn: {middle:?}");
+        assert!(deep(&surface, 0.0, 0.0) > 2.5, "and keeps its bowl: {}", deep(&surface, 0.0, 0.0));
+        assert!(surface.foams().is_empty(), "with no rapid, it has no foam");
         assert!(Surface::new(&lake(), grid(), |_, _| Some(1.0)).flows().is_empty(), "a lake is still");
     }
 
@@ -1198,6 +1940,18 @@ mod tests {
         let ring = vec![[-100.0, -100.0], [100.0, -100.0], [100.0, 100.0], [-100.0, 100.0]];
         let sea = Map { bodies: vec![Body { kind: Kind::Sea, rings: vec![ring], level: Some(0.0) }], streams: Vec::new() };
         assert!(Surface::new(&sea, grid(), |_, _| Some(1.0)).reaches().iter().all(|&steps| steps == u8::MAX), "the sea carries every swell");
+    }
+
+    #[test]
+    fn a_rivers_reach_is_a_small_share_of_its_width_so_the_wind_raises_only_a_chop() {
+        // 120 m wide, running past both ends of the grid: a lake that wide would carry the 25 m swell.
+        let map = river(vec![[-400.0, -60.0], [400.0, -60.0], [400.0, 60.0], [-400.0, 60.0]]);
+        let surface = Surface::new(&map, river_grid(), |x, z| Some(10.0 - x / 100.0 + noise(x, z)));
+        let reach = f32::from(surface.reaches()[surface.index(0.0, 0.0).unwrap()]) * REACH_STEP;
+        assert!((reach - RIVER_REACH_MAX).abs() <= REACH_STEP, "the middle of a wide river has the most a river gets: {reach}");
+        let swell = shared::waves::wave(0.0, 0.0, 0.0, reach);
+        let lake = shared::waves::wave(0.0, 0.0, 0.0, 120.0);
+        assert!(swell.height.abs() < 0.05 && swell.height.abs() < lake.height.abs(), "{} {}", swell.height, lake.height);
     }
 
     #[test]
@@ -1269,5 +2023,64 @@ mod tests {
         let trimmed = surface.trim_streams(&[line]);
         assert_eq!(trimmed.len(), 2, "{trimmed:?}");
         assert!(trimmed[0].last().unwrap()[0] <= -30.0 && trimmed[1][0][0] >= 30.0);
+    }
+
+    /// A river 40 m wide on a grid of 321 × 321 samples every metre, with a 2 m rapid at x = 0.
+    fn fine_rapid() -> Surface {
+        let map = river(vec![[-200.0, -20.0], [200.0, -20.0], [200.0, 20.0], [-200.0, 20.0]]);
+        Surface::new(&map, Grid { origin: -16_000, cell: 100, side: 321 }, |x, z| Some(10.0 - x / 1000.0 - if x < 0.0 { 0.0 } else { 2.0 } + 0.02 * noise(x, z)))
+    }
+
+    /// How many crests the surface has along `z` from `from` to `to` metres of x: samples that
+    /// stand at least 5 cm over the mean of the water 3 m up and down the river from them.
+    fn crests(surface: &Surface, z: f64, from: i32, to: i32) -> usize {
+        let over = |x: i32| level(surface, f64::from(x), z) - 0.5 * (level(surface, f64::from(x - 3), z) + level(surface, f64::from(x + 3), z));
+        (from..=to).filter(|&x| over(x) > 0.05 && over(x) >= over(x - 1) && over(x) > over(x + 1)).count()
+    }
+
+    #[test]
+    fn a_rapid_stands_in_waves_across_the_current_and_a_pool_lies_flat() {
+        let surface = fine_rapid();
+        let fast = current(&surface, 20.0, 0.0);
+        assert!(fast[0] > 1.5, "the rapid runs: {fast:?}");
+        let standing = crests(&surface, 0.0, 5, 45);
+        assert!((4..=12).contains(&standing), "a crest every few metres down the rapid: {standing}");
+        // A crest lies across the current: the water beside it stands with it.
+        let beside = crests(&surface, 3.0, 5, 45);
+        assert!(beside.abs_diff(standing) <= 2, "{beside} beside {standing}");
+        assert_eq!(crests(&surface, 0.0, -140, -100), 0, "the slow water above lies flat");
+    }
+
+    #[test]
+    fn a_river_is_never_written_as_quite_still_even_in_the_slack_water_at_its_banks() {
+        let surface = fine_rapid();
+        let flows = surface.flows();
+        let still = (0..surface.body.len()).filter(|&at| surface.body[at] != NONE && flows[2 * at] == 0 && flows[2 * at + 1] == 0).count();
+        assert_eq!(still, 0, "every sample of it runs at a step of the flow at least");
+        assert!(Surface::new(&lake(), grid(), |_, _| Some(1.0)).flows().is_empty(), "and a lake is still");
+    }
+
+    #[test]
+    fn a_coarse_grid_cannot_hold_a_standing_wave_and_gets_none() {
+        // The same rapid sampled every 2 m: a 6.8 m wave would be three samples long.
+        let map = river(vec![[-400.0, -20.0], [400.0, -20.0], [400.0, 20.0], [-400.0, 20.0]]);
+        let surface = Surface::new(&map, river_grid(), |x, z| Some(10.0 - x / 1000.0 - if x < 0.0 { 0.0 } else { 2.0 } + 0.02 * noise(x, z)));
+        let over = |x: f64| level(&surface, x, 0.0) - 0.5 * (level(&surface, x - 4.0, 0.0) + level(&surface, x + 4.0, 0.0));
+        assert!((20..=50).all(|k| over(f64::from(k) * 2.0).abs() < 0.05), "no crest stands out below the rapid");
+    }
+
+    #[test]
+    fn the_water_stands_higher_against_an_island_than_in_the_fast_water_beside_it() {
+        // 60 m wide with an island 16 m square in the middle, the ground falling 2 m per km.
+        let outer = vec![[-400.0, -30.0], [400.0, -30.0], [400.0, 30.0], [-400.0, 30.0]];
+        let island = vec![[-8.0, -8.0], [8.0, -8.0], [8.0, 8.0], [-8.0, 8.0]];
+        let map = Map { bodies: vec![Body { kind: Kind::River, rings: vec![outer, island], level: None }], streams: Vec::new() };
+        let surface = Surface::new(&map, river_grid(), |x, _| Some(10.0 - x / 500.0));
+        assert!(!surface.is_wet(0.0, 0.0), "the island is dry");
+        let even = |x: f64| level(&surface, -100.0, 0.0) - (x + 100.0) / 500.0;
+        let (before, beside) = (level(&surface, -12.0, 0.0) - even(-12.0), level(&surface, 0.0, 20.0) - even(0.0));
+        assert!(before > beside + 0.03, "{before} against the island, {beside} beside it");
+        // Across the river above the island the surface is level again.
+        assert!((level(&surface, -200.0, -20.0) - level(&surface, -200.0, 20.0)).abs() < 0.03);
     }
 }

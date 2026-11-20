@@ -304,6 +304,19 @@ export const CHUTE_STEER = 0.03
 export const SPAWN_ALTITUDE = 100.0
 
 /**
+ * A river runs white from the first of these speeds of its current, m/s, and all of it is white by
+ * the second. The importer makes its foam there (`riverflow::foam`) and the water shader whitens it.
+ */
+export const WHITE_WATER_SPEEDS = [1.5, 3.2] as const
+
+/**
+ * The colour of a river's water where it is deep, sRGB red, green and blue, on a world that does
+ * not set its own (`Manifest::river_tint`): the brown-green of a northern forest river, stained by
+ * the bogs it drains.
+ */
+export const RIVER_TINT = [87, 82, 42] as const
+
+/**
  * Swimming (SWIMMING.md). Depths, the float height and whether the eyes are under all follow the
  * waves on the water (`shared::waves`). Water this deep over the feet, metres, floats a soldier off them: wading turns
  * into swimming. Swimming stops once it is no deeper than `SWIM_LEAVE_DEPTH`, so the change does not

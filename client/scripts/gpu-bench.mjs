@@ -8,9 +8,13 @@
 // printed, so drift over the run falls on both alike.
 //
 //   node client/scripts/gpu-bench.mjs [--out <dir>] [--url <url>] [--world <name>] [--views a,b]
+//                                     [--at 'name=x,z,yaw,pitch,above']
 //                                     [--breakdown] [--parts a,b] [--extra 'name=<js>'] [--shoot]
 //                                     [--rounds 5] [--frames 60] [--scale 2] [--label <name>]
 //                                     [--quality high]
+//
+// `--at` adds a view of your own: standing `above` metres over the ground (or a river's bed) at x, z,
+// looking along `yaw` and `pitch`, at midday. It is timed with the named views, or alone with `--views name`.
 //
 // With no `--url` it starts Vite on port 5287 and loads `worlds/<--world>/`, or the world the editor
 // activated (`worlds/active.json`). `--breakdown` also times the frame with each costly part turned off. Each view's
@@ -49,6 +53,13 @@ const VIEWS = {
   field: { phase: 0.5, yaw: 0, pitch: 0.0, place: 'field' },
   // The spawn at night with the headlamp on: the lights, beams, stars.
   night: { phase: 0.02, yaw: 0.3, pitch: 0.0, place: null, lamp: true },
+}
+
+for (const [i, a] of args.entries()) {
+  if (a !== '--at') continue
+  const [name, numbers] = args[i + 1].split('=')
+  const [x, z, yaw, pitch, above = 4] = numbers.split(',').map(Number)
+  VIEWS[name] = { phase: 0.5, yaw, pitch, place: [x, z, above] }
 }
 
 /** What `--breakdown` turns off, one at a time: [name, JS that turns it off and returns an undo]. */
@@ -209,6 +220,11 @@ await evaluate(`(() => {
           if (Number.isFinite(h) && h > best[2]) best = [start[0] + x, start[1] + z, h]
         }
         place(best[0], best[1])
+      } else if (Array.isArray(v.place)) {
+        place(v.place[0], v.place[1], v.place[2])
+        // The tiles there must come in before the ground's height is known: placed again once they have.
+        await sleep(4000)
+        place(v.place[0], v.place[1], v.place[2])
       } else if (v.place === 'shore') {
         const wet = (x, z) => { const w = g.fxWorld.waterAt?.(x, z); return typeof w === 'number' && w > g.terrain.heightAt(x, z) + 0.3 }
         let found = null

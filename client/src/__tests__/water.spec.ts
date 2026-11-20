@@ -41,6 +41,25 @@ describe('water', () => {
     disposeWater(group)
   })
 
+  it('leans a river’s surface as its level falls, for the light, and leaves a lake’s facing straight up', () => {
+    const { ground, water } = pond()
+    const still = buildWater({ water, streams: [] }, { ...ground, cell: 1 })!
+    const flat = (still.children[0] as Mesh).geometry.normals!
+    for (let i = 0; i < flat.length / 3; i++) expect([flat[i * 3], flat[i * 3 + 1], flat[i * 3 + 2]]).toEqual([0, 1, 0])
+    disposeWater(still)
+    // The same water falling 20 cm a metre towards +x, and running that way.
+    const falling = water.map((level, at) => (level === NO_WATER ? level : level - 0.2 * (at % 5)))
+    const flow = new Int8Array(water.length * 2)
+    for (let at = 0; at < water.length; at++) flow[at * 2] = 40
+    const river = buildWater({ water: falling, flow, streams: [] }, { ...ground, cell: 1, heights: ground.heights.map((h) => h - 1) })!
+    const geometry = (river.children[0] as Mesh).geometry
+    const middle = 2 * 5 + 2
+    const [nx, ny, nz] = [geometry.normals![middle * 3]!, geometry.normals![middle * 3 + 1]!, geometry.normals![middle * 3 + 2]!]
+    expect(-nx / ny).toBeCloseTo(-0.2)
+    expect(nz).toBeCloseTo(0)
+    disposeWater(river)
+  })
+
   it('keeps a fine grid as it is', () => {
     const { ground, water } = pond()
     const group = buildWater({ water, streams: [] }, { ...ground, cell: 1 })!
@@ -72,12 +91,26 @@ describe('water', () => {
     expect(still[3]).toBe(-FLOW_BIAS)
   })
 
+  it('carries a river’s foam in its uv’s y, leaving x to tell the refined mesh apart, and gives still water no uvs', () => {
+    const { ground, water } = pond()
+    const foam = new Uint8Array(water.length).fill(102)
+    const uvs = (buildWater({ water, foam, streams: [] }, ground)!.children[0] as Mesh).geometry.uvs!
+    expect(uvs.length).toBeGreaterThan(0)
+    for (let i = 0; i < uvs.length / 2; i++) {
+      expect(uvs[i * 2]).toBe(0)
+      expect(uvs[i * 2 + 1]).toBeCloseTo(0.4)
+    }
+    expect((buildWater({ water, streams: [] }, ground)!.children[0] as Mesh).geometry.uvs).toBeUndefined()
+  })
+
   it('hands the tile worker the open water’s reach and current, so the surface it builds has the waves the sim floats things on', () => {
     const reach = new Uint8Array([1, 2, 3])
     const flow = new Int8Array([0, 0, 4, 5, 0, 0])
-    const tile = { cover: [], roads: [], rails: [], ski: [], water: new Float32Array(3), reach, flow, streams: [], bridges: [], collision: null, buildings: [] } as unknown as TileData
+    const foam = new Uint8Array([0, 9, 200])
+    const tile = { cover: [], roads: [], rails: [], ski: [], water: new Float32Array(3), reach, flow, foam, streams: [], bridges: [], collision: null, buildings: [] } as unknown as TileData
     expect(tileParts(tile).reach).toBe(reach)
     expect(tileParts(tile).flow).toBe(flow)
+    expect(tileParts(tile).foam).toBe(foam)
   })
 
   it('has no mesh for a tile without water', () => {

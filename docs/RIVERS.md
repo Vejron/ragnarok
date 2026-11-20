@@ -1,31 +1,32 @@
 # Rivers that run
 
-A river's water now flows. It runs downstream as its OSM centre line is drawn, fastest where its surface falls steeply, and carries swimmers and whatever floats on it. Rapids run white and heave in standing waves. Vindelälven falls 24 m through `worlds/vindeln`, and its rapids at Vindelforsarna run at up to 4 m/s.
+A river's water now flows. It runs downstream as its OSM centre line is drawn, fastest where its surface falls steeply, and carries swimmers and whatever floats on it. Rapids run white and heave in standing waves. Vindelälven falls 26 m through `worlds/vindeln`, and its rapids at Vindelforsarna run at 3 to 4.5 m/s.
 
 ## In play
 
-- **Swimmers drift downstream.** The current is added to their strokes. A fast swimmer (3.2 m/s) can make headway up a gentle stretch but loses ground in a 4 m/s rapid. The current slows towards the banks, so a swimmer can always make for the shore.
+- **Swimmers drift downstream.** The current is added to their strokes. A fast swimmer (3.2 m/s) can make headway up a gentle stretch but loses ground in a 4 m/s rapid. The current slows towards the banks, so a swimmer can always make for the shore. (A rapid is now shallow enough to stand in over much of its width: see [RIVER-FLOW.md](RIVER-FLOW.md).)
 - **Boats, ships, submarines, amphibious vehicles and seaplanes drift** while they are crewed and nothing holds them. Their water physics now run on their speed through the water, so a boat driven upstream makes its top speed less the current over the ground, and one let go is carried along.
 - **Mooring.** The handbrake is the anchor, and the server holds the handbrake on every empty vehicle. So a boat, ship, submarine or amphibious vehicle left in a river stays where it was left. A seaplane with nobody aboard is moored the same way. A driver who holds the handbrake in a current drops anchor: the hull brakes to a stop over the ground and holds there.
-- **White water.** From 1.5 m/s the surface rises and falls in standing waves (up to 22 cm at 3.5 m/s), the same ones on the server and in the client's prediction. A boat bucks over them and a swimmer bobs on them. The drawn surface is lit by them but not lifted (see Cost).
-- **How it looks.** The river's ripples are carried along by its current. From 0.7 m/s foam starts to streak along it, from 1.5 m/s it breaks white in patches, and in the fastest rapids it is white over dark water, thickest on the crests of the standing waves. Lakes look as before.
+- **White water.** A rapid stands in waves across the current, which are part of the river's level, and from 1.2 m/s they surge up to 10 cm in place, the same on the server and in the client's prediction. A boat bucks over them and a swimmer bobs on them. See [RIVER-SURFACE.md](RIVER-SURFACE.md), which replaced the two standing waves in fixed headings (up to 22 cm) this had.
+- **How it looks.** The river's ripples are carried along by its current (all of them now, and more: [RIVER-SURFACE.md](RIVER-SURFACE.md)). Foam trails away below each rapid along the current, from 1.5 m/s the water breaks white in patches, and in the fastest rapids it is white over dark water, thickest on the crests of the standing waves. Lakes look as before.
 
 ## How it works
 
 ### The importer (`crates/osm-import/src/water.rs`)
 
-`river_levels` already measured each river stretch along its course and fitted a profile that only ever falls one way. It now keeps that work and writes the current from it:
+`river_levels` measures each river stretch along its course and fits a profile that only ever falls one way. It also finds which way the stretch runs:
 
 - **Downstream.** The river's OSM centre lines (`waterway=river`, drawn downstream) vote on which way the distance along the stretch grows (`downstream`). Where none crosses the stretch, the way the profile fits the ground better decides. The vote also picks which profile is used, so the water never runs uphill.
-- **Direction.** The direction is the gradient of a fast-marched (eikonal) distance from the same end (`march`). It is not taken from the chamfer distance used for the levels, whose 3-4 metric leans the gradient towards the eight grid directions: it pointed the current 18° off a straight river.
-- **Speed.** The speed is `25·√slope` m/s (Manning's law with the depth and roughness folded in), with the slope measured over 60 m up and down the course. It is clamped between 0.3 and 4 m/s (`FLOW_K`, `FLOW_MIN`, `FLOW_MAX`). A stretch with no centre line and less than 0.3 m of fall stays still.
-- **Smoothing.** The current is box-blurred over 8 m among the flowing samples, then slowed towards the banks by `√(shore / local radius)`.
+- **Direction.** The direction downstream is the gradient of a fast-marched (eikonal) distance from the same end (`march`). It is not taken from the chamfer distance used for the levels, whose 3-4 metric leans the gradient towards the eight grid directions: it pointed the current 18° off a straight river.
+- **Slope.** The slope is measured over 60 m up and down the course. A stretch with no centre line and less than 0.3 m of fall stays still.
+
+The current itself is then solved as a flow over a bed cut to carry the river's discharge, rough in the rapids with bars, boulders and a chute for boats, which [RIVER-FLOW.md](RIVER-FLOW.md) describes. It replaced a rule (`25·√slope` m/s along the course, blurred over 8 m and slowed towards the banks) under which a rapid ran at 4 m/s over a bed as deep as a pool's.
 
 `Tile::flow` stores it as two signed bytes a sample in 0.05 m/s steps (`FLOW_STEP`), and is empty in a tile where nothing flows. The importer logs each long stretch's top speed and how much of it runs at 2.5 m/s or more.
 
 ### The sim (`crates/sim`)
 
-- `Waters` keeps the current per tile and samples it bilinearly (`flow_at`). `Surface` carries it, and `waves::churn` adds the standing waves by speed.
+- `Waters` keeps the current per tile and samples it bilinearly (`flow_at`). `Surface` carries it, and `waves::churn` adds the standing waves' surge by the current.
 - `Water::drift(anchored)` is the current a hull is carried by, none at anchor. Each lift (`boat`, `sail`, `dive`, `floats`, and `swim` for amphibious hulls) takes the drift off the hull's velocity, runs its usual drag, keel, thrust and brake on what is left, and adds the drift back. The water's hold on the hull is therefore exactly its existing drag. A hull aground, held by none of it, is not carried.
 - `Physics::swim` adds the current to a swimmer's move.
 - Wheeled cars wading on the bed are not carried; their tyres hold them.
@@ -40,7 +41,7 @@ The client's prediction is the same sim in WASM, and loads the same tile bytes, 
 - `surfaceBuffers` puts the current in a lake's or river's `custom.zw` as `(x, z − FLOW_BIAS)`. Its `w` thus stays far below a stream's flag of 1, and `MeshRefiner` carries it into the refined mesh with no new attribute.
 - The water shader (`render/water.ts`):
   - It carries the chop along the current: two copies of it, each dragged downstream for 1.2 s (`FLOW_CYCLE`) and then started over, half a cycle apart and crossfaded.
-  - It draws foam streaks by smearing noise back along the current. Rotating world coordinates by the current's direction, as first tried, sheared the noise into zigzags wherever the current turned.
+  - It draws foam streaks by smearing noise back along the current. Where they lie is no longer the current's speed there but the foam the importer found carried there (`TileData.foam`, in the mesh's `uv.y`): see [RIVER-FLOW.md](RIVER-FLOW.md). Rotating world coordinates by the current's direction, as first tried, sheared the noise into zigzags wherever the current turned.
   - It lights the surface with the slopes of `churnWaves`, the WGSL copy of `waves::churn`, and thickens the foam on their crests.
   - Still water skips all of this with one branch.
 
@@ -74,7 +75,7 @@ The first version cost 1.1 to 1.7 ms. Timing its parts one at a time:
 
 ## Tests
 
-- importer:
+- importer (more in [RIVER-FLOW.md](RIVER-FLOW.md)):
   - `a_falling_river_flows_downhill_and_fastest_at_rapids`
   - `a_level_river_runs_the_way_its_centre_line_is_drawn`
   - the bend test checks the current turns with the river

@@ -46,6 +46,13 @@ struct Area {
     /// submarines still sail.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     open_water: bool,
+    /// The colour of the rivers' deep water, `"#rrggbb"` (`river_tint` in the importer). Absent,
+    /// the importer's usual brown-green; the page sends nothing to go back to it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    river_tint: Option<String>,
+    /// Colour the lakes and the sea as the rivers are too (`tint_all_water` in the importer).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    tint_all_water: bool,
     /// Public transport (`buses` in the importer): bus lines along the major roads, with buses the
     /// server runs. Absent from the page, the file's own is kept; `false` is written as nothing at all.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -176,7 +183,7 @@ async fn list_worlds(res: &mut Response) {
 async fn get_world(req: &mut Request, res: &mut Response) {
     let Some(name) = name_of(req, res) else { return };
     match read_area(&name) {
-        Some(area) => res.render(Json(serde_json::json!({ "name": name, "region": area.region.name(), "tiles": area.tiles, "cell": area.cell, "theme": area.theme, "groomed_paths": area.groomed_paths, "open_water": area.open_water, "buses": area.buses.unwrap_or(false), "spawns": area.spawns, "vehicles": area.vehicles, "items": area.items, "bots": area.bots, "animals": area.animals }))),
+        Some(area) => res.render(Json(serde_json::json!({ "name": name, "region": area.region.name(), "tiles": area.tiles, "cell": area.cell, "theme": area.theme, "groomed_paths": area.groomed_paths, "open_water": area.open_water, "river_tint": area.river_tint, "tint_all_water": area.tint_all_water, "buses": area.buses.unwrap_or(false), "spawns": area.spawns, "vehicles": area.vehicles, "items": area.items, "bots": area.bots, "animals": area.animals }))),
         None => fail(res, StatusCode::NOT_FOUND, "no such world"),
     }
 }

@@ -3,7 +3,7 @@ import tables from './sim/tables.generated.json'
 
 /** Mirrors `crates/shared/src/world.rs`. Coordinates are metres: +X east, +Z south, +Y up. */
 
-export const WORLD_VERSION = 32
+export const WORLD_VERSION = 35
 
 /** `Manifest::theme`, mirrors `crates/shared/src/world.rs`. */
 export const THEME_WINTER = 1
@@ -470,6 +470,10 @@ export interface WorldData {
   openWater?: boolean
   /** The bus lines, whole (`Manifest::bus_lines`): a sign stands at every stop. None on a world with no public transport. */
   busLines: BusLine[]
+  /** The colour of the rivers' deep water, sRGB hex (`Manifest::river_tint`). */
+  riverTint?: number
+  /** Whether the lakes and the sea are that colour too (`Manifest::tint_all`). */
+  tintAll?: boolean
   /**
    * Which tiles of the square grid are part of the world, `grid × grid` row-major, or `null` when
    * every one is. Tiles outside it have no ground and are walled off.
@@ -506,6 +510,11 @@ export interface TileData {
    * layout of `water`, in steps of `FLOW_STEP` m/s. Absent when no water in the tile flows.
    */
   flow?: Int8Array
+  /**
+   * How much of a river's surface is under foam at each ground sample (same layout as `water`), in
+   * 255ths: what its rapids make, carried downstream. Absent when the tile has none.
+   */
+  foam?: Uint8Array
   /**
    * Slopes `(dh/dx, dh/dz)` of the ground on a finer grid than `ground`, `n × n` with
    * `n = sqrt(length / 2)`, in units of `1 / DETAIL_SLOPE_SCALE`; for lighting only. Absent or empty
@@ -566,7 +575,7 @@ export function trunkRadiusCm(kind: number, heightCm: number, crownCm: number): 
 const noCollision = (): CollisionMesh => ({ vertices: new Float32Array(), triangles: new Uint32Array() })
 
 export function decodeManifest(bytes: Uint8Array): WorldData {
-  const [version, frame, halfExtent, tileSize, spawns, tiles, groundCell, theme, lifts, openWater, busLines] = decode(bytes) as [number, [number, number, number], number, number, number[][], number[][], number, number, [number, number, number[][], number[], number[]][], boolean, [number[][], number[], number[][]][]]
+  const [version, frame, halfExtent, tileSize, spawns, tiles, groundCell, theme, lifts, openWater, busLines, riverTint, tintAll] = decode(bytes) as [number, [number, number, number], number, number, number[][], number[][], number, number, [number, number, number[][], number[], number[]][], boolean, [number[][], number[], number[][]][], [number, number, number], boolean]
   if (version !== WORLD_VERSION) throw new Error(`world version ${version}, expected ${WORLD_VERSION}`)
   const refs = tiles.map(([col, row, hash]) => ({ col: col!, row: row!, hash: hash! }))
   const grid = Math.max(1, Math.ceil((2 * halfExtent) / Math.max(tileSize, 1)))
@@ -586,6 +595,8 @@ export function decodeManifest(bytes: Uint8Array): WorldData {
     lifts: lifts.map(([kind, seats, points, base, cable]) => ({ kind, seats, points: points.map(point), base: base.map(metres), cable: cable.map(metres) })),
     openWater,
     busLines: busLines.map(([points, stops, signs]) => ({ points: points.map(point), stops: stops.map(metres), signs: signs.map(point) })),
+    riverTint: (riverTint[0] << 16) | (riverTint[1] << 8) | riverTint[2],
+    tintAll,
     inside,
     collision: noCollision(),
     bytes,
@@ -658,13 +669,14 @@ function flatIndices(triangles: readonly number[][]): Uint32Array {
 }
 
 export function decodeTile(bytes: Uint8Array): TileData {
-  const [buildings, roads, [vertices, triangles], ground, cover, trees, water, reach, flow, streams, bridges, detail, rails, ski, lines, stones, crops, look, graves] = decode(bytes) as [
+  const [buildings, roads, [vertices, triangles], ground, cover, trees, water, reach, flow, foam, streams, bridges, detail, rails, ski, lines, stones, crops, look, graves] = decode(bytes) as [
     [number, number[][], number, number, number, number, number, number, [number, number], [number[], number[], Uint8Array, Uint8Array], [number, number] | null][],
     [number, number, boolean, number[][], number, number, number, number][],
     [number[][], number[][]],
     [number, Uint8Array],
     [number, number[][][]][],
     [number, number, number, number, number, number, boolean][],
+    Uint8Array,
     Uint8Array,
     Uint8Array,
     Uint8Array,
@@ -718,6 +730,7 @@ export function decodeTile(bytes: Uint8Array): TileData {
     ...(reach.length > 0 ? { reach: reach.slice() } : {}),
     // A copy of its own, as `detail` is.
     ...(flow.length > 0 ? { flow: new Int8Array(flow.slice().buffer) } : {}),
+    ...(foam.length > 0 ? { foam: foam.slice() } : {}),
     streams: streams.map(([width, points]) => ({ width: metres(width), points: points.map(point) })),
     bridges: bridges.map(([first, steel]) => ({ first, steel })),
     // A copy of its own: a view would keep the whole file alive, and be cloned whole to the worker.

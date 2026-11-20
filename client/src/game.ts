@@ -94,7 +94,7 @@ import { loadAnimalModels } from './render/animal'
 import { VehicleSounds } from './vehicleaudio'
 import { ZombieVoices } from './zombievoices'
 import { HIT_DEALT, HIT_KILL, HIT_TAKEN, HitFeedback } from './feedback'
-import { freezeWater, setWaterTime } from './render/water'
+import { freezeWater, setWaterRiver, setWaterTime } from './render/water'
 import { WaterWaves } from './render/waterwaves'
 import { WaterRefine } from './render/waterrefine'
 import { waveTime } from './sim/waves'
@@ -294,7 +294,7 @@ export class Game {
   /** The waves' clock this frame, seconds into their loop (`waveTime`). */
   private waveClock = 0
   /** The water's waves from what moves through it. */
-  private readonly waves = new WaterWaves((x, z) => this.waters?.flowAt(x, z) ?? [0, 0])
+  private readonly waves = new WaterWaves((x, z) => (this.waters && !this.waters.calm ? this.waters.flowAt(x, z) : [0, 0]), (x, z, reach, depth, speed) => this.waters?.rocksNear(x, z, reach, depth, speed) ?? [])
   /** The water near the camera cut finer, for the waves to lift. */
   private readonly waterRefine = new WaterRefine((...nodes) => this.scene.scene.add(...nodes))
   /** True from the welcome until the joiner's catch-up `destroyed` arrives: that one is state, not news. */
@@ -614,6 +614,7 @@ export class Game {
     this.waters = this.view.waters = this.surroundings.waters = new Waters(world.halfExtent, world.tileSize)
     // Frozen lakes have no waves.
     this.waters.calm = frozen(world)
+    if (world.riverTint !== undefined) setWaterRiver(world.riverTint, !!world.tintAll)
     this.scene.groundAt = (x, z) => this.terrain?.heightAt(x, z) ?? 0
     const terrain = this.terrain
     this.grass = this.view.grass = this.surroundings.grass = new Grass(world.halfExtent, world.tileSize, (x, z) => terrain.sample(x, z))

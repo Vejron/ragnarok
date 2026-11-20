@@ -93,6 +93,16 @@ At most 64 stamps are taken a frame: the nearest and biggest first. Nothing furt
 
 It replaces `render/wakes.ts`, the ring and trench splats that were drawn into a byte texture on the CPU. The rings that `Effects.ripple` drew as flat particles at the water's still level are gone as well. They lay at the wrong height on a swell, and a splash, a wader, a hull or a missile launch now stirs the wave field itself.
 
+### In a river
+
+A river's water runs, and the field's water runs with it ([RIVER-SURFACE.md](RIVER-SURFACE.md)):
+
+- **The current's map.** `WaterWaves.chart` hands the field the current over a 192 m square about the camera as 64 × 64 texels (`WaveField.setFlow`, `FLOW_GRID`), a byte a component in `FLOW_STEP`s. The square lies on lines 24 m apart, so it is made again only when the camera has gone that far (4096 lookups), and now and then for tiles that have come in. Still water has no map.
+- **Carried water.** In `advance`, a texel in a current takes the water that was upstream of it a step ago: itself and its four neighbours, each blended from the four texels round where it was (`wasBetween`). All five must move together. Carrying the middle one alone feeds the waves at long wavelengths instead of moving them, and the field filled the whole river with 20 cm of noise that never settled.
+- **Pushing by speed through the water.** A stamp's movement in a step is its own less the current's. So a boat drifting with the river makes no waves, as before, and something that stands still pushes the water that runs onto it.
+- **Boulders.** `Waters.rocksNear` finds the samples within 40 m of the camera where the water is no deeper than 0.45 m, no deeper than at any sample beside them, and runs at 1 m/s or more. The nearest 24 are stamped each frame as round bodies 1.3 m from their middle, standing still, sitting up to 22 cm deep by the square of the current's speed (`pushShare`). Each gets a dip over it, a rim round it and a wake that trails away downstream. Boats and waders have the stamps first when both want more than the field takes.
+- **Never at rest near a rapid.** A stamp each frame keeps the field stepping, where still water lets it rest after ten seconds.
+
 ### Spray (`client/src/render/jetspray.ts`)
 
 `JetSpray` throws a waterjet boat's water from two pools of its own, so that a crash stop cannot crowd out smoke and dust:

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { Waters } from '@/sim/waters'
 import type { TileGround } from '@/sim/terrain'
 import { NO_WATER } from '@/world'
+import { CHURN_HEIGHT } from '@/sim/waves'
 
 const SIDE = 3
 const ground = (height: number): TileGround => ({ x0: -50, z0: -50, cell: 50, side: SIDE, heights: new Float32Array(SIDE * SIDE).fill(height) })
@@ -40,6 +41,48 @@ describe('Waters', () => {
     const still = new Waters(50, 100)
     still.set({ col: 0, row: 0, hash: 0 }, ground(-1), new Float32Array(SIDE * SIDE).fill(1))
     expect(still.flowAt(0, 0)).toEqual([0, 0])
+  })
+
+  it('reads a falling river’s level between its samples, and adds the surge of a rapid to the surface as the sim does', () => {
+    const river = new Waters(50, 100)
+    // Falling 1 m from the west column to the east one, 2 m deep, running east at 4 m/s.
+    const levels = new Float32Array(SIDE * SIDE)
+    const heights = new Float32Array(SIDE * SIDE)
+    const flow = new Int8Array(SIDE * SIDE * 2)
+    for (let row = 0; row < SIDE; row++) {
+      for (let column = 0; column < SIDE; column++) {
+        levels[row * SIDE + column] = 3 - column * 0.5
+        heights[row * SIDE + column] = 1 - column * 0.5
+        flow[(row * SIDE + column) * 2] = 80
+      }
+    }
+    river.set({ col: 0, row: 0, hash: 0 }, { x0: -50, z0: -50, cell: 50, side: SIDE, heights }, levels, undefined, flow)
+    expect(river.levelAt(0, 0)).toBeCloseTo(2.5)
+    expect(river.levelAt(-25, 10)).toBeCloseTo(2.75)
+    const heaves = Array.from({ length: 40 }, (_, k) => river.surfaceAt(-25 + k * 0.7, 10, k * 0.31) - river.levelAt(-25 + k * 0.7, 10))
+    expect(Math.max(...heaves.map(Math.abs))).toBeGreaterThan(0.02)
+    expect(Math.max(...heaves.map(Math.abs))).toBeLessThanOrEqual(CHURN_HEIGHT + 1e-6)
+  })
+
+  it('finds the boulders just under a fast river’s surface, and none in slow water or on ice', () => {
+    const SIDE = 9
+    const river = new Waters(50, 100)
+    const heights = new Float32Array(SIDE * SIDE).fill(-2)
+    const levels = new Float32Array(SIDE * SIDE).fill(0)
+    const flow = new Int8Array(SIDE * SIDE * 2)
+    for (let at = 0; at < SIDE * SIDE; at++) flow[at * 2] = at % SIDE < 6 ? 60 : 10
+    // One boulder with its top 0.3 m down in the fast water, and one as shallow in the slow water.
+    heights[4 * SIDE + 3] = -0.3
+    heights[4 * SIDE + 7] = -0.3
+    river.set({ col: 0, row: 0, hash: 0 }, { x0: -40, z0: -40, cell: 10, side: SIDE, heights }, levels, undefined, flow)
+    const rocks = river.rocksNear(0, 0, 60, 0.45, 1)
+    expect(rocks).toHaveLength(1)
+    expect(rocks[0]).toMatchObject({ x: -10, z: 0 })
+    expect(rocks[0]!.depth).toBeCloseTo(0.3)
+    expect(rocks[0]!.flow[0]).toBeCloseTo(3)
+    expect(river.rocksNear(0, 0, 5, 0.45, 1)).toHaveLength(0)
+    river.calm = true
+    expect(river.rocksNear(0, 0, 60, 0.45, 1)).toHaveLength(0)
   })
 
   it('forgets a tile that streams out', () => {

@@ -113,12 +113,43 @@ impl Waters {
         self.by_tile.remove(&tile);
     }
 
-    /// The water surface height at `(x, z)`, metres, from the nearest ground sample; `None` where it
-    /// is dry or the tile is not here.
+    /// The still water surface's height at `(x, z)`, metres; `None` where the nearest ground sample
+    /// is dry or the tile is not here. A river's surface falls along it and is shaped by its
+    /// current, so the height is read between the wet samples around the point, as the water's
+    /// mesh draws it.
     pub fn level_at(&self, x: f32, z: f32) -> Option<f32> {
-        let (grid, i, j) = self.sample(x, z)?;
-        let level = grid.levels[j * grid.side + i];
-        level.is_finite().then_some(level)
+        self.still_at(x, z).map(|(level, _)| level)
+    }
+
+    /// The still surface at `(x, z)`: its height, metres, and its slope `[dh/dx, dh/dz]`. The
+    /// height is blended from the wet samples of the four round the point; the slope is that of
+    /// the cell they make, and level where one of them is dry (the shore).
+    fn still_at(&self, x: f32, z: f32) -> Option<(f32, [f32; 2])> {
+        let (grid, near_i, near_j) = self.sample(x, z)?;
+        if !grid.levels[near_j * grid.side + near_i].is_finite() {
+            return None;
+        }
+        let (u, v) = (((x - grid.x0) / self.cell).max(0.0), ((z - grid.z0) / self.cell).max(0.0));
+        let last = grid.side - 1;
+        let (i, j) = ((u as usize).min(last.saturating_sub(1)), (v as usize).min(last.saturating_sub(1)));
+        let (fu, fv) = ((u - i as f32).clamp(0.0, 1.0), (v - j as f32).clamp(0.0, 1.0));
+        let at = |i: usize, j: usize| grid.levels[j.min(last) * grid.side + i.min(last)];
+        let corners = [(at(i, j), (1.0 - fu) * (1.0 - fv)), (at(i + 1, j), fu * (1.0 - fv)), (at(i, j + 1), (1.0 - fu) * fv), (at(i + 1, j + 1), fu * fv)];
+        let (mut sum, mut weight) = (0.0, 0.0);
+        for (level, share) in corners {
+            if level.is_finite() {
+                sum += level * share;
+                weight += share;
+            }
+        }
+        let [a, b, c, d] = corners.map(|(level, _)| level);
+        let slope = if [a, b, c, d].iter().all(|level| level.is_finite()) {
+            [((b - a) * (1.0 - fv) + (d - c) * fv) / self.cell, ((c - a) * (1.0 - fu) + (d - b) * fu) / self.cell]
+        } else {
+            [0.0; 2]
+        };
+        // The nearest sample is wet, so it is one of the four and their shares are not all nothing.
+        Some((if weight > 0.0 { sum / weight } else { grid.levels[near_j * grid.side + near_i] }, slope))
     }
 
     /// How wide the open water is at `(x, z)`, metres, from the nearest ground sample; 0 off the grid.
@@ -134,17 +165,18 @@ impl Waters {
 
     /// The surface at `(x, z)` with its waves (`shared::waves`), `time` seconds into their loop: they
     /// are as big as the water is wide, and die away towards the shore, as deep as the water is
-    /// between the samples around it. `None` where it is dry or the tile is not here.
+    /// between the samples around it. Its slope is the waves' and the still surface's own (a river
+    /// falls, and stands in waves where it runs fast). `None` where it is dry or the tile is not here.
     pub fn surface(&self, x: f32, z: f32, time: f32) -> Option<Surface> {
-        let level = self.level_at(x, z)?;
+        let (level, lie) = self.still_at(x, z)?;
         let share = if self.calm { 0.0 } else { shared::waves::shore(self.depth_at(x, z)) };
         let flow = self.flow_at(x, z);
         let swell = shared::waves::wave(x, z, time, self.reach_at(x, z));
-        // A rapid's standing waves, on top of whatever swell the water's width raises.
-        let churn = if self.calm { shared::waves::Wave::default() } else { shared::waves::churn(x, z, time, flow[0].hypot(flow[1])) };
+        // The surge of a rapid's standing waves, on top of whatever chop the water's width raises.
+        let churn = if self.calm { shared::waves::Wave::default() } else { shared::waves::churn(x, z, time, flow) };
         let wave = shared::waves::Wave {
             height: swell.height * share + churn.height,
-            slope: [swell.slope[0] * share + churn.slope[0], swell.slope[1] * share + churn.slope[1]],
+            slope: [lie[0] + swell.slope[0] * share + churn.slope[0], lie[1] + swell.slope[1] * share + churn.slope[1]],
             rise: swell.rise * share + churn.rise,
         };
         Some(Surface { height: level + wave.height, slope: wave.slope, rise: wave.rise, flow })
@@ -272,6 +304,32 @@ mod tests {
         let pond = crest(&world);
         assert!(sea > 1.0, "the sea heaves {sea} m");
         assert!(pond < 0.05, "a pond ripples, not {pond} m");
+    }
+
+    #[test]
+    fn a_falling_rivers_level_is_read_between_its_samples_and_slopes_as_it_falls() {
+        // One grid of 2 m cells, 2 m deep: the surface falls 10 cm a sample towards +x.
+        let mut world = WorldFile { half_extent: 400, ..Default::default() };
+        world.ground = shared::terrain::Ground { origin: 0, cell: 200, side: 5, heights: (0..25).map(|k| -200 - 10 * (k % 5)).collect() };
+        world.water = (0..25).map(|k| -10 * (k % 5)).collect();
+        let mut waters = Waters::of_world(&world);
+        waters.calm();
+        assert_eq!(waters.level_at(2.0, 4.0), Some(-0.1), "on a sample");
+        let between = waters.level_at(3.0, 4.0).unwrap();
+        assert!((between + 0.15).abs() < 1e-5, "half way to the next: {between}");
+        let surface = waters.surface(3.0, 4.0, 0.0).unwrap();
+        assert!((surface.slope[0] + 0.05).abs() < 1e-5 && surface.slope[1].abs() < 1e-5, "it falls 5 cm a metre along x: {:?}", surface.slope);
+    }
+
+    #[test]
+    fn beside_a_dry_sample_the_level_is_the_wet_ones_and_lies_flat() {
+        // Tile (1, 0) again: the samples at x = 2 and 4, z = -2 are wet, at different heights.
+        let mut waters = Waters::new(400, 400, 200, false);
+        waters.set((1, 0), &[0; 9], &[NO_WATER, NO_WATER, NO_WATER, NO_WATER, 150, 170, NO_WATER, NO_WATER, NO_WATER], &[], &[]);
+        waters.calm();
+        let surface = waters.surface(2.5, -1.5, 0.0).unwrap();
+        assert!((surface.height - 1.55).abs() < 1e-5, "a quarter of the way from 1.5 to 1.7, whatever the dry ones are: {}", surface.height);
+        assert_eq!(surface.slope, [0.0; 2], "the shore's cell has no slope");
     }
 
     #[test]

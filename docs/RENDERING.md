@@ -122,12 +122,16 @@ The style is flat, bright and few-banded, not physically based.
   only cells touching water are triangulated, and a per-vertex depth (`water − ground`) is
   interpolated, so the shoreline is where depth crosses zero and islands stay dry. Streams are
   ribbons lifted 0.1 m over the terrain with a depth profile across them. One shared WGSL
-  `ShaderMaterial` tints shallow to deep, drifts stepped light bands over the surface (along the
-  stream's length for streams), draws a breathing foam line where depth is under ~0.35 m and fades
-  alpha to nothing at the edge; it supports fog. It reads no depth texture, so it needs no extra
-  pass. The geometry's `custom` attribute carries what the shader needs: depth in x, and the stream
-  flow (along, across, is-stream) in yzw. The engine's clock drives the animation; `setWaterLight`
-  points the reflection and glint at the palette's sky and sun.
+  `ShaderMaterial` tints shallow to deep, ruffles the surface with a chop read from a noise map,
+  mirrors the sky's panorama and (near the mirrored plane's height) the scene, draws a breathing
+  foam line where depth is under ~0.35 m and fades alpha to nothing at the edge; it supports fog.
+  It reads no depth texture, so it needs no extra pass. The geometry's `custom` attribute carries
+  what the shader needs: depth in x, and in yzw a stream's flow (along, across, is-stream) or a
+  lake's or river's reach and current. A surface's uv carries which mesh it is and the foam a river
+  carries, and its normal how the still surface leans. Water with a current is drawn as a river:
+  ripples that ride the current, glassy where it runs deep and broken where it runs thin, stained
+  and lit by its shaped surface (RIVER-SURFACE.md). The waves' clock is the server's tick;
+  `setWaterLight` points the reflection and glint at the palette's sky and sun.
 - **Roads** are draped ribbons that follow the ground every metre, with a casing and fill layer, and
   round discs at joints. They share the terrain's ramp and sit over it by a depth bias per layer.
   Paved roads (`ROAD_MAJOR`, `ROAD_MINOR`) are asphalt in summer (`MAT_ASPHALT`, `asphalt.wgsl.ts`):

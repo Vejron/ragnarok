@@ -225,6 +225,14 @@ pub const CHUTE_STEER: f32 = 0.03;
 /// Respawns drop in from this far above the ground, metres, with the canopy open.
 pub const SPAWN_ALTITUDE: f32 = 100.0;
 
+/// A river runs white from the first of these speeds of its current, m/s, and all of it is white by
+/// the second. The importer makes its foam there (`riverflow::foam`) and the water shader whitens it.
+pub const WHITE_WATER_SPEEDS: [f32; 2] = [1.5, 3.2];
+/// The colour of a river's water where it is deep, sRGB red, green and blue, on a world that does
+/// not set its own (`Manifest::river_tint`): the brown-green of a northern forest river, stained by
+/// the bogs it drains.
+pub const RIVER_TINT: [u8; 3] = [87, 82, 42];
+
 /// Swimming (SWIMMING.md). Depths, the float height and whether the eyes are under all follow the
 /// waves on the water (`shared::waves`). Water this deep over the feet, metres, floats a soldier off them: wading turns
 /// into swimming. Swimming stops once it is no deeper than `SWIM_LEAVE_DEPTH`, so the change does not

@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::terrain::Ground;
 
-pub const WORLD_VERSION: u8 = 32;
+pub const WORLD_VERSION: u8 = 35;
 
 /// `Manifest::theme`: the world as it always was.
 pub const THEME_PLAIN: u8 = 0;
@@ -143,6 +143,12 @@ pub struct Manifest {
     /// The bus lines, whole, for the same reason as the lifts: the server runs buses along them and
     /// the client stands a sign at every stop. Empty on a world with no public transport.
     pub bus_lines: Vec<BusLine>,
+    /// The colour of the world's river water where it is deep, sRGB (`consts::RIVER_TINT` unless the world's
+    /// `area.json` says otherwise). Only drawn: shallow water shows its bed through this colour.
+    pub river_tint: [u8; 3],
+    /// Whether the world's lakes and sea are that colour too, and not the clear blue they are
+    /// without it. Only drawn.
+    pub tint_all: bool,
 }
 
 impl Manifest {
@@ -298,6 +304,11 @@ pub struct Tile {
     /// when no water in the tile flows.
     #[serde(with = "samples8")]
     pub flow: Vec<i8>,
+    /// How much of a river's surface is under foam at each ground sample, in 255ths (same layout as
+    /// `water`): made where the river runs white, carried downstream and gathered where the water
+    /// goes round. Only drawn; nothing in play reads it. Empty when the tile has none.
+    #[serde(with = "bytes")]
+    pub foam: Vec<u8>,
     /// Streams: narrow watercourses drawn as ribbons draped on the ground, clipped to the tile.
     pub streams: Vec<Stream>,
     /// Bridges' steel (pylons, stay cables): ranges of this tile's collision triangles, collided
@@ -1566,6 +1577,8 @@ mod tests {
             lifts: vec![Lift { kind: LIFT_CHAIR, seats: 4, points: vec![[0, 0], [5_000, 20_000]], base: vec![100, 900], cable: vec![410, 1_210] }],
             open_water: true,
             bus_lines: vec![BusLine { points: vec![[0, 0], [30_000, 0], [30_000, 40_000]], stops: vec![0, 30_000, 70_000], signs: vec![[0, 560], [30_000, 560], [30_560, 40_000]] }],
+            river_tint: [70, 80, 40],
+            tint_all: true,
         };
         assert_eq!(Manifest::decode(&manifest.encode()).unwrap(), manifest);
         // A bus line knows its length, and where it is and which way it runs any distance along it.
@@ -1588,6 +1601,7 @@ mod tests {
             water: vec![NO_WATER, 40, 40, NO_WATER],
             reach: vec![0, 50, 50, 0],
             flow: vec![0, 0, 20, -4, 18, -6, 0, 0],
+            foam: vec![0, 30, 200, 0],
             streams: vec![Stream { width: 200, points: vec![[0, 0], [300, 100]] }],
             bridges: vec![Bridge { first: 0, steel: 4 }],
             detail: vec![0, -3, 127, -127],
@@ -1600,10 +1614,10 @@ mod tests {
             graves: vec![Grave { x: 40, z: -60, base: 120, yaw: -1571, kind: GRAVE_CROSS }],
         };
         assert_eq!(Tile::decode(&tile.encode()).unwrap(), tile);
-        assert_eq!(tile.encode()[..3], [0xdc, 0, 19], "an array of all 19 fields");
+        assert_eq!(tile.encode()[..3], [0xdc, 0, 20], "an array of all 20 fields");
         // An empty tile is every field still, each empty.
         let empty = Tile::default().encode();
-        assert_eq!(empty[..3], [0xdc, 0, 19]);
+        assert_eq!(empty[..3], [0xdc, 0, 20]);
         assert_eq!(Tile::decode(&empty).unwrap(), Tile::default());
         // A tile without its last field, the tombstones (`[]`, its last byte), is refused.
         assert_eq!(empty[empty.len() - 1], 0x90);
@@ -1615,7 +1629,7 @@ mod tests {
 
     #[test]
     fn water_and_detail_are_written_as_little_endian_bytes() {
-        let tile = Tile { water: vec![NO_WATER, 40, 40], reach: vec![0, 7, 255], flow: vec![0, 0, 12, -80, 127, -128], detail: vec![-1, 5], ..Default::default() };
+        let tile = Tile { water: vec![NO_WATER, 40, 40], reach: vec![0, 7, 255], flow: vec![0, 0, 12, -80, 127, -128], foam: vec![0, 9, 250], detail: vec![-1, 5], ..Default::default() };
         let bytes = tile.encode();
         // msgpack `bin 8` (0xc4), its length, then the samples low byte first: what the client reads
         // as an `Int32Array` or `Int8Array` (`decodeTile`).
@@ -1624,6 +1638,7 @@ mod tests {
         assert!(find(&[0xc4, 2, 0xff, 5]));
         assert!(find(&[0xc4, 3, 0, 7, 255]), "the reach, a byte a sample");
         assert!(find(&[0xc4, 6, 0, 0, 12, 0xb0, 127, 0x80]), "the flow, two signed bytes a sample");
+        assert!(find(&[0xc4, 3, 0, 9, 250]), "the foam, a byte a sample");
         assert_eq!(Tile::decode(&bytes).unwrap(), tile);
     }
 

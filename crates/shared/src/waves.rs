@@ -100,33 +100,44 @@ pub fn wave(x: f32, z: f32, time: f32, reach: f32) -> Wave {
     out
 }
 
-/// White water: where a river runs fast its surface heaves in standing waves, which stay where the
-/// rocks under them are and rise and fall in place. They are this high (metres, half crest to trough)
-/// where the current runs at the second speed, m/s, and none below the first.
-pub const CHURN_HEIGHT: f32 = 0.22;
-pub const CHURN_SPEEDS: [f32; 2] = [1.5, 3.5];
-/// The standing waves of white water: two crossing ones, each a share of `CHURN_HEIGHT` (`height`),
-/// rising and falling `cycles` times a loop.
-const CHURN: [Swell; 2] = [
-    Swell { heading: 0.4, length: 5.0, height: 0.65, cycles: 41, phase: 0.0 },
-    Swell { heading: 2.1, length: 3.3, height: 0.35, cycles: 53, phase: 1.3 },
+/// White water: where a river runs fast its surface stands in waves, crests across the current. The
+/// waves themselves are part of the river's level (the importer shapes it, RIVER-SURFACE.md) and stay
+/// where they are; this is how they surge, rising and falling in place. The surge is this high
+/// (metres, half crest to trough) where the current runs at the second speed, m/s, and there is none
+/// below the first, which is also where the standing waves start.
+pub const CHURN_HEIGHT: f32 = 0.1;
+pub const CHURN_SPEEDS: [f32; 2] = [1.2, 2.6];
+/// The surge's waves: four that lie a quarter of a half-turn apart, each rising and falling `cycles`
+/// times a loop. Water takes each by how nearly it runs along that one's heading (`churn`), so the
+/// crests lie across the current wherever it turns, without a seam. `height` is not used.
+const CHURN: [Swell; 4] = [
+    Swell { heading: 0.2, length: 4.6, height: 1.0, cycles: 41, phase: 0.0 },
+    Swell { heading: 0.2 + std::f32::consts::FRAC_PI_4, length: 5.3, height: 1.0, cycles: 37, phase: 1.3 },
+    Swell { heading: 0.2 + std::f32::consts::FRAC_PI_2, length: 4.9, height: 1.0, cycles: 43, phase: 2.9 },
+    Swell { heading: 0.2 + 3.0 * std::f32::consts::FRAC_PI_4, length: 5.6, height: 1.0, cycles: 35, phase: 4.4 },
 ];
+/// What the four waves' shares (the fourth power of the cosine of the angle to each) add up to,
+/// whichever way the water runs.
+const CHURN_SHARES: f32 = 1.5;
 
-/// The standing waves at `(x, z)`, `time` seconds into the loop, on water running at `speed` m/s:
-/// nothing on a calm river, a rough heave in a rapid. The client's water shader draws the white
-/// water its own way; this is what a hull or a swimmer rides.
-pub fn churn(x: f32, z: f32, time: f32, speed: f32) -> Wave {
+/// The surge of a rapid's standing waves at `(x, z)`, `time` seconds into the loop, on water running
+/// at `flow` (`[x, z]` m/s): nothing on a calm river, a heave across the current in a rapid. A hull
+/// or a swimmer rides it, and it lights the water the client draws. The slope takes the current as
+/// the same all round the point.
+pub fn churn(x: f32, z: f32, time: f32, flow: [f32; 2]) -> Wave {
+    let speed = flow[0].hypot(flow[1]);
     let t = ((speed - CHURN_SPEEDS[0]) / (CHURN_SPEEDS[1] - CHURN_SPEEDS[0])).clamp(0.0, 1.0);
     let mut out = Wave::default();
     if t <= 0.0 {
         return out;
     }
-    let size = CHURN_HEIGHT * t * t * (3.0 - 2.0 * t);
+    let size = CHURN_HEIGHT * t * t * (3.0 - 2.0 * t) / CHURN_SHARES;
     for swell in &CHURN {
-        let height = size * swell.height;
+        let (dz, dx) = swell.heading.sin_cos();
+        let along = (dx * flow[0] + dz * flow[1]) / speed;
+        let height = size * along * along * along * along;
         let k = std::f32::consts::TAU / swell.length;
         let omega = std::f32::consts::TAU * swell.cycles as f32 / LOOP_SECONDS as f32;
-        let (dz, dx) = swell.heading.sin_cos();
         let (sin_a, cos_a) = (k * (dx * x + dz * z) + swell.phase).sin_cos();
         let (sin_b, cos_b) = (omega * time).sin_cos();
         out.height += height * sin_a * cos_b;
@@ -142,9 +153,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn white_water_heaves_in_place_only_where_the_river_runs_fast() {
-        assert_eq!(churn(3.0, 4.0, 10.0, 1.0), Wave::default(), "a calm river is smooth");
-        let (x, z, t, e, fast) = (3.7, -12.2, 21.4, 1e-3, 4.0);
+    fn a_rapids_waves_surge_in_place_across_the_current_only_where_the_river_runs_fast() {
+        assert_eq!(churn(3.0, 4.0, 10.0, [1.0, 0.0]), Wave::default(), "a calm river is smooth");
+        let (x, z, t, e, fast) = (3.7, -12.2, 21.4, 1e-3, [2.4, 3.2]);
         let at = churn(x, z, t, fast);
         let dx = (churn(x + e, z, t, fast).height - churn(x - e, z, t, fast).height) / (2.0 * e);
         let dz = (churn(x, z + e, t, fast).height - churn(x, z - e, t, fast).height) / (2.0 * e);
@@ -152,7 +163,19 @@ mod tests {
         assert!((at.slope[0] - dx).abs() < 0.02 && (at.slope[1] - dz).abs() < 0.02 && (at.rise - dt).abs() < 0.02, "{at:?} against {dx} {dz} {dt}");
         assert_eq!(churn(x, z, time(LOOP_TICKS + 30), fast), churn(x, z, time(30), fast), "it loops with the swell");
         let highest = (0..LOOP_TICKS).step_by(3).map(|tick| churn(x, z, time(tick), fast).height.abs()).fold(0.0, f32::max);
-        assert!(highest > 0.05 && highest <= CHURN_HEIGHT + 1e-4, "{highest}");
+        assert!(highest > 0.02 && highest <= CHURN_HEIGHT + 1e-4, "{highest}");
+        // The surface slopes along the current far more than across it, whichever way the river runs:
+        // the crests lie across.
+        for heading in [0.0f32, 0.6, 1.3, 2.2, 2.9] {
+            let (dz, dx) = heading.sin_cos();
+            let (mut along, mut across) = (0.0, 0.0);
+            for k in 0..400 {
+                let wave = churn(k as f32 * 1.3, k as f32 * -0.7, k as f32 * 0.37, [4.0 * dx, 4.0 * dz]);
+                along += (wave.slope[0] * dx + wave.slope[1] * dz).powi(2);
+                across += (wave.slope[1] * dx - wave.slope[0] * dz).powi(2);
+            }
+            assert!(along > 3.0 * across, "running at {heading} rad: {along} along, {across} across");
+        }
     }
 
     #[test]

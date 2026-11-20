@@ -312,12 +312,12 @@ impl ClientSim {
         vec![wave.height, wave.slope[0], wave.slope[1], wave.rise]
     }
 
-    /// The standing waves of white water at `(x, z)`, `time` seconds into their loop, on water running at
-    /// `speed` m/s: height, slope x, slope z and rise (`shared::waves::churn`), for checking the client's
-    /// copy against.
+    /// The surge of a rapid's standing waves at `(x, z)`, `time` seconds into their loop, on water running
+    /// at `(flow_x, flow_z)` m/s: height, slope x, slope z and rise (`shared::waves::churn`), for checking
+    /// the client's copy against.
     #[wasm_bindgen(js_name = churnAt)]
-    pub fn churn_at(x: f32, z: f32, time: f32, speed: f32) -> Vec<f32> {
-        let wave = shared::waves::churn(x, z, time, speed);
+    pub fn churn_at(x: f32, z: f32, time: f32, flow_x: f32, flow_z: f32) -> Vec<f32> {
+        let wave = shared::waves::churn(x, z, time, [flow_x, flow_z]);
         vec![wave.height, wave.slope[0], wave.slope[1], wave.rise]
     }
 

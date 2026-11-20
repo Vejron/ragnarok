@@ -34,6 +34,7 @@ pub mod overpass;
 pub mod progress;
 pub mod props;
 pub mod region;
+pub mod riverflow;
 pub mod roof;
 pub mod square;
 pub mod species;

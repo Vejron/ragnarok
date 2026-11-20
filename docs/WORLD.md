@@ -480,8 +480,9 @@ The data has **no surface height or depth, and streams no width**, so:
   connected stretch is measured along its length: the distance through the water from one end, whose
   whole cross-section is the start where it leaves the grid. The DTM's median every 20 m along it is
   fitted with the nearest profile that only falls one way (isotonic regression, in whichever direction
-  fits better). The surface is level across the river and steps down at rapids. Stretches of under 200
-  samples keep the median, and a stretch of 500 m or more has its fall logged;
+  fits better). The surface is level across the river and steps down at rapids. River polygons that
+  touch are one stretch. Stretches of under 200 samples keep the median, and a stretch of 500 m or
+  more is logged with its fall, discharge and speeds;
 - the bed is a bowl cut below the surface: `0.3 m` at the bank, deepest at the body's inscribed
   radius `R` (the largest distance from the bank of any of its samples). The deepest point depends
   on size: lakes `1.5 + √R` (2 to 24 m), rivers `1 + 0.6·√R` (1.5 to 12 m), so a pond is about
@@ -489,6 +490,9 @@ The data has **no surface height or depth, and streams no width**, so:
   down at `t = shore / R`: it falls away from the bank at three times its average slope and flattens
   in the middle. The bed is never more than 25 m below y = 0, which is still the lowest *dry* ground
   (`KILL_Y` is −50 m);
+- a river that flows keeps only part of its bowl where it falls steeply: its bed is cut to carry
+  the river's discharge by Manning's law, so a rapid is shallow (down to a quarter of its bowl, and
+  1.2 m where the bowl allows) and a pool keeps its bowl. See [RIVER-FLOW.md](RIVER-FLOW.md);
 - `Tile.water` holds the surface height at every ground sample (`NO_WATER` where none; samples
   next to water sit just under the bank so the drawn shoreline falls between samples). The depth
   at a sample is `water − ground`; islands are simply ground above the surface;
@@ -497,11 +501,14 @@ The data has **no surface height or depth, and streams no width**, so:
   you are (twice its local inscribed radius), and the most a byte holds on the sea. A bank sample
   takes the widest water beside it. The waves grow with it (see "Waves" below);
 - `Tile.flow` holds which way and how fast a river runs at each sample, `x` then `z` as two signed
-  bytes in 0.05 m/s steps (`FLOW_STEP`), empty in a tile where nothing flows. It comes out of the same
-  fit as the river's levels: downstream is the way its OSM centre lines are drawn where they cross it
-  (else downhill), the direction is the gradient of a true (fast-marched) distance along it, and the
-  speed in the middle is `25·√slope` m/s over 120 m of its profile, 0.3 to 4 m/s, slowed towards the
-  banks. Lakes and the sea are still. See [RIVERS.md](RIVERS.md);
+  bytes in 0.05 m/s steps (`FLOW_STEP`), empty in a tile where nothing flows. Downstream is the way
+  the river's OSM centre lines are drawn where they cross it (else downhill). The current is solved
+  over the river's bed as a flow (`riverflow.rs`): the same water through every cross-section, at up
+  to 5 m/s, fastest mid-channel and slack behind islands. Lakes and the sea are still. See
+  [RIVERS.md](RIVERS.md) and [RIVER-FLOW.md](RIVER-FLOW.md);
+- `Tile.foam` holds how much of a river's surface is under foam at each sample, a byte in 255ths,
+  empty in a tile with none: made where the river runs white and carried downstream by the solved
+  current. Only the water shader reads it. See [RIVER-FLOW.md](RIVER-FLOW.md);
 - streams are drawn 2.5 m wide as ribbons on the terrain (`Tile.streams`), and the stretches that
   run through a lake or river polygon are dropped;
 - a stream goes under the roads and railways it crosses, as through a culvert: a way tagged
@@ -778,6 +785,9 @@ under the deck, and nobody spawns on it. A road that crosses under a bridge is n
 `WORLD_VERSION` 26 added which way each building's road lies (`Building::front`, BUILDING-STYLES.md).
 `WORLD_VERSION` 28 made a bridge's concrete into sections that are buildings (`BUILDING_BRIDGE`), leaving `Tile.bridges` only its steel (`Bridge { first, steel }`, BRIDGES.md).
 `WORLD_VERSION` 30 added each river's current after `Tile.reach` (`Tile::flow`, RIVERS.md).
+`WORLD_VERSION` 33 added the foam a river carries after `Tile.flow` (`Tile::foam`, RIVER-FLOW.md).
+`WORLD_VERSION` 34 added the colour of the world's rivers to the manifest (`Manifest::river_tint`), and a river's `Tile::water` is now shaped by its current: not level across, and standing in waves in a rapid (RIVER-SURFACE.md).
+`WORLD_VERSION` 35 added whether the lakes and the sea take that colour too (`Manifest::tint_all`).
 
 Both sides check `WORLD_VERSION` and read only the current layout: there is no reading of older
 worlds. When the layout changes, bump it in `crates/shared/src/world.rs` **and**

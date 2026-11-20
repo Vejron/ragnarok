@@ -258,6 +258,14 @@ what the formula left to shimmer. `vindeln`, water view: 3.15 to 2.95 ms.
 The map is the material's first texture because a shader material's one sampler is its first
 texture's, and the map must repeat; the mirror's lookup is kept a thousandth in from its edges for that.
 
+A river is now drawn as running water (RIVER-SURFACE.md): three octaves of ripples carried by the
+current in place of one, its own colour, and its surface lit by how the current shapes it. Timed
+alternately against the same frame with the river drawn as a lake, looking down at Vindelälven from
+3 to 4 m, that costs 0.19 ms of a 4.24 ms frame in the rapid and 0.25 ms of a 4.43 ms frame over the
+pool below it: what carrying the one octave cost before (0.20 to 0.23 ms). The standing waves in its
+level cost nothing, since they are where the vertices already were; working them out in the vertex
+shader is what cost 1.3 to 1.8 ms (RIVERS.md).
+
 ### 10. Opaque draws nearest first (`Renderer.nearFirst`)
 
 For GPUs that are not tiled (integrated Intel and AMD), which shade every hidden layer drawn before

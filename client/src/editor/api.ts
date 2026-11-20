@@ -48,13 +48,14 @@ const json = (method: string, body: unknown): RequestInit => ({
 export const api = {
   grid: (region: Region) => call<import('./grid').GridInfo>(`/grid?region=${region}`),
   worlds: async () => (await call<{ worlds: WorldSummary[] }>('/worlds')).worlds,
-  world: (name: string) => call<{ tiles: TileId[]; region?: Region; cell?: number | null; theme?: string | null; groomed_paths?: boolean; open_water?: boolean; buses?: boolean } & Partial<Placements>>(`/worlds/${name}`),
+  world: (name: string) => call<{ tiles: TileId[]; region?: Region; cell?: number | null; theme?: string | null; groomed_paths?: boolean; open_water?: boolean; river_tint?: string | null; tint_all_water?: boolean; buses?: boolean } & Partial<Placements>>(`/worlds/${name}`),
   /**
    * `winter` is the snow switch; `groomed` grooms forest paths for skiing too; `openWater` leaves a winter
-   * world's water unfrozen; `buses` asks for bus lines along the major roads.
+   * world's water unfrozen; `buses` asks for bus lines along the major roads; `riverTint` is the rivers'
+   * colour (`#rrggbb`), null for the usual one, and `tintAll` gives the lakes and the sea it too.
    */
-  save: (name: string, region: Region, tiles: TileId[], cell: number, winter: boolean, groomed: boolean, openWater: boolean, buses: boolean, placements: Placements) =>
-    call(`/worlds/${name}`, json('PUT', { tiles, region, cell, theme: winter ? 'winter' : 'summer', groomed_paths: winter && groomed, open_water: winter && openWater, buses, ...placements })),
+  save: (name: string, region: Region, tiles: TileId[], cell: number, winter: boolean, groomed: boolean, openWater: boolean, buses: boolean, riverTint: string | null, tintAll: boolean, placements: Placements) =>
+    call(`/worlds/${name}`, json('PUT', { tiles, region, cell, theme: winter ? 'winter' : 'summer', groomed_paths: winter && groomed, open_water: winter && openWater, buses, ...(riverTint ? { river_tint: riverTint } : {}), tint_all_water: tintAll, ...placements })),
   remove: (name: string) => call(`/worlds/${name}`, { method: 'DELETE' }),
   activate: (name: string) => call(`/worlds/${name}/activate`, { method: 'POST' }),
   generate: (name: string) => call<Job>(`/worlds/${name}/generate`, { method: 'POST' }),

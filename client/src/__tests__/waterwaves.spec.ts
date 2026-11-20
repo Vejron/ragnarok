@@ -125,6 +125,46 @@ describe('a hull in the water waves', () => {
   })
 })
 
+describe('a river in the water waves', () => {
+  const eye = { x: 0, y: 0, z: 0 }
+  const rock = { x: 4, z: -6, depth: 0.3, flow: [3, 0] as const }
+
+  it('has its boulders push the water that runs onto them, standing still, the nearest first', () => {
+    const far = { x: 30, z: 0, depth: 0.2, flow: [3, 0] as const }
+    const waves = new WaterWaves(() => [3, 0], () => [far, rock])
+    waves.update(1 / 60, eye)
+    expect(waves.rocky).toBe(2)
+    expect(waves.field.pressing).toBe(2)
+    const pressed = (waves.field as unknown as { ready: Float32Array }).ready
+    // The nearer one first: where it is, as a round body, pushing the water at rest over the ground.
+    expect([pressed[0], pressed[1]]).toEqual([4, -6])
+    expect(pressed[4]).toBe(pressed[5])
+    expect(pressed[6]).toBeGreaterThan(0.1)
+    expect([pressed[8], pressed[9]]).toEqual([0, 0])
+  })
+
+  it('hands the field the current to carry its water along, and none on still water', () => {
+    const river = new WaterWaves(() => [2, -1], () => [])
+    river.update(1 / 60, eye)
+    const flow = (river.field as unknown as { flow: { bytes: Uint8Array; area: number[]; step: number } | null }).flow!
+    expect([flow.bytes[0], flow.bytes[1]]).toEqual([128 + 40, 128 - 20])
+    expect(flow.area[2]).toBeGreaterThan(96)
+    expect(flow.area[0]).toBeLessThanOrEqual(-48)
+    const lake = new WaterWaves()
+    lake.update(1 / 60, eye)
+    expect((lake.field as unknown as { flow: unknown }).flow).toBeNull()
+    expect(lake.field.pressing).toBe(0)
+  })
+
+  it('lets boats have the stamps first when there are more of both than the field takes', () => {
+    const rocks = Array.from({ length: 30 }, (_, k) => ({ x: k, z: 0, depth: 0.2, flow: [3, 0] as const }))
+    const waves = new WaterWaves(() => [0, 0], () => rocks)
+    for (let k = 0; k < 60; k++) waves.hull(`boat ${k}`, hull(k % 10, -k % 7))
+    waves.update(1 / 60, eye)
+    expect(waves.field.pressing).toBe(64)
+  })
+})
+
 describe('a boat in the waves', () => {
   const last = <T>(list: T[]) => list[list.length - 1]!
   /** A Stridsbåt 90 heading -Z from `speed` m/s, changing at `accel` m/s², for half a second: the hulls it pressed in and the splashes its drops made. */

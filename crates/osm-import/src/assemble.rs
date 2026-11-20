@@ -493,6 +493,7 @@ fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collecti
         half_extent: cm(half),
         tile_size: cm(tile_size),
         ground_cell: ground.cell.max(0),
+        river_tint: shared::consts::RIVER_TINT,
         ..Default::default()
     };
     let mut tiles: BTreeMap<(u16, u16), Tile> = BTreeMap::new();
@@ -856,6 +857,9 @@ fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collecti
             // The current's two parts, cut as the levels are.
             let part = |k: usize| Ground { origin: ground.origin, cell: ground.cell, side: ground.side, heights: if flowing { water.flow.iter().skip(k).step_by(2).map(|&v| i32::from(v)).collect() } else { Vec::new() } };
             let (flow_x, flow_z) = (part(0), part(1));
+            // And the foam on it.
+            let foamy = water.foam.len() == all.heights.len();
+            let foam = Ground { origin: ground.origin, cell: ground.cell, side: ground.side, heights: if foamy { water.foam.iter().map(|&cover| i32::from(cover)).collect() } else { Vec::new() } };
             for col in 0..manifest.grid() {
                 for row in (0..manifest.grid()).filter(|&row| inside(col, row)) {
                     let block = all.block(col as u32 * per_tile, row as u32 * per_tile, samples);
@@ -867,6 +871,12 @@ fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collecti
                             let (x, z) = (flow_x.block(col as u32 * per_tile, row as u32 * per_tile, samples), flow_z.block(col as u32 * per_tile, row as u32 * per_tile, samples));
                             if x.iter().chain(&z).any(|&v| v != 0) {
                                 tile.flow = x.into_iter().zip(z).flat_map(|(x, z)| [x as i8, z as i8]).collect();
+                            }
+                        }
+                        if foamy {
+                            let cover = foam.block(col as u32 * per_tile, row as u32 * per_tile, samples);
+                            if cover.iter().any(|&v| v != 0) {
+                                tile.foam = cover.into_iter().map(|v| v as u8).collect();
                             }
                         }
                     }
