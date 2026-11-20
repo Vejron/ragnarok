@@ -32,7 +32,7 @@ The Stridsbåt 90 (CB90) is the Swedish navy's fast assault craft, here at its r
 
 ## What changed to make it
 
-- **`Lift::Boat`** (`crates/shared/src/vehicles/spec.rs`) is a planing hull on waterjets, and `crates/sim/src/vehicle/boat.rs` moves it. Like `sail` and `dive` it sets the body's velocities from its state, the controls and the tick alone, so the client predicts its own boat with the same code. Its tuning numbers are the `CB90_*` constants. Its tests in `boat.rs` cover floating at its draft, top speed and planing, stopping, turning on the spot, banking, the shore and sinking.
+- **`Lift::Boat`** (`crates/shared/src/vehicles/spec.rs`) is a planing hull on waterjets, and `crates/sim/src/vehicle/boat.rs` moves it. Like `sail` and `dive` it sets the body's velocities from its state, the controls and the tick alone, so the client predicts its own boat with the same code. Its tuning numbers are the `CB90_*` constants, which it now reads from the `Boat` that `Lift::Boat` carries (`CB90_HULL`; [VEHICLES-XX.md](VEHICLES-XX.md)). Its tests in `boat.rs` cover floating at its draft, top speed and planing, stopping, turning on the spot, banking, the shore and sinking.
 - **`Lift::afloat`** says whether a kind is a hull that only floats: a ship, a submarine or a boat. Such a kind starts on the water, a wreck of it fills and sinks rather than being thrown, and it drifting alongside a swimmer only nudges them. These were matches on `Sail | Dive` before.
 - **A hull's own gun can be shown as the `pintle`.** A vehicle replicates at most one `turret`, which here is the cannon. The machine guns are `Show::Pintle` with `Aim::Bore`, the Strv S's gun's aim, so their yaw on the wire is always 0 and only their pitch changes. The wire format is unchanged.
 - **`crew_gun`** now leaves out every seat that works one of the vehicle's mounts, not only a `mount_seat`. The client reads which seats those are from the new `gunners` list in `tables.generated.json`.
@@ -43,9 +43,8 @@ The Stridsbåt 90 (CB90) is the Swedish navy's fast assault craft, here at its r
   - The driver's seat is the Strv S's `tanker` rig, which now takes the gun's pitch and its camera's offset (`CB90_AIM_BACK`, `CB90_AIM_UP`).
   - The new role `coxswain` both moves the boat and aims with a reticle, and has its own line of key hints.
   - The gunner's seat is a `gun` rig with `stand`. The tank music plays for its crew.
-- **Its spray** comes from `fx.jets`: `VehicleFx.jets` (`render/tyres.ts`) hands the boat to `JetSpray` (`render/jetspray.ts`), which throws it in layers of streaks, drops, mist and glints ([WATER-WAVES.md](WATER-WAVES.md)):
-  - under way, a rooster tail off the jets, and sheets off the bow once it is planing;
-  - in a crash stop, read from how fast it is slowing, sheets forward past the bow along both sides, a wall of water off the bow and a cloud of mist.
+- **Its spray** comes from `fx.drive: 'jets'`: `VehicleFx.jets` (`render/tyres.ts`) hands the boat to `JetSpray` (`render/jetspray.ts`), which throws a rooster tail off the jets under way in layers of streaks, drops, mist and glints ([WATER-WAVES.md](WATER-WAVES.md)). Behind its transom it leaves a white wash in the water (`VehicleFx.wash`).
+  - The sheets off its bow and the crash stop's storm of spray (sheets forward past the bow, a wall of water, a cloud of mist) were taken out in [VEHICLES-XX.md](VEHICLES-XX.md)'s round: they did not look like water. Its bow still digs in and its hull squats in a crash stop.
 - **Its wake** comes from `fx.floats`: its hull is pushed into the water's wave field (`render/waterwaves.ts`) as it moves, which raises its bow wave and the V behind it.
 - **`client/src/render/cb90.ts`** is `Cb90Model`, a `TankModel` with no wheels. Its cannon's pedestal and barrel are `turret` and `gun`, and its machine guns are `mg` and `mg_gun` on the hull. `machineGun(side)` gives either barrel, and the roof-gun presenter fires them in turn. `TankLayout.driverHead` may now be `null`, as the crew are drawn as soldiers.
 

@@ -59,11 +59,16 @@ const ENTRY_SPEED = 1.5
 const ENTRY_DRY = 0.25
 /** Faster than this, m/s, a hull ploughing through the water (not planing over it) throws water off its bow. */
 const PLOUGH_SPEED = 2.5
-/** A waterjet boat's crash stop starts to throw spray at this deceleration, m/s², and throws all of it at `CRASH_STOP_FULL`. */
-const CRASH_STOP_FROM = 3
-const CRASH_STOP_FULL = 8
+/** The speed through the water a boat's white wash behind its transom is at its fullest, m/s. */
+const WASH_FULL_SPEED = 8
+/** How churned that wash is at its fullest, the wave field's churn (`WaveStamp.churn`). */
+const WASH_CHURN = 3
 /** The speed a waterjet boat's rooster tail is at its biggest, m/s. */
 const JET_FULL_SPEED = 22
+/** The speed an outboard's prop wash is at its fullest, m/s. */
+const OUTBOARD_FULL_SPEED = 12
+/** Coming down onto the water this fast, m/s, an outboard boat's hull slaps its fullest burst of spray up. */
+const SLAP_SPEED = 2.5
 /** How quickly the smoothed slips and acceleration follow, per second. */
 const SMOOTHING = 12
 
@@ -467,7 +472,7 @@ export class VehicleFx {
     this.splashIn(world, here, afloat ? level : -Infinity, bottom, hx, hz, particles, dt)
     // Anything in the water and moving pushes the water aside, and the waves make its wake of that: a
     // bow wave and a V behind. How deep it sits is how far its bottom is under the surface; a planing
-    // hull rides up out of it and pushes less, a crash stop digs the bow in.
+    // hull rides up out of it and pushes less.
     const inWater = afloat && bottom < level + SKIM_DRAFT
     this.afloat = inWater
     this.dived = afloat && here.y + hull < level
@@ -476,19 +481,19 @@ export class VehicleFx {
       const sunk = Math.min(1, Math.max(0.1, level - bottom))
       // Only what breaks the surface pushes it aside: a dived submarine leaves it still.
       const breaking = Math.min(1, Math.max(0, (here.y + hull - level + DIVED) / DIVED))
-      const stop = this.fx.jets ? this.crashStop() : 0
       world.waves.hull(`vehicle ${this.id}`, {
         x: here.x,
         z: here.z,
         ahead: [ahead.x, ahead.z],
         halfWidth: hx,
         halfLength: hz,
-        depth: (sunk * 0.6 + 0.35 * stop) * breaking,
+        depth: sunk * 0.6 * breaking,
         velocity: [this.velocity.x, this.velocity.z],
-        churn: (skimming ? 1.5 : 0.6) + 3 * stop,
+        churn: skimming ? 1.5 : 0.6,
       })
+      if (this.fx.drive) this.wash(world, here, moving)
     }
-    if (inWater && particles && this.fx.jets) this.jets(world, here, level, dt)
+    if (inWater && particles && this.fx.drive) this.jets(world, here, level, dt)
     // Ploughing through rather than planing over: water heaps and is thrown off the bow.
     if (inWater && !skimming && !this.fx.floats && particles && moving > PLOUGH_SPEED && bottom < level && Math.random() < dt * moving * 0.5) {
       const bow = this.velocity.clone().setY(0).normalize().multiplyScalar(hz * 0.8).add(here)
@@ -499,7 +504,7 @@ export class VehicleFx {
       this.airTime = 0
       this.fall = 0
       // Its spray: fans off its back corners, a rooster tail off a snowmobile's track, a mist behind.
-      if (particles && !this.fx.jets) {
+      if (particles && !this.fx.drive) {
         const right = new Vector3(1, 0, 0).applyQuaternion(this.q).setY(0).normalize()
         const ahead = this.forward.clone().setY(0).normalize()
         world.jetSpray?.skim({ at: here, right, ahead, velocity: this.velocity, speed: moving, level, halfBeam: hx, halfLength: hz, tail: this.fx.roost ? 1 : 0.3 }, dt)
@@ -538,25 +543,47 @@ export class VehicleFx {
     world.waves?.splash(here.x, here.z, Math.max(hx, Math.min(hz, hx * 2)), Math.min(1.2, 0.1 + hard * 0.05), 1)
   }
 
-  /** How hard a waterjet boat is crash stopping, 0..1, from its deceleration while it still runs ahead. */
-  private crashStop() {
-    if (this.speed < 2) return 0
-    return Math.min(1, Math.max(0, (-this.accel - CRASH_STOP_FROM) / (CRASH_STOP_FULL - CRASH_STOP_FROM)))
+  /**
+   * The white wash a driven boat leaves behind its transom: the water its jets or propeller throw back,
+   * stamped into the wave field as a narrow, shallow, churned strip that the current then carries off
+   * and the water's shader draws as foam. It is whiter the faster the boat goes through the water
+   * (`moving`, m/s) and the harder it pulls away.
+   */
+  private wash(world: FxWorld, here: Vector3, moving: number) {
+    const [hx, , hz] = halfExtentsOf(this.kind)
+    const share = Math.min(1, moving / WASH_FULL_SPEED + Math.max(0, this.accel) * 0.1)
+    if (share <= 0) return
+    const ahead = this.forward.clone().setY(0).normalize()
+    const length = hz * (0.3 + 0.4 * share)
+    world.waves?.hull(`vehicle ${this.id} wash`, {
+      x: here.x - ahead.x * (hz + length),
+      z: here.z - ahead.z * (hz + length),
+      ahead: [ahead.x, ahead.z],
+      halfWidth: hx * 0.45,
+      halfLength: length,
+      depth: 0.04 * share,
+      velocity: [this.velocity.x, this.velocity.z],
+      churn: WASH_CHURN * share,
+    })
   }
 
   /**
-   * A waterjet boat in the water: its spray (`JetSpray`), the rooster tail and bow sheets under way and
-   * the storm of water a crash stop throws; the waves it makes are the wave field's.
+   * A driven boat in the water (`JetSpray`): the rooster tail off a waterjet boat's jets under way, or
+   * the low fan of an outboard's prop wash, bursting up as its hull slaps down off a wave.
    */
   private jets(world: FxWorld, here: Vector3, level: number, dt: number) {
     const [hx, , hz] = halfExtentsOf(this.kind)
     const right = new Vector3(1, 0, 0).applyQuaternion(this.q).setY(0).normalize()
     const ahead = this.forward.clone().setY(0).normalize()
-    const stop = this.crashStop()
     // Its speed ahead through the water, m/s, not over the ground: what its jets throw up.
     const [cx, cz] = world.currentAt?.(here.x, here.z) ?? [0, 0]
     const speed = this.speed - (cx * ahead.x + cz * ahead.z)
-    world.jetSpray?.throw({ at: here, right, ahead, velocity: this.velocity, speed, stop, level, halfBeam: hx, halfLength: hz, fullSpeed: JET_FULL_SPEED }, dt)
+    if (this.fx.drive === 'outboard') {
+      const slap = Math.min(1, Math.max(0, -this.velocity.y / SLAP_SPEED))
+      world.jetSpray?.outboard({ at: here, right, ahead, velocity: this.velocity, speed, level, halfBeam: hx, halfLength: hz, fullSpeed: OUTBOARD_FULL_SPEED, slap }, dt)
+    } else {
+      world.jetSpray?.throw({ at: here, right, ahead, velocity: this.velocity, speed, level, halfLength: hz, fullSpeed: JET_FULL_SPEED, tail: 1 }, dt)
+    }
   }
 
   /** Exhaust puffs when the driver pulls away, and a backfire when a sports car lifts off hard. */

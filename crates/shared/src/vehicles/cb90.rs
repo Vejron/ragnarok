@@ -157,6 +157,34 @@ const MG: Fire = Fire::Bullet {
     pen: Pen::ball(10.0, 6.0, CB90_MG_RANGE, 7.62),
 };
 
+/// Its planing hull on two waterjets, with their reversing buckets.
+const CB90_HULL: Boat = Boat {
+    draft: CB90_DRAFT,
+    thrust: CB90_THRUST,
+    brake: CB90_BRAKE,
+    brake_dip: CB90_BRAKE_DIP,
+    brake_squat: CB90_BRAKE_SQUAT,
+    astern_speed: CB90_ASTERN_SPEED,
+    spin_rate: CB90_SPIN_RATE,
+    plane_lift: CB90_PLANE_LIFT,
+    plane_speed: CB90_PLANE_SPEED,
+    bow_rise: CB90_BOW_RISE,
+    bow_planing: CB90_BOW_PLANING,
+    bank: CB90_BANK,
+    bank_max: CB90_BANK_MAX,
+    // A deep vee: it holds its line, and drives on through whatever the water does.
+    heave: 3.0,
+    coast: 0.8,
+    level: 10.0,
+    rock: 3.0,
+    keel: 2.5,
+    grip: 0.0,
+    helm: 3.0,
+    thrust_steer: 0.0,
+    lever: 0.3,
+    scrape: 0.0,
+};
+
 /// It heaves into a tree on the shore rather than stopping on it, and starts floating at its draft.
 const CB90_BODY: Body = Body { drop_y: CB90_HALF_EXTENTS[1] - CB90_DRAFT, heavy: true, ram: 2.0, crash: 0.3, ..CAR };
 
@@ -186,7 +214,7 @@ pub(super) const CB90: VehicleDef = VehicleDef {
         steer_lock: 0.0,
         steer_axles: Spec::FRONT_STEER,
         turn_rate: CB90_TURN_RATE,
-        lift: Lift::Boat,
+        lift: Lift::Boat(&CB90_HULL),
         linear_damping: 0.0,
         // Its engines low in the hull: it rolls back upright.
         com_drop: 0.4,

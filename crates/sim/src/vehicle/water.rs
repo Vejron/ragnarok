@@ -73,8 +73,10 @@ const SWIM_LEVEL: f32 = 10.0;
 const SWIM_ROCK: f32 = 2.5;
 
 /// The water under a hull: the surface's height there (metres, averaged along the hull), which way is
-/// up off it, how fast it is rising under the hull's middle (m/s), its slope there `[dh/dx, dh/dz]`
-/// and the current there (horizontal, m/s).
+/// up off it, how fast it is rising under the hull's middle (m/s), its slope there `[dh/dx, dh/dz]`,
+/// the current under it (horizontal, m/s, averaged over the hull) and how fast the water under it turns
+/// (rad/s, anticlockwise from above): where its bow and stern, or its two sides, are in water running
+/// differently, as across an eddy line.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Water {
     pub height: f32,
@@ -82,6 +84,7 @@ pub(crate) struct Water {
     pub rise: f32,
     pub slope: [f32; 2],
     pub flow: Vector,
+    pub turn: f32,
 }
 
 impl Water {
@@ -110,8 +113,18 @@ pub(crate) fn water_under(waters: &Waters, time: f32, body: &RigidBody, spec: &S
     let along = (front - back) / (2.0 * hz);
     let across = (height(right * hx) - height(-right * hx)) / (2.0 * hx);
     let normal = (Vector::Y - forward * along - right * across).normalize();
-    let flow = Vector::new(middle.flow[0], 0.0, middle.flow[1]);
-    Some(Water { height: (front + back + 2.0 * middle.height) / 4.0, normal, rise: middle.rise, slope: middle.slope, flow })
+    // The current at its bow, stern and sides: the water over dry land is still. A floating body turns
+    // as the water turns, which is half its vorticity; the difference along it and the difference
+    // across it each give that turn in a shear across their line, and the full turn in a whirl.
+    let current = |offset: Vector| {
+        let [x, z] = waters.flow_at(at.x + offset.x, at.z + offset.z);
+        Vector::new(x, 0.0, z)
+    };
+    let (bow, stern) = (current(forward * hz), current(-forward * hz));
+    let (port, starboard) = (current(-right * hx), current(right * hx));
+    let turn = 0.5 * ((stern - bow).dot(right) / (2.0 * hz) + (starboard - port).dot(forward) / (2.0 * hx));
+    let flow = (bow + stern + Vector::new(middle.flow[0], 0.0, middle.flow[1]) * 2.0) / 4.0;
+    Some(Water { height: (front + back + 2.0 * middle.height) / 4.0, normal, rise: middle.rise, slope: middle.slope, flow, turn })
 }
 
 /// `0` at `low`, `1` at `high`, smoothly in between.

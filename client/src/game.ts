@@ -1166,7 +1166,7 @@ export class Game {
     }
     const eye = this.scene.camera.position
     this.waves.update(dt, eye)
-    this.waterRefine.update(eye, this.surroundings.mirrored)
+    this.waterRefine.update(eye, this.surroundings.mirrored?.y ?? null)
     this.view.update(dt, this.effects, this.cameraAt.set(eye.x, eye.y, eye.z), this.fxWorld)
     const ticks = this.runTicks(dt)
     const renderTick = this.clock.tickAt(now) - this.clock.interpDelay
@@ -1216,7 +1216,7 @@ export class Game {
     this.voice.setTalking(this.localId !== null && this.player.alive && this.input.talkHeld)
     this.voice.update(this.localId, position, nearby)
     this.scene.contact.end()
-    this.surroundings.mirrorWater()
+    this.surroundings.mirrorWater(dt)
     const stats = this.report(moment)
     this.holdMap(stats, moment)
     this.drawHud(stats, now)

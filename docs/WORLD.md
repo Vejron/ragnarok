@@ -509,6 +509,12 @@ The data has **no surface height or depth, and streams no width**, so:
 - `Tile.foam` holds how much of a river's surface is under foam at each sample, a byte in 255ths,
   empty in a tile with none: made where the river runs white and carried downstream by the solved
   current. Only the water shader reads it. See [RIVER-FLOW.md](RIVER-FLOW.md);
+- `Tile.stir` holds how a river's current stirs its surface at each sample, two signed bytes in
+  `STIR_STEP`s (0.005 1/s): how it wells up in boils or gathers into a foam line, and how fast it
+  spins. `Tile.lane` holds its stream function, an `i16` a sample in 1024ths of `LANE_FLUX`
+  (10 m³/s), wrapping round: the client draws the river's streaks along its lines. Both are empty
+  in a tile where nothing flows, and only the water shader reads them. See
+  [RIVER-SURFACE.md](RIVER-SURFACE.md);
 - streams are drawn 2.5 m wide as ribbons on the terrain (`Tile.streams`), and the stretches that
   run through a lake or river polygon are dropped;
 - a stream goes under the roads and railways it crosses, as through a culvert: a way tagged
@@ -788,6 +794,7 @@ under the deck, and nobody spawns on it. A road that crosses under a bridge is n
 `WORLD_VERSION` 33 added the foam a river carries after `Tile.flow` (`Tile::foam`, RIVER-FLOW.md).
 `WORLD_VERSION` 34 added the colour of the world's rivers to the manifest (`Manifest::river_tint`), and a river's `Tile::water` is now shaped by its current: not level across, and standing in waves in a rapid (RIVER-SURFACE.md).
 `WORLD_VERSION` 35 added whether the lakes and the sea take that colour too (`Manifest::tint_all`).
+`WORLD_VERSION` 36 added how a river's current stirs its surface after `Tile.foam` (`Tile::stir`, `Tile::lane`, RIVER-SURFACE.md).
 
 Both sides check `WORLD_VERSION` and read only the current layout: there is no reading of older
 worlds. When the layout changes, bump it in `crates/shared/src/world.rs` **and**

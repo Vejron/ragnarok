@@ -8,7 +8,7 @@ import { Particles } from '@/render/particles'
 import { VehicleFx, type FxWorld } from '@/render/tyres'
 import { JetSpray } from '@/render/jetspray'
 import { COVER_FARM, COVER_WATER, RAIL_TRAIN, RAIL_TRAM, ROAD_MINOR, ROAD_PATH, NO_WATER } from '@/world'
-import { KIND_CB90, KIND_HELI, KIND_JEEP, KIND_PLANE, KIND_SNOWMOBILE, KIND_SPORTS, KIND_TANK } from '@/net/codec'
+import { KIND_CB90, KIND_HELI, KIND_JEEP, KIND_PLANE, KIND_RAFT, KIND_SNOWMOBILE, KIND_SPORTS, KIND_TANK } from '@/net/codec'
 import { setIced, setWinter } from '@/render/season'
 import { JEEP_RIDE_HEIGHT, SNOWMOBILE_RIDE_HEIGHT, TANK_HALF_EXTENTS, TANK_RIDE_HEIGHT } from '@/sim/consts'
 import { SnowRoost } from '@/render/snowroost'
@@ -234,12 +234,12 @@ describe('VehicleFx', () => {
   })
 })
 
-describe('a waterjet boat', () => {
+describe('a boat\'s spray', () => {
   /**
-   * A Stridsbåt 90 afloat heading -Z from `speed` m/s, changing speed at `accel` m/s², for a second: the
-   * water it has in the air at the end, all of it and the mist alone.
+   * A boat of `kind` (a Stridsbåt 90 unless said) afloat heading -Z from `speed` m/s, changing speed at
+   * `accel` m/s², for a second: the water it has in the air at the end, all of it and the mist alone.
    */
-  function run(speed: number, accel: number) {
+  function run(speed: number, accel: number, kind = KIND_CB90, bob = 0) {
     const glow = new Particles(2000, true)
     const jetSpray = new JetSpray(glow)
     const w: FxWorld & { smoke: Particles; skids: Skidmarks } = {
@@ -252,25 +252,34 @@ describe('a waterjet boat', () => {
       camera: new Vec3(0, 5, 10),
       jetSpray,
     }
-    const fx = new VehicleFx(1, KIND_CB90)
+    const fx = new VehicleFx(1, kind)
     const dt = 1 / 60
     for (let i = 0; i < 60; i++) {
       const t = i * dt
-      fx.update(w, [0, 0.2, -(speed * t + 0.5 * accel * t * t)], [0, 0, 0, 1], 0, true, dt)
+      // Bobbing `bob` metres up and down twice a second, as over a rapid's waves.
+      fx.update(w, [0, 0.2 + bob * Math.sin(4 * Math.PI * t), -(speed * t + 0.5 * accel * t * t)], [0, 0, 0, 1], 0, true, dt)
       jetSpray.update(dt)
     }
     return { water: jetSpray.alive, mist: jetSpray.misty }
   }
 
-  it('throws nothing lying still, a rooster tail of streaks, drops and mist under way, and a storm of it in a crash stop', () => {
+  it('is a rooster tail of streaks, drops and mist off a waterjet boat under way, none lying still, and no more in a crash stop', () => {
     expect(run(0, 0)).toEqual({ water: 0, mist: 0 })
     const cruising = run(20, 0)
-    // About a thousand drops a second in the rooster tail and bow sheets, and a cloud behind.
+    // About a thousand drops a second in the rooster tail, and a cloud behind.
     expect(cruising.water).toBeGreaterThan(500)
     expect(cruising.mist).toBeGreaterThan(20)
+    // Stopping, its tail dies down with its speed: no storm of water thrown forward.
     const stopping = run(20, -10)
-    expect(stopping.water).toBeGreaterThan(cruising.water * 2)
-    expect(stopping.mist).toBeGreaterThan(cruising.mist * 2)
+    expect(stopping.water).toBeLessThan(cruising.water)
+  })
+
+  it('is a low fan off the raft\'s outboard under way, far less than a rooster tail, and more as it slaps over waves', () => {
+    expect(run(0, 0, KIND_RAFT)).toEqual({ water: 0, mist: 0 })
+    const smooth = run(12, 0, KIND_RAFT)
+    expect(smooth.water).toBeGreaterThan(100)
+    expect(smooth.water).toBeLessThan(run(20, 0).water / 2)
+    expect(run(12, 0, KIND_RAFT, 0.15).water).toBeGreaterThan(smooth.water * 1.2)
   })
 })
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { Waters } from '@/sim/waters'
+import { easeMirror, Waters, type ShownMirror, type WaterPlane } from '@/sim/waters'
 import type { TileGround } from '@/sim/terrain'
 import { NO_WATER } from '@/world'
 import { CHURN_HEIGHT } from '@/sim/waves'
@@ -101,19 +101,19 @@ describe('the mirrored water', () => {
   river.set({ col: 0, row: 0, hash: 0 }, { x0: -200, z0: -200, cell: 5, side: SIDE, heights: new Float32Array(SIDE * SIDE).fill(-3) }, levels)
 
   it('mirrors the water the camera looks at, a gently falling stretch of it as one level', () => {
-    expect(river.planeNear(0, 0, 1, 0)).toBeCloseTo(1.8, 0)
-    expect(river.planeNear(0, 0, -1, 0)).toBeCloseTo(4.8, 0)
+    expect(river.planeNear(0, 0, 1, 0)!.y).toBeCloseTo(1.8, 0)
+    expect(river.planeNear(0, 0, -1, 0)!.y).toBeCloseTo(4.8, 0)
   })
 
   it('changes level once as the camera turns from one water to the other, later than it would afresh', () => {
     // From 5 m above the rapid, looking east (downstream) round through north to west (upstream), a degree at a time.
     const turn = (keep: boolean) => {
-      let kept: number | null = null
+      let kept: WaterPlane | null = null
       const levels: number[] = []
       for (let degree = 0; degree <= 180; degree++) {
         const a = (degree * Math.PI) / 180
         kept = river.planeNear(-5, 0, Math.cos(a), -Math.sin(a), keep ? kept : null)
-        levels.push(kept!)
+        levels.push(kept!.y)
       }
       return levels
     }
@@ -123,5 +123,86 @@ describe('the mirrored water', () => {
     expect(afresh).toHaveLength(1)
     expect(kept).toHaveLength(1)
     expect(kept[0]).toBeGreaterThan(afresh[0]! + 10)
+  })
+})
+
+describe('the mirrored plane on a falling river', () => {
+  // A river 400 m wide falling 4 cm a metre towards +x, as a rapid's run does, and a lake beside it.
+  const SIDE = 81
+  const make = (fall: number) => {
+    const waters = new Waters(200, 400)
+    const levels = new Float32Array(SIDE * SIDE)
+    for (let j = 0; j < SIDE; j++) for (let i = 0; i < SIDE; i++) levels[j * SIDE + i] = 20 - (i * 5 - 200) * fall
+    waters.set({ col: 0, row: 0, hash: 0 }, { x0: -200, z0: -200, cell: 5, side: SIDE, heights: new Float32Array(SIDE * SIDE).fill(-3) }, levels)
+    return waters
+  }
+
+  it('leans with the river, so the water far up and down it is mirrored too', () => {
+    const plane = make(0.04).planeNear(0, 0, -1, 0)!
+    expect(plane.slopeX).toBeCloseTo(-0.04, 2)
+    expect(plane.slopeZ).toBeCloseTo(0, 3)
+    expect(plane.y).toBeCloseTo(20, 1)
+  })
+
+  it('lies level on a lake', () => {
+    const plane = make(0).planeNear(0, 0, 1, 0)!
+    expect(plane.slopeX).toBeCloseTo(0, 6)
+    expect(plane.slopeZ).toBeCloseTo(0, 6)
+    expect(plane.y).toBeCloseTo(20, 3)
+  })
+
+  it('moves smoothly as the camera goes up the river', () => {
+    const waters = make(0.04)
+    let kept: WaterPlane | null = null
+    let last: number | null = null
+    for (let x = 60; x >= -60; x -= 0.5) {
+      kept = waters.planeNear(x, 0, -1, 0, kept)
+      // The mirrored plane under the camera stays on the water there, well within the shader's 20 cm,
+      // and never jumps: it moves no more than the river falls in the step and a little.
+      expect(Math.abs(kept!.y - (20 - x * 0.04))).toBeLessThan(0.05)
+      if (last !== null) expect(Math.abs(kept!.y - last - 0.02)).toBeLessThan(0.02)
+      last = kept!.y
+    }
+  })
+})
+
+describe('the mirror as shown', () => {
+  const at = (y: number): WaterPlane => ({ x: 0, y, z: 0, slopeX: 0, slopeZ: 0 })
+  const DT = 1 / 60
+
+  it('slides from one water to another and never jumps', () => {
+    let shown: ShownMirror | null = { plane: at(5), strength: 1 }
+    let last = 5
+    for (let frame = 0; frame < 60; frame++) {
+      shown = easeMirror(shown, at(2), DT)!
+      // 3 m apart: no frame moves it more than 30 cm.
+      expect(Math.abs(shown.plane.y - last)).toBeLessThan(0.3)
+      last = shown.plane.y
+    }
+    expect(last).toBeCloseTo(2, 1)
+  })
+
+  it('fades out where no water is about, and back in', () => {
+    let shown: ShownMirror | null = { plane: at(5), strength: 1 }
+    const out: number[] = []
+    while (shown) {
+      shown = easeMirror(shown, null, DT)
+      out.push(shown?.strength ?? 0)
+    }
+    // Over about half a second, a little a frame.
+    expect(out.length).toBeGreaterThan(25)
+    out.forEach((strength, k) => k > 0 && expect(out[k - 1]! - strength).toBeLessThan(0.05))
+    shown = easeMirror(null, at(5), DT)
+    expect(shown!.strength).toBeLessThan(0.05)
+  })
+
+  it('finds water far below a camera high over it', () => {
+    // Water only 400 m and more from the camera, to the west.
+    const SIDE = 81
+    const waters = new Waters(400, 800)
+    const levels = new Float32Array(SIDE * SIDE).fill(NO_WATER)
+    for (let j = 0; j < SIDE; j++) for (let i = 0; i < 20; i++) levels[j * SIDE + i] = 2
+    waters.set({ col: 0, row: 0, hash: 0 }, { x0: -400, z0: -400, cell: 10, side: SIDE, heights: new Float32Array(SIDE * SIDE).fill(-3) }, levels)
+    expect(waters.planeNear(0, 0, -1, 0)?.y).toBeCloseTo(2, 3)
   })
 })

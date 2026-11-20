@@ -140,6 +140,12 @@ export const KIND_AMV = 33
  */
 export const KIND_CB90 = 34
 
+/**
+ * The raft: a small inflatable river-rafting boat for two with a powerful outboard, light and shallow
+ * enough to run a rapid.
+ */
+export const KIND_RAFT = 35
+
 /** Fixed simulation rate, in ticks per second. */
 export const TICK_RATE = 60
 
@@ -2349,6 +2355,119 @@ export const PLANE_REARM_TICKS = 3 * TICK_RATE
 
 /** The pilot behind the wings, the gunner standing in the ring. */
 export const PLANE_SEAT_HEADS = [[0.0, 0.98, -0.45], [0.0, 1.15, 0.7]] as const
+
+/**
+ * The raft (`KIND_RAFT`): a small inflatable river-rafting boat for two, 3.6 m long and 1.6 m across
+ * over its tubes, with a big outboard on its transom. Its driver sits on the left tube at the stern
+ * with a hand on the tiller; the other sits on the thwart up in the bow. It floats a hand's breadth
+ * deep, so it runs where the river is too thin for a heavier boat, and the motor shoves it out of the
+ * water onto the plane at once.
+ */
+export const RAFT_SEATS = 2
+
+/** Half the box over its tubes, metres: 3.6 m long, 1.6 m across and 0.5 m deep, the tubes' height. */
+export const RAFT_HALF_EXTENTS = [0.8, 0.25, 1.8] as const
+
+/** How deep it floats at rest, metres: an empty raft and its motor are light. */
+export const RAFT_DRAFT = 0.12
+
+/** About 27 knots: a 40 hp outboard on a boat this light. */
+export const RAFT_MAX_SPEED = 14.0
+
+/** How hard the outboard pushes it, m/s² at a standstill: it leaps off the mark. */
+export const RAFT_THRUST = 6.0
+
+/**
+ * How hard it stops with the outboard put astern, m/s², and how far its bow digs in (radians) and its
+ * tubes squat (metres) as it does.
+ */
+export const RAFT_BRAKE = 4.5
+export const RAFT_BRAKE_DIP = 0.06
+export const RAFT_BRAKE_SQUAT = 0.05
+
+/** Its top speed astern, m/s. */
+export const RAFT_ASTERN_SPEED = 3.0
+
+/**
+ * How fast it turns under way with the outboard pushing, rad/s: it whips its light stern round, a
+ * circle about 15 m across flat out.
+ */
+export const RAFT_TURN_RATE = 1.9
+
+/** How fast the outboard swings it round standing still, rad/s. */
+export const RAFT_SPIN_RATE = 1.4
+
+/**
+ * How much higher it rides on the plane, metres, and the speeds it climbs onto it between, m/s: early,
+ * as a light flat floor does.
+ */
+export const RAFT_PLANE_LIFT = 0.06
+export const RAFT_PLANE_SPEED = [3.0, 7.0] as const
+
+/**
+ * How far its bow lifts as it climbs onto the plane and how far it stays up once on it, radians: the
+ * light bow rears up under the motor's shove.
+ */
+export const RAFT_BOW_RISE = 0.16
+export const RAFT_BOW_PLANING = 0.05
+
+/** How far it banks into a turn, radians for each rad/s of turn and m/s of speed, and at most. */
+export const RAFT_BANK = 0.016
+export const RAFT_BANK_MAX = 0.22
+
+/** How quickly its rise and fall follows the water's, per second: the face of a wave lifts it at once. */
+export const RAFT_HEAVE = 10.0
+
+/**
+ * The share of its sideways slide its floor and the outboard's leg take out a second: it carves its
+ * turns, with a little slide at the start of a hard one.
+ */
+export const RAFT_KEEL = 3.5
+
+/** How hard it slows with the outboard let go, m/s²: it sits down in the water at once. */
+export const RAFT_COAST = 3.0
+
+/**
+ * How hard it is brought level with the water under it, per second², and how quickly its roll and
+ * pitch die away, per second: it pitches and rolls over every wave, and bobs.
+ */
+export const RAFT_LEVEL = 40.0
+export const RAFT_ROCK = 2.5
+
+/**
+ * The share of its way through the water the water takes out a second while it coasts: the river
+ * takes it up at once.
+ */
+export const RAFT_GRIP = 1.5
+
+/** How quickly its rate of turn follows the helm and the water, per second: it snaps round at once. */
+export const RAFT_HELM = 7.0
+
+/**
+ * The share of its turning that comes from the outboard's thrust: let go, it answers the helm only
+ * lazily.
+ */
+export const RAFT_THRUST_STEER = 0.65
+
+/**
+ * How far the water's own turning turns it, a share of the water's rotation: more than a speck of
+ * foam turns, as the slack water holds one end while the current takes the other.
+ */
+export const RAFT_LEVER = 2.0
+
+/** The share of its drive and grip it keeps scraping over a shoal on its rubber floor. */
+export const RAFT_SCRAPE = 0.5
+
+/**
+ * The outboard on the transom: where it turns on its bracket, in the hull frame, how long its tiller
+ * is, metres, and how far it swings either way, radians.
+ */
+export const RAFT_MOTOR_PIVOT = [0.0, 0.1, 1.82] as const
+export const RAFT_TILLER = 0.75
+export const RAFT_MOTOR_SWING = 0.5
+
+/** The driver on the left tube at the stern, a hand on the tiller, and the other on the thwart in the bow. */
+export const RAFT_SEAT_HEADS = [[-0.5, 1.05, 1.15], [0.0, 1.0, -0.85]] as const
 
 /**
  * The Roadster (`KIND_ROADSTER`): Tesla's 2026 two-seater with SpaceX cold-gas thrusters fed from a

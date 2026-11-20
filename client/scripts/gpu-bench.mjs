@@ -65,7 +65,7 @@ for (const [i, a] of args.entries()) {
 /** What `--breakdown` turns off, one at a time: [name, JS that turns it off and returns an undo]. */
 const PARTS = [
   ['shadows', `(() => { const s = e.sun.shadow; s.enabled = false; return () => { s.enabled = true } })()`],
-  ['reflection', `(() => { const h = r.reflectionHeight; r.reflectionHeight = null; return () => { r.reflectionHeight = h } })()`],
+  ['reflection', `(() => { const p = r.reflectionPlane; r.reflectionPlane = null; return () => { r.reflectionPlane = p } })()`],
   ['sky', `(() => { const k = e.sky; e.sky = null; return () => { e.sky = k } })()`],
   ['bloom', `(() => { const b = e.bloom; e.bloom = null; return () => { e.bloom = b } })()`],
   ['ink', `(() => { const i = e.ink; e.ink = null; return () => { e.ink = i } })()`],

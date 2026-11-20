@@ -4,6 +4,7 @@ pub use crate::vehicles::amv::*;
 pub use crate::vehicles::drone::*;
 pub use crate::vehicles::bus::*;
 pub use crate::vehicles::cb90::*;
+pub use crate::vehicles::raft::*;
 pub use crate::vehicles::golf_cart::*;
 pub use crate::vehicles::heli::*;
 pub use crate::vehicles::hen::*;
@@ -112,6 +113,9 @@ pub const KIND_AMV: u8 = 33;
 /// The Stridsbåt 90: a fast assault craft on waterjets, its driver working twin machine guns on the bow
 /// and its gunner a 25 mm automatic cannon in a turret on the wheelhouse roof.
 pub const KIND_CB90: u8 = 34;
+/// The raft: a small inflatable river-rafting boat for two with a powerful outboard, light and shallow
+/// enough to run a rapid.
+pub const KIND_RAFT: u8 = 35;
 
 /// Fixed simulation rate, in ticks per second.
 pub const TICK_RATE: u32 = 60;

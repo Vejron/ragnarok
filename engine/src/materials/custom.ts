@@ -47,7 +47,7 @@ const MIRROR_CLIP_MARK = '  // (mirror clip)'
  * ever does, so the main view's must not hold the statement at all.
  */
 export function mirrorCode(code: string): string {
-  return code.replace(MIRROR_CLIP_MARK, `  if (frame.lightCount.z > 0.5 && in.world.y < frame.lightCount.y) {
+  return code.replace(MIRROR_CLIP_MARK, `  if (frame.lightCount.z > 0.5 && dot(in.world, frame.mirror.xyz) < frame.mirror.w) {
     discard;
   }`)
 }

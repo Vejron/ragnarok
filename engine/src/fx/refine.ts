@@ -38,15 +38,13 @@ const WORDS = ${WORDS}u;
 @group(0) @binding(5) var<storage, read_write> outVertices: array<u32>;
 @group(0) @binding(6) var<storage, read_write> outIndices: array<u32>;
 @group(0) @binding(7) var<storage, read_write> counter: atomic<u32>;
-@group(0) @binding(8) var<storage, read> marks: array<f32>;
-@group(0) @binding(9) var<storage, read> normals: array<f32>;
+// Each source vertex's normal, then its uv's y; and its colour. Held together so the pass binds no more
+// storage buffers than the renderer's device allows (\`VERTEX_SCAR_BUFFERS\`).
+@group(0) @binding(8) var<storage, read> facings: array<vec4f>;
+@group(0) @binding(9) var<storage, read> colors: array<vec4f>;
 
 fn position(v: u32) -> vec3f {
   return vec3f(positions[v * 3u], positions[v * 3u + 1u], positions[v * 3u + 2u]);
-}
-
-fn normalOf(v: u32) -> vec3f {
-  return vec3f(normals[v * 3u], normals[v * 3u + 1u], normals[v * 3u + 2u]);
 }
 
 // Where vertex (i, j) of a refined triangle is in its list: row i holds LEVELS + 1 - i of them.
@@ -56,7 +54,7 @@ fn corner(i: u32, j: u32) -> u32 {
 
 // One thread a source triangle: one whose middle is in the square is cut into LEVELS² triangles, its
 // new vertices blended from its corners and written in the arena's layout, with uv's x 1 to mark them
-// and its y (\`marks\`) and its normal blended from the corners'.
+// and its y (\`marks\`), its normal and its colour blended from the corners'.
 @compute @workgroup_size(64)
 fn refine(@builtin(global_invocation_id) id: vec3u) {
   let t = id.x;
@@ -92,8 +90,10 @@ fn refine(@builtin(global_invocation_id) id: vec3u) {
       let wa = 1.0 - wb - wc;
       let p = a * wa + b * wb + c * wc;
       let q = custom[ia] * wa + custom[ib] * wb + custom[ic] * wc;
-      let mark = marks[ia] * wa + marks[ib] * wb + marks[ic] * wc;
-      let facing = normalOf(ia) * wa + normalOf(ib) * wb + normalOf(ic) * wc;
+      let both = facings[ia] * wa + facings[ib] * wb + facings[ic] * wc;
+      let mark = both.w;
+      let facing = both.xyz;
+      let tint = clamp(colors[ia] * wa + colors[ib] * wb + colors[ic] * wc, vec4f(0.0), vec4f(1.0));
       let o = (base + corner(i, j)) * WORDS;
       outVertices[o] = bitcast<u32>(p.x);
       outVertices[o + 1u] = bitcast<u32>(p.y);
@@ -103,8 +103,8 @@ fn refine(@builtin(global_invocation_id) id: vec3u) {
       outVertices[o + 5u] = bitcast<u32>(facing.z);
       outVertices[o + 6u] = bitcast<u32>(1.0);
       outVertices[o + 7u] = bitcast<u32>(mark);
-      outVertices[o + 8u] = 0xffffffffu;
-      outVertices[o + 9u] = 0xffffffffu;
+      outVertices[o + 8u] = pack2x16unorm(tint.xy);
+      outVertices[o + 9u] = pack2x16unorm(tint.zw);
       outVertices[o + 10u] = bitcast<u32>(q.x);
       outVertices[o + 11u] = bitcast<u32>(q.y);
       outVertices[o + 12u] = bitcast<u32>(q.z);
@@ -137,8 +137,8 @@ fn refine(@builtin(global_invocation_id) id: vec3u) {
  * vertices move by something finer than its own mesh (water under a wave field). Each source triangle
  * whose middle is in the square becomes `REFINE_LEVELS`² triangles, their corners blended from its own
  * position and `custom`, and marked with 1 in uv's x so a shader can tell them from the source's. Uv's y
- * is blended from the corners' too, for a source that keeps a value of its own there, and so is the
- * normal (straight up for a source without normals).
+ * is blended from the corners' too, for a source that keeps a value of its own there, and so are the
+ * normal (straight up for a source without normals) and the colour (white for a source without colours).
  *
  * The result is `geometry`, for a mesh of the caller's with the sources' material: a fixed slot in the
  * geometry arena that a compute pass fills, then copies in, whenever the square or the sources change.
@@ -267,8 +267,8 @@ class RefineGpu {
   private readonly layout: GPUBindGroupLayout
   private positions: GPUBuffer | null = null
   private custom: GPUBuffer | null = null
-  private marks: GPUBuffer | null = null
-  private normals: GPUBuffer | null = null
+  private facings: GPUBuffer | null = null
+  private colors: GPUBuffer | null = null
   private indices: GPUBuffer | null = null
   group: GPUBindGroup | null = null
   triangles = 0
@@ -303,7 +303,7 @@ class RefineGpu {
     this.pipeline = device.createComputePipeline({ label: 'refine', layout: device.createPipelineLayout({ bindGroupLayouts: [this.layout] }), compute: { module, entryPoint: 'refine' } })
   }
 
-  /** Uploads the sources' positions, custom, uv y's, normals and indices end to end, and the table of where each starts. */
+  /** Uploads the sources' positions, custom, uv y's, normals, colours and indices end to end, and the table of where each starts. */
   upload(sources: readonly Geometry[]) {
     let vertices = 0
     let triangles = 0
@@ -327,8 +327,8 @@ class RefineGpu {
     }
     this.positions = fit(this.positions, vertices * 12, 'refine positions')
     this.custom = fit(this.custom, vertices * 16, 'refine custom')
-    this.marks = fit(this.marks, vertices * 4, 'refine marks')
-    this.normals = fit(this.normals, vertices * 12, 'refine normals')
+    this.facings = fit(this.facings, vertices * 16, 'refine normals')
+    this.colors = fit(this.colors, vertices * 16, 'refine colours')
     this.indices = fit(this.indices, triangles * 12, 'refine indices in')
     let v = 0
     let t = 0
@@ -336,17 +336,19 @@ class RefineGpu {
       const count = g.positions.length / 3
       this.device.queue.writeBuffer(this.positions, v * 12, g.positions as Float32Array<ArrayBuffer>)
       if (g.custom) this.device.queue.writeBuffer(this.custom, v * 16, g.custom as Float32Array<ArrayBuffer>)
-      // A source's uv y, or 0 for one without uvs (the buffer may hold an earlier source's).
-      const marks = new Float32Array(count)
-      if (g.uvs) for (let i = 0; i < count; i++) marks[i] = g.uvs[i * 2 + 1]!
-      this.device.queue.writeBuffer(this.marks, v * 4, marks)
-      // A source's normals, or straight up for one without any.
-      let facing = g.normals
-      if (!facing) {
-        facing = new Float32Array(count * 3)
-        for (let i = 0; i < count; i++) facing[i * 3 + 1] = 1
+      // A source's normals, or straight up for one without any, each with its uv y, or 0 for one
+      // without uvs (the buffer may hold an earlier source's).
+      const facing = new Float32Array(count * 4)
+      for (let i = 0; i < count; i++) {
+        if (g.normals) facing.set([g.normals[i * 3]!, g.normals[i * 3 + 1]!, g.normals[i * 3 + 2]!], i * 4)
+        else facing[i * 4 + 1] = 1
+        if (g.uvs) facing[i * 4 + 3] = g.uvs[i * 2 + 1]!
       }
-      this.device.queue.writeBuffer(this.normals, v * 12, facing as Float32Array<ArrayBuffer>)
+      this.device.queue.writeBuffer(this.facings, v * 16, facing)
+      // A source's colours, or white for one without four a vertex.
+      let tint = g.colors
+      if (!tint || tint.length !== count * 4) tint = new Float32Array(count * 4).fill(1)
+      this.device.queue.writeBuffer(this.colors, v * 16, tint as Float32Array<ArrayBuffer>)
       const indices = g.indices instanceof Uint32Array ? g.indices : Uint32Array.from(g.indices ?? [])
       if (indices.length) this.device.queue.writeBuffer(this.indices, t * 12, indices as Uint32Array<ArrayBuffer>)
       v += count
@@ -364,13 +366,13 @@ class RefineGpu {
         { binding: 5, resource: { buffer: this.outVertices } },
         { binding: 6, resource: { buffer: this.outIndices } },
         { binding: 7, resource: { buffer: this.counter } },
-        { binding: 8, resource: { buffer: this.marks } },
-        { binding: 9, resource: { buffer: this.normals } },
+        { binding: 8, resource: { buffer: this.facings } },
+        { binding: 9, resource: { buffer: this.colors } },
       ],
     })
   }
 
   destroy() {
-    for (const b of [this.uniforms, this.counter, this.outVertices, this.outIndices, this.sourceTable, this.positions, this.custom, this.marks, this.normals, this.indices]) b?.destroy()
+    for (const b of [this.uniforms, this.counter, this.outVertices, this.outIndices, this.sourceTable, this.positions, this.custom, this.facings, this.colors, this.indices]) b?.destroy()
   }
 }

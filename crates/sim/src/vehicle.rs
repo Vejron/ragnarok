@@ -88,7 +88,7 @@ const FRICTION_SLIP: f32 = 12.0;
 /// How high a track's end wheels ride over flat ground, metres: ground rising more than this under the
 /// nose or the tail lifts it.
 const TRACK_END_CLEAR: f32 = 0.25;
-/// Friction of a tracked hull's belly, against 0.4 for anything else's.
+/// Friction of a tracked hull's belly or a rubber boat's floor, against 0.4 for anything else's.
 const TRACKED_HULL_FRICTION: f32 = 0.1;
 /// Gravity, m/s², for the sag of a vehicle's springs under its own weight.
 const GRAVITY_SAG: f32 = 9.81;
@@ -599,8 +599,10 @@ impl Physics {
             .ccd_enabled(is_drone(kind))
             .build();
         let body = self.bodies.insert(body);
-        // A tracked hull's belly slides over what it rests on rather than dragging on it.
-        let mut chassis = hull(kind).friction(if heavy(kind) { TRACKED_HULL_FRICTION } else { 0.4 });
+        // A tracked hull's belly slides over what it rests on rather than dragging on it, as a rubber
+        // boat's wet floor slides over the rocks it scrapes across.
+        let slides = heavy(kind) || matches!(spec.lift, Lift::Boat(boat) if boat.scrape > 0.0);
+        let mut chassis = hull(kind).friction(if slides { TRACKED_HULL_FRICTION } else { 0.4 });
         // A tracked hull or a swept one keeps the mass and balance of its whole box, whatever its
         // outline cuts away.
         chassis = if spec.com_drop > 0.0 || heavy(kind) || spec.sweep > 0.0 {
@@ -837,7 +839,7 @@ impl Physics {
     /// Applies the driver's controls to the wheels for the next [`Physics::step_cars`].
     pub fn drive_car(&mut self, id: u32, controls: CarControls, dt: f32) {
         let Some(car) = self.cars.get_mut(&id) else { return };
-        if matches!(car.spec.lift, Lift::Rotor | Lift::Walker | Lift::Drone | Lift::Loiter | Lift::Missile | Lift::Sail | Lift::Dive | Lift::Boat | Lift::Mounted) {
+        if matches!(car.spec.lift, Lift::Rotor | Lift::Walker | Lift::Drone | Lift::Loiter | Lift::Missile | Lift::Sail | Lift::Dive | Lift::Boat(_) | Lift::Mounted) {
             car.flight = controls;
             return;
         }
@@ -1070,7 +1072,7 @@ impl Physics {
             dive(body, car.spec, car.flight, car.condition, water.as_ref(), dt);
         }
         // A boat floats, and its waterjets drive it while there is enough water under its keel.
-        for car in self.cars.values().filter(|car| car.spec.lift == Lift::Boat) {
+        for car in self.cars.values().filter(|car| matches!(car.spec.lift, Lift::Boat(_))) {
             let Some(body) = self.bodies.get_mut(car.body) else { continue };
             let water = water_under(&self.waters, waves, body, car.spec);
             boat(body, car.spec, car.flight, car.condition, water.as_ref(), dt);

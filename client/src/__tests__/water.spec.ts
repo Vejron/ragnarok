@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { buildWater, disposeWater } from '@/render/water'
 import type { TileGround } from '@/sim/terrain'
 import { FLOW_STEP, REACH_STEP } from '@/sim/waves'
-import { FLOW_BIAS, streamBuffers } from '@/render/watermesh'
+import { FLOW_BIAS, LANE_STEPS, LANE_WRAP, STIR_RANGE, STIR_STEP, streamBuffers } from '@/render/watermesh'
 import { NO_WATER, type TileData } from '@/world'
 import { tileParts } from '@/render/tileprep'
 
@@ -103,14 +103,43 @@ describe('water', () => {
     expect((buildWater({ water, streams: [] }, ground)!.children[0] as Mesh).geometry.uvs).toBeUndefined()
   })
 
+  it('carries how a river’s current stirs its surface in its colours, and runs it on to the shore', () => {
+    const { ground, water } = pond()
+    const flow = new Int8Array(water.length * 2)
+    const stir = new Int8Array(water.length * 2)
+    const lane = new Int16Array(water.length)
+    for (let at = 0; at < water.length; at++) {
+      flow[at * 2] = 20
+      // Welling up at 0.1 a second, spinning the other way at 0.05, and a streak and a half along.
+      stir.set([0.1 / STIR_STEP, -0.05 / STIR_STEP], at * 2)
+      lane[at] = 1.5 * LANE_STEPS
+    }
+    const geometry = (buildWater({ water, flow, stir, lane, streams: [] }, { ...ground, cell: 1 })!.children[0] as Mesh).geometry
+    const colors = geometry.colors!
+    expect(colors.length).toBe((geometry.positions.length / 3) * 4)
+    // The pond's dry corner (0, 0) takes its wet neighbour's, as its current does.
+    for (const at of [2 * 5 + 2, 0]) {
+      expect((colors[at * 4]! - 0.5) * 2 * STIR_RANGE).toBeCloseTo(0.1, 2)
+      expect((colors[at * 4 + 1]! - 0.5) * 2 * STIR_RANGE).toBeCloseTo(-0.05, 2)
+      const turn = Math.atan2(colors[at * 4 + 3]! - 0.5, colors[at * 4 + 2]! - 0.5)
+      expect((turn / (Math.PI * 2)) * LANE_WRAP).toBeCloseTo(1.5)
+    }
+    // A lake has none.
+    expect((buildWater({ water, streams: [] }, ground)!.children[0] as Mesh).geometry.colors).toBeUndefined()
+  })
+
   it('hands the tile worker the open water’s reach and current, so the surface it builds has the waves the sim floats things on', () => {
     const reach = new Uint8Array([1, 2, 3])
     const flow = new Int8Array([0, 0, 4, 5, 0, 0])
     const foam = new Uint8Array([0, 9, 200])
-    const tile = { cover: [], roads: [], rails: [], ski: [], water: new Float32Array(3), reach, flow, foam, streams: [], bridges: [], collision: null, buildings: [] } as unknown as TileData
+    const stir = new Int8Array([0, 0, 3, -1, 0, 0])
+    const lane = new Int16Array([0, 700, 0])
+    const tile = { cover: [], roads: [], rails: [], ski: [], water: new Float32Array(3), reach, flow, foam, stir, lane, streams: [], bridges: [], collision: null, buildings: [] } as unknown as TileData
     expect(tileParts(tile).reach).toBe(reach)
     expect(tileParts(tile).flow).toBe(flow)
     expect(tileParts(tile).foam).toBe(foam)
+    expect(tileParts(tile).stir).toBe(stir)
+    expect(tileParts(tile).lane).toBe(lane)
   })
 
   it('has no mesh for a tile without water', () => {

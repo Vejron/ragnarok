@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::terrain::Ground;
 
-pub const WORLD_VERSION: u8 = 35;
+pub const WORLD_VERSION: u8 = 36;
 
 /// `Manifest::theme`: the world as it always was.
 pub const THEME_PLAIN: u8 = 0;
@@ -309,6 +309,20 @@ pub struct Tile {
     /// goes round. Only drawn; nothing in play reads it. Empty when the tile has none.
     #[serde(with = "bytes")]
     pub foam: Vec<u8>,
+    /// How a river's current stirs its surface at each ground sample (same layout as `water`, two
+    /// entries a sample, in steps of `STIR_STEP` 1/s): first how the surface wells up (above 0, where
+    /// water that dived below a drop comes back up in boils) or gathers (below 0, where the current
+    /// slows into deeper water and the surface converges in a foam line), then how fast the water
+    /// spins (anticlockwise seen from above above 0), which it does along the edge of a fast tongue
+    /// and in the eddy behind a boulder. Only drawn. Empty when no water in the tile flows.
+    #[serde(with = "samples8")]
+    pub stir: Vec<i8>,
+    /// The river's stream function at each ground sample (same layout as `water`): how much water
+    /// runs between a fixed line and here, m³/s, in `1 / LANE_STEPS` of `LANE_FLUX`, wrapping round.
+    /// A line along which it is the same is a line the water runs along, so the client draws its
+    /// streaks along them. Only drawn. Empty when no water in the tile flows.
+    #[serde(with = "samples16")]
+    pub lane: Vec<i16>,
     /// Streams: narrow watercourses drawn as ribbons draped on the ground, clipped to the tile.
     pub streams: Vec<Stream>,
     /// Bridges' steel (pylons, stay cables): ranges of this tile's collision triangles, collided
@@ -551,6 +565,18 @@ pub const REACH_STEP: f32 = 4.0;
 
 /// The step `Tile::flow` counts in, m/s: a byte holds up to 6.35 m/s, faster than any rapid.
 pub const FLOW_STEP: f32 = 0.05;
+
+/// The step `Tile::stir` counts in, 1/s: a byte holds up to 0.635 a second, more than the water
+/// spins or wells up anywhere but over a boulder.
+pub const STIR_STEP: f32 = 0.005;
+
+/// How much water runs between one of a river's streaks and the next, m³/s (`Tile::lane`): the
+/// streaks follow the current, part round a boulder and crowd together where the water is fast or deep.
+pub const LANE_FLUX: f32 = 10.0;
+
+/// The steps of `Tile::lane` to one `LANE_FLUX`: it counts the water in 1024ths of a streak and wraps
+/// round every 64 streaks (`i16`), which the client's noise repeats over too.
+pub const LANE_STEPS: f32 = 1024.0;
 
 /// `Tile::water` entry for a sample with no water.
 pub const NO_WATER: i32 = i32::MIN;
@@ -900,6 +926,24 @@ mod bytes {
 
     pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<u8>, D::Error> {
         Ok(super::Bits::deserialize(deserializer)?.0)
+    }
+}
+
+/// A tile's river lanes written as a msgpack `bin` of little-endian `i16`s, as `samples32` does the water.
+mod samples16 {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(samples: &[i16], serializer: S) -> Result<S::Ok, S::Error> {
+        let bytes: Vec<u8> = samples.iter().flat_map(|sample| sample.to_le_bytes()).collect();
+        serializer.serialize_bytes(&bytes)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<i16>, D::Error> {
+        let bytes = super::Bits::deserialize(deserializer)?.0;
+        if !bytes.len().is_multiple_of(2) {
+            return Err(serde::de::Error::custom("a byte count that is not a multiple of 2 for i16 samples"));
+        }
+        Ok(bytes.chunks_exact(2).map(|pair| i16::from_le_bytes([pair[0], pair[1]])).collect())
     }
 }
 
@@ -1602,6 +1646,8 @@ mod tests {
             reach: vec![0, 50, 50, 0],
             flow: vec![0, 0, 20, -4, 18, -6, 0, 0],
             foam: vec![0, 30, 200, 0],
+            stir: vec![0, 0, 12, -3, -40, 127, 0, 0],
+            lane: vec![0, -32768, 1024, 0],
             streams: vec![Stream { width: 200, points: vec![[0, 0], [300, 100]] }],
             bridges: vec![Bridge { first: 0, steel: 4 }],
             detail: vec![0, -3, 127, -127],
@@ -1614,14 +1660,14 @@ mod tests {
             graves: vec![Grave { x: 40, z: -60, base: 120, yaw: -1571, kind: GRAVE_CROSS }],
         };
         assert_eq!(Tile::decode(&tile.encode()).unwrap(), tile);
-        assert_eq!(tile.encode()[..3], [0xdc, 0, 20], "an array of all 20 fields");
+        assert_eq!(tile.encode()[..3], [0xdc, 0, 22], "an array of all 22 fields");
         // An empty tile is every field still, each empty.
         let empty = Tile::default().encode();
-        assert_eq!(empty[..3], [0xdc, 0, 20]);
+        assert_eq!(empty[..3], [0xdc, 0, 22]);
         assert_eq!(Tile::decode(&empty).unwrap(), Tile::default());
         // A tile without its last field, the tombstones (`[]`, its last byte), is refused.
         assert_eq!(empty[empty.len() - 1], 0x90);
-        let mut short = vec![0xdc, 0, 18];
+        let mut short = vec![0xdc, 0, 20];
         short.extend_from_slice(&empty[3..empty.len() - 1]);
         assert!(Tile::decode(&short).is_err());
         assert_eq!(manifest.tiles[0].path(), "tiles/1_0.msgpack");
@@ -1629,7 +1675,7 @@ mod tests {
 
     #[test]
     fn water_and_detail_are_written_as_little_endian_bytes() {
-        let tile = Tile { water: vec![NO_WATER, 40, 40], reach: vec![0, 7, 255], flow: vec![0, 0, 12, -80, 127, -128], foam: vec![0, 9, 250], detail: vec![-1, 5], ..Default::default() };
+        let tile = Tile { water: vec![NO_WATER, 40, 40], reach: vec![0, 7, 255], flow: vec![0, 0, 12, -80, 127, -128], foam: vec![0, 9, 250], stir: vec![0, 0, 4, -2, -128, 127], lane: vec![0, -2, 32767], detail: vec![-1, 5], ..Default::default() };
         let bytes = tile.encode();
         // msgpack `bin 8` (0xc4), its length, then the samples low byte first: what the client reads
         // as an `Int32Array` or `Int8Array` (`decodeTile`).
@@ -1639,6 +1685,8 @@ mod tests {
         assert!(find(&[0xc4, 3, 0, 7, 255]), "the reach, a byte a sample");
         assert!(find(&[0xc4, 6, 0, 0, 12, 0xb0, 127, 0x80]), "the flow, two signed bytes a sample");
         assert!(find(&[0xc4, 3, 0, 9, 250]), "the foam, a byte a sample");
+        assert!(find(&[0xc4, 6, 0, 0, 4, 0xfe, 0x80, 127]), "the stir, two signed bytes a sample");
+        assert!(find(&[0xc4, 6, 0, 0, 0xfe, 0xff, 0xff, 0x7f]), "the lane, a little-endian i16 a sample");
         assert_eq!(Tile::decode(&bytes).unwrap(), tile);
     }
 

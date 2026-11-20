@@ -123,7 +123,7 @@ The style is flat, bright and few-banded, not physically based.
   interpolated, so the shoreline is where depth crosses zero and islands stay dry. Streams are
   ribbons lifted 0.1 m over the terrain with a depth profile across them. One shared WGSL
   `ShaderMaterial` tints shallow to deep, ruffles the surface with a chop read from a noise map,
-  mirrors the sky's panorama and (near the mirrored plane's height) the scene, draws a breathing
+  mirrors the sky's panorama and (near the mirrored plane, which leans with a falling river) the scene, draws a breathing
   foam line where depth is under ~0.35 m and fades alpha to nothing at the edge; it supports fog.
   It reads no depth texture, so it needs no extra pass. The geometry's `custom` attribute carries
   what the shader needs: depth in x, and in yzw a stream's flow (along, across, is-stream) or a

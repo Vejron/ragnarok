@@ -1,9 +1,10 @@
 import { Color, Geometry, Group, Mesh, PANORAMA_SIZE, ShaderMaterial, Texture } from '@ragnarok/engine'
 import type { TileGround } from '@/sim/terrain'
 import type { TileData } from '@/world'
+import type { WaterPlane } from '@/sim/waters'
 import type { HeightSource } from './shade'
 import { waterBuffers, type WaterBuffers } from './groundmesh'
-import { FLOW_BIAS, STREAM_FILL } from './watermesh'
+import { FLOW_BIAS, LANE_WRAP, STIR_RANGE, STREAM_FILL } from './watermesh'
 import { GROUND_LIGHT_WGSL } from './groundlight'
 import { WAVES_WGSL } from '@/sim/waves'
 import { RIVER_TINT, WHITE_WATER_SPEEDS } from '@/sim/consts.generated'
@@ -63,6 +64,13 @@ fn wakeLift(p: vec2f) -> f32 {
 const FOAM_DEPTH = 0.35
 /** On a stream, only this deep, metres: a fine line at the banks, where a lake's would whiten it all. */
 const STREAM_FOAM_DEPTH = 0.08
+/**
+ * Water this far off the mirrored plane, metres, shows the scene's mirror whole, and it fades to the sky
+ * alone by `MIRROR_FAR`. Water at another level than the plane mirrors the scene a little out of place,
+ * which the ripples hide, so the mirror covers the water about the camera and does not show in a band.
+ */
+const MIRROR_NEAR = 1.5
+const MIRROR_FAR = 8
 /** The water fades out from this depth to the shoreline, metres: whatever of a cell lies past it is not drawn. */
 const SHORE_FADE = 0.04
 /** Along-stream speed of the flow, metres per second. */
@@ -101,6 +109,39 @@ const TONGUE_WHITE = 0.3
 const RIVER_PASSES = [0.22, 0.7] as const
 /** How far light goes through water to show the bed, in the water's depths: down, and back up at a slant. */
 const RIVER_PATH = 2.2
+
+/**
+ * How the river's current stirs its surface shows (RIVER-SURFACE.md, `WaterBuffers.colors`). Water welling up
+ * faster than the first of `BOILS` (1/s) shows boils, all of them by the second; water gathering faster
+ * than the first of `GATHERS` roughens and draws its foam into lines; water spinning faster than the first
+ * of `SPINS` whirls.
+ */
+const BOILS = [0.003, 0.025] as const
+const GATHERS = [0.004, 0.035] as const
+const SPINS = [0.05, 0.22] as const
+/**
+ * How long a boil or a whirl swells and fades over as it drifts down, seconds, and how wide the noise
+ * they are drawn from is, metres: a boil is about that wide and a whirl half of it.
+ */
+const STIR_CYCLE = 3.5
+const STIR_SIZE = 2.2
+/** How steep a boil's dome is at most, and a whirl's dimple, metres a metre. */
+const BOIL_SLOPE = 0.12
+const WHIRL_SLOPE = 0.3
+/** How much the river's streaks along its current set ruffled bands against glassy ones. */
+const LANE_STREAKS = 0.6
+/** How much of a river's foam is drawn out into threads along its streaks. */
+const LANE_FOAM = 0.5
+/**
+ * Riffles stand over a shallow bed where the water runs fast for its depth: from the first of
+ * `RIFFLE_FROUDES` and in full by the second, in water shallower than the second of `RIFFLE_DEPTHS`
+ * (metres), all of it by the first. `RIFFLE_SLOPE` is how steep they are.
+ */
+const RIFFLE_FROUDES = [0.3, 0.8] as const
+const RIFFLE_DEPTHS = [0.4, 1.2] as const
+const RIFFLE_SLOPE = 0.35
+/** How glassy a slow, deep pool's ripples are against a broken run's (the least of a river's roughness). */
+const RIVER_CALM = 0.08
 
 /** How many of the noise's lattice cells the chop map holds a side, after which it repeats. */
 const CHOP_CELLS = 64
@@ -317,6 +358,62 @@ fn carriedFroth(p: vec2f, t: f32, current: vec2f, fine: f32, span: f32) -> f32 {
   return a * weight + b * (1.0 - weight);
 }
 
+// Where a river's water is among its streaks (\`WaterBuffers.colors\`): a turn round a circle, one to
+// LANE_WRAP streaks, so a lane that wraps round blends between vertices. The noise repeats over as many.
+fn riverLane(c: vec4f) -> f32 {
+  return atan2(c.w - 0.5, c.z - 0.5) * ${(LANE_WRAP / (2 * Math.PI)).toFixed(6)};
+}
+
+// How a river's current stirs its surface there, 1/s: how it wells up (above 0) or gathers, and how fast it spins.
+fn riverStir(c: vec4f) -> vec2f {
+  return (c.xy - 0.5) * ${(2 * STIR_RANGE).toFixed(4)};
+}
+
+// The river's streaks, about -1 to 1, at \`lane\` among them: a noise across the streaks only, so a
+// streak follows the water wherever it runs, round a boulder and through a narrows.
+fn laneStreak(lane: f32, lod: f32) -> f32 {
+  return mappedNoise(vec2f(lane, 17.5), lod).x;
+}
+
+// The noise a river's boils and whirls are drawn from: carried down the current over STIR_CYCLE
+// seconds, from each place's own time (\`late\`, 0 to 1, a slow noise of the place) so they do not all
+// come and go together; a new batch comes up where the last faded, so one copy is enough. Its value,
+// its slope a metre, and how far through its life the batch is (0 to 1 and back to 0).
+fn stirNoise(p: vec2f, t: f32, current: vec2f, late: f32, span: f32) -> vec4f {
+  let scale = ${(1 / STIR_SIZE).toFixed(4)};
+  let lod = log2(max(span * scale * CHOP_TEXELS, 1.0));
+  let time = t / ${STIR_CYCLE.toFixed(2)} + 2.0 * late;
+  let run = fract(time);
+  // Each batch is a different part of the noise.
+  let batch = floor(time);
+  let n = mappedNoise((p - current * run * ${STIR_CYCLE.toFixed(2)}) * scale + vec2f(31.0 + 23.0 * batch, 5.0 + 37.0 * batch), lod);
+  return vec4f(n.x, n.yz * scale, sin(run * PI));
+}
+
+// Boils welling up where the noise \`n\` (\`stirNoise\`) is high: domes ${STIR_SIZE} m or so across that
+// swell as they come up and fade as they drift down. How glassy the water is (0 to 1), how rippled
+// their rims are, and the domes' slope.
+fn boils(n: vec4f) -> vec4f {
+  let dome = smoothstep(0.1, 0.5, n.x) * n.w;
+  let rim = (1.0 - smoothstep(0.0, 0.12, abs(n.x - 0.08))) * n.w;
+  return vec4f(dome, rim, n.yz * n.w * ${BOIL_SLOPE.toFixed(4)} * smoothstep(-0.1, 0.4, n.x));
+}
+
+// Whirls along an eddy line where the noise \`n\` is low: dimples that the surface falls into and is
+// swept round, the way the water spins (\`turn\`, its sign). Their slope.
+fn whirls(n: vec4f, turn: f32) -> vec2f {
+  let u = clamp((-n.x - 0.3) / 0.4, 0.0, 1.0);
+  let fall = n.yz * 6.0 * u * (1.0 - u) / 0.4;
+  return (fall + vec2f(-fall.y, fall.x) * turn) * n.w * ${(WHIRL_SLOPE / 2).toFixed(4)};
+}
+
+// Riffles standing over a shallow, uneven bed: ripples that keep their place while the water runs
+// through them, with their crests across the current (only their slope along it is kept).
+fn riffles(p: vec2f, dir: vec2f, span: f32) -> vec2f {
+  let g = octave(p, 0.0, 1.3, 0.4, vec2f(0.0), span).yz;
+  return dir * dot(g, dir);
+}
+
 // Where the wind is gusting, 0 (a glassy slick) to 1 (ruffled dark water): broad patches, tens of metres
 // to a couple of hundred across, that drift slowly, so water seen from above is never the same twice.
 fn gusts(p: vec2f, t: f32) -> f32 {
@@ -384,9 +481,27 @@ fn surface(s: Surface) -> vec4f {
   // How broken a river's surface is, 0 glassy to 1 broken. Water that is thin for its speed breaks (its
   // Froude number, the speed over that of a wave on water that deep), and so does water under the foam
   // a rapid sent down; a deep run at the same speed slides by smooth, and a pool lies still.
+  // Where the water gathers into a line it roughens, and so it does along an eddy line, where it spins.
   var rough = 0.0;
+  var gathered = 0.0;
+  var welling = 0.0;
+  var spun = 0.0;
+  var shoal = 0.0;
+  var stir = vec2f(0.0);
+  // Where it is among its streaks, and how many a pixel spans (for the map's mip level): taken here,
+  // before any branch. Where the lane wraps round, a pixel spans many and reads a blurred level.
+  let lane = riverLane(s.color);
+  let laneSpan = min(length(vec2f(dpdx(lane), dpdy(lane))), 8.0);
   if (river) {
-    rough = max(smoothstep(${ROUGH_FROUDES[0].toFixed(2)}, ${ROUGH_FROUDES[1].toFixed(2)}, speed / sqrt(9.81 * max(depth, 0.05))), 0.6 * s.uv.y);
+    let froude = speed / sqrt(9.81 * max(depth, 0.05));
+    stir = riverStir(s.color);
+    gathered = smoothstep(${GATHERS[0].toFixed(3)}, ${GATHERS[1].toFixed(3)}, -stir.x);
+    welling = smoothstep(${BOILS[0].toFixed(3)}, ${BOILS[1].toFixed(3)}, stir.x);
+    spun = smoothstep(${SPINS[0].toFixed(3)}, ${SPINS[1].toFixed(3)}, abs(stir.y));
+    // Thin water running fast for its depth stands in riffles over its bed.
+    shoal = smoothstep(${RIFFLE_FROUDES[0].toFixed(2)}, ${RIFFLE_FROUDES[1].toFixed(2)}, froude) * (1.0 - smoothstep(${RIFFLE_DEPTHS[0].toFixed(2)}, ${RIFFLE_DEPTHS[1].toFixed(2)}, depth));
+    rough = max(smoothstep(${ROUGH_FROUDES[0].toFixed(2)}, ${ROUGH_FROUDES[1].toFixed(2)}, froude), 0.6 * s.uv.y);
+    rough = clamp(rough + 0.45 * gathered + 0.35 * spun + 0.3 * shoal, 0.0, 1.0);
   }
   // How white it runs: the faster the whiter, but a smooth tongue of deep fast water keeps most of its dark.
   let white = smoothstep(${WHITE_WATER_SPEEDS[0].toFixed(2)}, ${WHITE_WATER_SPEEDS[1].toFixed(2)}, speed) * params.wave.y * mix(${TONGUE_WHITE.toFixed(2)}, 1.0, rough);
@@ -396,6 +511,11 @@ fn surface(s: Surface) -> vec4f {
   var wave = 0.0;
   // The chop's slope: rougher in a gust, nearly flat on a slick. A stream ripples along its flow.
   var grad = vec2f(0.0);
+  // A river's own: its streaks (-1 to 1), how glassy its boils leave it, and the slope its boils,
+  // whirls and riffles give it.
+  var streak = 0.0;
+  var glass = 0.0;
+  var stirred = vec2f(0.0);
   if (stream) {
     let e = 0.15;
     let h = bands(p, 0.0);
@@ -406,11 +526,38 @@ fn surface(s: Surface) -> vec4f {
     // Running water draws its ripples out along itself: their slope along the current is mostly taken
     // out, the more the faster it runs, which leaves streaks that lie with the flow.
     let dir = flowing / speed;
-    let slope = chopped.yz - dir * dot(chopped.yz, dir) * 0.6 * smoothstep(0.3, 1.5, speed);
+    var slope = chopped.yz - dir * dot(chopped.yz, dir) * 0.6 * smoothstep(0.3, 1.5, speed);
+    // The streaks along the current: ruffled lanes between glassy ones, which part round a boulder,
+    // crowd through a narrows and spread out over a pool.
+    if (params.stir.w > 0.5) {
+      streak = laneStreak(lane, log2(max(laneSpan * CHOP_TEXELS, 1.0)));
+    }
+    let lanes = mix(1.0 - ${LANE_STREAKS.toFixed(2)}, 1.0 + 0.5 * ${LANE_STREAKS.toFixed(2)}, smoothstep(-0.35, 0.45, streak));
+    let boiling = welling > 0.0 && params.stir.x > 0.5;
+    let whirling = spun > 0.0 && params.stir.y > 0.5;
+    if (boiling || whirling) {
+      let n = stirNoise(world, time, flowing, s.extra[0].x, span);
+      // Where the water wells up it boils: glassy domes, rippled round their rims.
+      if (boiling) {
+        let b = boils(n);
+        glass = b.x * welling;
+        slope *= 1.0 + 1.5 * b.y * welling;
+        stirred += b.zw * welling;
+      }
+      // Along an eddy line it whirls.
+      if (whirling) {
+        stirred += whirls(n, sign(stir.y)) * spun;
+      }
+    }
+    // Over a shallow, uneven bed it stands in riffles, the more the more uneven it is.
+    if (shoal > 0.0 && params.stir.z > 0.5) {
+      let uneven = 0.4 + 0.6 * smoothstep(0.005, 0.05, abs(stir.x));
+      stirred += riffles(world, dir, span) * shoal * uneven * ${RIFFLE_SLOPE.toFixed(2)} * fine;
+    }
     // The wind's gusts matter little down between the banks: how ruffled a river is goes by how it runs.
     gust = clamp(0.12 + 0.2 * s.extra[0].x + 0.85 * rough, 0.0, 1.0);
     wave = clamp(chopped.x * 0.5, -1.0, 1.0) * mix(0.7, 1.15, gust);
-    grad = slope * mix(0.25, 1.1, rough) * (1.0 + 0.4 * white);
+    grad = slope * mix(${RIVER_CALM.toFixed(2)}, 1.1, rough) * lanes * (1.0 - 0.85 * glass) * (1.0 + 0.4 * white);
   } else {
     gust = s.extra[0].x;
     chopped = chop(world, time, fine, mid, span);
@@ -469,7 +616,7 @@ fn surface(s: Surface) -> vec4f {
   if (!stream) {
     lie = -s.normal.xz * sign(s.normal.y) / max(abs(s.normal.y), 0.2);
   }
-  let big = waves(world, params.wave.x, s.custom.y) * share + vec3f(0.0, lie + stand.yz);
+  let big = waves(world, params.wave.x, s.custom.y) * share + vec3f(0.0, lie + stand.yz + stirred);
   // And what has moved through it: its bow waves, wakes and rings, and their churn.
   let churn = wake(world) * wakeShare(s.custom);
   var n = normalize(vec3f(-grad.x * 0.45 - big.y - churn.y, 1.0, -grad.y * 0.45 - big.z - churn.z));
@@ -502,14 +649,16 @@ fn surface(s: Surface) -> vec4f {
   bounce.y = abs(bounce.y);
   var mirror = skyAt(bounce, time);
   // The scene mirrored in the water's plane, drawn from the same view and flipped across (see the renderer).
-  // Water at another height than the plane, or without a mirror, keeps the sky.
+  // Water far off the plane, or without a mirror, keeps the sky.
   // The mirror is the view flipped left to right, so the pixel's own place in it is across the screen.
   let screen = s.pixel / frame.viewport.xy;
-  let ripple = vec2f(n.x, n.z) * 0.05 * fine;
+  // The mirror is already tilted with the river, so only how the surface leans off it moves the image.
+  let ripple = (vec2f(n.x, n.z) + params.plane.zw) * 0.05 * fine;
   let ruv = clamp(vec2f(1.0 - screen.x, screen.y) + ripple, vec2f(0.001), vec2f(0.999));
   let seen = textureSampleLevel(reflection, materialSampler, ruv, 0.0);
   // Measured at the water's level under the waves, so a crest still mirrors the scene.
-  let level = params.plane.y * (1.0 - smoothstep(0.2, 0.5, abs(s.world.y - big.x - churn.x - params.plane.x)));
+  let mirrored = params.plane.x + dot(params.plane.zw, s.world.xz);
+  let level = params.plane.y * (1.0 - smoothstep(${MIRROR_NEAR.toFixed(1)}, ${MIRROR_FAR.toFixed(1)}, abs(s.world.y - big.x - churn.x - mirrored)));
   mirror = mix(mirror, seen.rgb, seen.a * level);
   // Down in its channel a stream mirrors its own banks more than the open sky, and the scene's mirror,
   // made for the lake's level, misses it.
@@ -554,12 +703,22 @@ fn surface(s: Surface) -> vec4f {
   var rush = 0.0;
   let carried = s.uv.y * params.wave.y * params.wave.z;
   if ((white > 0.0 || carried > ${FOAM_COVERS[0].toFixed(2)}) && !stream) {
-    let foamy = carriedFroth(world, time, flowing, fine, span) * 0.5 + 0.5;
+    // Drawn out into threads along the streaks, and pushed aside by the boils, which leave holes in it.
+    let froth = carriedFroth(world, time, flowing, fine, span) * 0.5 + 0.5;
+    // The faster it runs the more of it is drawn out, into threads three to a streak (the noise repeats
+    // over three times the streaks the lane wraps round after, so no seam shows).
+    let threads = ${LANE_FOAM.toFixed(2)} * mix(0.6, 1.4, smoothstep(0.8, 2.5, speed));
+    var thread = 0.0;
+    if (params.stir.w > 0.5) {
+      thread = mappedNoise(vec2f(lane * 3.0, 41.5), log2(max(laneSpan * 3.0 * CHOP_TEXELS, 1.0))).x;
+    }
+    let foamy = mix(froth, 0.4 * froth + 0.6 * (0.5 + 0.35 * streak + 0.35 * thread), threads) - 0.45 * glass;
     let amount = max(white, (0.45 + 0.35 * carried) * smoothstep(${FOAM_COVERS[0].toFixed(2)}, ${FOAM_COVERS[1].toFixed(2)}, carried));
     // Broken white over dark water between: thin foam is scattered flecks, and it closes up as it
     // thickens. A standing wave breaks on the face that meets the current (where the surface rises
     // downstream) and its back runs dark, so a rapid shows its waves as bars of white across it.
-    let edge = mix(0.74, 0.42, max(white, carried));
+    // Where the surface gathers, the foam closes up into a line.
+    let edge = mix(0.74, 0.42, max(white, carried)) - 0.12 * gathered;
     let face = dot(lie + stand.yz, flowing / max(speed, 1e-3));
     rush = smoothstep(edge, edge + 0.09, foamy + ${WAVE_FOAM.toFixed(1)} * face - ${WAVE_FOAM_LESS.toFixed(2)} * white) * amount;
     color = mix(color, params.foam * ground, rush * 0.9);
@@ -606,14 +765,18 @@ function material(): ShaderMaterial {
       sky: Color.hex(0xffffff),
       sun: Color.hex(0xffffff),
       cloud: Color.hex(0xffffff),
-      // Height of the mirrored plane, and 1 while there is one.
-      plane: [0, 0],
+      // The mirrored plane: its height at the world's origin (m), how much of the mirror shows (0 to 1,
+      // eased in and out), and how much it rises a metre along x and along z.
+      plane: [0, 0, 0, 0],
       // 1 while the water is frozen; and 1 on a world whose lakes and sea are the rivers' colour too.
       ice: [0, 0],
       // The waves' clock, seconds into their loop; 1 while they run (not on ice); how much of a
       // river's carried foam is drawn; and 1 while a river is drawn as running water and not as a
       // lake. Only the GPU benchmark turns the last two down, to time them.
       wave: [0, 1, 1, 1],
+      // 1 for each of a river's boils, whirls, riffles and streaks while they are drawn. Only the GPU
+      // benchmark turns them off, to time them.
+      stir: [1, 1, 1, 1],
       // Where the wake map's corner is (x, z) and how wide it is, metres (`WaveField.area`).
       wakeArea: [0, 0, 1, 0],
       // The square the refined mesh covers (\`WaterRefine\`): its corner (x, z), its side, metres, and 1 while it is drawn.
@@ -623,6 +786,8 @@ function material(): ShaderMaterial {
     // The chop map first: the material's sampler is its first texture's, and the map must repeat.
     textures: { chopMap: chop, reflection: blank, wakeMap: still, skyPanorama: blank },
     blend: 'alpha',
+    // The river's stir rides in the vertex colour (\`WaterBuffers.colors\`).
+    vertexColors: true,
     // Written, so the ink (which reads depth) outlines the surface and not the bed seen through it.
     depthWrite: true,
     // Seen from below too: a swimmer (or anyone on the bed) looks up at it.
@@ -684,13 +849,21 @@ export function setWaterReflection(texture: Texture, sky: Texture) {
   material().needsUpdate()
 }
 
-/** The height the mirror was drawn at this frame, or null for none (the water then reflects the sky alone). */
-export function setWaterPlane(height: number | null) {
-  const plane = material().uniforms.plane as [number, number]
-  const on = height === null ? 0 : 1
-  if (plane[1] === on && (height === null || plane[0] === height)) return
-  plane[0] = height ?? plane[0]
+/**
+ * The plane the mirror was drawn in this frame and how much of it shows (0 to 1), or null for none (the
+ * water then reflects the sky alone).
+ */
+export function setWaterPlane(mirror: WaterPlane | null, strength = 1) {
+  const plane = material().uniforms.plane as [number, number, number, number]
+  const on = mirror === null ? 0 : strength
+  const height = mirror ? mirror.y - mirror.slopeX * mirror.x - mirror.slopeZ * mirror.z : plane[0]
+  const slopeX = mirror?.slopeX ?? plane[2]
+  const slopeZ = mirror?.slopeZ ?? plane[3]
+  if (plane[1] === on && plane[0] === height && plane[2] === slopeX && plane[3] === slopeZ) return
+  plane[0] = height
   plane[1] = on
+  plane[2] = slopeX
+  plane[3] = slopeZ
   material().needsUpdate()
 }
 
@@ -707,7 +880,7 @@ export function setWaterLight(sky: number, sun: number, cloud: Readonly<Color>) 
  * One tile's water, or null if it has none: from `prepared` when `prepareTile` built it already. It
  * is translucent and added apart from the tile's group so the game can place it in the world apart from the tile.
  */
-export function buildWater(tile: Pick<TileData, 'water' | 'reach' | 'flow' | 'foam' | 'streams'>, ground: TileGround, around?: HeightSource, prepared?: WaterBuffers[]): Group | null {
+export function buildWater(tile: Pick<TileData, 'water' | 'reach' | 'flow' | 'foam' | 'stir' | 'lane' | 'streams'>, ground: TileGround, around?: HeightSource, prepared?: WaterBuffers[]): Group | null {
   const meshes = (prepared ?? waterBuffers(tile, ground, around)).map((buffers) => {
     const mesh = new Mesh(new Geometry(buffers), material())
     mesh.renderOrder = 1

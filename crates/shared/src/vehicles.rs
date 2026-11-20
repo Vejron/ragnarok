@@ -13,7 +13,7 @@ use crate::consts::*;
 use crate::mounts::{Aim, Ammo, Dial, Eye, Fire, MountDef, Muzzle, Need, Refill, Show};
 use crate::items::*;
 use crate::protocol::{
-    KIND_AMV, KIND_BUS, KIND_CB90, KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MISSILE, KIND_MORTAR, KIND_PAK, KIND_PBV, KIND_PLANE, KIND_ROADSTER, KIND_SEAPLANE, KIND_SHIP, KIND_SHIP_GUN, KIND_SNOWMOBILE, KIND_SNOWRACER, KIND_SPORTS, KIND_STRF, KIND_STRV, KIND_SUBMARINE, KIND_TANK, KIND_TECHNICAL, KIND_TITAN, KIND_TUPP, KIND_WALKER, PROJECTILE_AMV_BOMB, PROJECTILE_BALL, PROJECTILE_BOMB, PROJECTILE_CANNON, PROJECTILE_CANNON_AP,
+    KIND_AMV, KIND_BUS, KIND_CB90, KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MISSILE, KIND_MORTAR, KIND_PAK, KIND_PBV, KIND_PLANE, KIND_RAFT, KIND_ROADSTER, KIND_SEAPLANE, KIND_SHIP, KIND_SHIP_GUN, KIND_SNOWMOBILE, KIND_SNOWRACER, KIND_SPORTS, KIND_STRF, KIND_STRV, KIND_SUBMARINE, KIND_TANK, KIND_TECHNICAL, KIND_TITAN, KIND_TUPP, KIND_WALKER, PROJECTILE_AMV_BOMB, PROJECTILE_BALL, PROJECTILE_BOMB, PROJECTILE_CANNON, PROJECTILE_CANNON_AP,
     PROJECTILE_EGG, PROJECTILE_HE, PROJECTILE_MORTAR, PROJECTILE_ROTARY, PROJECTILE_SHELL, WEAPON_AUTOCANNON, WEAPON_DRONE, WEAPON_LASER, WEAPON_LOITER, WEAPON_MG, WEAPON_MISSILE, WEAPON_ROCKET, WEAPON_SHELL,
 };
 
@@ -31,6 +31,7 @@ pub mod mortar;
 pub mod pak;
 pub mod pbv;
 pub mod plane;
+pub mod raft;
 pub mod roadster;
 pub mod seaplane;
 pub mod ship;
@@ -48,7 +49,7 @@ pub mod titan;
 pub mod tupp;
 pub mod walker;
 
-pub use spec::{Airframe, Arms, Buttons, Feet, Floats, Gait, Jets, Lift, Role, Rotorcraft, Runners, Shape, Skim, Solid, Spec, Springs, Step, Swim, STEER_FADE};
+pub use spec::{Airframe, Arms, Boat, Buttons, Feet, Floats, Gait, Jets, Lift, Role, Rotorcraft, Runners, Shape, Skim, Solid, Spec, Springs, Step, Swim, STEER_FADE};
 pub use crate::armor::{ALLOY, Armor, Box3, Module, On, Part, Pen, Plate, SHEET, SOFT, Zone};
 
 #[derive(Clone, Copy, Debug)]
@@ -279,6 +280,7 @@ pub static VEHICLES: &[VehicleDef] = &[
     pbv::PBV,
     amv::AMV,
     cb90::CB90,
+    raft::RAFT,
 ];
 
 /// Where each kind id's definition is in `VEHICLES`: 0, the jeep's, for ids that are not a vehicle.
@@ -415,10 +417,10 @@ mod tests {
     }
 
     #[test]
-    fn a_hulls_outline_is_convex_fills_its_box_and_only_tracked_kinds_have_one() {
+    fn a_hulls_outline_is_convex_fills_its_box_and_only_tracked_kinds_and_the_raft_have_one() {
         for def in VEHICLES {
             let profile = def.spec.profile;
-            assert_eq!(!profile.is_empty(), [KIND_TANK, KIND_STRV, KIND_STRF, KIND_PBV].contains(&def.kind), "{}", def.name);
+            assert_eq!(!profile.is_empty(), [KIND_TANK, KIND_STRV, KIND_STRF, KIND_PBV, KIND_RAFT].contains(&def.kind), "{}", def.name);
             if profile.is_empty() {
                 continue;
             }

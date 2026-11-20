@@ -65,5 +65,8 @@ export const SMALL_ELECTRIC: SynthSpec = { ...NONE, whine: 0.5, whineRatio: 8, g
 /** A submarine's electric motors: a low hum. */
 export const SUB_MOTORS: SynthSpec = { ...NONE, whine: 0.6, whineRatio: 6, gain: 4 }
 
+/** A big three-cylinder two-stroke outboard (the raft's): a high, raspy snarl through its leg's exhaust. */
+export const OUTBOARD: SynthSpec = { ...NONE, cylinders: 3, stroke: 2, imbalance: 0.15, jitter: 0.25, pulse: 1.2, pipe: 0.7, resonance: 0.6, body: 520, intake: 0.45, mech: 0.1, crackle: 0.2, roar: 0.12, roarHz: 1800, gain: 1.05 }
+
 /** The Stridsbåt 90's two V8 diesels, sixteen cylinders between them, and the roar of their waterjets. */
 export const TWIN_DIESEL_JETS: SynthSpec = { ...DIESEL_V8, cylinders: 16, imbalance: 0.3, knock: 0.4, pipe: 2, body: 220, whine: 0.2, whineRatio: 25, roar: 0.35, roarHz: 1200 }

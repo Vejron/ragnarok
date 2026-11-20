@@ -81,7 +81,7 @@ fn fs(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4f {
   let packed = normalTexel.xy * 2.0 - 1.0;
   let mapped = select(normalTexel.xyz * 2.0 - 1.0, vec3f(packed.x, sqrt(max(0.0, 1.0 - dot(packed, packed))), packed.y), marshy);
   // Mirroring for a reflection: what is under the water plane is not part of the picture.
-${reflect ? `  if (frame.lightCount.z > 0.5 && in.world.y < frame.lightCount.y) {
+${reflect ? `  if (frame.lightCount.z > 0.5 && dot(in.world, frame.mirror.xyz) < frame.mirror.w) {
     discard;
   }` : ''}
   // A ribbon on the ground reads the ground's colour from its map, toned as the ground is, and keeps its own.

@@ -4,7 +4,7 @@
 use super::walker::*;
 
 /// What holds a vehicle up.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Lift {
     /// Its wheels, and nothing else.
     Wheels,
@@ -24,10 +24,10 @@ pub enum Lift {
     /// A pressure hull that floats on the surface or holds any depth below it, driven by its motor,
     /// steered by its rudder, and taken up or down by its captain.
     Dive,
-    /// A planing hull on waterjets that floats on open water: the jets drive it ahead and astern and
-    /// swing it round even standing still, it rises onto the plane at speed and banks into its turns.
-    /// Aground, nothing drives it.
-    Boat,
+    /// A planing hull that floats on open water, driven by waterjets or an outboard (`Boat` is how):
+    /// they drive it ahead and astern and swing it round even standing still, it rises onto the plane
+    /// at speed and banks into its turns. Aground, nothing drives it.
+    Boat(&'static Boat),
     /// A guided missile's motor and fins: always driving forward fast, turning towards the look.
     Missile,
     /// Nothing of its own: it is fixed to another vehicle (`Fitting`) and carried with it.
@@ -43,8 +43,66 @@ impl Lift {
     /// Whether the kind is a hull that only floats: a ship, a submarine or a boat. It starts on the
     /// water, and a wreck fills and goes down where it is rather than being thrown.
     pub fn afloat(self) -> bool {
-        matches!(self, Lift::Sail | Lift::Dive | Lift::Boat)
+        matches!(self, Lift::Sail | Lift::Dive | Lift::Boat(_))
     }
+}
+
+/// How a boat (`Lift::Boat`) floats and is driven: `crates/sim/src/vehicle/boat.rs` moves it by these.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Boat {
+    /// How deep it floats at rest, metres.
+    pub draft: f32,
+    /// How hard its drive pushes it ahead, m/s² at a standstill (less as it nears its top speed).
+    pub thrust: f32,
+    /// How hard it stops when held back while it runs ahead, m/s².
+    pub brake: f32,
+    /// How far its bow digs in as it stops (radians) and how much deeper it squats into the water
+    /// (metres), both most from the top of `plane_speed` and gone by the time it has stopped.
+    pub brake_dip: f32,
+    pub brake_squat: f32,
+    /// Its top speed astern, m/s.
+    pub astern_speed: f32,
+    /// How fast its drive swings it round standing still, rad/s (under way it turns at `Spec::turn_rate`).
+    pub spin_rate: f32,
+    /// How much higher it rides on the plane, metres, and the speeds it climbs onto it between, m/s.
+    pub plane_lift: f32,
+    pub plane_speed: [f32; 2],
+    /// How far its bow lifts as it climbs onto the plane (most at the bottom of `plane_speed`) and how
+    /// far it stays up once on it, radians.
+    pub bow_rise: f32,
+    pub bow_planing: f32,
+    /// How far it banks into a turn, radians for each rad/s of turn and m/s of speed, and at most.
+    pub bank: f32,
+    pub bank_max: f32,
+    /// How quickly its rise and fall follows the water's, per second: a light hull is lifted by the
+    /// face of a wave at once, and so is thrown off its crest.
+    pub heave: f32,
+    /// The share of its sideways slide through the water its hull takes out each second: a deep hull
+    /// holds its line, a flat rubber floor slides out of a hard turn.
+    pub keel: f32,
+    /// How hard it slows with its drive let go, m/s²: a heavy hull glides on, a light one sits down
+    /// in the water at once.
+    pub coast: f32,
+    /// How hard it is brought level with the water under it, per second², and how quickly its roll and
+    /// pitch die away, per second: a light hull pitches and rolls over every wave, and bobs.
+    pub level: f32,
+    pub rock: f32,
+    /// The share of its way through the water the water takes out each second while its drive is idle,
+    /// on top of `coast`: how quickly a light hull let go is taken up by the current it drifts into.
+    pub grip: f32,
+    /// How quickly its rate of turn follows the helm and the water, per second: a light hull snaps
+    /// round at once, a heavy one swings into its turn.
+    pub helm: f32,
+    /// The share of its turning that comes from its drive's push (an outboard turns a boat by swinging
+    /// its thrust), the rest turning it however hard the drive pushes: 0 turns as hard coasting as
+    /// under power, 1 turns it only under power.
+    pub thrust_steer: f32,
+    /// How far the water's own turning (an eddy line, the shear beside a tongue) turns it, a share of
+    /// the water's rotation: 1 for a light hull the water does as it likes with.
+    pub lever: f32,
+    /// The share of its drive and its grip on the water it keeps once its bottom is on the bed, in water
+    /// too thin to float it: a rubber floor scrapes over a shoal, a hard hull is aground.
+    pub scrape: f32,
 }
 
 /// The speed at which a car's steering lock has halved, m/s: the usual `Spec::steer_fade`.

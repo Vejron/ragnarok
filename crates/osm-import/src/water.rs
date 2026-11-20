@@ -15,7 +15,7 @@
 
 use rayon::prelude::*;
 use shared::terrain::Ground;
-use shared::world::{FLOW_STEP, NO_WATER, REACH_STEP};
+use shared::world::{FLOW_STEP, LANE_FLUX, LANE_STEPS, NO_WATER, REACH_STEP, STIR_STEP};
 
 use crate::riverflow;
 
@@ -123,14 +123,21 @@ pub struct Placed {
     pub flow: Vec<i8>,
     /// How much of the surface is under foam at each sample, in 255ths (`Tile::foam`); empty when none is.
     pub foam: Vec<u8>,
+    /// How the current stirs the surface at each sample, two entries a sample (`Tile::stir`), and its
+    /// stream function (`Tile::lane`); both empty when nothing flows.
+    pub stir: Vec<i8>,
+    pub lane: Vec<i16>,
     pub streams: Vec<Vec<P>>,
 }
 
 impl Placed {
     /// The finished water of `map` over `ground`, whose y = 0 is `datum` in the height model.
     pub fn new(map: &Map, surface: &Surface, datum: f64, ground: &Ground) -> Self {
-        let (levels, reach, flow, foam) = if surface.is_empty() { (Vec::new(), Vec::new(), Vec::new(), Vec::new()) } else { (surface.levels(datum, ground), surface.reaches(), surface.flows(), surface.foams()) };
-        Self { levels, reach, flow, foam, streams: surface.trim_streams(&map.streams) }
+        if surface.is_empty() {
+            return Self { streams: surface.trim_streams(&map.streams), ..Self::default() };
+        }
+        let (stir, lane) = surface.stirs();
+        Self { levels: surface.levels(datum, ground), reach: surface.reaches(), flow: surface.flows(), foam: surface.foams(), stir, lane, streams: surface.trim_streams(&map.streams) }
     }
 
     /// How deep the water is at a local position over `ground` (the grid `levels` lies on), metres,
@@ -187,6 +194,11 @@ pub struct Surface {
     /// How much of the surface is under foam at each sample, 0 to 1: what a river's rapids make,
     /// carried downstream; none on lakes, the sea and dry samples.
     foam: Vec<f32>,
+    /// How a river's current stirs its surface at each sample, 1/s (`Tile::stir`): how it wells
+    /// up or gathers, and how fast it spins; 0 on lakes, the sea and dry samples.
+    stir: Vec<[f32; 2]>,
+    /// A river's stream function at each sample, m³/s (`Tile::lane`); 0 off a river.
+    lane: Vec<f64>,
     /// On each dry sample next to the water, the lowest surface beside it, metres above the datum,
     /// and how far outside the outline it is, metres; NaN elsewhere. `bed` shapes the bank with it.
     bank: Vec<[f32; 2]>,
@@ -302,11 +314,16 @@ impl Surface {
                 depth[at] = bed;
             }
         }
-        let foams: Vec<Vec<f32>> = stretches.par_iter().zip(&solved).map(|(stretch, (run, _))| stretch.foam(grid, &depth, &run.current.flow)).collect();
-        for ((((stretch, (Run { current, deeper, .. }, seconds)), cover), &(_, step)), chute) in stretches.iter().zip(&solved).zip(&foams).zip(&cut).zip(&chutes) {
-            for ((&at, &velocity), &cover) in stretch.members.iter().zip(&current.flow).zip(cover) {
+        let marks: Vec<riverflow::Marks> = stretches.par_iter().zip(&solved).map(|(stretch, (run, _))| stretch.marks(grid, &depth, &run.current.flow)).collect();
+        let mut stir = vec![[0.0f32; 2]; n];
+        let mut lane = vec![0.0f64; n];
+        for ((((stretch, (Run { current, deeper, .. }, seconds)), marked), &(_, step)), chute) in stretches.iter().zip(&solved).zip(&marks).zip(&cut).zip(&chutes) {
+            let cover = &marked.foam;
+            for (k, (&at, &velocity)) in stretch.members.iter().zip(&current.flow).enumerate() {
                 flow[at] = velocity;
-                foam[at] = cover;
+                foam[at] = cover[k];
+                stir[at] = [marked.boil[k], marked.spin[k]];
+                lane[at] = marked.lane[k];
             }
             if stretch.length >= RIVER_REPORTED {
                 let speeds = || current.flow.iter().map(|v| v[0].hypot(v[1]));
@@ -369,7 +386,7 @@ impl Surface {
                 }
             }
         }
-        Self { grid, body, level, depth, reach, flow, foam, bank }
+        Self { grid, body, level, depth, reach, flow, foam, stir, lane, bank }
     }
 
     fn index(&self, x: f64, z: f64) -> Option<usize> {
@@ -486,6 +503,20 @@ impl Surface {
     pub fn foams(&self) -> Vec<u8> {
         let out: Vec<u8> = self.foam.iter().map(|&cover| (cover * 255.0).round().clamp(0.0, 255.0) as u8).collect();
         if out.iter().all(|&v| v == 0) { Vec::new() } else { out }
+    }
+
+    /// How the current stirs the surface at every ground sample, two entries a sample in steps of
+    /// `STIR_STEP`, and its stream function, in `1 / LANE_STEPS` of `LANE_FLUX` and wrapping round,
+    /// as `Tile::stir` and `Tile::lane` lay them out; both empty when nothing flows.
+    pub fn stirs(&self) -> (Vec<i8>, Vec<i16>) {
+        if self.flow.iter().all(|v| v[0] == 0.0 && v[1] == 0.0) {
+            return (Vec::new(), Vec::new());
+        }
+        let step = |v: f32| (v / STIR_STEP).round().clamp(-127.0, 127.0) as i8;
+        let stir = self.stir.iter().flat_map(|&[boil, spin]| [step(boil), step(spin)]).collect();
+        // Wrapping round on purpose: the client only reads where it is among the 64 streaks.
+        let lane = self.lane.iter().map(|&psi| (psi / f64::from(LANE_FLUX) * f64::from(LANE_STEPS)).round() as i64 as i16).collect();
+        (stir, lane)
     }
 
     /// Stream centre lines without the vertices that lie in the middle of a lake or river (a
@@ -1204,12 +1235,12 @@ impl Stretch {
             .collect()
     }
 
-    /// The foam the current `flow` (at each member) makes and carries over the bed `depth`
-    /// (`riverflow::foam`), 0 to 1 at each member.
-    fn foam(&self, grid: Grid, depth: &[f32], flow: &[[f32; 2]]) -> Vec<f32> {
+    /// The foam the current `flow` (at each member) makes and carries over the bed `depth`, and
+    /// how it stirs the surface (`riverflow::marks`).
+    fn marks(&self, grid: Grid, depth: &[f32], flow: &[[f32; 2]]) -> riverflow::Marks {
         let side = grid.side as usize;
         let (open, fall) = self.ends(side);
-        riverflow::foam(&riverflow::Channel { side, cell: grid.cell as f64 / 100.0, members: &self.members, depth, fall: &fall, open: &open }, flow)
+        riverflow::marks(&riverflow::Channel { side, cell: grid.cell as f64 / 100.0, members: &self.members, depth, fall: &fall, open: &open }, flow)
     }
 
     /// The water the stretch carries, m³/s, given the current at each member: the median, over

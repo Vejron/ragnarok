@@ -21,7 +21,7 @@ export interface Rock {
 }
 
 /** How far from the camera, metres, and in how many directions `planeNear` looks for water. */
-const PLANE_RADII = [6, 20, 45, 90, 160]
+const PLANE_RADII = [6, 20, 45, 90, 160, 320, 640]
 const PLANE_RAYS = 12
 /**
  * Water within this of the mirrored plane, metres, shows the scene in it (the water shader fades it out
@@ -29,8 +29,74 @@ const PLANE_RAYS = 12
  * falling gently past the camera is one surface and not a slice every 10 cm.
  */
 const PLANE_BAND = 0.3
-/** The level mirrored last frame stays while it has at least this share of the best level's votes. */
+/** The plane mirrored last frame stays while it has at least this share of the best level's votes. */
 const PLANE_KEEP = 0.8
+/** How many times `planeNear` fits its plane to the water near it. */
+const PLANE_FITS = 3
+/**
+ * How strongly the fit holds the plane level, metres squared: the tilt it takes is as if this were
+ * added to the spread of the water about the camera. Water spread over a few metres barely tilts it.
+ */
+const PLANE_STIFFNESS = 4
+/** The steepest the mirrored plane leans, metres a metre: steeper than a rapid's even fall. */
+const PLANE_TILT_MAX = 0.1
+
+/** The plane of water to mirror (`Waters.planeNear`): `y` metres high at `(x, z)`, rising `slopeX` metres a metre along x and `slopeZ` along z. */
+export interface WaterPlane {
+  x: number
+  y: number
+  z: number
+  slopeX: number
+  slopeZ: number
+}
+
+/** How quickly the mirror shown follows the plane fitted under it, per second: a change of water slides over about half a second. */
+const MIRROR_FOLLOW = 6
+/** How much of the mirror fades in or out a second, where water comes into reach or goes out of it. */
+const MIRROR_FADE = 2
+
+/** The mirror as it is shown (`easeMirror`): its plane and how much of it shows, 0 to 1. */
+export interface ShownMirror {
+  plane: WaterPlane
+  strength: number
+}
+
+/**
+ * The mirror shown, `dt` seconds after `shown`, where `planeNear` fitted `fit` (null for no water about):
+ * the plane slides towards the fit and the mirror fades in or out, so it never jumps or pops. With no
+ * water about the last plane stays while it fades; null once it has gone.
+ */
+export function easeMirror(shown: ShownMirror | null, fit: WaterPlane | null, dt: number): ShownMirror | null {
+  if (!fit) {
+    if (!shown) return null
+    const strength = shown.strength - MIRROR_FADE * dt
+    return strength > 0 ? { plane: shown.plane, strength } : null
+  }
+  if (!shown) return { plane: { ...fit }, strength: Math.min(1, MIRROR_FADE * dt) }
+  const k = 1 - Math.exp(-MIRROR_FOLLOW * dt)
+  const p = shown.plane
+  // The shown plane's height where the fit is given, so the two are compared at one place.
+  const y = p.y + p.slopeX * (fit.x - p.x) + p.slopeZ * (fit.z - p.z)
+  return {
+    plane: {
+      x: fit.x,
+      y: y + (fit.y - y) * k,
+      z: fit.z,
+      slopeX: p.slopeX + (fit.slopeX - p.slopeX) * k,
+      slopeZ: p.slopeZ + (fit.slopeZ - p.slopeZ) * k,
+    },
+    strength: Math.min(1, shown.strength + MIRROR_FADE * dt),
+  }
+}
+
+/** Solves the 3×3 system `m · out = b` (`m` by rows), or null where it has no single answer. */
+function solve3(m: number[], b: number[]): [number, number, number] | null {
+  const det = (a: number[]) => a[0]! * (a[4]! * a[8]! - a[5]! * a[7]!) - a[1]! * (a[3]! * a[8]! - a[5]! * a[6]!) + a[2]! * (a[3]! * a[7]! - a[4]! * a[6]!)
+  const whole = det(m)
+  if (Math.abs(whole) < 1e-12) return null
+  const column = (c: number) => det(m.map((value, i) => (i % 3 === c ? b[Math.floor(i / 3)]! : value)))
+  return [column(0) / whole, column(1) / whole, column(2) / whole]
+}
 
 /**
  * The streamed-in tiles' water surface, to put splashes at the surface and not on the carved bed,
@@ -120,14 +186,20 @@ export class Waters {
   }
 
   /**
-   * The surface height of the water worth mirroring from the camera at `(x, z)` looking along `(dx, dz)`:
-   * the level with the most water within `PLANE_BAND` of it among sample points around the camera and
-   * ahead, nearer ones counting more. `kept`, the level mirrored last frame, stays while it is nearly as
-   * good, so on a river that steps down through rapids the mirror does not flip between two levels as the
-   * camera turns. Null when none of them is wet, so a mirrored pass is only drawn where there is water to see.
+   * The plane of the water worth mirroring from the camera at `(x, z)` looking along `(dx, dz)`, given at
+   * the camera. It starts from the level with the most water within `PLANE_BAND` of it among sample
+   * points around the camera and ahead, nearer ones counting more, and is then fitted to that water and
+   * tilted with it, so a river falling past the camera is mirrored along its length and not in a strip
+   * where it crosses one level. `kept`, the plane mirrored last frame, is fitted afresh instead while it
+   * is nearly as good, so on a river that steps down through rapids the mirror does not flip between two
+   * levels as the camera turns. Null when none of them is wet, so a mirrored pass is only drawn where
+   * there is water to see.
    */
-  planeNear(x: number, z: number, dx: number, dz: number, kept: number | null = null): number | null {
+  planeNear(x: number, z: number, dx: number, dz: number, kept: WaterPlane | null = null): WaterPlane | null {
+    const us: number[] = []
+    const vs: number[] = []
     const levels: number[] = []
+    const surfaces: number[] = []
     const weights: number[] = []
     for (const radius of PLANE_RADII) {
       for (let i = 0; i < PLANE_RAYS; i++) {
@@ -136,33 +208,67 @@ export class Waters {
         const pz = Math.sin(angle)
         const level = this.sampleAt(x + px * radius, z + pz * radius)
         if (level === NO_WATER) continue
-        // What lies ahead matters more than what is behind.
+        us.push(px * radius)
+        vs.push(pz * radius)
         levels.push(level)
+        const surface = this.levelAt(x + px * radius, z + pz * radius)
+        surfaces.push(surface === NO_WATER ? level : surface)
+        // What lies ahead matters more than what is behind.
         weights.push((0.5 + 0.5 * Math.max(0, px * dx + pz * dz)) / radius)
       }
     }
     if (levels.length === 0) return null
-    const score = (plane: number) => levels.reduce((sum, level, k) => sum + (Math.abs(level - plane) <= PLANE_BAND ? weights[k]! : 0), 0)
+    // How far each sample lies off a plane through `y` over the camera, rising `sx` and `sz` a metre: by the
+    // nearest sample's level when voting, so a rapid's ramp counts as the levels above and below it, and
+    // by the surface read between the samples when fitting, so the plane glides as the camera moves.
+    const off = (heights: number[], y: number, sx: number, sz: number, k: number) => heights[k]! - y - sx * us[k]! - sz * vs[k]!
+    const score = (y: number, sx: number, sz: number) => levels.reduce((sum, _, k) => sum + (Math.abs(off(levels, y, sx, sz, k)) <= PLANE_BAND ? weights[k]! : 0), 0)
     let best = levels[0]!
     let most = -1
     for (const level of levels) {
-      const s = score(level)
+      const s = score(level, 0, 0)
       if (s > most) {
         best = level
         most = s
       }
     }
-    if (kept !== null && score(kept) >= PLANE_KEEP * most) return kept
-    // The middle of the water it wins, so it covers as much of it as it can.
-    let sum = 0
-    let total = 0
-    levels.forEach((level, k) => {
-      if (Math.abs(level - best) <= PLANE_BAND) {
-        sum += level * weights[k]!
-        total += weights[k]!
+    let y = best
+    let sx = 0
+    let sz = 0
+    if (kept !== null) {
+      const ky = kept.y + kept.slopeX * (x - kept.x) + kept.slopeZ * (z - kept.z)
+      if (score(ky, kept.slopeX, kept.slopeZ) >= PLANE_KEEP * most) {
+        y = ky
+        sx = kept.slopeX
+        sz = kept.slopeZ
       }
-    })
-    return Math.round((sum / total) * 10) / 10
+    }
+    // Fitted by weighted least squares to the water within `PLANE_BAND` of the plane so far, a few times
+    // over, so the plane reaches along a falling river as far as it falls evenly. The tilt is held back by
+    // `PLANE_STIFFNESS`, so a narrow strip of water does not tip the plane across it.
+    for (let round = 0; round < PLANE_FITS; round++) {
+      let w = 0, wu = 0, wv = 0, wl = 0, wuu = 0, wvv = 0, wuv = 0, wul = 0, wvl = 0
+      surfaces.forEach((level, k) => {
+        if (Math.abs(off(surfaces, y, sx, sz, k)) > PLANE_BAND) return
+        const weight = weights[k]!
+        const u = us[k]!
+        const v = vs[k]!
+        w += weight; wu += weight * u; wv += weight * v; wl += weight * level
+        wuu += weight * u * u; wvv += weight * v * v; wuv += weight * u * v
+        wul += weight * u * level; wvl += weight * v * level
+      })
+      if (w === 0) break
+      const ridge = PLANE_STIFFNESS * w
+      const fitted = solve3([w, wu, wv, wu, wuu + ridge, wuv, wv, wuv, wvv + ridge], [wl, wul, wvl])
+      if (!fitted) break
+      const tilt = Math.hypot(fitted[1], fitted[2])
+      const scale = tilt > PLANE_TILT_MAX ? PLANE_TILT_MAX / tilt : 1
+      sx = fitted[1] * scale
+      sz = fitted[2] * scale
+      // With the tilt held back, the height is the inliers' mean height off the tilted plane.
+      y = (wl - sx * wu - sz * wv) / w
+    }
+    return { x, y, z, slopeX: sx, slopeZ: sz }
   }
 
   /**

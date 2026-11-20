@@ -17,15 +17,15 @@ import { reliefPixels, terrainBuffers, TERRAIN_LOD_ERRORS, type Pixels, type Ter
  */
 
 /** What of a tile `prepareTile` reads: small enough to send to the worker (`tileParts`). */
-export type TileParts = Pick<TileData, 'cover' | 'crops' | 'detail' | 'roads' | 'rails' | 'ski' | 'water' | 'reach' | 'flow' | 'foam' | 'streams' | 'bridges' | 'collision' | 'look'> & {
+export type TileParts = Pick<TileData, 'cover' | 'crops' | 'detail' | 'roads' | 'rails' | 'ski' | 'water' | 'reach' | 'flow' | 'foam' | 'stir' | 'lane' | 'streams' | 'bridges' | 'collision' | 'look'> & {
   buildings: readonly Pick<Building, 'first' | 'walls' | 'roof' | 'roofKind' | 'kind' | 'cells' | 'footprint' | 'paint' | 'look'>[]
 }
 
 /** The parts of `tile` `prepareTile` reads, leaving out what the worker has no use for (trees, the file's bytes). */
 export function tileParts(tile: TileData): TileParts {
-  const { cover, crops, detail, roads, rails, ski, water, reach, flow, foam, streams, bridges, collision, look } = tile
+  const { cover, crops, detail, roads, rails, ski, water, reach, flow, foam, stir, lane, streams, bridges, collision, look } = tile
   const buildings = tile.buildings.map(({ first, walls, roof, roofKind, kind, cells, footprint, paint, look }) => ({ first, walls, roof, roofKind, kind, cells, footprint, paint, look: look ?? null }))
-  return { cover, ...(crops ? { crops } : {}), ...(detail ? { detail } : {}), roads, rails, ski, water, ...(reach ? { reach } : {}), ...(flow ? { flow } : {}), ...(foam ? { foam } : {}), streams, bridges, collision, ...(look ? { look } : {}), buildings }
+  return { cover, ...(crops ? { crops } : {}), ...(detail ? { detail } : {}), roads, rails, ski, water, ...(reach ? { reach } : {}), ...(flow ? { flow } : {}), ...(foam ? { foam } : {}), ...(stir ? { stir } : {}), ...(lane ? { lane } : {}), streams, bridges, collision, ...(look ? { look } : {}), buildings }
 }
 
 /** What `prepareTile` makes a tile from. */

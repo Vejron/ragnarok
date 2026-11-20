@@ -5,7 +5,7 @@ import { JetSpray } from '@/render/jetspray'
 import { Particles } from '@/render/particles'
 import { Skidmarks } from '@/render/skidmarks'
 import { VehicleFx, type FxWorld } from '@/render/tyres'
-import { KIND_CB90, KIND_SUBMARINE } from '@/net/codec'
+import { KIND_CB90, KIND_RAFT, KIND_SUBMARINE } from '@/net/codec'
 import { SURFACE_WATER } from '@/sim/surface'
 
 const hull = (x: number, z: number, depth = 0.3) => ({ x, z, ahead: [0, -1] as const, halfWidth: 1.9, halfLength: 7.95, depth, velocity: [0, -20] as const, churn: 1 })
@@ -167,11 +167,20 @@ describe('a river in the water waves', () => {
 
 describe('a boat in the waves', () => {
   const last = <T>(list: T[]) => list[list.length - 1]!
-  /** A Stridsbåt 90 heading -Z from `speed` m/s, changing at `accel` m/s², for half a second: the hulls it pressed in and the splashes its drops made. */
-  function run(speed: number, accel: number) {
-    const hulls: { depth: number; churn: number; ahead: readonly [number, number]; velocity: readonly [number, number] }[] = []
+  type Pressed = { x: number; z: number; depth: number; churn: number; ahead: readonly [number, number]; velocity: readonly [number, number] }
+  /**
+   * A boat of `kind` (a Stridsbåt 90 unless said) heading -Z from `speed` m/s, changing at `accel` m/s²,
+   * for `frames` sixtieths of a second: the hulls it pressed in, the white wash behind it, and the
+   * splashes its drops made.
+   */
+  function run(speed: number, accel: number, kind = KIND_CB90, frames = 90) {
+    const hulls: Pressed[] = []
+    const washes: Pressed[] = []
     const pokes: number[] = []
-    const stir = { hull: (_key: string, s: (typeof hulls)[number]) => hulls.push(s), splash: (_x: number, _z: number, r: number) => pokes.push(r) }
+    const stir = {
+      hull: (key: string, s: Pressed) => (key.endsWith('wash') ? washes : hulls).push(s),
+      splash: (_x: number, _z: number, r: number) => pokes.push(r),
+    }
     const glow = new Particles(2000, true)
     const jetSpray = new JetSpray(glow, stir)
     const w: FxWorld = {
@@ -185,31 +194,43 @@ describe('a boat in the waves', () => {
       waves: stir,
       jetSpray,
     }
-    const fx = new VehicleFx(1, KIND_CB90)
+    const fx = new VehicleFx(1, kind)
     const dt = 1 / 60
-    for (let i = 0; i < 90; i++) {
+    let z = 0
+    for (let i = 0; i < frames; i++) {
       const t = i * dt
-      fx.update(w, [0, 0.2, -(speed * t + 0.5 * accel * t * t)], [0, 0, 0, 1], 0, true, dt)
+      z = -(speed * t + 0.5 * accel * t * t)
+      fx.update(w, [0, 0.2, z], [0, 0, 0, 1], 0, true, dt)
       jetSpray.update(dt)
     }
-    return { hulls, pokes }
+    return { hulls, washes, pokes, z }
   }
 
-  it('presses nothing in lying still, its hull along its heading under way, and digs in harder in a crash stop', () => {
+  it('presses nothing in lying still, and its hull along its heading under way', () => {
     expect(run(0, 0).hulls).toHaveLength(0)
     const cruising = last(run(20, 0).hulls)
     expect(cruising.ahead[0]).toBeCloseTo(0, 6)
     expect(cruising.ahead[1]).toBeCloseTo(-1, 6)
     expect(cruising.depth).toBeGreaterThan(0)
     expect(cruising.velocity[1]).toBeCloseTo(-20, 0)
-    const stopping = last(run(20, -10).hulls)
-    expect(stopping.depth).toBeGreaterThan(cruising.depth)
-    expect(stopping.churn).toBeGreaterThan(cruising.churn)
+  })
+
+  it.each([
+    ['Stridsbåt 90', KIND_CB90, 20],
+    ['raft', KIND_RAFT, 12],
+  ])('leaves a white wash behind the %s\'s transom under way, and none lying still', (_, kind, speed) => {
+    expect(run(0, 0, kind).washes).toHaveLength(0)
+    const { washes, hulls, z } = run(speed, 0, kind)
+    const wash = last(washes)
+    // Behind it, and churned harder than its hull churns the water.
+    expect(wash.z).toBeGreaterThan(z)
+    expect(wash.churn).toBeGreaterThan(last(hulls).churn)
   })
 
   it('stirs the water where its spray comes down', () => {
     expect(run(0, 0).pokes).toHaveLength(0)
-    expect(run(20, 0).pokes.length).toBeGreaterThan(3)
+    // The rooster tail's drops are nearly two seconds in the air.
+    expect(run(20, 0, KIND_CB90, 180).pokes.length).toBeGreaterThan(3)
   })
 
   it('leaves the surface still above a dived submarine, and pushes it surfaced', () => {

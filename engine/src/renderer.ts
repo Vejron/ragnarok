@@ -42,7 +42,19 @@ const VERTEX_SCAR_BUFFERS = 9
 type Layer = 'world' | 'held' | 'overlay'
 
 /** Floats in the frame uniform block. Matches `Frame` in common.wgsl. */
-const FRAME_FLOATS = 148
+const FRAME_FLOATS = 152
+
+/**
+ * The plane the water mirrors the scene in: `y` metres high at `(x, z)`, rising `slopeX` metres a metre
+ * along x and `slopeZ` along z. A river falling along its course mirrors in a plane tilted with it.
+ */
+export interface MirrorPlane {
+  x: number
+  y: number
+  z: number
+  slopeX: number
+  slopeZ: number
+}
 /**
  * Casters smaller than this, metres of bounding radius, are left out of the far shadow map: its texels are
  * wide, and there they would cost draws and show as nothing.
@@ -345,12 +357,12 @@ export class Renderer {
   private overlayFrom = 0
 
   /**
-   * The scene mirrored in a horizontal plane, for water to sample: RGB is the scene, alpha is where it drew
-   * anything (the rest is sky). Drawn only while `reflectionHeight` is a world Y; set it to null for no pass.
+   * The scene mirrored in the water's plane, for water to sample: RGB is the scene, alpha is where it drew
+   * anything (the rest is sky). Drawn only while `reflectionPlane` is set; set it to null for no pass.
    * Draws opaque meshes only, within `reflectionRange` metres, at `reflectionScale` of the screen's size.
    */
   readonly reflection = new Texture({ data: new Uint8Array(4), width: 1, height: 1 }, { srgb: false, wrap: 'clamp', mipmaps: false })
-  reflectionHeight: number | null = null
+  reflectionPlane: MirrorPlane | null = null
   /**
    * The sky above the horizon folded into a square, redrawn each frame there is a sky, for materials
    * that mirror it: sample it at `skyPanoramaUv(dir)` and pass that to `skyFrom(dir, sample)`.
@@ -359,6 +371,9 @@ export class Renderer {
   reflectionScale = 0.5
   reflectionRange = 300
   private reflectionOn = false
+  /** The mirror's unit normal, pointing up, and its distance from the origin along it, metres (`reflectionPlane`'s). */
+  private readonly mirrorNormal = new Float32Array(3)
+  private mirrorOffset = 0
   private reflectionTarget: { width: number; height: number; color: GPUTexture | null; depth: GPUTexture; resolve: GPUTexture } | null = null
   private readonly reflectionFrame = new Float32Array(FRAME_FLOATS)
   private readonly reflectionFrameBuffer: GPUBuffer
@@ -789,8 +804,9 @@ export class Renderer {
     const dx = cx - this.camX, dy = cy - this.camY, dz = cz - this.camZ
     const distance2 = dx * dx + dy * dy + dz * dz
     // Only what rises above the mirror, is near and big enough to show, and falls in the mirrored view.
+    const mn = this.mirrorNormal
     const inReflection = this.reflectionOn && !material.transparent && layer === 'world' &&
-      cy + radius > this.reflectionHeight! && distance2 < this.reflectionRange * this.reflectionRange &&
+      mn[0]! * cx + mn[1]! * cy + mn[2]! * cz - this.mirrorOffset + radius > 0 && distance2 < this.reflectionRange * this.reflectionRange &&
       radius * radius > distance2 * (REFLECT_MIN_SIZE * REFLECT_MIN_SIZE) &&
       (!mesh.frustumCulled || this.reflectionFrustum.intersectsSphere(cx, cy, cz, radius))
     if (!inView && !inShadow && !inFarShadow && !inReflection) return
@@ -1241,19 +1257,25 @@ export class Renderer {
     f[145] = this.farShadowsOn ? 1 : 0
     this.writeLights(scene, f)
     this.writeSky(scene, f)
-    // The point-light count's neighbours are the clip: below `clip height` is cut away while mirroring.
+    // Beside the point-light count: whether this is the mirror image's pass, which cuts away what lies
+    // under the mirror (`mirror`, after the far shadow).
     f[89] = 0
     f[90] = 0
     this.device.queue.writeBuffer(this.frameBuffer, 0, f)
     if (this.reflectionOn) {
       const r = this.reflectionFrame
-      const h = this.reflectionHeight!
+      const n = this.mirrorNormal
       r.set(f)
       r.set(this.reflectionViewProjection, 0)
       r.set(this.reflectionView, 16)
-      r[33] = 2 * h - this.camY
-      r[89] = h - 0.05
+      // The camera mirrored: as far under the plane as it is over it.
+      const over = 2 * (n[0]! * this.camX + n[1]! * this.camY + n[2]! * this.camZ - this.mirrorOffset)
+      r[32] = this.camX - over * n[0]!
+      r[33] = this.camY - over * n[1]!
+      r[34] = this.camZ - over * n[2]!
       r[90] = 1
+      // Cut 5 cm under the plane, so the shore's edge meets the water.
+      r[148] = n[0]!; r[149] = n[1]!; r[150] = n[2]!; r[151] = this.mirrorOffset - 0.05
       this.device.queue.writeBuffer(this.reflectionFrameBuffer, 0, r)
     }
   }
@@ -1431,14 +1453,26 @@ export class Renderer {
 
   /** Mirrors the view in the reflection plane and sizes the target, or turns the reflection off. */
   private setupReflection(camera: PerspectiveCamera) {
-    const h = this.reflectionHeight
+    const plane = this.reflectionPlane
+    this.reflectionOn = false
+    if (!plane) return
+    const n = this.mirrorNormal
+    const length = Math.hypot(plane.slopeX, 1, plane.slopeZ)
+    n[0] = -plane.slopeX / length
+    n[1] = 1 / length
+    n[2] = -plane.slopeZ / length
+    const d = n[0]! * plane.x + n[1]! * plane.y + n[2]! * plane.z
+    this.mirrorOffset = d
     // Under the surface there is nothing to mirror.
-    this.reflectionOn = h !== null && this.camY > h
+    this.reflectionOn = n[0]! * this.camX + n[1]! * this.camY + n[2]! * this.camZ > d
     if (!this.reflectionOn) return
+    // A reflection in the plane n·p = d: p - 2 (n·p - d) n.
     const m = this.mirror
     mat4.identity(m)
-    m[5] = -1
-    m[13] = 2 * h!
+    for (let c = 0; c < 3; c++) {
+      for (let r = 0; r < 3; r++) m[c * 4 + r] = (c === r ? 1 : 0) - 2 * n[c]! * n[r]!
+      m[12 + c] = 2 * d * n[c]!
+    }
     mat4.multiply(this.reflectionView, camera.view, m)
     // A mirror reverses winding, and so does flipping the image: do both and the pipelines' culling still holds.
     // The water samples the result flipped back.

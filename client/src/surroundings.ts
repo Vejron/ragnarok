@@ -16,7 +16,7 @@ import { halfExtentsOf } from '@/sim/kinds'
 import { groundOf, type Footing } from '@/sim/groundsound'
 import { surfaceWetness } from '@/sim/surface'
 import { iced, winter } from '@/render/season'
-import type { Waters } from '@/sim/waters'
+import { easeMirror, type ShownMirror, type WaterPlane, type Waters } from '@/sim/waters'
 import { NO_WATER } from '@/world'
 
 /** Feet this deep (metres) under the surface are in the water. */
@@ -65,16 +65,19 @@ export class Surroundings {
     return true
   }
 
-  /** The water level mirrored last frame, kept while it is nearly as good as any (`Waters.planeNear`); null with none about. */
-  mirrored: number | null = null
+  /** The water plane fitted last frame, kept while it is nearly as good as any (`Waters.planeNear`); null with none about. */
+  mirrored: WaterPlane | null = null
+  /** The mirror as shown, eased towards `mirrored` (`easeMirror`); null once it has faded out. */
+  private shownMirror: ShownMirror | null = null
 
-  /** Picks the water level to mirror this frame, if any water is about the camera. */
-  mirrorWater() {
+  /** Picks the water plane to mirror this frame, `dt` seconds after the last, if any water is about the camera. */
+  mirrorWater(dt: number) {
     const camera = this.scene.camera.position
     const look = this.scene.camera.getWorldDirection({ x: 0, y: 0, z: 0 })
-    const level = this.waters?.planeNear(camera.x, camera.z, look.x, look.z, this.mirrored) ?? null
-    this.mirrored = level
-    this.scene.setWaterPlane(level)
+    const plane = this.waters?.planeNear(camera.x, camera.z, look.x, look.z, this.mirrored) ?? null
+    this.mirrored = plane
+    this.shownMirror = easeMirror(this.shownMirror, plane, dt)
+    this.scene.setWaterPlane(this.shownMirror?.plane ?? null, this.shownMirror?.strength ?? 0)
     // The surface over the camera with its waves, as the water draws it.
     this.scene.setUnderwater(camera.y < (this.fx().waterAt?.(camera.x, camera.z) ?? NO_WATER))
   }

@@ -40,5 +40,5 @@ export const CB90: VehicleKind = {
     engine: { name: 'marine', synth: TWIN_DIESEL_JETS, idle: 600, redline: 2300, spin: 1.6, shifts: [0], top: CB90_MAX_SPEED, level: 0.5 },
   },
   // No wheels: it carves a wake, and its waterjets throw spray. Its engines are under the after deck.
-  fx: { wheels: null, drivenFrom: null, exhaust: 'pipe', bay: [0, 0.6, 6], floats: true, jets: true },
+  fx: { wheels: null, drivenFrom: null, exhaust: 'pipe', bay: [0, 0.6, 6], floats: true, drive: 'jets' },
 }

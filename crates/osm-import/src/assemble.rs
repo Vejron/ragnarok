@@ -857,6 +857,11 @@ fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collecti
             // The current's two parts, cut as the levels are.
             let part = |k: usize| Ground { origin: ground.origin, cell: ground.cell, side: ground.side, heights: if flowing { water.flow.iter().skip(k).step_by(2).map(|&v| i32::from(v)).collect() } else { Vec::new() } };
             let (flow_x, flow_z) = (part(0), part(1));
+            // How it stirs the surface, cut as the current is, and its streaks.
+            let stirred = water.stir.len() == 2 * all.heights.len() && water.lane.len() == all.heights.len();
+            let stir = |k: usize| Ground { origin: ground.origin, cell: ground.cell, side: ground.side, heights: if stirred { water.stir.iter().skip(k).step_by(2).map(|&v| i32::from(v)).collect() } else { Vec::new() } };
+            let (boil, spin) = (stir(0), stir(1));
+            let lane = Ground { origin: ground.origin, cell: ground.cell, side: ground.side, heights: if stirred { water.lane.iter().map(|&v| i32::from(v)).collect() } else { Vec::new() } };
             // And the foam on it.
             let foamy = water.foam.len() == all.heights.len();
             let foam = Ground { origin: ground.origin, cell: ground.cell, side: ground.side, heights: if foamy { water.foam.iter().map(|&cover| i32::from(cover)).collect() } else { Vec::new() } };
@@ -871,6 +876,14 @@ fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collecti
                             let (x, z) = (flow_x.block(col as u32 * per_tile, row as u32 * per_tile, samples), flow_z.block(col as u32 * per_tile, row as u32 * per_tile, samples));
                             if x.iter().chain(&z).any(|&v| v != 0) {
                                 tile.flow = x.into_iter().zip(z).flat_map(|(x, z)| [x as i8, z as i8]).collect();
+                            }
+                        }
+                        if stirred {
+                            let (x, z) = (col as u32 * per_tile, row as u32 * per_tile);
+                            let (boil, spin, lane) = (boil.block(x, z, samples), spin.block(x, z, samples), lane.block(x, z, samples));
+                            if boil.iter().chain(&spin).chain(&lane).any(|&v| v != 0) {
+                                tile.stir = boil.into_iter().zip(spin).flat_map(|(boil, spin)| [boil as i8, spin as i8]).collect();
+                                tile.lane = lane.into_iter().map(|v| v as i16).collect();
                             }
                         }
                         if foamy {

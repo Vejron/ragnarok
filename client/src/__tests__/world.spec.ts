@@ -94,7 +94,7 @@ describe('world files', () => {
 
   /** A tile file with every field empty, `fields` put in by index (`Tile` in `world.rs`). */
   const tileWith = (fields: Record<number, unknown>) =>
-    encode(Object.assign([[], [], [[], []], [2, new Uint8Array()], [], [], new Uint8Array(), new Uint8Array(), new Uint8Array(), new Uint8Array(), [], [], new Uint8Array(), [], [], [], new Uint8Array(), new Uint8Array(), [[], [], []], []], fields))
+    encode(Object.assign([[], [], [[], []], [2, new Uint8Array()], [], [], new Uint8Array(), new Uint8Array(), new Uint8Array(), new Uint8Array(), new Uint8Array(), new Uint8Array(), [], [], new Uint8Array(), [], [], [], new Uint8Array(), new Uint8Array(), [[], [], []], []], fields))
 
   it('decodes ground written as residuals of a plane', () => {
     // The bytes `world.rs` pins (`ground_is_written_rounded_as_residuals_of_a_plane_through_its_neighbours`):
@@ -108,7 +108,7 @@ describe('world files', () => {
 
   it('decodes tracks', () => {
     expect(decodeTile(tileWith({})).rails).toEqual([])
-    const tile = decodeTile(tileWith({ 13: [[144, RAIL_TRAIN, [[0, 0], [1000, -250]]]] }))
+    const tile = decodeTile(tileWith({ 15: [[144, RAIL_TRAIN, [[0, 0], [1000, -250]]]] }))
     expect(tile.rails).toEqual([{ gauge: 1.44, kind: RAIL_TRAIN, points: [[0, 0], [10, -2.5]] }])
   })
 
@@ -119,14 +119,19 @@ describe('world files', () => {
     // A river's foam, a byte a sample in 255ths, after its current.
     expect(decodeTile(tileWith({})).foam).toBeUndefined()
     expect([...decodeTile(tileWith({ 9: new Uint8Array([0, 51, 255]) })).foam!]).toEqual([0, 51, 255])
+    // How it stirs its surface, two signed bytes a sample, and its lanes, a little-endian i16 a sample.
+    expect(decodeTile(tileWith({})).stir).toBeUndefined()
+    expect([...decodeTile(tileWith({ 10: new Uint8Array([4, 0xfe, 0x80, 127]) })).stir!]).toEqual([4, -2, -128, 127])
+    expect(decodeTile(tileWith({})).lane).toBeUndefined()
+    expect([...decodeTile(tileWith({ 11: new Uint8Array([0xfe, 0xff, 0xff, 0x7f, 0, 0x80]) })).lane!]).toEqual([-2, 32767, -32768])
     expect(decodeTile(tileWith({})).crops).toBeUndefined()
-    const tile = decodeTile(tileWith({ 17: new Uint8Array([CROP_NONE, CROP_WHEAT, CROP_WHEAT, CROP_NONE]) }))
+    const tile = decodeTile(tileWith({ 19: new Uint8Array([CROP_NONE, CROP_WHEAT, CROP_WHEAT, CROP_NONE]) }))
     expect(Array.from(tile.crops!)).toEqual([CROP_NONE, CROP_WHEAT, CROP_WHEAT, CROP_NONE])
   })
 
   it('decodes tombstones, in metres and radians', () => {
     expect(decodeTile(tileWith({})).graves).toEqual([])
-    const tile = decodeTile(tileWith({ 19: [[1250, -300, 480, -1571, GRAVE_CROSS]] }))
+    const tile = decodeTile(tileWith({ 21: [[1250, -300, 480, -1571, GRAVE_CROSS]] }))
     expect(tile.graves).toEqual([{ x: 12.5, z: -3, base: 4.8, yaw: -1.571, kind: GRAVE_CROSS }])
   })
 

@@ -39,6 +39,14 @@ const WAVE_CELL = 1.5
  * under a stream's 1 and the shader tells the two apart as before.
  */
 export const FLOW_BIAS = 10
+/** The step `TileData.stir` counts in, 1/s (`STIR_STEP` in `crates/shared`). */
+export const STIR_STEP = 0.005
+/** The most `TileData.stir` holds either way, 1/s: the vertex colour's 0 and 1 (`WaterBuffers.colors`). */
+export const STIR_RANGE = 127 * STIR_STEP
+/** The steps of `TileData.lane` to a streak (`LANE_STEPS` in `crates/shared`); it wraps round every 64 streaks. */
+export const LANE_STEPS = 1024
+/** The streaks `TileData.lane` wraps round after. */
+export const LANE_WRAP = 65536 / LANE_STEPS
 /**
  * A water mesh: positions, the shader's `custom` attribute (depth, then a stream's flow, or on a lake or
  * river the open water's reach in metres in y and its current in zw, `FLOW_BIAS` off in w), and indices.
@@ -58,6 +66,13 @@ export interface WaterBuffers {
    * coarse to.
    */
   normals?: Float32Array
+  /**
+   * On a river (`TileData.stir`, `TileData.lane`), each vertex's colour: how the surface wells up or
+   * gathers and how fast it spins, each as `0.5 + v / (2 STIR_RANGE)`, then where it is among the
+   * streaks as a turn round a circle (one turn to `LANE_WRAP` streaks), its cosine and sine as
+   * `0.5 + 0.5 c`. A turn blends between vertices where the count it was made from wraps round.
+   */
+  colors?: Float32Array
   indices: Uint32Array
   /** A lake's or river's surface rather than a stream's ribbon: the wave field moves it (`WaterRefine`). */
   surface?: boolean
@@ -68,10 +83,11 @@ export interface WaterBuffers {
  * touch water are triangulated. Depth is `water - ground` at the vertices and interpolates across
  * a cell, so the shoreline (depth 0) falls between a wet and a dry sample, and islands stay dry
  * because their ground is above the level. `reach` (`TileData.reach`) is how wide the water is at each
- * sample, which the waves grow with, `flow` (`TileData.flow`) which way it runs and `foam`
- * (`TileData.foam`) how much foam it carries. Null when the tile has no water.
+ * sample, which the waves grow with, `flow` (`TileData.flow`) which way it runs, `foam`
+ * (`TileData.foam`) how much foam it carries, and `stir` and `lane` how the current stirs it and where its
+ * streaks run (`WaterBuffers.colors`). Null when the tile has no water.
  */
-export function surfaceBuffers(water: Float32Array, ground: TileGround, reach?: Uint8Array, flow?: Int8Array, foam?: Uint8Array): WaterBuffers | null {
+export function surfaceBuffers(water: Float32Array, ground: TileGround, reach?: Uint8Array, flow?: Int8Array, foam?: Uint8Array, stir?: Int8Array, lane?: Int16Array): WaterBuffers | null {
   const { x0, z0, cell, side, heights } = ground
   if (water.length !== side * side) return null
   const positions = new Float32Array(side * side * 3)
@@ -79,6 +95,8 @@ export function surfaceBuffers(water: Float32Array, ground: TileGround, reach?: 
   const flows = new Float32Array(side * side * 3)
   const foamy = foam && foam.length === water.length
   const foams = foamy ? new Float32Array(side * side) : undefined
+  const stirred = stir && lane && stir.length === 2 * water.length && lane.length === water.length
+  const colors = stirred ? new Float32Array(side * side * 4) : undefined
   for (let row = 0; row < side; row++) {
     for (let column = 0; column < side; column++) {
       const at = row * side + column
@@ -93,6 +111,10 @@ export function surfaceBuffers(water: Float32Array, ground: TileGround, reach?: 
       flows[at * 3 + 1] = flowing ? flow[at * 2]! * FLOW_STEP : 0
       flows[at * 3 + 2] = (flowing ? flow[at * 2 + 1]! * FLOW_STEP : 0) - FLOW_BIAS
       if (foams) foams[at] = foam![at]! / 255
+      if (colors) {
+        const turn = (lane![at]! / 65536) * Math.PI * 2
+        colors.set([0.5 + (stir![at * 2]! * STIR_STEP) / (2 * STIR_RANGE), 0.5 + (stir![at * 2 + 1]! * STIR_STEP) / (2 * STIR_RANGE), 0.5 + 0.5 * Math.cos(turn), 0.5 + 0.5 * Math.sin(turn)], at * 4)
+      }
     }
   }
   const indices: number[] = []
@@ -141,6 +163,8 @@ export function surfaceBuffers(water: Float32Array, ground: TileGround, reach?: 
           if (fastest >= 0 && !wet(p) && speedAt(p) < speedAt(fastest)) {
             flows[p * 3 + 1] = flows[fastest * 3 + 1]!
             flows[p * 3 + 2] = flows[fastest * 3 + 2]!
+            // And are stirred as it is, so the streaks run on to the shore and do not crowd into it.
+            if (colors) colors.copyWithin(p * 4, fastest * 4, fastest * 4 + 4)
           }
         }
       }
@@ -149,17 +173,17 @@ export function surfaceBuffers(water: Float32Array, ground: TileGround, reach?: 
   }
   if (indices.length === 0) return null
   const split = Math.ceil(cell / WAVE_CELL - 1e-6)
-  if (split > 1) return subdivided(positions, depths, flows, foams, normals, Uint32Array.from(indices), side, cell, split)
-  return { positions, custom: surfaceCustom(depths, flows), ...(foams ? { uvs: surfaceUvs(foams) } : {}), normals, indices: Uint32Array.from(indices), surface: true }
+  if (split > 1) return subdivided(positions, depths, flows, foams, normals, colors, Uint32Array.from(indices), side, cell, split)
+  return { positions, custom: surfaceCustom(depths, flows), ...(foams ? { uvs: surfaceUvs(foams) } : {}), normals, ...(colors ? { colors } : {}), indices: Uint32Array.from(indices), surface: true }
 }
 
 /**
  * The cells of a surface mesh (two triangles a cell, as `surfaceBuffers` lists them, over a grid
  * `side` samples across) each cut into `split` × `split`, their heights and depths blended from the
- * cell's corners, and so are their flows (a lake's reach), `foams` and `normals`. Neighbouring cells repeat their shared edge's
+ * cell's corners, and so are their flows (a lake's reach), `foams`, `normals` and `colors`. Neighbouring cells repeat their shared edge's
  * vertices, which the waves move alike.
  */
-function subdivided(positions: Float32Array, depths: Float32Array, flows: Float32Array, foams: Float32Array | undefined, normals: Float32Array, cells: Uint32Array, side: number, cell: number, split: number): WaterBuffers {
+function subdivided(positions: Float32Array, depths: Float32Array, flows: Float32Array, foams: Float32Array | undefined, normals: Float32Array, colors: Float32Array | undefined, cells: Uint32Array, side: number, cell: number, split: number): WaterBuffers {
   const n = split + 1
   const count = cells.length / 6
   const out = new Float32Array(count * n * n * 3)
@@ -167,6 +191,7 @@ function subdivided(positions: Float32Array, depths: Float32Array, flows: Float3
   const flow = new Float32Array(count * n * n * 3)
   const foam = foams ? new Float32Array(count * n * n) : undefined
   const facing = new Float32Array(count * n * n * 3)
+  const stirs = colors ? new Float32Array(count * n * n * 4) : undefined
   const indices = new Uint32Array(count * split * split * 6)
   let vertex = 0
   let index = 0
@@ -190,6 +215,7 @@ function subdivided(positions: Float32Array, depths: Float32Array, flows: Float3
         // Not made unit length again: the shader does that.
         for (let k = 0; k < 3; k++) facing[vertex * 3 + k] = blend((p) => normals[p * 3 + k]!, u, v)
         if (foam) foam[vertex] = blend((p) => foams![p]!, u, v)
+        if (stirs) for (let k = 0; k < 4; k++) stirs[vertex * 4 + k] = blend((p) => colors![p * 4 + k]!, u, v)
         deep[vertex++] = blend((p) => depths[p]!, u, v)
       }
     }
@@ -202,7 +228,7 @@ function subdivided(positions: Float32Array, depths: Float32Array, flows: Float3
       }
     }
   }
-  return { positions: out, custom: surfaceCustom(deep, flow), ...(foam ? { uvs: surfaceUvs(foam) } : {}), normals: facing, indices, surface: true }
+  return { positions: out, custom: surfaceCustom(deep, flow), ...(foam ? { uvs: surfaceUvs(foam) } : {}), normals: facing, ...(stirs ? { colors: stirs } : {}), indices, surface: true }
 }
 
 /**

@@ -11,9 +11,9 @@ What moves through open water now moves the water. A wave equation is stepped on
 - **Vehicles going into the water** splash: a tank driving down a bank throws a crown of spray off its bow and shoves out a ring as wide as its hull, then a wake and water off its bow as it ploughs on. A helicopter coming down in a lake does the same. A walker's, a hen's or a Titan's feet splash where they come down in the water, and a Titan wading through a lake pushes a wave ahead of each stride.
 - **Water breaks.** Crests ease off below half a metre, and steep water spends part of its motion as foam, so a hull at just the ripples' speed cannot keep adding to its own wave.
 - **A splash** knocks a hole in the water that runs out as rings. Spray landing back on the water does the same, and leaves foam where it comes down.
-- **A waterjet boat's spray** (the Stridsbåt 90, [VEHICLES-XIX.md](VEHICLES-XIX.md)):
-  - under way, a rooster tail off its jets, and sheets off its bow once it is planing;
-  - in a crash stop, sheets blasted forward past the bow along both sides, a wall of water off the bow, and a cloud the boat runs into.
+- **A waterjet boat's spray** (the Stridsbåt 90, [VEHICLES-XIX.md](VEHICLES-XIX.md)) is a rooster tail off its jets under way, and nothing else. The sheets thrown off its bow to either side and the storm of water in a crash stop are gone: they did not look like water.
+- **A driven boat's white wash** (`VehicleFx.wash`): the Stridsbåt 90 and the raft ([VEHICLES-XX.md](VEHICLES-XX.md)) press a second, narrow, shallow and heavily churned stamp into the field behind their transoms (`vehicle <id> wash`), whiter the faster they go through the water and the harder they pull away. The current carries it off, and the water's shader draws its churn as foam.
+- **An outboard's prop wash** (the raft, `JetSpray.outboard`): a low fan of spray thrown back and out from behind the transom, big drops, fine ones and a thin mist, bursting up as the hull slaps down off a wave.
 - **A car or snowmobile skimming over the water** throws spray too (`JetSpray.skim`): fans of streaks and drops out to either side from its back corners, a little off its nose, and a rooster tail off its drive with a mist behind. A snowmobile's track throws a full rooster tail; a car's wheels about a third of one. It all grows with speed, to its fullest at 20 m/s.
   - A car skims on its wheels, not its hull: whether it is skimming goes by the lowest of its wheels against the surface. Before, it went by the hull's underside alone, which rides too high over the water on a car for it ever to count.
   - In a winter world with open water (`open_water`), the water is water: spray, splashes and wakes as in summer. Only frozen water is ice to the effects (`iced` in `render/season.ts`). Before, any winter world turned them all off.
@@ -82,7 +82,8 @@ At most 64 stamps are taken a frame: the nearest and biggest first. Nothing furt
 
 | Caller | What it pushes in |
 |---|---|
-| `VehicleFx.skim` (`render/tyres.ts`) | Any vehicle in the water, by its speed (`pushShare`): 0.6 of how deep its bottom (its hull, or its wheels or tracks where they are in water) is under the surface (at most 1 m), more in a crash stop, fading out as its top goes 0.5 m under |
+| `VehicleFx.skim` (`render/tyres.ts`) | Any vehicle in the water, by its speed (`pushShare`): 0.6 of how deep its bottom (its hull, or its wheels or tracks where they are in water) is under the surface (at most 1 m), fading out as its top goes 0.5 m under |
+| `VehicleFx.wash` | A boat with a drive (`fx.drive`): a strip behind its transom, 0.45 of its beam wide, 4 cm deep and churned up to 3, by its speed through the water (full at 8 m/s) and how hard it pulls away |
 | `VehicleFx.splashIn` | Any vehicle going into the water, driven in or dropped in, after a quarter of a second out of it: a crown of spray at its bow (or under it, dropped) and a hole as wide as its hull, deeper the faster it came. Not one first seen already in the water |
 | `VehicleFx.skim`, ploughing | A vehicle driving through the water on its wheels or tracks, faster than 2.5 m/s, throws water off its bow. Wheels on the bed mean it is not skimming over the water, however close its hull is to the surface |
 | `Vehicles.stepIn` (`entities/presenters/vehicles.ts`) | A walker's, a hen's or a Titan's foot coming down in water, and a Titan landing in it: a splash and a hole as big as the foot (3.5 m round for a Titan's) |
@@ -105,7 +106,7 @@ A river's water runs, and the field's water runs with it ([RIVER-SURFACE.md](RIV
 
 ### Spray (`client/src/render/jetspray.ts`)
 
-`JetSpray` throws a waterjet boat's water from two pools of its own, so that a crash stop cannot crowd out smoke and dust:
+`JetSpray` throws a waterjet boat's rooster tail from two pools of its own, so that it cannot crowd out smoke and dust:
 - 8,192 crisp drops at full resolution;
 - 1,536 puffs of mist at half resolution;
 - the glints go in the shared additive pool.
@@ -125,7 +126,7 @@ Where the drops come down is worked out on the CPU from each stream's arc. It co
 
 Measured with `client/scripts/gpu-bench.mjs` on Vindeln's water view, at quality high (2268 × 1258, 2.56 ms a frame), timed alternately with the plain frame:
 - a hull driven through the wave field every frame costs nothing measurable (0.00 ms);
-- a crash stop's spray in view costs 0.14 ms;
+- a crash stop's spray in view cost 0.14 ms, before it was taken out;
 - the refined water, about 120,000 more triangles in that view, costs 0.16 ms (2.51 ms with it).
 
 The bench's search for a shore now steps west from the spawn as well as east, which Vindeln needs.
@@ -136,7 +137,7 @@ The bench's search for a shore now steps west from the spawn as well as east, wh
   - the field's stepping rate, catching up and following the camera;
   - its rest once still;
   - the stamp limit and which stamps are kept;
-  - a boat's hull pressed in along its heading, deeper in a crash stop;
+  - a boat's hull pressed in along its heading, and a white wash behind the CB90's and the raft's transoms;
   - spray stirring the water where it lands.
 - `client/src/__tests__/waterrefine.spec.ts`:
   - the refined water waits for water and sizes itself to the vertex spacing;
@@ -144,7 +145,7 @@ The bench's search for a shore now steps west from the spawn as well as east, wh
   - it keeps the square on the cells' lines and takes only the surfaces that reach into it.
 - `tyres.spec.ts`: a car skimming fast throws spray, more the faster, and none standing still; a snowmobile on a winter world's open water throws more than a car (its rooster tail).
 - `tyres.spec.ts`: a tank driving into a lake splashes once as big as itself, then pushes a wake and throws water off its bow; one first seen in the water does not splash; a helicopter dropping in splashes.
-- `tyres.spec.ts`: a waterjet boat throws no spray lying still, a rooster tail of streaks, drops and mist under way, and more than twice the water and mist in a crash stop.
+- `tyres.spec.ts`: a waterjet boat throws no spray lying still, a rooster tail of streaks, drops and mist under way, and no more in a crash stop; the raft's outboard throws a low fan, far less, and more as it bobs over waves.
 - The GPU side was checked in headless Chrome:
   - the field read back after a hull ran through it: a bow wave and a V, at first about 0.6 m by the hull and ±0.2 m 25 m behind;
   - after the waterline and wave speed changed, a CB90 at 20 m/s and a submarine at 8 m/s side by side: narrow Vs from pointed bows, peaking at 0.4 to 0.5 m by the hulls;

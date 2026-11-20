@@ -3,7 +3,7 @@ import tables from './sim/tables.generated.json'
 
 /** Mirrors `crates/shared/src/world.rs`. Coordinates are metres: +X east, +Z south, +Y up. */
 
-export const WORLD_VERSION = 35
+export const WORLD_VERSION = 36
 
 /** `Manifest::theme`, mirrors `crates/shared/src/world.rs`. */
 export const THEME_WINTER = 1
@@ -516,6 +516,19 @@ export interface TileData {
    */
   foam?: Uint8Array
   /**
+   * How a river's current stirs its surface at each ground sample: two entries a sample in the layout of
+   * `water`, in steps of `STIR_STEP` 1/s. First how it wells up in boils (above 0) or gathers into a foam
+   * line (below 0), then how fast it spins, along an eddy line or behind a boulder. Absent when no water
+   * in the tile flows.
+   */
+  stir?: Int8Array
+  /**
+   * A river's stream function at each ground sample (same layout as `water`), in `1 / LANE_STEPS` of
+   * `LANE_FLUX` m³/s and wrapping round every 64 of them: the water runs along a line where it is the
+   * same, so its streaks are drawn along those lines. Absent when no water in the tile flows.
+   */
+  lane?: Int16Array
+  /**
    * Slopes `(dh/dx, dh/dz)` of the ground on a finer grid than `ground`, `n × n` with
    * `n = sqrt(length / 2)`, in units of `1 / DETAIL_SLOPE_SCALE`; for lighting only. Absent or empty
    * when the tile has none.
@@ -669,13 +682,15 @@ function flatIndices(triangles: readonly number[][]): Uint32Array {
 }
 
 export function decodeTile(bytes: Uint8Array): TileData {
-  const [buildings, roads, [vertices, triangles], ground, cover, trees, water, reach, flow, foam, streams, bridges, detail, rails, ski, lines, stones, crops, look, graves] = decode(bytes) as [
+  const [buildings, roads, [vertices, triangles], ground, cover, trees, water, reach, flow, foam, stir, lane, streams, bridges, detail, rails, ski, lines, stones, crops, look, graves] = decode(bytes) as [
     [number, number[][], number, number, number, number, number, number, [number, number], [number[], number[], Uint8Array, Uint8Array], [number, number] | null][],
     [number, number, boolean, number[][], number, number, number, number][],
     [number[][], number[][]],
     [number, Uint8Array],
     [number, number[][][]][],
     [number, number, number, number, number, number, boolean][],
+    Uint8Array,
+    Uint8Array,
     Uint8Array,
     Uint8Array,
     Uint8Array,
@@ -731,6 +746,9 @@ export function decodeTile(bytes: Uint8Array): TileData {
     // A copy of its own, as `detail` is.
     ...(flow.length > 0 ? { flow: new Int8Array(flow.slice().buffer) } : {}),
     ...(foam.length > 0 ? { foam: foam.slice() } : {}),
+    ...(stir.length > 0 ? { stir: new Int8Array(stir.slice().buffer) } : {}),
+    // Little-endian `i16`s, which every machine the game runs on is.
+    ...(lane.length > 0 ? { lane: new Int16Array(lane.slice().buffer) } : {}),
     streams: streams.map(([width, points]) => ({ width: metres(width), points: points.map(point) })),
     bridges: bridges.map(([first, steel]) => ({ first, steel })),
     // A copy of its own: a view would keep the whole file alive, and be cloned whole to the worker.

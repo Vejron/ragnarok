@@ -31,7 +31,7 @@ export class WaterRefine {
 
   /**
    * Moves the square to stay about `eye` and hands it the surfaces it covers. `water` is the level of the
-   * water about the camera (`Surroundings.mirrored`), null for none: high over it, or with none, the
+   * water about the camera (the height of `Surroundings.mirrored` there), null for none: high over it, or with none, the
    * refined mesh stands down.
    */
   update(eye: Readonly<XYZ>, water: number | null = null) {

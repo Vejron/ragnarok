@@ -1,5 +1,6 @@
 import { Adaptation, Beams, Bloom, Color, Fog, Grade, Ink, LensFlare, PerspectiveCamera, Quaternion, Renderer, Scene as EngineScene, Shafts, Sky, Vector3, type EyeTarget } from '@ragnarok/engine'
 import type { Eye } from '@/xr/headset'
+import type { WaterPlane } from '@/sim/waters'
 import { GunSightView } from './gunsight'
 import { HeldMapView } from './heldmap'
 import { ContactShadows } from './contact'
@@ -91,6 +92,10 @@ const MIST_DENSITY = 0.004
 const MIST_FALLOFF = 0.045
 /** How the mist's base follows the height of the water in sight, per frame: it settles over a few seconds. */
 const MIST_SETTLE = 0.02
+/** How far the water's mirror draws the scene, metres, low over the water; how much further for each metre the camera is above it; and the most. */
+const MIRROR_RANGE = 300
+const MIRROR_RANGE_PER_METRE = 6
+const MIRROR_RANGE_MAX = 1000
 /** In the hardest rain the air is this hazy, per metre, near-evenly with height (it thins by e every 1/`RAIN_FALLOFF` m). */
 const RAIN_HAZE = 0.0035
 const RAIN_FALLOFF = 0.004
@@ -515,18 +520,21 @@ export class Scene {
   }
 
   /**
-   * The height of the water to mirror this frame, or null where there is none in sight (the mirrored
-   * pass is then skipped altogether).
+   * The plane of the water to mirror this frame, given at the camera, and how much of the mirror shows
+   * (0 to 1), or null where there is none in sight (the mirrored pass is then skipped altogether).
    */
-  setWaterPlane(height: number | null) {
+  setWaterPlane(plane: WaterPlane | null, strength = 1) {
     if (!this.renderer) return
-    const on = this.currentLook.reflect && height !== null
-    this.renderer.reflectionHeight = on ? height : null
-    if (height !== null) {
-      this.mistBase = this.mistBase === null ? height : this.mistBase + (height - this.mistBase) * MIST_SETTLE
+    const on = this.currentLook.reflect && plane !== null
+    this.renderer.reflectionPlane = on ? plane : null
+    if (plane !== null) {
+      // High over the water the mirror shows more of the land: it draws further, so trees do not drop out of it as the camera climbs.
+      const height = Math.max(0, this.camera.position.y - plane.y)
+      this.renderer.reflectionRange = Math.min(MIRROR_RANGE_MAX, MIRROR_RANGE + MIRROR_RANGE_PER_METRE * height)
+      this.mistBase = this.mistBase === null ? plane.y : this.mistBase + (plane.y - this.mistBase) * MIST_SETTLE
       this.drawn.fogBase = this.mistBase
     }
-    setWaterPlane(on ? height : null)
+    setWaterPlane(on ? plane : null, strength)
   }
 
   /** Whether the camera is under the water's surface: the view then closes in to the water's murk. */

@@ -29,7 +29,7 @@ struct Frame {
   shadow: vec4f,
   // camera near, camera far, seconds since the last frame, unused.
   clip: vec4f,
-  // Number of lights listed, the height under which a reflection pass cuts the scene away, whether it does (0 or 1), unused.
+  // Number of lights listed, unused, whether this is the mirror image's pass (0 or 1), unused.
   lightCount: vec4f,
   // The light grid's corner (world x, z), 1 / its cell size, whether to show its cells' counts instead (0 or 1).
   lightGrid: vec4f,
@@ -53,6 +53,9 @@ struct Frame {
   farShadowMatrix: mat4x4f,
   // The far map's texel size (m), whether it is drawn (0 or 1), unused, unused.
   farShadow: vec4f,
+  // The mirror image's pass cuts away what lies under the water's plane: the plane's unit normal, and
+  // how far along it from the origin the cut lies (m). All zero in other passes.
+  mirror: vec4f,
 }
 
 struct Object {

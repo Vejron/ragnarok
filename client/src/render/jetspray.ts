@@ -26,15 +26,36 @@ export interface JetBoat {
   velocity: XYZ
   /** Speed along its nose, m/s, signed. */
   speed: number
-  /** How hard it is crash stopping, 0..1. */
-  stop: number
+  /** The water's height under it, metres. */
+  level: number
+  /** Half its length, metres. */
+  halfLength: number
+  /** The speed its rooster tail is at its biggest, m/s. */
+  fullSpeed: number
+  /** How big a rooster tail its drive throws up, 0 to 1: waterjets 1, an outboard's propeller none. */
+  tail: number
+}
+
+/** Where an outboard boat is and what it is doing, for one frame of its prop wash. */
+export interface Outboard {
+  /** The middle of the hull, metres. */
+  at: XYZ
+  /** Unit directions to its right and ahead, level with the water. */
+  right: XYZ
+  ahead: XYZ
+  /** How fast it is going, m/s (world). */
+  velocity: XYZ
+  /** Speed ahead through the water, m/s, signed. */
+  speed: number
   /** The water's height under it, metres. */
   level: number
   /** Half its beam and half its length, metres. */
   halfBeam: number
   halfLength: number
-  /** The speed its rooster tail is at its biggest, m/s. */
+  /** The speed its wash is at its fullest, m/s. */
   fullSpeed: number
+  /** How hard its hull is slapping down onto the water, 0 to 1: a burst of spray as it lands off a wave. */
+  slap: number
 }
 
 /** Where a hull skimming over the water is and what it is doing, for one frame of its spray. */
@@ -68,10 +89,9 @@ const MIST = 0xf6faff
 /**
  * The water a waterjet boat throws, in the layers real spray is made of: sheets of fast water seen as
  * streaks, which break up into drops that arc and fall back, a mist that hangs and drifts downwind, and
- * glints of sun in it. Under way that is the rooster tail off the jets and sheets off the bow; in a
- * crash stop the reversed jets blast sheets forward along both sides past the bow, the bow ploughs up a
- * wall of water, and the boat runs into its own cloud. All of it is water (`scatter`): it blazes when
- * seen against the sun.
+ * glints of sun in it: the rooster tail off a waterjet boat's jets under way. What a hull does to the
+ * surface, its bow wave, wake and white wash, is the wave field's. All of it is water (`scatter`): it
+ * blazes when seen against the sun.
  */
 export class JetSpray {
   private readonly drops = new Particles(DROP_POOL)
@@ -115,7 +135,7 @@ export class JetSpray {
 
   /** Throws `dt` seconds of the boat's spray. */
   throw(boat: JetBoat, dt: number) {
-    const { at, right, ahead, velocity: v, level, halfBeam: hx, halfLength: hz, stop } = boat
+    const { at, right, ahead, velocity: v, level, halfLength: hz } = boat
     this.level = level
     this.dt = dt
     const fast = Math.min(1, Math.max(0, boat.speed) / boat.fullSpeed)
@@ -129,7 +149,7 @@ export class JetSpray {
 
     // The rooster tail: a column of water thrown up off the jets, which keeps much of the boat's speed,
     // breaks into drops as it climbs and leaves a cloud behind and above it.
-    const tail = boat.speed > 4 && stop < 0.3 ? fast * (1 - stop / 0.3) : 0
+    const tail = boat.speed > 4 ? fast * boat.tail : 0
     if (tail > 0) {
       const from = point(0, hz + 0.4, 0.3)
       const rise = 4 + 5 * tail
@@ -138,35 +158,38 @@ export class JetSpray {
       this.puffs(count(36 * tail, dt), point(0, hz + 2, 1.2), 1.2, flung(0.45, 0, -1, 1.5 + tail), [1.5, 4.5], [1.8, 3.2], 0.2)
       this.glints(count(80 * tail * sun, dt), from, flung(0.6, 0, -2, rise), sun)
     }
-    // Sheets off the bow, out to either side, once it is planing.
-    const sheet = boat.speed > 8 ? fast : 0
-    if (sheet > 0) {
-      for (const side of [-1, 1]) {
-        const from = point(side * hx * 0.9, -hz * 0.35, 0.15)
-        this.streaks(count(320 * sheet, dt), from, 0.4, flung(0.7, side * 4 * sheet, 0, 1.5 + 2 * sheet), [0.6, 0.7, 0.6], [0.5, 0.9])
-        this.droplets(count(70 * sheet, dt), from, 0.5, flung(0.7, side * 4.5 * sheet, 0, 2 * sheet), 1.2, [0.6, 1.1])
-        this.puffs(count(6 * sheet, dt), point(side * (hx + 1), -hz * 0.1, 0.5), 0.8, flung(0.6, side * 2, 0, 0.6), [0.8, 2.5], [1.2, 2], 0.14)
-      }
-    }
-    if (stop <= 0) return
-    // The reversed jets: the buckets drop over them and throw their water forward and out along both
-    // sides, past the bow, in sheets that break into a storm of drops and a cloud the boat runs into.
+  }
+
+  /**
+   * Throws `dt` seconds of an outboard's prop wash: not a column of water but a low fan thrown back
+   * and out from behind the transom, a few big drops that arc and drop back, a scatter of fine ones
+   * and a thin mist, growing with its speed and bursting up as the hull slaps down off a wave.
+   */
+  outboard(boat: Outboard, dt: number) {
+    const { at, right, ahead, velocity: v, level, halfBeam: hx, halfLength: hz } = boat
+    this.level = level
+    this.dt = dt
+    const fast = Math.min(1, Math.max(0, boat.speed) / boat.fullSpeed)
+    const wash = boat.speed > 2 ? fast * (1 + 1.5 * boat.slap) : 0
+    if (wash <= 0) return
+    const point = (x: number, z: number, up: number) =>
+      [at.x + right.x * x + ahead.x * -z, level + up, at.z + right.z * x + ahead.z * -z] as const
+    const flung = (keep: number, side: number, on: number, up: number) =>
+      [v.x * keep + right.x * side + ahead.x * on, up, v.z * keep + right.z * side + ahead.z * on] as const
+    const light = this.drops.light
+    const sun = Math.max(0, Math.min(1, ((light.r + light.g + light.b) / 3 - 0.3) / 0.7))
+    const from = point(0, hz + 0.25, 0.05)
+    const rise = 1.2 + 1.8 * fast + 2 * boat.slap
+    // The fan: drops thrown back and out to either side of the prop, keeping some of the boat's speed.
     for (const side of [-1, 1]) {
-      const from = point(side * (hx + 0.3), hz * 0.7, 0.3)
-      const out = flung(0.8, side * 2.5, 6 + 6 * stop, 3 + 3.5 * stop)
-      this.streaks(count(1200 * stop, dt), from, 0.6, out, [1.5, 1.6, 1.5], [0.9, 1.5])
-      this.droplets(count(320 * stop, dt), from, 0.8, out, 3, [1.1, 1.8])
-      this.puffs(count(55 * stop, dt), point(side * (hx + 1.2), 0, 1.5), 2, flung(0.75, side * 1.5, 3 * stop, 1.2), [2, 6], [2.2, 3.6], 0.26)
-      this.glints(count(60 * stop * sun, dt), from, out, sun)
+      const out = flung(0.55, side * (0.6 + 1.2 * fast), -1.5, rise)
+      this.droplets(count(70 * wash, dt), from, hx * 0.3, out, 1.4, [0.5, 1])
+      this.streaks(count(60 * wash, dt), from, hx * 0.25, out, [0.5, 0.6, 0.5], [0.3, 0.6])
     }
-    // The bow ploughs in: a wall of water up and out from either side of it.
-    for (const side of [-1, 1]) {
-      const from = point(side * hx * 0.6, -hz * 0.6, 0.2)
-      const out = flung(0.9, side * 5 * stop, 0, 2.5 + 3 * stop)
-      this.streaks(count(400 * stop, dt), from, 0.7, out, [1, 1.2, 1], [0.7, 1.2])
-      this.droplets(count(260 * stop, dt), from, 0.9, out, 2.5, [0.9, 1.5])
-      this.puffs(count(20 * stop, dt), point(side * hx, -hz * 0.8, 1), 1.5, flung(0.85, side * 2.5, 0, 1), [1.5, 4.5], [1.6, 2.6], 0.22)
-    }
+    // The fine stuff the fan breaks into, and a thin mist that hangs behind it.
+    this.droplets(count(50 * wash, dt), point(0, hz + 0.6, 0.2), hx * 0.5, flung(0.5, 0, -1, rise * 0.6), 2, [0.4, 0.8])
+    this.puffs(count(8 * wash, dt), point(0, hz + 1.2, 0.4), 0.6, flung(0.4, 0, -0.5, 0.6), [0.6, 1.6], [1, 1.8], 0.1)
+    this.glints(count(25 * wash * sun, dt), from, flung(0.55, 0, -1.5, rise), sun)
   }
 
   /**

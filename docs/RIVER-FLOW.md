@@ -74,13 +74,15 @@ The result is the same bytes every run. Each stretch is solved on its own thread
 
 The shader used to draw a river's foam by the current's speed at each pixel: streaks from 0.7 m/s, white from 1.5 m/s. A pool below a rapid was speckled evenly wherever it ran over 0.7 m/s, and slack water beside it looked like any lake.
 
-Foam is now made in the rapids and carried. `riverflow::foam` works out, once the current is solved, how much of the surface is under foam at every sample:
+Foam is now made in the rapids and carried. `riverflow::marks` (once `riverflow::foam`) works out, once the current is solved, how much of the surface is under foam at every sample:
 
 - it is **made** where the water breaks, covering it in about 4 s (`FOAM_RISE`). That is in two places:
   - thin fast water: water that runs white, from 1.5 m/s and fully by 3.2 m/s (`WHITE_WATER_SPEEDS` in `crates/shared/src/consts.rs`, which the shader's own white water reads too), breaks by its Froude number, its speed over `√(g · depth)`: from 0.6, and all of it by 1.1 (`FOAM_FROUDES`). The sheet over a bar or a boulder is white, and a deep run at the same speed is a dark tongue. In an even channel the Froude number hardly depends on the depth, so it is the rough bed that tells them apart: the water is forced over a bar faster than it would run there alone;
   - fast water being braked: water that arrives at 1.5 m/s or more and loses 0.2 to 1 m/s each second (`FOAM_SLOWING`), below a boulder or a ledge and where a run meets a pool;
 - it is **carried** along the solved current, and mixed sideways a little by the same eddy viscosity as the current, so it seeps into the slack water beside a fast run;
 - it **thins** with age, to a third in 45 s (`FOAM_LIFE`).
+
+Since `WORLD_VERSION` 36 it is also gathered where the surface converges and made a little along eddy lines, and it is carried by a scheme that keeps its edges, with a quarter of the sideways mixing: see [RIVER-SURFACE.md](RIVER-SURFACE.md).
 
 This is marched to a steady state on the solver's cells, with no pressure solve, and takes no measurable time. The result is a trail that leaves each rapid along the main current, bends with it, and fades over a few hundred metres. Vindelälven has 168,000 m² under at least a tenth of foam, of its 1 km². It had 311,000 m² when foam was made by speed alone, over a smooth bed: a rapid was white from bank to bank.
 

@@ -571,34 +571,93 @@ const FOAM_FROUDES: [f64; 2] = [0.6, 1.1];
 /// Fast water that loses speed starts to break when it loses the first of these, m/s each second,
 /// and all of it breaks by the second.
 const FOAM_SLOWING: [f64; 2] = [0.2, 1.0];
+/// Water that spins faster than the first of these, 1/s (along the edge of a fast tongue, where it
+/// shears past the slack water beside it), starts to make foam, and by the second makes `FOAM_SPUN`
+/// of what white water does.
+const FOAM_SPINS: [f64; 2] = [0.15, 0.5];
+const FOAM_SPUN: f64 = 0.35;
+/// How much the surface's gathering piles its foam up, and its spreading thins it: 1 would be a film
+/// carried on the depth-averaged current exactly, which takes every bit of foam into the deepest pool.
+const FOAM_GATHER: f64 = 0.6;
+/// How much of the eddy viscosity's sideways mixing the foam takes. Foam lies on the surface and is
+/// mixed far less than the water's momentum is, so a trail keeps its streaks.
+const FOAM_MIXING: f64 = 0.25;
 /// The foam has settled when no cell's changed by more than this in a step...
 const FOAM_SETTLED: f64 = 0.001;
 /// ...and is taken as it is after this many steps.
 const FOAM_STEPS: usize = 600;
+/// How far the water that dives where the current slows (below a drop, into a pool) is carried
+/// before it has all come back up, metres: its boils trail about this far below the place.
+const RISE_REACH: f64 = 15.0;
+/// ...though water that hardly moves has come up within this long, seconds.
+const RISE_LIFE_MAX: f64 = 60.0;
+/// Passes that smooth the surface's gathering and spin over a cell's neighbours, which takes the
+/// lattice's own unevenness out of them.
+const STIR_SMOOTHINGS: usize = 2;
+/// Passes that settle the stream function once it is summed up cell by cell, so it is the same
+/// whichever way round an island it was summed.
+const LANE_SWEEPS: usize = 40;
 
-/// How much of the water's surface is under foam at each member of `channel`, 0 to 1, given the
-/// current `flow` there (`[x, z]` m/s, as `solve` gives it).
+/// What `marks` found at each member of a channel: the foam on the water and how the current stirs
+/// its surface.
+pub struct Marks {
+    /// How much of the surface is under foam, 0 to 1.
+    pub foam: Vec<f32>,
+    /// How the surface wells up (above 0) or gathers (below 0), 1/s: see `Tile::stir`.
+    pub boil: Vec<f32>,
+    /// How fast the water spins, 1/s, turning from +z towards +x above 0.
+    pub spin: Vec<f32>,
+    /// The stream function, m³/s: how much water runs between a fixed line and here (`Tile::lane`).
+    pub lane: Vec<f64>,
+}
+
+/// The foam on the water of `channel` and how its current stirs its surface, at each member, given
+/// the current `flow` there (`[x, z]` m/s, as `solve` gives it).
+///
+/// The current's own shape gives how it stirs the surface. Where it slows into deeper water (below
+/// a drop, at the head of a pool) the surface converges and the water dives; where it speeds onto a
+/// shoal it spreads. What dives comes back up downstream as boils (`RISE_REACH`). Along the edge of a
+/// fast tongue and in an eddy the water spins. A line of equal stream function is a line the
+/// water runs along.
 ///
 /// Foam is made where the water breaks: where it runs white (`WHITE_WATER_SPEEDS`) and thin for
-/// its speed (`FOAM_FROUDES`), as over a bar or a boulder, and where fast water is braked
-/// (`FOAM_SLOWING`), as below one. A deep run at the same speed makes none. It is carried along
-/// by the current and thins with age (`FOAM_LIFE`). So it trails away below a rapid, and gathers
-/// where the water goes round: an eddy is fed its own foam back. This is marched in pseudo-time to a steady state
-/// on the cells `solve` uses.
-pub fn foam(channel: &Channel, flow: &[[f32; 2]]) -> Vec<f32> {
+/// its speed (`FOAM_FROUDES`), as over a bar or a boulder, where fast water is braked
+/// (`FOAM_SLOWING`), as below one, and a little where it spins (`FOAM_SPINS`). A deep run at the
+/// same speed makes none. It is carried along by the current, gathered where the surface converges
+/// and spread where it wells up, and thins with age (`FOAM_LIFE`). So it trails away below a rapid
+/// in streaks, gathers in lines down the seams and turns in the eddies. This is marched in
+/// pseudo-time to a steady state on the cells `solve` uses.
+pub fn marks(channel: &Channel, flow: &[[f32; 2]]) -> Marks {
+    let members = channel.members.len();
+    let mut out = Marks { foam: vec![0.0; members], boil: vec![0.0; members], spin: vec![0.0; members], lane: vec![0.0; members] };
     let every = (CELL_MIN / channel.cell).ceil().max(1.0) as usize;
-    let mut out = vec![0.0; channel.members.len()];
     let Some(lattice) = lattice(channel, every) else { return out };
     let n = lattice.open.len();
     let dt = STEP_PER_METRE * lattice.dx;
     let [from, to] = shared::consts::WHITE_WATER_SPEEDS.map(f64::from);
-    // Each cell's current, in cells a step, and how fast its water makes foam, a second.
-    let carried: Vec<[f64; 2]> = lattice.member.iter().map(|&member| flow[member as usize].map(|v| f64::from(v) * dt / lattice.dx)).collect();
+    // Each cell's current, m/s and in cells a step.
+    let velocity: Vec<[f64; 2]> = lattice.member.iter().map(|&member| flow[member as usize].map(f64::from)).collect();
+    let carried: Vec<[f64; 2]> = velocity.iter().map(|v| v.map(|v| v * dt / lattice.dx)).collect();
     let ease = |from: f64, to: f64, x: f64| {
         let t = ((x - from) / (to - from)).clamp(0.0, 1.0);
         t * t * (3.0 - 2.0 * t)
     };
-    let speed: Vec<f64> = lattice.member.iter().map(|&member| f64::from(flow[member as usize][0]).hypot(f64::from(flow[member as usize][1]))).collect();
+    let speed: Vec<f64> = velocity.iter().map(|v| v[0].hypot(v[1])).collect();
+    // How the surface spreads (the current's divergence) and how the water spins (its curl).
+    let u: Vec<f64> = velocity.iter().map(|v| v[0]).collect();
+    let v: Vec<f64> = velocity.iter().map(|v| v[1]).collect();
+    let mut spread: Vec<f64> = (0..n).map(|cell| lattice.slope(&u, cell, 0) + lattice.slope(&v, cell, 1)).collect();
+    let mut spin: Vec<f64> = (0..n).map(|cell| lattice.slope(&v, cell, 0) - lattice.slope(&u, cell, 1)).collect();
+    for _ in 0..STIR_SMOOTHINGS {
+        spread = lattice.smoothed(&spread);
+        spin = lattice.smoothed(&spin);
+    }
+    // What dives where the surface gathers comes back up below, as boils.
+    let gathers: Vec<f64> = spread.iter().map(|&s| (-s).max(0.0)).collect();
+    let rising: Vec<f64> = speed.iter().map(|&speed| (RISE_REACH / speed.max(1e-3)).min(RISE_LIFE_MAX)).collect();
+    let dived = lattice.carry(&carried, &Tracer { made: &gathers, life: &rising, saturate: false, mixing: 0.0, spread: None });
+    let boil: Vec<f64> = (0..n).map(|cell| dived[cell] / rising[cell] - gathers[cell]).collect();
+    // The water's foam.
     let made: Vec<f64> = (0..n)
         .map(|cell| {
             let here = speed[cell];
@@ -615,42 +674,180 @@ pub fn foam(channel: &Channel, flow: &[[f32; 2]]) -> Vec<f32> {
             // Fast water that is being slowed piles up and breaks: below a boulder or a ledge.
             let slowing = here * (above - below) / (2.0 * lattice.dx);
             let braked = ease(0.5 * from, from, above) * ease(FOAM_SLOWING[0], FOAM_SLOWING[1], slowing);
-            thin.max(braked) / FOAM_RISE
+            // Water shearing past slack water along an eddy line froths a little.
+            let spun = FOAM_SPUN * ease(0.7 * from, from, here) * ease(FOAM_SPINS[0], FOAM_SPINS[1], spin[cell].abs());
+            thin.max(braked).max(spun) / FOAM_RISE
         })
         .collect();
-    if made.iter().all(|&rate| rate == 0.0) {
-        return out;
-    }
-    // How much of the difference to each neighbour a cell takes up in a step.
-    let mixing = (dt * EDDY_VISCOSITY / (lattice.dx * lattice.dx)).min(0.2);
-    let mut cover = vec![0.0; n];
-    let mut arrived = vec![0.0; n];
-    let mut next = vec![0.0; n];
-    for _ in 0..FOAM_STEPS {
-        let mut change = 0.0f64;
-        // Carried: each cell takes the foam of the water that arrives at it.
-        for cell in 0..n {
-            let [i, j] = lattice.place[cell].map(f64::from);
-            arrived[cell] = lattice.among(&cover, i - carried[cell][0], j - carried[cell][1]);
-        }
-        for cell in 0..n {
-            // The water's churning also mixes it sideways, into the slack water beside a fast run
-            // (none goes into a bank).
-            let mixed: f64 = lattice.around[cell].iter().filter(|&&beside| beside != NONE).map(|&beside| arrived[beside as usize] - arrived[cell]).sum();
-            // Made towards full cover and thinning, both taken at the end of the step.
-            next[cell] = (arrived[cell] + mixing * mixed + dt * made[cell]) / (1.0 + dt * (made[cell] + 1.0 / FOAM_LIFE));
-            change = change.max((next[cell] - cover[cell]).abs());
-        }
-        std::mem::swap(&mut cover, &mut next);
-        if change <= FOAM_SETTLED {
-            break;
-        }
-    }
-    for (foam, &at) in out.iter_mut().zip(channel.members) {
+    let foam = if made.iter().all(|&rate| rate == 0.0) {
+        vec![0.0; n]
+    } else {
+        let mixing = FOAM_MIXING * (dt * EDDY_VISCOSITY / (lattice.dx * lattice.dx)).min(0.2);
+        lattice.carry(&carried, &Tracer { made: &made, life: &vec![FOAM_LIFE; n], saturate: true, mixing, spread: Some(&spread) })
+    };
+    let lane = lattice.stream_function(&velocity);
+    for (k, &at) in channel.members.iter().enumerate() {
         let (x, z) = lattice.position(at, channel.side, every);
-        *foam = lattice.among(&cover, x, z) as f32;
+        out.foam[k] = lattice.among(&foam, x, z) as f32;
+        out.boil[k] = lattice.among(&boil, x, z) as f32;
+        out.spin[k] = lattice.among(&spin, x, z) as f32;
+        out.lane[k] = lattice.among(&lane, x, z);
     }
     out
+}
+
+/// Something the water carries, for `Lattice::carry`.
+struct Tracer<'a> {
+    /// How fast each cell makes it, a second: towards 1 when it `saturate`s, which foam does (a
+    /// surface all under foam takes no more), and without end otherwise.
+    made: &'a [f64],
+    saturate: bool,
+    /// How long it lasts at each cell, seconds: it thins to a third in this time.
+    life: &'a [f64],
+    /// How much of the difference to each neighbour a cell takes up in a step.
+    mixing: f64,
+    /// How the surface it lies on spreads at each cell, 1/s (`marks`), which thins it, and
+    /// gathers it where it converges; `None` for something carried through the water.
+    spread: Option<&'a [f64]>,
+}
+
+impl Lattice {
+    /// The slope of `field` (a value a cell) at `cell` along x (`axis` 0) or z, a metre: from the
+    /// wet neighbours either side, or one side and the cell itself at a bank.
+    fn slope(&self, field: &[f64], cell: usize, axis: usize) -> f64 {
+        let (back, ahead) = if axis == 0 { (self.around[cell][WEST], self.around[cell][EAST]) } else { (self.around[cell][NORTH], self.around[cell][SOUTH]) };
+        match (back != NONE, ahead != NONE) {
+            (true, true) => (field[ahead as usize] - field[back as usize]) / (2.0 * self.dx),
+            (true, false) => (field[cell] - field[back as usize]) / self.dx,
+            (false, true) => (field[ahead as usize] - field[cell]) / self.dx,
+            (false, false) => 0.0,
+        }
+    }
+
+    /// `field` with each cell half its own value and half its wet neighbours' mean.
+    fn smoothed(&self, field: &[f64]) -> Vec<f64> {
+        (0..field.len())
+            .map(|cell| {
+                let wet: Vec<f64> = self.around[cell].iter().filter(|&&next| next != NONE).map(|&next| field[next as usize]).collect();
+                if wet.is_empty() { field[cell] } else { 0.5 * field[cell] + 0.5 * wet.iter().sum::<f64>() / wet.len() as f64 }
+            })
+            .collect()
+    }
+
+    /// The least and most of `field` among the wet cells of the four round `(x, z)` (lattice
+    /// units), or `None` where all four are dry.
+    fn bounds(&self, field: &[f64], x: f64, z: f64) -> Option<(f64, f64)> {
+        let (i, j) = (x.floor() as i64, z.floor() as i64);
+        let mut out: Option<(f64, f64)> = None;
+        for (di, dj) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+            if let Some(cell) = self.at(i + di, j + dj) {
+                let value = field[cell];
+                out = Some(out.map_or((value, value), |(low, high)| (low.min(value), high.max(value))));
+            }
+        }
+        out
+    }
+
+    /// `tracer` carried on the current (`carried`, cells a step, at each cell) to its steady state.
+    /// It is carried by MacCormack's scheme: looked up where the water was a step ago, then that
+    /// lookup's own error, found by carrying it back again, taken off (and the result kept within
+    /// the values it came from). A plain lookup blurs a trail across a cell every few steps, and
+    /// this keeps its edges.
+    fn carry(&self, carried: &[[f64; 2]], tracer: &Tracer) -> Vec<f64> {
+        let n = carried.len();
+        let dt = STEP_PER_METRE * self.dx;
+        let mut cover = vec![0.0; n];
+        let mut ahead = vec![0.0; n];
+        let mut arrived = vec![0.0; n];
+        let mut next = vec![0.0; n];
+        // How much of a cell's tracer its surface leaves it in a step: more where it gathers.
+        let kept: Vec<f64> = (0..n).map(|cell| tracer.spread.map_or(1.0, |spread| (-FOAM_GATHER * spread[cell] * dt).exp())).collect();
+        for _ in 0..FOAM_STEPS {
+            for cell in 0..n {
+                let [i, j] = self.place[cell].map(f64::from);
+                ahead[cell] = self.among(&cover, i - carried[cell][0], j - carried[cell][1]);
+            }
+            for cell in 0..n {
+                let [i, j] = self.place[cell].map(f64::from);
+                let (x, z) = (i - carried[cell][0], j - carried[cell][1]);
+                let back = self.among(&ahead, i + carried[cell][0], j + carried[cell][1]);
+                let corrected = ahead[cell] + 0.5 * (cover[cell] - back);
+                arrived[cell] = match self.bounds(&cover, x, z) {
+                    Some((low, high)) => corrected.clamp(low, high),
+                    None => ahead[cell],
+                } * kept[cell];
+            }
+            let mut change = 0.0f64;
+            for cell in 0..n {
+                // The water's churning mixes it sideways too, into the slack water beside a fast
+                // run (none goes into a bank).
+                let mixed: f64 = self.around[cell].iter().filter(|&&beside| beside != NONE).map(|&beside| arrived[beside as usize] - arrived[cell]).sum();
+                let made = tracer.made[cell];
+                // Made and thinning, both taken at the end of the step.
+                let saturating = if tracer.saturate { made } else { 0.0 };
+                let mut value = (arrived[cell] + tracer.mixing * mixed + dt * made) / (1.0 + dt * (saturating + 1.0 / tracer.life[cell]));
+                if tracer.saturate {
+                    value = value.min(1.0);
+                }
+                next[cell] = value;
+                change = change.max((value - cover[cell]).abs());
+            }
+            std::mem::swap(&mut cover, &mut next);
+            if change <= FOAM_SETTLED {
+                break;
+            }
+        }
+        cover
+    }
+
+    /// The stream function of the current `velocity` (m/s at each cell) over the cells' depths,
+    /// m³/s: `ψ` with `h·u = ∂ψ/∂z` and `h·v = −∂ψ/∂x`, so the water runs along a line of equal `ψ`
+    /// and as much passes between two such lines anywhere along them. Summed from cell to cell
+    /// outwards from the first, then settled (`LANE_SWEEPS`) so that each cell agrees with all its
+    /// neighbours at once.
+    fn stream_function(&self, velocity: &[[f64; 2]]) -> Vec<f64> {
+        let n = velocity.len();
+        let carried: Vec<[f64; 2]> = velocity.iter().zip(&self.deep).map(|(v, &h)| [v[0] * h, v[1] * h]).collect();
+        // How much more `ψ` is at `cell`'s neighbour on `side` than at `cell`.
+        let rise = |cell: usize, next: usize, side: usize| match side {
+            WEST => self.dx * 0.5 * (carried[cell][1] + carried[next][1]),
+            EAST => -self.dx * 0.5 * (carried[cell][1] + carried[next][1]),
+            NORTH => -self.dx * 0.5 * (carried[cell][0] + carried[next][0]),
+            _ => self.dx * 0.5 * (carried[cell][0] + carried[next][0]),
+        };
+        let mut psi = vec![f64::NAN; n];
+        let mut queue = std::collections::VecDeque::new();
+        for first in 0..n {
+            if !psi[first].is_nan() {
+                continue;
+            }
+            psi[first] = 0.0;
+            queue.push_back(first);
+            while let Some(cell) = queue.pop_front() {
+                for (side, &next) in self.around[cell].iter().enumerate() {
+                    if next != NONE && psi[next as usize].is_nan() {
+                        psi[next as usize] = psi[cell] + rise(cell, next as usize, side);
+                        queue.push_back(next as usize);
+                    }
+                }
+            }
+        }
+        let mut settled = psi.clone();
+        for _ in 0..LANE_SWEEPS {
+            for cell in 0..n {
+                let (mut sum, mut count) = (0.0, 0.0);
+                for (side, &next) in self.around[cell].iter().enumerate() {
+                    if next != NONE {
+                        sum += psi[next as usize] - rise(cell, next as usize, side);
+                        count += 1.0;
+                    }
+                }
+                settled[cell] = if count > 0.0 { sum / count } else { psi[cell] };
+            }
+            std::mem::swap(&mut psi, &mut settled);
+        }
+        psi
+    }
 }
 
 impl Lattice {
@@ -852,7 +1049,7 @@ mod tests {
         // 40 m wide and 1 m deep, pinched to 12 m for 40 m: only the narrows runs fast enough to whiten.
         let bed = Bed::new(200, 20, 1.0, 0.005, |i, j| (50..70).contains(&i) && !(8..14).contains(&j));
         let solved = bed.solve(2.0);
-        let foam = foam(&Channel { side: bed.side, cell: 2.0, members: &bed.members, depth: &bed.depth, fall: &bed.fall, open: &bed.open }, &solved.current.flow);
+        let foam = marks(&Channel { side: bed.side, cell: 2.0, members: &bed.members, depth: &bed.depth, fall: &bed.fall, open: &bed.open }, &solved.current.flow).foam;
         let at = |i: usize, j: usize| foam[bed.members.iter().position(|&m| m == j * bed.side + i).unwrap()];
         assert!(solved.at(60, 10)[0] > 1.5 && solved.at(20, 10)[0] < 1.5, "{:?} {:?}", solved.at(60, 10), solved.at(20, 10));
         assert!(at(68, 10) > 0.5, "the narrows is white: {}", at(68, 10));
@@ -866,7 +1063,7 @@ mod tests {
         // 60 m wide and 1 m deep, an island leaving 12 m either side: only the water squeezed past it whitens.
         let bed = Bed::new(140, 30, 1.0, 0.005, |i, j| (40..50).contains(&i) && (7..25).contains(&j));
         let solved = bed.solve(2.0);
-        let foam = foam(&Channel { side: bed.side, cell: 2.0, members: &bed.members, depth: &bed.depth, fall: &bed.fall, open: &bed.open }, &solved.current.flow);
+        let foam = marks(&Channel { side: bed.side, cell: 2.0, members: &bed.members, depth: &bed.depth, fall: &bed.fall, open: &bed.open }, &solved.current.flow).foam;
         let at = |i: usize, j: usize| foam[bed.members.iter().position(|&m| m == j * bed.side + i).unwrap()];
         assert!(at(20, 15) == 0.0 && at(45, 3) > 0.15, "none above the island, and it is made beside it: {} {}", at(20, 15), at(45, 3));
         // Two trails leave the island's sides; the slack water between them has none at first...
@@ -880,7 +1077,7 @@ mod tests {
     /// The foam on `bed` under its own current, and that current.
     fn foamed(bed: &Bed) -> (Vec<f32>, Solved<'_>) {
         let solved = bed.solve(2.0);
-        let foam = foam(&Channel { side: bed.side, cell: 2.0, members: &bed.members, depth: &bed.depth, fall: &bed.fall, open: &bed.open }, &solved.current.flow);
+        let foam = marks(&Channel { side: bed.side, cell: 2.0, members: &bed.members, depth: &bed.depth, fall: &bed.fall, open: &bed.open }, &solved.current.flow).foam;
         (foam, solved)
     }
 
@@ -896,9 +1093,10 @@ mod tests {
         let at = |i: usize, j: usize| foam[bed.members.iter().position(|&m| m == j * bed.side + i).unwrap()];
         let (beside, over, behind) = (solved.at(60, 4)[0], solved.at(60, 10)[0], solved.at(64, 10)[0]);
         assert!(beside > 1.8 && over > beside && behind < 0.3 * beside, "{beside} m/s beside it, {over} m/s over it, {behind} m/s behind it");
-        assert!(at(50, 10) == 0.0 && at(64, 3) < 0.01, "no foam above it or well to the side: {} {}", at(50, 10), at(64, 3));
+        assert!(at(50, 10) < 1e-4 && at(64, 3) < 0.01, "no foam above it or well to the side: {} {}", at(50, 10), at(64, 3));
         let trail = [60, 64, 70, 90].map(|i| at(i, 10));
-        assert!(trail[0] > 0.15 && trail.windows(2).all(|w| w[1] < w[0]) && trail[3] > 0.01, "the thin water over it breaks, and the foam trails away below: {trail:?}");
+        // Its foam is thickest just below it, where the braked water gathers it, and trails away from there.
+        assert!(trail[0] > 0.15 && trail[1] > trail[0] && trail[1..].windows(2).all(|w| w[1] < w[0]) && trail[3] > 0.01, "the thin water over it breaks, and the foam gathers below it and trails away: {trail:?}");
     }
 
     #[test]
@@ -917,11 +1115,61 @@ mod tests {
         assert!(at(62, 18) < 0.01 && at(40, 7) == 0.0, "the tongue is dark, and the water above: {} {}", at(62, 18), at(40, 7));
     }
 
+    /// How `bed`'s own current marks its surface, and that current.
+    fn marked(bed: &Bed) -> (Marks, Solved<'_>) {
+        let solved = bed.solve(2.0);
+        let marks = marks(&Channel { side: bed.side, cell: 2.0, members: &bed.members, depth: &bed.depth, fall: &bed.fall, open: &bed.open }, &solved.current.flow);
+        (marks, solved)
+    }
+
+    #[test]
+    fn the_water_dives_where_it_slows_into_a_pool_and_boils_up_below() {
+        // 40 m wide, 0.8 m deep and then 3 m deep from 160 m on.
+        let mut bed = Bed::new(160, 20, 0.8, 0.004, |_, _| false);
+        for (i, j) in (80..=160).flat_map(|i| (1..=20).map(move |j| (i, j))) {
+            bed.depth[j * bed.side + i] = 3.0;
+        }
+        let (marks, _) = marked(&bed);
+        let boil = |i: usize| marks.boil[bed.members.iter().position(|&m| m == i + 10 * bed.side).unwrap()];
+        assert!(boil(40).abs() < 0.005, "an even run neither dives nor boils: {}", boil(40));
+        assert!(boil(80) < -0.02, "it dives where it runs into the pool: {}", boil(80));
+        let below = [86, 90, 96].map(boil);
+        assert!(below[0] > 0.01 && below.windows(2).all(|w| w[1] < w[0] && w[1] > 0.0), "and comes back up below, less and less: {below:?}");
+        assert!(boil(140) < 0.5 * below[0], "less of it far down the pool: {}", boil(140));
+    }
+
+    #[test]
+    fn the_water_spins_one_way_and_the_other_in_the_lee_of_an_island() {
+        let bed = round_an_island(120);
+        let (marks, _) = marked(&bed);
+        let spin = |i: usize, j: usize| marks.spin[bed.members.iter().position(|&m| m == j * bed.side + i).unwrap()];
+        // The island spans 22 to 40 m across a 60 m channel; behind it the water shears past slack
+        // water on both its sides, turning opposite ways.
+        let (near, far) = (spin(54, 11), spin(54, 20));
+        assert!(near * far < 0.0 && near.abs() > 0.05 && far.abs() > 0.05, "{near} and {far} at the lee's two edges");
+        assert!(spin(15, 15).abs() < 0.3 * near.abs(), "the open water above it barely spins: {}", spin(15, 15));
+    }
+
+    #[test]
+    fn as_much_water_runs_between_the_banks_streamlines_everywhere_and_round_both_sides_of_an_island() {
+        let bed = round_an_island(120);
+        let (marks, solved) = marked(&bed);
+        let lane = |i: usize, j: usize| marks.lane[bed.members.iter().position(|&m| m == j * bed.side + i).unwrap()];
+        let through = |i: usize| lane(i, 30) - lane(i, 1);
+        let q = solved.discharge(20);
+        for i in [20, 45, 70, 100] {
+            assert!((through(i) - q).abs() < 0.15 * q, "{} m³/s between the banks at {i}, {q} m³/s passing", through(i));
+        }
+        // The island is a streamline: as much water passes on either side of it as round its other end.
+        let (north, south) = (lane(45, 10) - lane(45, 1), lane(45, 30) - lane(45, 21));
+        assert!((north + south - through(45)).abs() < 0.15 * q && north > 0.3 * q && south > 0.3 * q, "{north} and {south} m³/s past its two sides");
+    }
+
     #[test]
     fn a_river_without_a_rapid_has_no_foam() {
         let bed = Bed::new(120, 20, 2.0, 0.001, |_, _| false);
         let solved = bed.solve(2.0);
-        let foam = foam(&Channel { side: bed.side, cell: 2.0, members: &bed.members, depth: &bed.depth, fall: &bed.fall, open: &bed.open }, &solved.current.flow);
+        let foam = marks(&Channel { side: bed.side, cell: 2.0, members: &bed.members, depth: &bed.depth, fall: &bed.fall, open: &bed.open }, &solved.current.flow).foam;
         assert!(foam.iter().all(|&cover| cover == 0.0));
     }
 
