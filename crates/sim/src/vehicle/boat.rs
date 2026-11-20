@@ -270,7 +270,7 @@ mod tests {
                 tilt = tilt.min(pose.up_y);
             }
         }
-        assert!(low > REST - 1.2 && high < REST + 1.4, "it rides the swell, {low}..{high} about {REST}");
+        assert!(low > REST - 2.5 && high < REST + 2.8, "it rides the swell, {low}..{high} about {REST}");
         assert!(tilt > 0.97, "it stays upright, up {tilt}");
     }
 
@@ -553,10 +553,13 @@ mod tests {
     }
 
     #[test]
-    fn a_raft_rocks_over_the_swell_and_sits_down_in_the_water_when_let_off() {
-        // How far it tips at the most, radians, lying on the open swell for ten seconds.
+    fn a_raft_rocks_over_the_chop_and_sits_down_in_the_water_when_let_off() {
+        // How far it tips at the most, radians, lying ten seconds on a lake's chop (200 m of open water,
+        // where the short waves rise but not the long swell, which tilts any hull alike).
+        let mut chop = sea();
+        chop.reach = vec![(200.0 / shared::world::REACH_STEP) as u8; chop.reach.len()];
         let rocked = |kind: u8, rest: f32| {
-            let mut physics = Physics::new(&sea()).unwrap();
+            let mut physics = Physics::new(&chop).unwrap();
             physics.add_car(1, kind, [0.0, rest, 0.0], 0.3);
             let mut tilt = 0.0f32;
             for tick in 0..10 * SECOND {

@@ -31,6 +31,8 @@ fn sea() -> Game {
         ..Default::default()
     };
     let mut game = Game::new(map, 0).unwrap();
+    // Still water: these are about her deck and guns, which a heaving, drifting hull makes hard to measure.
+    game.world.physics.calm_waters();
     game.world.clear_pickups();
     game
 }
@@ -152,8 +154,9 @@ fn a_gunner_mans_a_gun_fires_round_shot_into_the_sea_and_steps_back_onto_the_dec
     let (gunner, _inbox) = join(&mut game);
     let mut seq = 0;
     idle(&mut game, gunner, &mut seq, 3);
-    // Behind the middle starboard gun's breech.
-    on_deck(&mut game, gunner, &mut seq, [SHIP_GUN_SLOTS[1].0[0] - SHIP_GUN_EXIT[2], SHIP_GUN_SLOTS[1].0[2]]);
+    // Behind the middle starboard gun's breech. That is the middle of the deck, as near the port gun,
+    // so a step to starboard of it.
+    on_deck(&mut game, gunner, &mut seq, [SHIP_GUN_SLOTS[1].0[0] - SHIP_GUN_EXIT[2] + 0.3, SHIP_GUN_SLOTS[1].0[2]]);
     press(&mut game, gunner, &mut seq, (0, 0), BUTTON_USE, 1);
     idle(&mut game, gunner, &mut seq, 2);
     let seat = game.world.entities.of::<Player>(gunner).seat.expect("manning a gun");
@@ -221,5 +224,8 @@ fn a_wrecked_ship_takes_her_guns_down_with_her() {
     }
     let back = game.world.physics.car_pose(ship).unwrap().position;
     assert!(game.world.entities.alive(ship) && guns.iter().all(|&gun| game.world.entities.alive(gun)));
-    assert!((back[1] - start[1]).abs() < 0.5 && vec3::distance(back, start) < 2.0, "afloat again at {back:?}");
+    // Afloat on whatever part of the swell is under her now.
+    let surface = game.world.physics.water_surface(back[0], back[2]).unwrap();
+    let afloat = surface + SHIP_HALF_EXTENTS[1] - SHIP_DRAFT;
+    assert!((back[1] - afloat).abs() < 0.5 && (back[0] - start[0]).hypot(back[2] - start[2]) < 2.0, "afloat again at {back:?}, on water at {surface}");
 }

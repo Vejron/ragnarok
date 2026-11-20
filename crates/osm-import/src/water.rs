@@ -2074,8 +2074,8 @@ mod tests {
         let surface = Surface::new(&map, river_grid(), |x, z| Some(10.0 - x / 100.0 + noise(x, z)));
         let reach = f32::from(surface.reaches()[surface.index(0.0, 0.0).unwrap()]) * REACH_STEP;
         assert!((reach - RIVER_REACH_MAX).abs() <= REACH_STEP, "the middle of a wide river has the most a river gets: {reach}");
-        let swell = shared::waves::wave(0.0, 0.0, 0.0, reach);
-        let lake = shared::waves::wave(0.0, 0.0, 0.0, 120.0);
+        let swell = shared::waves::wave(0.0, 0.0, 0.0, reach, 1.0);
+        let lake = shared::waves::wave(0.0, 0.0, 0.0, 120.0, 1.0);
         assert!(swell.height.abs() < 0.05 && swell.height.abs() < lake.height.abs(), "{} {}", swell.height, lake.height);
     }
 

@@ -24,13 +24,15 @@ struct Grid {
 }
 
 /// The water's surface at a point, waves and all: its height (metres), its slope `[dh/dx, dh/dz]`,
-/// how fast it is rising there (m/s) and the current that carries what floats in it, `[x, z]` m/s.
+/// how fast it is rising there (m/s), the current that carries what floats in it, `[x, z]` m/s, and
+/// how the waves swing the water there across, `[x, z]` m/s (forwards on a crest, back in a trough).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Surface {
     pub height: f32,
     pub slope: [f32; 2],
     pub rise: f32,
     pub flow: [f32; 2],
+    pub sway: [f32; 2],
 }
 
 /// Every tile's water surface, by the tile it came in. A world that is not cut into whole tiles is
@@ -171,15 +173,16 @@ impl Waters {
         let (level, lie) = self.still_at(x, z)?;
         let share = if self.calm { 0.0 } else { shared::waves::shore(self.depth_at(x, z)) };
         let flow = self.flow_at(x, z);
-        let swell = shared::waves::wave(x, z, time, self.reach_at(x, z));
+        let swell = shared::waves::wave(x, z, time, self.reach_at(x, z), share);
         // The surge of a rapid's standing waves, on top of whatever chop the water's width raises.
         let churn = if self.calm { shared::waves::Wave::default() } else { shared::waves::churn(x, z, time, flow) };
         let wave = shared::waves::Wave {
-            height: swell.height * share + churn.height,
-            slope: [lie[0] + swell.slope[0] * share + churn.slope[0], lie[1] + swell.slope[1] * share + churn.slope[1]],
-            rise: swell.rise * share + churn.rise,
+            height: swell.height + churn.height,
+            slope: [lie[0] + swell.slope[0] + churn.slope[0], lie[1] + swell.slope[1] + churn.slope[1]],
+            rise: swell.rise + churn.rise,
+            orbit: swell.orbit,
         };
-        Some(Surface { height: level + wave.height, slope: wave.slope, rise: wave.rise, flow })
+        Some(Surface { height: level + wave.height, slope: wave.slope, rise: wave.rise, flow, sway: wave.orbit })
     }
 
     /// The current at `(x, z)`, `[x, z]` m/s, between the four samples around it; still off the grid
@@ -283,7 +286,7 @@ mod tests {
         let waters = Waters::of_world(&world);
         let time = 7.3;
         let deep = waters.surface(0.0, 4.0, time).unwrap();
-        assert_eq!(deep.height, shared::waves::wave(0.0, 4.0, time, shared::waves::OPEN_SEA).height, "deep water has the whole wave");
+        assert_eq!(deep.height, shared::waves::wave(0.0, 4.0, time, shared::waves::OPEN_SEA, 1.0).height, "deep water has the whole wave");
         let shallow = waters.surface(6.0, 4.0, time).unwrap();
         assert_eq!((shallow.height, shallow.rise), (0.0, 0.0), "20 cm of water lies flat");
     }

@@ -528,13 +528,15 @@ Water is no cover (`natural=water` is not a `Cover`). With `--cell 0` or with `-
 has no water.
 
 #### Waves
-`shared::waves` is five swells crossing (90, 60, 25, 13 and 7.5 m long), the same function of place
-and server tick on the server, in the client's prediction and in the water shader. The swells grow
-with the open water they have to rise over (fetch). A swell `L` metres long has none of its height on
-water narrower than `L` and all of it on water wider than `4L` (`FETCH`, a smoothstep between), read
-from `Tile.reach`. So a 20 m pond only ripples (crests about 2 cm), a 200 m lake has a chop of about
-half a metre, and water 360 m across or more, and the sea, carries the whole swell (crests about
-1.8 m). The waves also die away towards the shore, from 2.5 m deep to none at 0.3 m (`SHORE_DEPTHS`).
+`shared::waves` is five Gerstner swells crossing (70, 45, 20, 10 and 6 m long), the same function of
+place and server tick on the server, in the client's prediction and in the water shader
+([GERSTNER-SEA.md](GERSTNER-SEA.md)). The water goes round as a swell passes, so it gathers under narrow,
+sharp crests and spreads over broad, flat troughs. The swells grow with the open water they have to rise
+over (fetch). A swell `L` metres long has none of its height on water narrower than `2L` and all of it on
+water wider than `8L` (`FETCH`, a smoothstep between), read from `Tile.reach`. So a 20 m pond is all but
+flat, a 200 m lake has a chop of about 1.2 m crest to trough, a 400 m one about 3.5 m, and water 560 m
+across or more, and the sea, carries the whole swell (about 4 m crest to trough at the most, crests over
+2 m). The waves also die away towards the shore, from 2.5 m deep to none at 0.3 m (`SHORE_DEPTHS`).
 Where a river runs fast its surface heaves in standing waves as well (`waves::churn`, up to 22 cm
 from 1.5 m/s to 3.5 m/s), which stay in place and rise and fall. The client mirrors the numbers in
 `client/src/sim/waves.ts`, and `waves.spec.ts` holds the two together.

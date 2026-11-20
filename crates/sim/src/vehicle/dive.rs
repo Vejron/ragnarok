@@ -213,8 +213,8 @@ mod tests {
                 tilt = tilt.min(pose.up_y);
             }
         }
-        assert!(low > -SUB_SURFACE_DEPTH - 1.5 && high < -SUB_SURFACE_DEPTH + 1.5, "it rides the swell, {low}..{high}");
-        assert!(tilt > 0.97, "it stays upright, up {tilt}");
+        assert!(low > -SUB_SURFACE_DEPTH - 2.8 && high < -SUB_SURFACE_DEPTH + 2.8, "it rides the swell, {low}..{high}");
+        assert!(tilt > 0.96, "it stays upright, up {tilt}");
     }
 
     #[test]

@@ -38,12 +38,13 @@ fn inRefine(p: vec2f) -> f32 {
 
 // The moved water's height at \`p\`, for a vertex of the refined mesh (\`WaterRefine\`, its uv's x is 1),
 // whose vertices are as close as the wave field's texels: none for the tiles' own coarser vertices,
-// which cannot carry it, and fading out towards the refined square's edge, so the two meet flat.
-fn wakeLift(p: vec2f) -> f32 {
+// which cannot carry it, and fading out towards the refined square's edge, so the two meet flat. The
+// fade goes by where the vertex's water rested (\`rest\`), as the square's edge does.
+fn wakeLift(p: vec2f, rest: vec2f) -> f32 {
   if (vertexUv.x < 0.5) {
     return 0.0;
   }
-  return wake(p).x * smoothstep(0.0, WAKE_EDGE, inRefine(p));
+  return wake(p).x * smoothstep(0.0, WAKE_EDGE, inRefine(rest));
 }
 `
 
@@ -62,6 +63,12 @@ fn wakeLift(p: vec2f) -> f32 {
 
 /** Shore foam reaches this deep, metres. */
 const FOAM_DEPTH = 0.35
+/**
+ * Whitecaps break where the waves squeeze the surface (`Gerstner.squeeze`, its area against its area at
+ * rest) under the second of these and are whole under the first: the sharpest few crests of the sea,
+ * hardly any on a lake.
+ */
+const CAP_SQUEEZE = [0.58, 0.7] as const
 /** On a stream, only this deep, metres: a fine line at the banks, where a lake's would whiten it all. */
 const STREAM_FOAM_DEPTH = 0.08
 /**
@@ -230,12 +237,17 @@ fn wakeShare(custom: vec4f) -> f32 {
   return smoothstep(0.05, 0.4, custom.x) * params.wave.y;
 }
 
+// Each vertex goes where the waves carry the water resting there: across as well as up, so it gathers
+// under the crests and spreads over the troughs. The wakes lift it where it has gone.
 fn displace(world: vec3f, custom: vec4f, color: vec4f) -> vec3f {
-  let lift = waves(world.xz, params.wave.x, custom.y).x * waveShare(custom) + wakeLift(world.xz) * wakeShare(custom);
+  let swell = gerstner(world.xz, params.wave.x, custom.y, waveShare(custom));
+  let moved = world.xz + swell.shift;
+  let lift = swell.height + wakeLift(moved, world.xz) * wakeShare(custom);
   // The gusts are patches tens of metres across, far broader than the mesh: worked out at each vertex
-  // and handed to the fragment, where they cost two noises a pixel.
-  vertexExtra[0] = vec4f(gusts(world.xz, frame.fog.w), 0.0, 0.0, 0.0);
-  return world + vec3f(0.0, lift, 0.0);
+  // and handed to the fragment, where they cost two noises a pixel. Where the water rested goes too,
+  // for the fragment to find the waves' slope where they have carried it.
+  vertexExtra[0] = vec4f(gusts(world.xz, frame.fog.w), world.xz, 0.0);
+  return vec3f(moved.x, world.y + lift, moved.y);
 }
 `
 
@@ -466,12 +478,15 @@ fn surface(s: Surface) -> vec4f {
   let span = sqrt(length(dpdx(world)) * length(dpdy(world)));
   let stream = flow.z > 0.5;
   // A tile's own surface leaves the refined square to the refined mesh, which covers just its triangles
-  // there: the square is on the cells' lines and the water moves only up and down, so the two meet.
-  if (!stream && s.uv.x < 0.5 && inRefine(world) >= 0.0) {
+  // there. The square is on the cells' lines, and both are cut by where their water rested, not where
+  // the waves have carried it (up to a couple of metres across): so the two share their edge, which
+  // moves with the waves alike in both, and meet without a gap.
+  let rest = s.extra[0].yz;
+  if (!stream && s.uv.x < 0.5 && inRefine(rest) >= 0.0) {
     discard;
   }
   // And the refined mesh, which reaches a cell past the square, leaves what is outside it to the tiles.
-  if (s.uv.x >= 0.5 && inRefine(world) < 0.0) {
+  if (s.uv.x >= 0.5 && inRefine(rest) < 0.0) {
     discard;
   }
   var p = world * 0.7;
@@ -626,7 +641,8 @@ fn surface(s: Surface) -> vec4f {
   if (!stream) {
     lie = -s.normal.xz * sign(s.normal.y) / max(abs(s.normal.y), 0.2);
   }
-  let big = waves(world, params.wave.x, s.custom.y) * share + vec3f(0.0, lie + stand.yz + stirred);
+  let swell = gerstner(s.extra[0].yz, params.wave.x, s.custom.y, share);
+  let big = vec3f(swell.height, swell.slope + lie + stand.yz + stirred);
   // And what has moved through it: its bow waves, wakes and rings, and their churn.
   let churn = wake(world) * wakeShare(s.custom);
   var n = normalize(vec3f(-grad.x * 0.45 - big.y - churn.y, 1.0, -grad.y * 0.45 - big.z - churn.z));
@@ -697,9 +713,8 @@ fn surface(s: Surface) -> vec4f {
   let edge = depth - wander - lap;
   let shore = select(${FOAM_DEPTH.toFixed(2)}, ${STREAM_FOAM_DEPTH.toFixed(2)}, stream) * (1.0 + 0.23 * sin(time * 1.3 + world.x * 0.6 + world.y * 0.45));
   let foam = 1.0 - smoothstep(shore * 0.55, shore, edge);
-  // Whitecaps: the high, steep crests break, in ragged patches.
-  let steep = length(big.yz);
-  let crest = smoothstep(0.45, 0.9, big.x) * smoothstep(0.15, 0.4, steep);
+  // Whitecaps: where the waves gather the water tightest, the crests break, in ragged patches.
+  let crest = 1.0 - smoothstep(${CAP_SQUEEZE[0].toFixed(2)}, ${CAP_SQUEEZE[1].toFixed(2)}, swell.squeeze);
   // The lace that breaks up all the foam: two noises, worked out only where there is foam to break up
   // (the shore's line, a breaking crest or a wake), which open water mostly has none of.
   var lace = 0.0;

@@ -304,12 +304,21 @@ impl ClientSim {
     }
 
     /// The waves at `(x, z)`, `time` seconds into their loop, on open water `reach` metres across, at
-    /// full height for the depth: height, slope x, slope z and rise (`shared::waves::wave`), for checking
-    /// the client's copy against.
+    /// `share` of their full height (`shared::waves::shore`): height, slope x, slope z, rise, and the
+    /// water's swing x and z (`shared::waves::wave`), for checking the client's copy against.
     #[wasm_bindgen(js_name = waveAt)]
-    pub fn wave_at(x: f32, z: f32, time: f32, reach: f32) -> Vec<f32> {
-        let wave = shared::waves::wave(x, z, time, reach);
-        vec![wave.height, wave.slope[0], wave.slope[1], wave.rise]
+    pub fn wave_at(x: f32, z: f32, time: f32, reach: f32, share: f32) -> Vec<f32> {
+        let wave = shared::waves::wave(x, z, time, reach, share);
+        vec![wave.height, wave.slope[0], wave.slope[1], wave.rise, wave.orbit[0], wave.orbit[1]]
+    }
+
+    /// Where the water at rest at `(x0, z0)` has gone, `time` seconds into the loop, on open water
+    /// `reach` metres across with `share` of the waves: shift x, shift z, height and squeeze
+    /// (`shared::waves::particle`), for checking the client's copy, and the shader's, against.
+    #[wasm_bindgen(js_name = particleAt)]
+    pub fn particle_at(x0: f32, z0: f32, time: f32, reach: f32, share: f32) -> Vec<f32> {
+        let particle = shared::waves::particle(x0, z0, time, reach, share);
+        vec![particle.shift[0], particle.shift[1], particle.height, particle.squeeze]
     }
 
     /// The surge of a rapid's standing waves at `(x, z)`, `time` seconds into their loop, on water running

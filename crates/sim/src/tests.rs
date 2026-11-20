@@ -1223,7 +1223,8 @@ fn a_floating_swimmer_bobs_with_the_waves() {
     for tick in 0..20 * TICK_RATE {
         physics.set_tick(tick);
         physics.move_character(&mut character, &InputFrame::default(), TICK_DT);
-        let surface = physics.waters.surface(0.0, -60.0, shared::waves::time(tick)).unwrap().height;
+        // The waves carry it to and fro, so the surface is the one where it is now.
+        let surface = physics.waters.surface(character.position[0], character.position[2], shared::waves::time(tick)).unwrap().height;
         if tick > 2 * TICK_RATE {
             assert!((character.position[1] - (surface - SWIM_FLOAT)).abs() < 0.12, "riding the surface: {character:?} on {surface}");
             assert!(!physics.submerged(&character), "the head stays out on the swell");

@@ -993,7 +993,10 @@ impl Physics {
         character.chute = false;
         character.ski_strain = 0;
         character.down = character.down.saturating_sub(1);
-        let (level, rise, flow) = self.surface_at(character.position).map_or((character.position[1] + SWIM_FLOAT, 0.0, [0.0; 2]), |surface| (surface.height, surface.rise, surface.flow));
+        // The current and the waves' swing both carry a swimmer.
+        let (level, rise, flow) = self
+            .surface_at(character.position)
+            .map_or((character.position[1] + SWIM_FLOAT, 0.0, [0.0; 2]), |surface| (surface.height, surface.rise, [surface.flow[0] + surface.sway[0], surface.flow[1] + surface.sway[1]]));
         // A stroke with run held spends stamina as running does; nothing else costs any.
         let stroke = InputFrame { buttons: input.buttons & !(BUTTON_JUMP | BUTTON_CROUCH | BUTTON_PRONE), ..*input };
         let (spent, winded, _) = spend_stamina(character.spent, character.winded, true, false, &stroke);

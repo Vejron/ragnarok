@@ -280,7 +280,7 @@ export class Waters {
     const level = this.levelAt(x, z)
     if (level === NO_WATER || this.calm) return level
     const [flowX, flowZ] = this.flowAt(x, z)
-    return level + wave(x, z, time, this.reachAt(x, z)).height * shore(this.depthAt(x, z)) + churn(x, z, time, flowX, flowZ).height
+    return level + wave(x, z, time, this.reachAt(x, z), shore(this.depthAt(x, z))).height + churn(x, z, time, flowX, flowZ).height
   }
 
   /** How wide the open water is at `(x, z)`, metres, from the nearest ground sample, as the sim has it; 0 where it is not known. */
