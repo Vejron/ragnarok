@@ -364,6 +364,43 @@ fn the_ak5_chips_a_vehicle_and_a_wreck_kills_the_crew() {
 }
 
 #[test]
+fn a_round_on_a_vehicle_shows_its_number_where_it_struck_not_in_the_middle() {
+    let mut game = game();
+    let (vid, _driver) = driver_in_the_car(&mut game);
+    let (shooter, mut inbox) = join(&mut game);
+    give(&mut game, shooter, 0, ITEM_AK5, 1);
+    let pose = game.world.physics.car_pose(vid).unwrap();
+    game.world.entities.get_mut::<Player>(shooter).unwrap().character.position = [pose.position[0], STANDING_Y, pose.position[2] + 15.0];
+    let mut seq = 0;
+    hold(&mut game, shooter, &mut seq, 0.0, 0, 3);
+    while inbox.try_recv().is_ok() {}
+    for _ in 0..3 {
+        seq += 1;
+        game.handle(Command::Input(shooter, 0, vec![InputFrame { seq, strafe: 0, forward: 0, yaw: 0, buttons: BUTTON_FIRE, pitch: to_mrad(-0.05), view: 0, slot: 0, collective: 0 }]));
+        game.step();
+    }
+    settle(&mut game, shooter, &mut seq);
+    let mut dealt = Vec::new();
+    while let Ok(outgoing) = inbox.try_recv() {
+        if let Outgoing::Reliable(bytes) = outgoing
+            && shared::protocol::peek_tag(&bytes) == Some(shared::protocol::S_HIT)
+        {
+            let hit = decode::<shared::protocol::Hit>(&bytes).unwrap();
+            if hit.role == HIT_DEALT && hit.target == vid {
+                dealt.push(hit.z);
+            }
+        }
+    }
+    assert!(!dealt.is_empty(), "the shooter is told of the hit");
+    // The rounds came from +z, so they struck the near end of the car, a metre or more from its middle.
+    let pose = game.world.physics.car_pose(vid).unwrap();
+    for z in dealt {
+        let near = z as f32 / 100.0 - pose.position[2];
+        assert!(near > 1.0, "the number is on the side the round struck, {near} m from the middle");
+    }
+}
+
+#[test]
 fn a_wreck_tumbles_as_it_is_thrown_up() {
     let mut game = game();
     let (vid, _driver) = driver_in_the_car(&mut game);

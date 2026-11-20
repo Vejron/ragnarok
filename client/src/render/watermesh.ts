@@ -12,11 +12,26 @@ import type { Height } from './shade'
 /** Ribbon cross-sections along a stream are this far apart, metres. */
 const STREAM_STEP = 2
 /** Vertices across a stream ribbon (an odd number, so there is a middle one). */
-const STREAM_ACROSS = 5
-/** How far a stream floats over the ground, metres. */
-const STREAM_LIFT = 0.1
-/** Depth drawn at the middle of a stream, metres. */
-const STREAM_DEPTH = 0.45
+const STREAM_ACROSS = 7
+/**
+ * How high a stream's water stands over the middle of its bed, metres. The importer cuts the bed half a
+ * metre under the banks (`STREAM_DEPTH` in `crates/osm-import/src/condition.rs`), so the water lies a
+ * hand's breadth under them.
+ */
+export const STREAM_FILL = 0.35
+/**
+ * How far a stream's ribbon reaches past its bed on either side, metres: further than the 1-in-1 banks
+ * take to rise through the water, so the ground draws its edge and the ribbon's own edge is never seen.
+ */
+const STREAM_OVER = 0.6
+/**
+ * How far a stream's ribbon runs on past each end of its line, metres, its water thinning out to nothing
+ * over that stretch (`STREAM_TAPER`): it reaches into the pond it feeds, or up to the culvert it leaves
+ * by, and ends in a soft edge rather than a cut.
+ */
+const STREAM_TIP = 1
+/** How fast a stream's depth falls away towards the tip of its ribbon, metres a metre. */
+const STREAM_TAPER = 0.4
 /** Water cells wider than this, metres, are cut into smaller ones, fine enough for the waves to bend. */
 const WAVE_CELL = 1.5
 /**
@@ -149,17 +164,22 @@ function surfaceCustom(depths: Float32Array, flows: Float32Array): Float32Array 
 }
 
 /**
- * Streams as ribbons on the ground: cross-sections every `STREAM_STEP` metres, `STREAM_ACROSS`
- * vertices wide, each lifted a hair over the terrain. Depth is deepest in the middle and zero at
- * the banks; `flow` carries the distance along the stream and the offset across it.
+ * Streams as water standing in their channels: cross-sections every `STREAM_STEP` metres, `STREAM_ACROSS`
+ * vertices wide, level across at `STREAM_FILL` over the ground under the middle and wider than the bed,
+ * so the banks rise through it. Depth is the water over the ground at each vertex, below zero past the
+ * banks, where the shader fades it out; `flow` carries the distance along the stream and the offset
+ * across it.
  */
 export function streamBuffers(streams: readonly Stream[], height: Height): WaterBuffers | null {
   const positions: number[] = []
   const depths: number[] = []
   const flows: number[] = []
   const indices: number[] = []
-  for (const { width, points } of streams) {
-    const half = width / 2
+  for (const { width, points: line } of streams) {
+    const half = width / 2 + STREAM_OVER
+    const points = withTips(line)
+    let total = 0
+    for (let i = 0; i + 1 < points.length; i++) total += Math.hypot(points[i + 1]![0] - points[i]![0], points[i + 1]![1] - points[i]![1])
     let along = 0
     let previous: number[] | null = null
     for (let i = 0; i + 1 < points.length; i++) {
@@ -174,15 +194,19 @@ export function streamBuffers(streams: readonly Stream[], height: Height): Water
       for (let k = previous ? 1 : 0; k <= parts; k++) {
         const x = ax + ((bx - ax) * k) / parts
         const z = az + ((bz - az) * k) / parts
+        const surface = height(x, z) + STREAM_FILL
+        const at = along + (length * k) / parts
+        // The water thins out to nothing over the tips, half a tip past the line's own ends.
+        const tip = (Math.min(at, total - at) - STREAM_TIP / 2) * STREAM_TAPER
         const section: number[] = []
         for (let j = 0; j < STREAM_ACROSS; j++) {
           const across = (2 * j) / (STREAM_ACROSS - 1) - 1
           const px = x + nx * across * half
           const pz = z + nz * across * half
           section.push(positions.length / 3)
-          positions.push(px, height(px, pz) + STREAM_LIFT, pz)
-          depths.push(STREAM_DEPTH * (1 - across * across))
-          flows.push(along + (length * k) / parts, across * half, 1)
+          positions.push(px, surface, pz)
+          depths.push(Math.min(surface - height(px, pz), tip))
+          flows.push(at, across * half, 1)
         }
         if (previous) {
           for (let j = 0; j + 1 < STREAM_ACROSS; j++) {
@@ -206,3 +230,15 @@ export function streamBuffers(streams: readonly Stream[], height: Height): Water
   }
 }
 
+/** A stream's line carried on `STREAM_TIP` past both ends, along its first and last pieces. */
+function withTips(points: readonly (readonly [number, number])[]): [number, number][] {
+  const out = points.map(([x, z]) => [x, z] as [number, number])
+  if (out.length < 2) return out
+  const reach = (from: [number, number], to: [number, number]): [number, number] => {
+    const length = Math.hypot(to[0] - from[0], to[1] - from[1])
+    return length < 1e-4 ? to : [to[0] + ((to[0] - from[0]) / length) * STREAM_TIP, to[1] + ((to[1] - from[1]) / length) * STREAM_TIP]
+  }
+  out[0] = reach(out[1]!, out[0]!)
+  out[out.length - 1] = reach(out[out.length - 2]!, out[out.length - 1]!)
+  return out
+}

@@ -24,7 +24,8 @@ over it in this order:
    - A bed as wide as the water drawn in it (2.5 m) is cut 0.5 m below that profile, with banks of
      1 in 1, so the water lies flat in its channel. No cell is cut more than 1 m below the model.
 
-   Cutting only ever lowers the ground.
+   Cutting only ever lowers the ground. The client fills the channel with water 0.35 m deep, a
+   hand's breadth under the banks ([SHORES.md](SHORES.md)).
 3. **Roads and rails.** For each way's long profile, the model is sampled every 2 m along the centre
    line, then taken through a median and a mean over the way's `Grade`: ±8 m for roads, ±5 m for
    paths and tracks, and ±25 m for rails. The profile is kept within the grade's `shift` (1.5 m,
@@ -56,7 +57,7 @@ over it in this order:
 The result is kept as an offset from the model. Each ground sample adds the mean offset over its
 own cell (`Shaping::mean`), and so do the detail slopes (`detail.rs`), so a 4 m ground and its 1 m
 shading are shaped alike. Lakes, rivers and the sea are carved afterwards (`water::Surface::bed`),
-as before.
+as before, and their banks are shelved to meet the waterline ([SHORES.md](SHORES.md)).
 
 ## Using it
 

@@ -73,6 +73,7 @@ The docs are in [docs/](docs/).
 - [BUSES.md](docs/BUSES.md): public transport, a world option like winter: bus lines found along the major roads, with stops, and buses the server drives along them that anyone can ride, or take once the driver is gone
 - [HEADLIGHTS.md](docs/HEADLIGHTS.md): every vehicle's lamps, which its driver switches with L: headlights along the nose, a helicopter's searchlight under its gun and a Titan's in its visor
 - [WATER-WAVES.md](docs/WATER-WAVES.md): water that moves when something moves through it, a wave equation stepped on the GPU about the camera, so boats raise bow waves and leave a V behind, a boat that stops dead runs into its own wave and splashes send out rings, on water cut finer on the GPU near the camera; and a waterjet boat's spray in layers of streaks, drops, drifting mist and glints that glow against the sun
+- [SHORES.md](docs/SHORES.md): shorelines that follow the outline, not the sample grid; streams that fill their channels; no trees in the water
 - [RIVERS.md](docs/RIVERS.md): rivers that run downstream, fastest where they fall, carrying swimmers and drifting boats (an empty or anchored one holds), with white water and standing waves in the rapids
 - [AUDIO.md](docs/AUDIO.md): engines made firing by firing from each vehicle's real machine (the Centurion's Meteor V12, a snowmobile's two-stroke twin, a rotary, a turbine, an electric motor), revving with the driver's throttle through its gearbox, over the crunch, roll and squeal of the ground it is on, and soldiers' footsteps on what they step on
 

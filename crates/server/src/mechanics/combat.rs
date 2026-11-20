@@ -229,7 +229,8 @@ fn burst(world: &mut World, blast: Blast, direct: Option<Direct>, spare: Option<
         if direct.is_none() {
             super::armor::blast_parts(world, vid, blast.point, blast.damage * falloff.max(0.0), blast.attacker);
         }
-        damage_vehicle(world, vid, amount, blast.attacker);
+        // A shell that struck it shows its number where it burst; splash, in the vehicle's middle.
+        damage_vehicle_at(world, vid, amount, blast.attacker, direct.map(|_| blast.point));
         if amount > 0 && direct.is_some_and(|direct| direct.turret) {
             super::armor::damage_turret(world, vid, amount, blast.attacker);
         }
@@ -458,8 +459,15 @@ fn distance_to_building(world: &World, id: shared::world::ObjId, point: [f32; 3]
     Some((dx * dx + dy * dy + dz * dz).sqrt())
 }
 
-/// Takes `amount` health off vehicle `vid`, and says so (`Damaged`, with who was aboard). Wrecks it at zero.
+/// Takes `amount` health off vehicle `vid`, and says so (`Damaged`, with who was aboard), as struck in
+/// its middle. Wrecks it at zero.
 pub fn damage_vehicle(world: &mut World, vid: u32, amount: u8, attacker: Option<u32>) {
+    damage_vehicle_at(world, vid, amount, attacker, None);
+}
+
+/// `damage_vehicle`, struck at world point `point` (metres) when it is known, as a round or a shell
+/// that landed on it is: the shooter's number shows there rather than in the vehicle's middle.
+pub fn damage_vehicle_at(world: &mut World, vid: u32, amount: u8, attacker: Option<u32>, point: Option<[f32; 3]>) {
     let Some(seated) = world.entities.get::<Seats>(vid).map(|seats| seats.riders().collect::<Vec<u32>>()) else { return };
     // A crew's own side spares it, as it spares them on foot.
     if attacker.is_some_and(|by| seated.iter().any(|&rider| rider != by && same_team(world, by, rider))) {
@@ -481,8 +489,8 @@ pub fn damage_vehicle(world: &mut World, vid: u32, amount: u8, attacker: Option<
     }
     let at = world.physics.car_pose(vid).map(|pose| pose.position);
     let from = attacker.and_then(|id| position_of(world, id));
-    let centre = at.map_or([0.0; 3], |p| [p[0], p[1] + 0.8, p[2]]);
-    crate::events::damaged(world, Damaged { victim: vid, lost, attacker, weapon: 0, from, at: centre, head: false, killed: wrecked, aboard: seated });
+    let struck = point.or_else(|| at.map(|p| [p[0], p[1] + 0.8, p[2]])).unwrap_or([0.0; 3]);
+    crate::events::damaged(world, Damaged { victim: vid, lost, attacker, weapon: 0, from, at: struck, head: false, killed: wrecked, aboard: seated });
     if wrecked {
         wreck(world, vid);
     }
@@ -995,7 +1003,7 @@ pub fn land(world: &mut World, flight: &Flight, met: &Strike, round: &Round) {
                         return;
                     }
                 }
-                damage_vehicle(world, car, (f32::from(base) * scale).round().max(1.0) as u8, attacker);
+                damage_vehicle_at(world, car, (f32::from(base) * scale).round().max(1.0) as u8, attacker, Some(point));
                 super::vehicles::shoot_wheels(world, car, point, f32::from(round.damage), super::vehicles::BULLET_WHEEL_REACH);
             }
         }

@@ -306,7 +306,8 @@ export class Events {
 
   /**
    * What a hit the local player landed looks like in the world: a number on the spot, and a pinpoint
-   * flash there on a soldier (whose blood comes from `struck`) or flying debris off anything else.
+   * flash there on a soldier (whose blood comes from `struck`), nothing more on a vehicle (the shot
+   * itself sparked off it), or flying debris off anything else.
    */
   hit(hit: { kind: number; amount: number; x: number; y: number; z: number; target: number }) {
     const { scene, effects, damageNumbers, avatars } = this.world
@@ -325,9 +326,11 @@ export class Events {
       effects.struck(at)
       return
     }
+    // A vehicle already threw its sparks where the round landed (the shot, or the blast): only the number.
+    if (kind === 'vehicle') return
     // Debris flies back towards the shooter, as it would from a round that came in.
     const back = scene.camera.position.clone().sub(at).normalize()
-    effects.impact(at, kind === 'kill' ? 'kill' : kind === 'vehicle' ? 'vehicle' : 'body', back)
+    effects.impact(at, kind === 'kill' ? 'kill' : 'body', back)
   }
 
   /** Forgets everything pending and in flight: a disconnect. */

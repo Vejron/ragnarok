@@ -3,7 +3,7 @@ import type { TileGround } from '@/sim/terrain'
 import type { TileData } from '@/world'
 import type { HeightSource } from './shade'
 import { waterBuffers, type WaterBuffers } from './groundmesh'
-import { FLOW_BIAS } from './watermesh'
+import { FLOW_BIAS, STREAM_FILL } from './watermesh'
 import { GROUND_LIGHT_WGSL } from './groundlight'
 import { WAVES_WGSL } from '@/sim/waves'
 
@@ -58,6 +58,10 @@ fn wakeLift(p: vec2f) -> f32 {
 
 /** Shore foam reaches this deep, metres. */
 const FOAM_DEPTH = 0.35
+/** On a stream, only this deep, metres: a fine line at the banks, where a lake's would whiten it all. */
+const STREAM_FOAM_DEPTH = 0.08
+/** The water fades out from this depth to the shoreline, metres: whatever of a cell lies past it is not drawn. */
+const SHORE_FADE = 0.04
 /** Along-stream speed of the flow, metres per second. */
 const FLOW_SPEED = 1.4
 /**
@@ -347,17 +351,20 @@ fn surface(s: Surface) -> vec4f {
   }
   let band = smoothstep(0.35, 0.5, wave) * 0.5 + smoothstep(0.6, 0.7, wave) * 0.5;
 
-  let deep = smoothstep(0.0, 2.2, depth);
+  // How deep and how clear the water looks: a stream by its own few hand-breadths, dark down the
+  // middle of its channel and clear only at the banks.
+  let deep = select(smoothstep(0.0, 2.2, depth), smoothstep(0.0, ${STREAM_FILL.toFixed(2)}, depth), stream);
   var color = mix(params.shallow, params.deep, deep);
 
-  let clear = 1.0 - smoothstep(0.0, 1.4, depth);
+  let clear = select(1.0 - smoothstep(0.0, 1.4, depth), 1.0 - smoothstep(0.0, ${STREAM_FILL.toFixed(2)}, depth), stream);
   let bedP = select(world * 0.9, p * 0.8, stream);
   // The light's web on the bed shows only through clear, shallow water.
   var web = 0.0;
   if (clear > 0.0) {
     web = caustics(bedP, select(time * 0.8, time, stream));
   }
-  color = mix(color, params.bed, clear * 0.45);
+  // A stream runs over mud and stones, darker than a lake's sandy shallows.
+  color = mix(color, select(params.bed, params.bed * vec3f(0.5, 0.45, 0.35), stream), clear * 0.45);
   color += params.foam * web * clear * 0.35;
   color = mix(color, params.foam, band * 0.12);
   // The water's own colour and its foam are lit as the flat ground is, so a lake darkens with the shore at night.
@@ -409,14 +416,21 @@ fn surface(s: Surface) -> vec4f {
   // Measured at the water's level under the waves, so a crest still mirrors the scene.
   let level = params.plane.y * (1.0 - smoothstep(0.2, 0.5, abs(s.world.y - big.x - churn.x - params.plane.x)));
   mirror = mix(mirror, seen.rgb, seen.a * level);
+  // Down in its channel a stream mirrors its own banks more than the open sky, and the scene's mirror,
+  // made for the lake's level, misses it.
+  if (stream) {
+    mirror = mix(mirror, color * 0.55, 0.6);
+  }
   color = mix(color, mirror, clamp((fresnel * 1.3 + 0.12) * mix(1.1, 0.8, gust), 0.0, 0.95));
 
   let sunward = max(dot(reflect(-frame.sunDir.xyz, n), view), 0.0);
   let glint = pow(sunward, 90.0);
   let spark = smoothstep(0.35, 0.6, glint);
-  color += params.sun * (spark * 0.8 + pow(sunward, 24.0) * 0.12);
+  // A stream's ripples are small, and so are their glints.
+  let glints = select(1.0, 0.35, stream);
+  color += params.sun * (spark * 0.8 + pow(sunward, 24.0) * 0.12) * glints;
 
-  let shore = ${FOAM_DEPTH.toFixed(2)} + 0.08 * sin(time * 1.3 + world.x * 0.6 + world.y * 0.45);
+  let shore = select(${FOAM_DEPTH.toFixed(2)}, ${STREAM_FOAM_DEPTH.toFixed(2)}, stream) * (1.0 + 0.23 * sin(time * 1.3 + world.x * 0.6 + world.y * 0.45));
   let foam = 1.0 - smoothstep(shore * 0.55, shore, depth);
   // Whitecaps: the high, steep crests break, in ragged patches.
   let steep = length(big.yz);
@@ -456,10 +470,12 @@ fn surface(s: Surface) -> vec4f {
     let drift = smoothstep(-0.25, 0.35, bands(world * 0.09, 0.0) + bands(world * 0.31, 0.0) * 0.4);
     let crack = smoothstep(0.9, 0.99, 1.0 - abs(sin(world.x * 0.13 + 2.0 * sin(world.y * 0.08))));
     let ice = mix(vec3f(0.74, 0.86, 0.93), vec3f(0.92, 0.95, 0.98), drift) * (1.0 - crack * 0.14 * (1.0 - drift));
-    return vec4f(ice * ground * 1.15 + mirror * fresnel * 0.2 * (1.0 - drift), 1.0);
+    return vec4f(ice * ground * 1.15 + mirror * fresnel * 0.2 * (1.0 - drift), smoothstep(-${SHORE_FADE.toFixed(2)}, 0.0, depth));
   }
   var alpha = max(smoothstep(0.0, 0.1, depth) * mix(0.62, 0.9, deep), max(max(cap, wash), rush) * 0.9);
-  alpha = clamp(alpha - clear * 0.12 + fresnel * 0.35 + spark * 0.4, 0.0, 1.0);
+  alpha = clamp(alpha - clear * 0.12 + fresnel * 0.35 + spark * 0.4 * glints, 0.0, 1.0);
+  // Past the shoreline, where the cell's far corner is dry ground, nothing: not even the mirror's sheen.
+  alpha *= smoothstep(-${SHORE_FADE.toFixed(2)}, 0.0, depth);
   return vec4f(color, alpha);
 }
 `

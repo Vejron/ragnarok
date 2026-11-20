@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { buildWater, disposeWater } from '@/render/water'
 import type { TileGround } from '@/sim/terrain'
 import { FLOW_STEP, REACH_STEP } from '@/sim/waves'
-import { FLOW_BIAS } from '@/render/watermesh'
+import { FLOW_BIAS, streamBuffers } from '@/render/watermesh'
 import { NO_WATER, type TileData } from '@/world'
 import { tileParts } from '@/render/tileprep'
 
@@ -93,6 +93,29 @@ describe('water', () => {
     // Flow is (along, across, is-stream) in custom's y, z and w.
     const custom = mesh.geometry.custom!
     expect(custom[3]).toBe(1)
-    expect(custom[(mesh.geometry.vertexCount - 1) * 4 + 1]).toBeCloseTo(16)
+    // The 16 m line and a metre's tip past either end.
+    expect(custom[(mesh.geometry.vertexCount - 1) * 4 + 1]).toBeCloseTo(18)
+  })
+
+  it('fills a stream’s channel level across, wider than its bed, so the banks draw its edge', () => {
+    // A bed 2.5 m wide at 10 m along z = 0, with banks rising 1 in 1.
+    const height = (_x: number, z: number) => 10 + Math.max(0, Math.abs(z) - 1.25)
+    const { positions, custom } = streamBuffers([{ width: 2.5, points: [[0, 0], [10, 0]] }], height)!
+    const count = positions.length / 3
+    const across = Array.from({ length: count }, (_, i) => custom[i * 4 + 2]!)
+    expect(Math.max(...across)).toBeGreaterThan(1.25)
+    const along = Array.from({ length: count }, (_, i) => custom[i * 4 + 1]!)
+    const total = Math.max(...along)
+    for (let i = 0; i < count; i++) {
+      const level = positions[i * 3 + 1]!
+      expect(level).toBeCloseTo(10.35)
+      // Depth is the water over the ground there: deepest over the bed, below zero past the banks...
+      const over = level - height(positions[i * 3]!, positions[i * 3 + 2]!)
+      if (along[i]! > 2 && along[i]! < total - 2) expect(custom[i * 4]).toBeCloseTo(over)
+      else expect(custom[i * 4]).toBeLessThanOrEqual(over + 1e-6)
+      // ...and below zero at the tips, past either end of the line, where the stream fades out.
+      if (along[i] === 0 || along[i] === total) expect(custom[i * 4]).toBeLessThan(0)
+    }
+    expect(Math.max(...Array.from({ length: count }, (_, i) => custom[i * 4]!))).toBeCloseTo(0.35)
   })
 })

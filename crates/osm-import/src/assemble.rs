@@ -27,6 +27,8 @@ const SPAWN_CLEARANCE: f64 = 1.5;
 const SOLID_REACH: f64 = 20.0;
 /// No tree stands this close to the edge of a bridge, metres.
 const BRIDGE_CLEAR: f64 = 4.0;
+/// A tree's trunk keeps this far from the water drawn in a stream, metres.
+const TRUNK_CLEAR: f64 = 0.5;
 /// A golf flagstick's height, metres.
 const FLAG_HEIGHT: f64 = 2.3;
 /// How much wider a track's ballast bed is than its gauge, metres.
@@ -734,10 +736,15 @@ fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collecti
     let roads: Vec<(&[P], f64)> = roads.iter().map(|(points, width, _)| (&points[..], *width)).chain(rails.iter().map(|(points, gauge, _)| (&points[..], ballast(*gauge)))).chain(ski.iter().map(|points| (&points[..], SKI_TRAIL_WIDTH))).collect();
     let road_boxes: Vec<[f64; 4]> = roads.iter().map(|(points, width)| reach_box(points, width / 2.0 + SOLID_REACH)).collect();
     let footprint_boxes: Vec<[f64; 4]> = footprints.iter().map(|footprint| reach_box(footprint, SOLID_REACH)).collect();
+    // Nothing grows in a stream's channel: the water drawn in it and a trunk's width either side.
+    let stream_clear = STREAM_WIDTH / 2.0 + TRUNK_CLEAR;
+    let stream_boxes: Vec<[f64; 4]> = water.streams.iter().map(|points| reach_box(points, stream_clear)).collect();
     // Each tree that may stand where it is, with whether it is near a road or building.
     let mut standing: Vec<(crate::thin::Planted, bool)> = Vec::new();
     // Trees dropped for standing against a house: `[from the laser, planted]`.
     let mut against_walls = [0usize; 2];
+    // Trees and shrubs dropped for standing in water: in a lake, a river or the sea, then in a stream.
+    let mut in_water = [0usize; 2];
     for (at, kind, height, crown, planted) in trees.into_iter().chain(props) {
         if at[0].abs() > inner || at[1].abs() > inner {
             continue;
@@ -760,6 +767,19 @@ fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collecti
         if on_building || on_road || on_bridge || on_course {
             continue;
         }
+        // A tree or shrub keeps out of the water; a rock may lie in it. The laser finds a crown that
+        // leans out over a pond where its top is, so the trunk would stand in the water.
+        if crate::thin::is_tree(kind) || kind == TREE_BUSH {
+            if water.depth_at(&ground, at[0], at[1]) > 0.0 {
+                in_water[0] += 1;
+                continue;
+            }
+            let in_stream = water.streams.iter().zip(&stream_boxes).any(|(points, b)| in_box(b, at) && points.windows(2).any(|pair| distance_to_segment(at, pair[0], pair[1]) < stream_clear));
+            if in_stream {
+                in_water[1] += 1;
+                continue;
+            }
+        }
         let wall = footprints
             .iter()
             .zip(&footprint_boxes)
@@ -776,7 +796,14 @@ fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collecti
     // The woods are thinned among the trees that stand, so none is crowded out by one that does not.
     let keep = crate::thin::woods(&standing.iter().map(|(tree, _)| *tree).collect::<Vec<_>>());
     if !standing.is_empty() {
-        eprintln!("trees: {} against a house ({} of them planted), {} thinned out of the woods", against_walls[0] + against_walls[1], against_walls[1], keep.iter().filter(|keep| !**keep).count());
+        eprintln!(
+            "trees: {} against a house ({} of them planted), {} in lakes and rivers, {} in streams, {} thinned out of the woods",
+            against_walls[0] + against_walls[1],
+            against_walls[1],
+            in_water[0],
+            in_water[1],
+            keep.iter().filter(|keep| !**keep).count()
+        );
     }
     for (((at, kind, height, crown, _), near), _) in standing.into_iter().zip(keep).filter(|(_, keep)| *keep) {
         let tile = tiles.entry(manifest.tile_at(cm(at[0]), cm(at[1]))).or_default();
@@ -2768,6 +2795,35 @@ mod tests {
         let world = WorldFile::assemble(&manifest, built.tiles.into_iter().map(|((col, row), tile)| (col, row, tile)));
         let looks: Vec<&BuildingLook> = world.buildings.iter().zip(&world.looks).filter(|(b, _)| b.kind == BUILDING_BRIDGE).map(|(_, look)| look).collect();
         assert!(looks.iter().all(|look| !look.walls.is_empty() && !look.roof.is_empty() && look.windows.is_empty() && look.inside.is_empty()));
+    }
+
+    #[test]
+    fn trees_and_shrubs_do_not_grow_in_ponds_or_streams() {
+        use crate::water::{Grid, Surface};
+        let map = synthetic_water(300.0);
+        let grid = Grid { origin: -30_000, cell: 100, side: 601 };
+        let surface = Surface::new(&map, grid, |_, _| Some(3.0));
+        let heights = (0..601 * 601).map(|at| (surface.bed(-300.0 + (at % 601) as f64, -300.0 + (at / 601) as f64, Some(3.0)).unwrap() * 100.0).round() as i32).collect();
+        let ground = Ground { origin: -30_000, cell: 100, side: 601, heights };
+        let placed = Placed::new(&map, &surface, 0.0, &ground);
+        let ring = &map.bodies[0].rings[0];
+        let middle = [ring.iter().map(|p| p[0]).sum::<f64>() / ring.len() as f64, ring.iter().map(|p| p[1]).sum::<f64>() / ring.len() as f64];
+        let stream = map.streams[0][10];
+        let dry = [stream[0] + 30.0, stream[1]];
+        let trees = vec![
+            (middle, TREE_PINE, 12.0, 3.0, false),
+            ([middle[0] + 5.0, middle[1]], TREE_BUSH, 1.5, 1.0, false),
+            ([middle[0] - 5.0, middle[1]], TREE_ROCK_BOULDER, 1.0, 1.0, false),
+            ([stream[0] + 0.8, stream[1]], TREE_BIRCH, 10.0, 2.0, false),
+            (dry, TREE_BIRCH, 10.0, 2.0, false),
+        ];
+        let built = assemble(Frame::default(), 300.0, 100.0, None, vec![], vec![], &[], vec![], vec![], vec![], vec![], vec![], trees, &[], ground, placed);
+        let mut standing: Vec<(u8, [f64; 2])> = built.tiles.values().flat_map(|tile| &tile.trees).map(|tree| (tree.kind, [tree.x as f64 / 100.0, tree.z as f64 / 100.0])).collect();
+        standing.sort_by_key(|tree| tree.0);
+        assert_eq!(standing.len(), 2, "only the rock in the pond and the tree on dry ground stand: {standing:?}");
+        assert_eq!(standing[0].0, TREE_BIRCH);
+        assert!((standing[0].1[0] - dry[0]).abs() < 0.01);
+        assert_eq!(standing[1].0, TREE_ROCK_BOULDER);
     }
 
     #[test]
