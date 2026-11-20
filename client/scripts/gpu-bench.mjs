@@ -302,9 +302,18 @@ await evaluate(`(() => {
  * drawn (the page's own screenshot waits on the compositor, which a heavy world can stall).
  */
 async function shoot(file) {
-  const url = await evaluate(`(() => { const s = window.__game.scene; s.render(); return s.canvas.toDataURL('image/png') })()`, 30000)
-  if (typeof url === 'string') writeFileSync(join(out, `${file}.png`), Buffer.from(url.split(',')[1], 'base64'))
+  // Fetched a piece at a time: Node's WebSocket drops the connection on a message of more than about 4 MB,
+  // which a Retina-sized picture is, and every call after it would then wait out its two minutes.
+  const length = await evaluate(`(() => { const s = window.__game.scene; s.render(); window.__shot = s.canvas.toDataURL('image/png').split(',')[1]; return window.__shot.length })()`, 30000)
+  if (typeof length !== 'number') return
+  let data = ''
+  for (let at = 0; at < length; at += SHOT_PIECE) data += await evaluate(`window.__shot.slice(${at}, ${at + SHOT_PIECE})`, 30000)
+  await evaluate('(() => { window.__shot = null; return 1 })()')
+  writeFileSync(join(out, `${file}.png`), Buffer.from(data, 'base64'))
 }
+
+/** How much of a screenshot's base64 is fetched in one reply, characters. */
+const SHOT_PIECE = 1 << 20
 
 const median = (a) => a.slice().sort((x, y) => x - y)[a.length >> 1]
 const views = (option('views', null)?.split(',') ?? Object.keys(VIEWS)).filter((v) => VIEWS[v])

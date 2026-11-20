@@ -153,6 +153,8 @@ export class FlashEffects extends Effect {
   private dirtyFrom = -1
   private dirtyCount = 0
   private readonly color = new Color()
+  /** The clock's uniform as uploaded each frame: the time in its first float, seconds. */
+  private readonly clockData = new Float32Array(4)
   private gpu: { device: GPUDevice; buffer: GPUBuffer; clock: GPUBuffer; pipeline: GPURenderPipeline; group: GPUBindGroup; sampleCount: number } | null = null
 
   constructor(readonly capacity = 8192) {
@@ -224,7 +226,8 @@ export class FlashEffects extends Effect {
       this.dirtyFrom = -1
       this.dirtyCount = 0
     }
-    queue.writeBuffer(gpu.clock, 0, new Float32Array([this.time, 0, 0, 0]))
+    this.clockData[0] = this.time
+    queue.writeBuffer(gpu.clock, 0, this.clockData)
   }
 
   override get idle() {

@@ -731,6 +731,8 @@ export class Renderer {
     this.outputPass(encoder, scene, camera, screen, light)
     this.timer.resolve(encoder)
     const reading = scene.adaptation !== null && this.frameNumber % 30 === 0 && this.adaptation.copyOut(encoder)
+    // The geometry synced this frame is copied in from its staging buffers before the frame draws it.
+    this.arena.flush()
     this.device.queue.submit([encoder.finish()])
     this.timer.read()
     if (reading) this.adaptation.read()

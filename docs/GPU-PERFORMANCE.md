@@ -274,6 +274,28 @@ so they mostly still batch (a town's 139 draws became 237). On Apple's GPU it ch
 (within 0.03 ms either way), so it is off there and on for every other adapter. What it wins
 elsewhere is not measured: the bench has only been run on a Mac.
 
+## Uploads
+
+Uploads cost the CPU, not the GPU, and only on frames that stream geometry in. The geometry arena
+(`gpu/arena.ts`) sends an upload of 64 KB or less with `writeBuffer` from a JavaScript array it keeps,
+and interleaves a bigger one straight into a ring of 4 MB staging buffers mapped for writing, copied
+in on the GPU when the frame is submitted. A mesh bigger than the ring gets a staging buffer of its
+own, made mapped. Main-thread time per upload, interleaving included, in headless Chrome on Metal:
+
+| Upload | `writeBuffer` | Mapped staging |
+|---|---|---|
+| 16 KB | 0.03 ms | 0.06 ms |
+| 256 KB | 0.32 ms | 0.18 ms |
+| 1 MB | 1.18 ms | 0.65 ms |
+| 4 MB | 1.25 ms | 1.39 ms |
+| 16 MB | 3.04 ms | 2.80 ms |
+
+Writing 128 KB into a mapped buffer cost the same whether the buffer was 256 KB or 16 MB, so the
+browser does not copy the whole range on `unmap`. Uniforms and the per-frame records (objects, bones,
+materials, lights) are small and stay on `writeBuffer`, uploading only the range that changed.
+Readbacks (the pass timer, the particle count, the eye's adaptation) rotate their `MAP_READ` buffers,
+start mapping after the submit, read the mapped range in place and never wait for the GPU.
+
 ## Smoke
 
 Smoke is cheap here because it is drawn at half resolution: 200 puffs 3 to 5 m wide across the whole
@@ -285,6 +307,16 @@ thing added per pixel, and took the 200 puffs from 0.11 to 0.13 ms.
 
 ## Tried and dropped
 
+- **Half-precision floats (`shader-f16`) for the water's colour maths.** The tint, the mirror's blend,
+  the foam and the alpha were worked out in `f16` (Metal's `half`), with places, times, the waves and
+  the glint's steep powers left in `f32`. Timed alternately with the `f32` shader on `vindeln`'s shore:
+  3.01 ms against 3.02 ms, and 3.01 ms for the same frame timed twice, the picture unchanged. What a
+  water pixel costs is its texture reads and the waves' sines, which stay `f32`; the maths that can be
+  halved is too little of it to show. Of the other newer WGSL features Chrome 157 has, none bears on
+  what a frame costs here: `immediates` replace per-draw uniforms, which the draw list already does
+  without; `subgroups` speed reductions in compute, which are 0.1 ms in all; `fragment_depth` keeps the
+  early depth test for a shader that writes depth, and only the full-screen depth copy does;
+  `buffer_view` and `swizzle_assignment` change how code is written, not how fast it runs.
 - **`rg11b10ufloat` for the HDR image** (4 bytes a pixel, not 8, where the device has
   `rg11b10ufloat-renderable`): slower on Apple's GPU, forest 3.88 → 4.37 ms, so it was reverted.
 - **A depth pre-pass for everything opaque:** a tiled GPU already shades each pixel of opaque,

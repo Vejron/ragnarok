@@ -39,12 +39,20 @@ const INITIAL_INDICES = 1 << 20
  */
 const GROWTH_BYTES = 64 << 20
 /**
- * The most bytes of an upload that are put together in the arena's own staging buffer, kept from one
- * upload to the next: the small and steady ones (a grass chunk, a few changed quads) then make no
- * garbage. A bigger upload, a tile's buildings say, is rare and gets a buffer of its own, so that the
- * arena does not hold the biggest mesh's size for good.
+ * The most bytes of an upload that are put together in a JavaScript array and sent with `writeBuffer`:
+ * a few changed quads, a small mesh. Below this the browser's own copy is cheaper than a mapped
+ * buffer's round trip (16 KB took 0.03 ms that way and 0.06 ms mapped, in headless Chrome on Metal).
  */
-const STAGING_BYTES = 1 << 20
+const SMALL_UPLOAD_BYTES = 64 << 10
+/**
+ * The size of each staging buffer in the ring that bigger uploads are interleaved straight into,
+ * bytes. Mapped, they skip the copy out of a JavaScript array (a 1 MB upload took 0.65 ms instead of
+ * 1.2 ms). An upload bigger than this, a tile's buildings say, gets a mapped buffer of its own, so that
+ * the ring does not hold the biggest mesh's size for good.
+ */
+const STAGING_BYTES = 4 << 20
+/** How many staging buffers are kept mapped and waiting between frames; more are destroyed when they come back. */
+const STAGING_KEPT = 3
 
 /**
  * All mesh geometry lives in one vertex buffer and one index buffer, so the renderer binds them once per
@@ -60,7 +68,23 @@ export class GeometryArena {
   private readonly indices = new RangeAllocator(INITIAL_INDICES)
   /** Geometries holding a slot here, so disposed ones are freed even when nothing draws them again. */
   private readonly live = new Set<Geometry>()
-  private readonly staging = new ArrayBuffer(STAGING_BYTES)
+  /** Where small uploads are put together before `writeBuffer` copies them out. */
+  private readonly scratch = new ArrayBuffer(SMALL_UPLOAD_BYTES)
+  /** Staging buffers mapped and ready for the next uploads. */
+  private readonly ready: GPUBuffer[] = []
+  /** The staging buffer being filled, its mapped range and the bytes of it used so far. */
+  private current: GPUBuffer | null = null
+  private currentRange: ArrayBuffer | null = null
+  private cursor = 0
+  /** Staging buffers filled and unmapped, waiting for `flush` to submit their copies. */
+  private readonly filled: GPUBuffer[] = []
+  /** Mapped buffers made for one upload too big for the ring, destroyed once their copy is submitted. */
+  private readonly oversize: GPUBuffer[] = []
+  /** The copies out of the staging buffers since the last `flush`. */
+  private encoder: GPUCommandEncoder | null = null
+  /** The buffer `stage` last put an upload in (null for `scratch`), and that upload's mapped range. */
+  private stagedIn: GPUBuffer | null = null
+  private stagedRange: ArrayBuffer = this.scratch
 
   constructor(private readonly device: GPUDevice) {
     this.vertexBuffer = this.makeVertexBuffer(INITIAL_VERTICES)
@@ -134,6 +158,31 @@ export class GeometryArena {
     this.indices.release(slot.firstIndex, slot.indexCount)
   }
 
+  /**
+   * Submits the copies out of the staging buffers and starts mapping them again for the next uploads.
+   * Call before submitting the frame that draws what was synced.
+   */
+  flush() {
+    if (!this.encoder) return
+    if (this.current) {
+      this.current.unmap()
+      this.filled.push(this.current)
+      this.current = this.currentRange = null
+    }
+    for (const buffer of this.oversize) buffer.unmap()
+    this.device.queue.submit([this.encoder.finish()])
+    this.encoder = null
+    for (const buffer of this.oversize) buffer.destroy()
+    this.oversize.length = 0
+    for (const buffer of this.filled) {
+      buffer.mapAsync(GPUMapMode.WRITE).then(() => {
+        if (this.ready.length < STAGING_KEPT) this.ready.push(buffer)
+        else buffer.destroy()
+      }, () => buffer.destroy())
+    }
+    this.filled.length = 0
+  }
+
   get usedBytes() {
     return this.vertices.used * VERTEX_STRIDE + this.indices.used * 4
   }
@@ -142,24 +191,73 @@ export class GeometryArena {
     this.writeVertices(geometry, slot, 0, slot.vertexCount)
     // Indices are stored relative to the geometry; draws add baseVertex.
     const given = geometry.indices
-    if (given instanceof Uint32Array) {
+    const bytes = slot.indexCount * 4
+    if (given instanceof Uint32Array && bytes <= SMALL_UPLOAD_BYTES && !this.encoder) {
       this.device.queue.writeBuffer(this.indexBuffer, slot.firstIndex * 4, given as Uint32Array<ArrayBuffer>)
       return
     }
-    const indices = new Uint32Array(this.stage(slot.indexCount * 4), 0, slot.indexCount)
+    const at = this.stage(bytes)
+    const indices = new Uint32Array(this.stagedRange, at, slot.indexCount)
     if (given) indices.set(given)
     else for (let i = 0; i < indices.length; i++) indices[i] = i
-    this.device.queue.writeBuffer(this.indexBuffer, slot.firstIndex * 4, indices)
+    this.send(this.indexBuffer, slot.firstIndex * 4, at, bytes)
   }
 
   /**
-   * A buffer of at least `bytes` to put an upload together in: the arena's own, zeroed, when it is big
-   * enough, and a new one otherwise. `writeBuffer` copies at the call, so the next upload can use it again.
+   * Finds room for an upload of `bytes`, zeroed, and returns where in `stagedRange` it starts: the
+   * scratch array for a small one, the staging ring for a bigger one, and a mapped buffer of its own
+   * for one too big for the ring. `send` then takes it to the arena.
+   *
+   * A `writeBuffer` runs before any command buffer submitted after it, so once a copy is waiting for
+   * `flush`, small uploads go through the ring as well: one sent later would otherwise land first, and
+   * a waiting copy to the same place (a slot freed and given again) would write over it.
    */
-  private stage(bytes: number): ArrayBuffer {
-    if (bytes > STAGING_BYTES) return new ArrayBuffer(bytes)
-    new Uint8Array(this.staging, 0, bytes).fill(0)
-    return this.staging
+  private stage(bytes: number): number {
+    if (bytes <= SMALL_UPLOAD_BYTES && !this.encoder) {
+      new Uint8Array(this.scratch, 0, bytes).fill(0)
+      this.stagedIn = null
+      this.stagedRange = this.scratch
+      return 0
+    }
+    if (bytes > STAGING_BYTES) {
+      // Made mapped, so it starts zeroed.
+      const buffer = this.makeStaging(bytes)
+      this.oversize.push(buffer)
+      this.stagedIn = buffer
+      this.stagedRange = buffer.getMappedRange()
+      return 0
+    }
+    if (this.current && this.cursor + bytes > STAGING_BYTES) {
+      this.current.unmap()
+      this.filled.push(this.current)
+      this.current = this.currentRange = null
+    }
+    if (!this.current) {
+      // A buffer back from mapAsync holds what was last written into it, so the range used is zeroed below.
+      this.current = this.ready.pop() ?? this.makeStaging(STAGING_BYTES)
+      this.currentRange = this.current.getMappedRange()
+      this.cursor = 0
+    }
+    const at = this.cursor
+    this.cursor += bytes
+    new Uint8Array(this.currentRange!, at, bytes).fill(0)
+    this.stagedIn = this.current
+    this.stagedRange = this.currentRange!
+    return at
+  }
+
+  /** Takes the `bytes` that `stage` found room for at `at` to `offset` in `target`. */
+  private send(target: GPUBuffer, offset: number, at: number, bytes: number) {
+    if (!this.stagedIn) {
+      this.device.queue.writeBuffer(target, offset, this.scratch, at, bytes)
+      return
+    }
+    this.encoder ??= this.device.createCommandEncoder({ label: 'arena uploads' })
+    this.encoder.copyBufferToBuffer(this.stagedIn, at, target, offset, bytes)
+  }
+
+  private makeStaging(bytes: number) {
+    return this.device.createBuffer({ label: 'arena staging', size: bytes, usage: GPUBufferUsage.MAP_WRITE | GPUBufferUsage.COPY_SRC, mappedAtCreation: true })
   }
 
   /** Puts vertices `first` to `first + count - 1` on one point (`Geometry.collapseRange`). */
@@ -167,7 +265,8 @@ export class GeometryArena {
     first = Math.max(0, first)
     count = Math.min(count, slot.vertexCount - first)
     if (count <= 0) return
-    this.device.queue.writeBuffer(this.vertexBuffer, (slot.baseVertex + first) * VERTEX_STRIDE, this.stage(count * VERTEX_STRIDE), 0, count * VERTEX_STRIDE)
+    const bytes = count * VERTEX_STRIDE
+    this.send(this.vertexBuffer, (slot.baseVertex + first) * VERTEX_STRIDE, this.stage(bytes), bytes)
   }
 
   /** Interleaves and uploads vertices `first` to `first + count - 1`. */
@@ -175,10 +274,11 @@ export class GeometryArena {
     first = Math.max(0, first)
     count = Math.min(count, slot.vertexCount - first)
     if (count <= 0) return
-    const data = this.stage(count * VERTEX_STRIDE)
-    const f32 = new Float32Array(data)
-    const u16 = new Uint16Array(data)
-    const u8 = new Uint8Array(data)
+    const bytes = count * VERTEX_STRIDE
+    const at = this.stage(bytes)
+    const f32 = new Float32Array(this.stagedRange, at, count * 16)
+    const u16 = new Uint16Array(this.stagedRange, at, count * 32)
+    const u8 = new Uint8Array(this.stagedRange, at, bytes)
     const { positions, normals, uvs, colors, custom, joints, weights } = geometry
     const colorSize = colors ? colors.length / slot.vertexCount : 0
     for (let k = 0; k < count; k++) {
@@ -221,7 +321,7 @@ export class GeometryArena {
         u16[c] = u16[c + 1] = u16[c + 2] = u16[c + 3] = 65535
       }
     }
-    this.device.queue.writeBuffer(this.vertexBuffer, (slot.baseVertex + first) * VERTEX_STRIDE, data, 0, count * VERTEX_STRIDE)
+    this.send(this.vertexBuffer, (slot.baseVertex + first) * VERTEX_STRIDE, at, bytes)
   }
 
   private allocVertices(count: number): number {
@@ -252,6 +352,8 @@ export class GeometryArena {
       next.destroy()
       throw new Error(`Geometry arena needs ${next.size} bytes, over the GPU's ${this.device.limits.maxBufferSize}`)
     }
+    // The staged copies into the old buffer go first, or the growth would copy it over without them.
+    this.flush()
     const encoder = this.device.createCommandEncoder()
     encoder.copyBufferToBuffer(old, 0, next, 0, bytes)
     this.device.queue.submit([encoder.finish()])

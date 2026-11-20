@@ -2,16 +2,64 @@ import { describe, expect, it, vi } from 'vitest'
 import { GeometryArena } from '../src/gpu/arena'
 import { Geometry } from '../src/scene/geometry'
 
-vi.stubGlobal('GPUBufferUsage', { VERTEX: 1, INDEX: 2, COPY_DST: 4, COPY_SRC: 8 })
+vi.stubGlobal('GPUBufferUsage', { VERTEX: 1, INDEX: 2, COPY_DST: 4, COPY_SRC: 8, MAP_WRITE: 16 })
+vi.stubGlobal('GPUMapMode', { WRITE: 2 })
 
-/** Just enough of a device for the arena: buffers that remember their size, and a queue that does nothing. */
+/** What a fake device was asked to do, in order. */
+type Event =
+  | { kind: 'write'; offset: number; size: number }
+  | { kind: 'copy'; from: FakeBuffer; to: FakeBuffer; offset: number; size: number }
+  | { kind: 'submit'; copies: number }
+  | { kind: 'create'; buffer: FakeBuffer }
+
+interface FakeBuffer { size: number; label?: string; mapped: boolean; destroyed: boolean }
+
+/**
+ * Just enough of a device for the arena: buffers that remember their size and can be mapped, and a
+ * queue that records what it is asked to do.
+ */
 function fakeDevice(maxBufferSize = 1 << 30) {
-  return {
+  const events: Event[] = []
+  const device = {
+    events,
     limits: { maxBufferSize },
-    createBuffer: ({ size }: { size: number }) => ({ size, destroy() {} }),
-    createCommandEncoder: () => ({ copyBufferToBuffer() {}, finish: () => ({}) }),
-    queue: { writeBuffer() {}, submit() {} },
-  } as unknown as GPUDevice
+    createBuffer: ({ size, label, mappedAtCreation }: GPUBufferDescriptor) => {
+      let range: ArrayBuffer | null = mappedAtCreation ? new ArrayBuffer(size) : null
+      const buffer = {
+        size, label, mapped: !!mappedAtCreation, destroyed: false,
+        destroy() { buffer.destroyed = true },
+        getMappedRange() { return range! },
+        unmap() { range = null; buffer.mapped = false },
+        mapAsync() { return Promise.resolve().then(() => { range = new ArrayBuffer(size); buffer.mapped = true }) },
+      }
+      events.push({ kind: 'create', buffer })
+      return buffer
+    },
+    createCommandEncoder: () => {
+      let copies = 0
+      return {
+        copyBufferToBuffer(from: FakeBuffer, _at: number, to: FakeBuffer, offset: number, size: number) {
+          copies++
+          events.push({ kind: 'copy', from, to, offset, size })
+        },
+        finish: () => ({ copies }),
+      }
+    },
+    queue: {
+      writeBuffer(_buffer: GPUBuffer, offset: number, data: ArrayBufferView | ArrayBuffer, _from?: number, size?: number) {
+        events.push({ kind: 'write', offset, size: size ?? data.byteLength })
+      },
+      submit([commands]: { copies: number }[]) {
+        events.push({ kind: 'submit', copies: commands!.copies })
+      },
+    },
+  }
+  return device as unknown as GPUDevice & { events: Event[] }
+}
+
+/** A geometry of `vertices` vertices, 64 bytes each in the arena, and no indices. */
+function mesh(vertices: number) {
+  return new Geometry({ positions: new Float32Array(vertices * 3) })
 }
 
 function triangle() {
@@ -98,6 +146,74 @@ describe('GeometryArena', () => {
     // Once only.
     arena.sync(geometry)
     expect(writes.length).toBe(1)
+  })
+
+  it('sends a small upload with writeBuffer and nothing to flush', () => {
+    const device = fakeDevice()
+    const arena = new GeometryArena(device)
+    arena.sync(mesh(100))
+    arena.flush()
+    expect(device.events.filter((e) => e.kind === 'write').length).toBeGreaterThan(0)
+    expect(device.events.some((e) => e.kind === 'copy' || e.kind === 'submit')).toBe(false)
+  })
+
+  it('stages a big upload in a mapped buffer and copies it in on flush', () => {
+    const device = fakeDevice()
+    const arena = new GeometryArena(device)
+    const slot = arena.sync(mesh(4096))!
+    expect(device.events.some((e) => e.kind === 'submit')).toBe(false)
+    arena.flush()
+    const copies = device.events.filter((e) => e.kind === 'copy')
+    expect(copies.map((e) => [e.offset, e.size])).toEqual([[slot.baseVertex * 64, 4096 * 64], [slot.firstIndex * 4, 4096 * 4]])
+    expect(copies.every((e) => !e.from.mapped)).toBe(true)
+    expect(device.events.at(-1)).toEqual({ kind: 'submit', copies: 2 })
+  })
+
+  it('sends small uploads through the ring once a copy waits, so they cannot land before it', () => {
+    const device = fakeDevice()
+    const arena = new GeometryArena(device)
+    arena.sync(mesh(4096))
+    const writes = device.events.filter((e) => e.kind === 'write').length
+    arena.sync(mesh(10))
+    expect(device.events.filter((e) => e.kind === 'write').length).toBe(writes)
+    arena.flush()
+    expect(device.events.at(-1)).toEqual({ kind: 'submit', copies: 4 })
+  })
+
+  it('maps its staging buffer again and uses it for the next frame', async () => {
+    const device = fakeDevice()
+    const arena = new GeometryArena(device)
+    arena.sync(mesh(4096))
+    arena.flush()
+    const staging = () => device.events.filter((e) => e.kind === 'create' && e.buffer.label === 'arena staging')
+    expect(staging().length).toBe(1)
+    await Promise.resolve()
+    await Promise.resolve()
+    arena.sync(mesh(4096))
+    arena.flush()
+    expect(staging().length).toBe(1)
+  })
+
+  it('gives an upload too big for the ring a buffer of its own, destroyed once its copy is submitted', () => {
+    const device = fakeDevice()
+    const arena = new GeometryArena(device)
+    arena.sync(mesh(100_000))
+    arena.flush()
+    const own = device.events.find((e) => e.kind === 'create' && e.buffer.size === 100_000 * 64)
+    expect(own?.kind === 'create' && own.buffer.destroyed).toBe(true)
+  })
+
+  it('submits the staged copies before growing, so the growth copies them over', () => {
+    const device = fakeDevice()
+    const arena = new GeometryArena(device)
+    arena.sync(mesh(4096))
+    const old = arena.vertexBuffer as unknown as FakeBuffer
+    arena.sync(mesh(1 << 18))
+    const growth = device.events.findIndex((e) => e.kind === 'copy' && e.from === old && e.to !== old)
+    const first = device.events.findIndex((e) => e.kind === 'submit')
+    expect(first).toBeGreaterThan(-1)
+    expect(first).toBeLessThan(growth)
+    expect(device.events[first]).toEqual({ kind: 'submit', copies: 2 })
   })
 
   it('throws rather than growing past the device limit', () => {

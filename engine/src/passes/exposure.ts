@@ -150,10 +150,11 @@ export class EyeAdaptation {
   /** After the submit that `copyOut` went into: reads the numbers when they arrive. */
   read() {
     this.readback.mapAsync(GPUMapMode.READ).then(() => {
-      const values = new Float32Array(this.readback.getMappedRange().slice(0))
-      this.readback.unmap()
+      // Read straight from the mapped range: it is let go at unmap, so nothing is cloned.
+      const values = new Float32Array(this.readback.getMappedRange())
       this.exposure = values[1]!
       this.luminance = values[3]!
+      this.readback.unmap()
       this.reading = false
     }, () => {
       this.reading = false
