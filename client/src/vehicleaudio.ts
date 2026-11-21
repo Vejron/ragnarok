@@ -1,4 +1,4 @@
-import { audioContext } from './audio'
+import { audioBus, audioContext } from './audio'
 import { SampleBank } from './sfx'
 import { kindView } from '@/kinds'
 import type { KindSound } from '@/kinds/kind'
@@ -39,6 +39,20 @@ const COLLAPSE_EVERY = 600
 const FLIGHT_HEARING = 200
 const MAX_FLIGHTS = 4
 const SPEED_OF_SOUND = 343
+/**
+ * How far the loud one-shots carry, metres: rifles and machine guns, a small blast, and a cannon or a
+ * vehicle blowing up. Beyond `HEARING` they arrive late, dull and mostly echo, which tells a player
+ * where a fight is from a kilometre off.
+ */
+const GUN_REACH = 800
+const BLAST_REACH = 1100
+const BOOM_REACH = 1600
+/** Slots a shot from beyond `HEARING` leaves free for nearer sounds. */
+const FAR_SPARE = 6
+/** The echo off the land: how long it rings, seconds, and how much of a loud shot goes to it close by and far off. */
+const ECHO_LENGTH = 2.2
+const ECHO_NEAR = 0.08
+const ECHO_FAR = 0.45
 /** Seconds a voice takes to fade out before its nodes stop. */
 const FADE = 0.25
 /** What is left of a plane's engine with the blip switch in, and how often it fires through it, s. */
@@ -67,6 +81,51 @@ function place(node: PannerNode, at: Vec3) {
   } else {
     node.setPosition(at[0], at[1], at[2])
   }
+}
+
+/** The highs air leaves of a sound from `distance` metres off: the cut-off of its low-pass, Hz. */
+export function airCut(distance: number): number {
+  return Math.max(350, 18000 / (1 + distance / 50))
+}
+
+/** How much of a loud shot from `distance` metres off is heard as its echo, against 1 for the shot itself up close. */
+export function echoLevel(distance: number): number {
+  const share = ECHO_NEAR + (ECHO_FAR - ECHO_NEAR) * (distance / (distance + 250))
+  return share * Math.pow(12 / Math.max(12, distance), 0.6)
+}
+
+/**
+ * The echo's impulse: a slap off the nearest slope a fifth of a second on, another later, and a
+ * rolling tail that darkens as it dies, different in each ear.
+ */
+function echoImpulse(ctx: BaseAudioContext): AudioBuffer {
+  const length = Math.floor(ctx.sampleRate * ECHO_LENGTH)
+  const buffer = ctx.createBuffer(2, length, ctx.sampleRate)
+  for (let channel = 0; channel < 2; channel++) {
+    const data = buffer.getChannelData(channel)
+    let smooth = 0
+    for (let i = 0; i < length; i++) {
+      const t = i / ctx.sampleRate
+      // A one-pole low-pass that closes as the tail goes on: the far hills give back only the lows.
+      const pole = 0.55 + 0.4 * Math.min(1, t / ECHO_LENGTH)
+      smooth = smooth * pole + (Math.random() * 2 - 1) * (1 - pole)
+      const onset = t < 0.06 ? 0 : 1
+      const slaps = Math.exp(-(((t - 0.21 - channel * 0.03) / 0.025) ** 2)) * 1.6 + Math.exp(-(((t - 0.52 + channel * 0.05) / 0.04) ** 2)) * 0.9
+      data[i] = smooth * 3 * onset * (Math.exp(-t * 2.2) + slaps)
+    }
+  }
+  return buffer
+}
+
+/** A loud sound's panner: it falls away more slowly than `makePanner`'s, so a shot is still heard a kilometre off. */
+function makeLoudPanner(ctx: BaseAudioContext): PannerNode {
+  const panner = ctx.createPanner()
+  panner.panningModel = 'equalpower'
+  panner.distanceModel = 'inverse'
+  panner.refDistance = 12
+  panner.rolloffFactor = 1
+  panner.maxDistance = 10000
+  return panner
 }
 
 function makePanner(ctx: BaseAudioContext): PannerNode {
@@ -108,6 +167,8 @@ class Voice {
     master: AudioNode,
     /** Seeds its engine's unevenness, so two of a kind side by side do not sound the same. */
     private readonly seed: number,
+    /** It is the listener's own, heard in their seat. */
+    readonly own = false,
   ) {
     this.fade = ctx.createGain()
     this.fade.connect(master)
@@ -356,7 +417,11 @@ interface Candidate {
  */
 export class VehicleSounds {
   private ctx: BaseAudioContext | null = null
+  /** The world's sounds, dulled with the bus in a cabin or under water, and the listener's own (`dry`), never dulled. */
   private master: GainNode | null = null
+  private dry: GainNode | null = null
+  /** The echo off the land that loud one-shots send to. */
+  private echo: ConvolverNode | null = null
   /** The hiss of skis on snow, once somebody here has skied. */
   private skiHiss: { filter: BiquadFilterNode; gain: GainNode } | null = null
   private bank: SampleBank | null = null
@@ -391,11 +456,17 @@ export class VehicleSounds {
     if (this.ctx) return this.ctx
     const ctx = this.provided ?? audioContext()
     if (!ctx) return null
-    const compressor = ctx.createDynamicsCompressor()
-    compressor.connect(ctx.destination)
+    const bus = audioBus(ctx)
     this.master = ctx.createGain()
     this.master.gain.value = 0.7
-    this.master.connect(compressor)
+    this.master.connect(bus.world)
+    this.dry = ctx.createGain()
+    this.dry.gain.value = 0.7
+    this.dry.connect(bus.dry)
+    this.echo = ctx.createConvolver()
+    this.echo.normalize = false
+    this.echo.buffer = echoImpulse(ctx)
+    this.echo.connect(this.master)
     this.ctx = ctx
     this.bank = new SampleBank(ctx)
     this.bank.load()
@@ -459,7 +530,8 @@ export class VehicleSounds {
     if (this.candidates.length === 0 && this.voices.size === 0) return
     const ctx = this.ready()
     const master = this.master
-    if (!ctx || !master) return
+    const dry = this.dry
+    if (!ctx || !master || !dry) return
     this.candidates.sort((a, b) => Number(b.own) - Number(a.own) || a.distance - b.distance)
     // Every engine in earshot keeps its revs turning over, so one coming into the nearest few is heard where it is.
     const heard = new Set<number>()
@@ -477,8 +549,13 @@ export class VehicleSounds {
       if (index >= MAX_VOICES) return
       chosen.add(candidate.id)
       let voice = this.voices.get(candidate.id)
+      // The listener's own vehicle is heard in their seat, past the cabin's muffle; one they get into or out of is made again.
+      if (voice && voice.own !== candidate.own) {
+        voice.stop()
+        voice = undefined
+      }
       if (!voice) {
-        voice = new Voice(ctx, kindView(candidate.kind).sound, master, candidate.id)
+        voice = new Voice(ctx, kindView(candidate.kind).sound, candidate.own ? dry : master, candidate.id, candidate.own)
         this.voices.set(candidate.id, voice)
       }
       voice.moveTo(candidate.own ? this.listener : candidate.position)
@@ -506,23 +583,42 @@ export class VehicleSounds {
 
   // One-shots.
 
-  /** Plays a one-shot at `at` (null: in the listener's head), if a slot is free; `spare` slots are kept back from it, for the sounds that matter more. */
-  private emit(at: Vec3 | null, life: number, build: (ctx: BaseAudioContext, out: AudioNode, t: number) => void, spare = 0) {
+  /**
+   * Plays a one-shot at `at` (null: in the listener's head), if a slot is free; `spare` slots are kept
+   * back from it, for the sounds that matter more. It arrives late at the speed of sound, and dulled:
+   * air takes the highs first. A loud one (`reach` past `HEARING`) falls away more slowly, carries to
+   * `reach` metres and is heard partly as its echo off the land, more so the farther it is.
+   */
+  private emit(at: Vec3 | null, life: number, build: (ctx: BaseAudioContext, out: AudioNode, t: number) => void, spare = 0, reach = HEARING) {
     const ctx = this.ready()
-    if (!ctx || !this.master) return
+    if (!ctx || !this.master || !this.dry) return
     const now = ctx.currentTime
-    while (this.shots.length > 0 && this.shots[0]! < now) this.shots.shift()
-    if (this.shots.length >= MAX_SHOTS - spare) return
-    let out: AudioNode = this.master
-    if (at) {
-      if (this.distanceTo(at) > HEARING) return
-      const panner = makePanner(ctx)
-      place(panner, at)
-      panner.connect(this.master)
-      out = panner
+    for (let i = this.shots.length - 1; i >= 0; i--) if (this.shots[i]! < now) this.shots.splice(i, 1)
+    if (!at) {
+      if (this.shots.length >= MAX_SHOTS - spare) return
+      this.shots.push(now + life)
+      build(ctx, this.dry, now + 0.01)
+      return
     }
-    this.shots.push(now + life)
-    build(ctx, out, now + 0.01)
+    const distance = this.distanceTo(at)
+    if (distance > reach) return
+    if (this.shots.length >= MAX_SHOTS - Math.max(spare, distance > HEARING ? FAR_SPARE : 0)) return
+    const loud = reach > HEARING
+    const panner = loud ? makeLoudPanner(ctx) : makePanner(ctx)
+    place(panner, at)
+    panner.connect(this.master)
+    const air = ctx.createBiquadFilter()
+    air.type = 'lowpass'
+    air.frequency.value = airCut(distance)
+    air.connect(panner)
+    if (loud && this.echo) {
+      const send = ctx.createGain()
+      send.gain.value = echoLevel(distance)
+      air.connect(send).connect(this.echo)
+    }
+    const late = distance / SPEED_OF_SOUND
+    this.shots.push(now + late + life)
+    build(ctx, air, now + 0.01 + late)
   }
 
   /** A burst of filtered noise that sweeps from `from` to `to` Hz and dies away over `length` s. */
@@ -558,30 +654,25 @@ export class VehicleSounds {
   }
 
   /**
-   * Plays a recording of `name` at `at` (null: in the listener's head), if one has loaded. Far shots arrive
-   * late, at the speed of sound, and dull: air takes the highs first. Returns false when there is none, so
-   * the caller can play its synthesised sound instead.
+   * Plays a recording of `name` at `at` (null: in the listener's head), if one has loaded, as `emit` places
+   * it. Returns false when there is none, so the caller can play its synthesised sound instead.
    */
-  private play(name: string, at: Vec3 | null, level = 1, rate = 1, spare = 0): boolean {
+  private play(name: string, at: Vec3 | null, level = 1, rate = 1, spare = 0, reach = HEARING): boolean {
     const buffer = this.ready() && this.bank ? this.bank.pick(name) : null
     if (!buffer) return false
-    const distance = at ? this.distanceTo(at) : 0
     // Slots are for sounds that matter in the mix; a long tail is not one.
-    this.emit(at, Math.min(buffer.duration, 0.8), (ctx, out, t) => VehicleSounds.sample(ctx, out, t, buffer, level, rate, distance), spare)
+    this.emit(at, Math.min(buffer.duration, 0.8), (ctx, out, t) => VehicleSounds.sample(ctx, out, t, buffer, level, rate), spare, reach)
     return true
   }
 
-  private static sample(ctx: BaseAudioContext, out: AudioNode, t: number, buffer: AudioBuffer, level: number, rate: number, distance: number, delay = 0) {
+  private static sample(ctx: BaseAudioContext, out: AudioNode, t: number, buffer: AudioBuffer, level: number, rate: number, delay = 0) {
     const source = ctx.createBufferSource()
     source.buffer = buffer
     source.playbackRate.value = rate * (0.95 + Math.random() * 0.1)
     const gain = ctx.createGain()
     gain.gain.value = level
-    const filter = ctx.createBiquadFilter()
-    filter.type = 'lowpass'
-    filter.frequency.value = Math.max(1500, 18000 / (1 + distance / 50))
-    source.connect(filter).connect(gain).connect(out)
-    source.start(t + delay + Math.min(0.6, distance / SPEED_OF_SOUND))
+    source.connect(gain).connect(out)
+    source.start(t + delay)
   }
 
   /**
@@ -743,22 +834,34 @@ export class VehicleSounds {
 
   /** A rifle (`kind` 'rifle'), revolver, sniper rifle or shotgun fired from `at`. The shotgun has no sample yet, so it is always synthesised. */
   gunshot(at: Vec3, kind: 'rifle' | 'revolver' | 'sniper' | 'shotgun') {
-    if (kind !== 'shotgun' && this.play(kind, at, kind === 'sniper' ? 1 : 0.85)) return
-    this.emit(at, 0.6, (ctx, out, t) => {
-      if (kind === 'shotgun') VehicleSounds.burst(ctx, out, t, 'lowpass', 2200, 200, 0.28, 0.9)
-      VehicleSounds.burst(ctx, out, t, 'lowpass', kind === 'sniper' ? 4500 : 3200, 300, kind === 'sniper' ? 0.3 : 0.14, 0.7)
-      VehicleSounds.ping(ctx, out, t, 'sine', kind === 'revolver' ? 200 : 140, 50, 0.08, 0.5)
-    })
+    if (kind !== 'shotgun' && this.play(kind, at, kind === 'sniper' ? 1 : 0.85, 1, 0, GUN_REACH)) return
+    this.emit(
+      at,
+      0.6,
+      (ctx, out, t) => {
+        if (kind === 'shotgun') VehicleSounds.burst(ctx, out, t, 'lowpass', 2200, 200, 0.28, 0.9)
+        VehicleSounds.burst(ctx, out, t, 'lowpass', kind === 'sniper' ? 4500 : 3200, 300, kind === 'sniper' ? 0.3 : 0.14, 0.7)
+        VehicleSounds.ping(ctx, out, t, 'sine', kind === 'revolver' ? 200 : 140, 50, 0.08, 0.5)
+      },
+      0,
+      GUN_REACH,
+    )
   }
 
   /** A blast at `at`: 'big' for a wreck or bomb, 'small' for a grenade, rocket or round. */
   blast(at: Vec3, size: 'small' | 'big') {
     if (size === 'big') return this.explosion(at)
-    if (this.play('blast', at, 0.9)) return
-    this.emit(at, 1, (ctx, out, t) => {
-      VehicleSounds.burst(ctx, out, t, 'lowpass', 1800, 100, 0.7, 0.8)
-      VehicleSounds.ping(ctx, out, t, 'sine', 90, 35, 0.4, 0.8)
-    })
+    if (this.play('blast', at, 0.9, 1, 0, BLAST_REACH)) return
+    this.emit(
+      at,
+      1,
+      (ctx, out, t) => {
+        VehicleSounds.burst(ctx, out, t, 'lowpass', 1800, 100, 0.7, 0.8)
+        VehicleSounds.ping(ctx, out, t, 'sine', 90, 35, 0.4, 0.8)
+      },
+      0,
+      BLAST_REACH,
+    )
   }
 
   /** A collision at `at` that took `speed` m/s out of the vehicle: a bump, a crunch or a smash with glass. */
@@ -822,25 +925,38 @@ export class VehicleSounds {
 
   /** A vehicle blowing up. */
   explosion(at: Vec3) {
-    if (this.play('boom', at, 1)) return
-    this.emit(at, 2, (ctx, out, t) => {
-      VehicleSounds.burst(ctx, out, t, 'lowpass', 2200, 80, 1.6, 1)
-      VehicleSounds.ping(ctx, out, t, 'sine', 80, 28, 0.9, 1)
-      VehicleSounds.burst(ctx, out, t, 'bandpass', 900, 200, 0.5, 0.4, 0.08)
-    })
+    if (this.play('boom', at, 1, 1, 0, BOOM_REACH)) return
+    this.emit(
+      at,
+      2,
+      (ctx, out, t) => {
+        VehicleSounds.burst(ctx, out, t, 'lowpass', 2200, 80, 1.6, 1)
+        VehicleSounds.ping(ctx, out, t, 'sine', 80, 28, 0.9, 1)
+        VehicleSounds.burst(ctx, out, t, 'bandpass', 900, 200, 0.5, 0.4, 0.08)
+      },
+      0,
+      BOOM_REACH,
+    )
   }
 
   /** A tank's or helicopter's gun, and the casing clanking after it. */
   cannon(at: Vec3, heavy: boolean) {
-    if (this.play('cannon', at, heavy ? 1 : 0.7, heavy ? 1 : 1.35)) return
-    this.emit(at, 1.2, (ctx, out, t) => {
-      VehicleSounds.burst(ctx, out, t, 'lowpass', heavy ? 1400 : 3000, 150, heavy ? 0.4 : 0.12, heavy ? 0.9 : 0.5)
-      VehicleSounds.ping(ctx, out, t, 'sine', heavy ? 95 : 160, 38, heavy ? 0.35 : 0.1, heavy ? 0.9 : 0.4)
-      if (heavy) {
-        VehicleSounds.ping(ctx, out, t, 'square', 1700, 1500, 0.05, 0.06, 0.35)
-        VehicleSounds.ping(ctx, out, t, 'square', 2300, 2000, 0.04, 0.05, 0.4)
-      }
-    })
+    const reach = heavy ? BOOM_REACH : BLAST_REACH
+    if (this.play('cannon', at, heavy ? 1 : 0.7, heavy ? 1 : 1.35, 0, reach)) return
+    this.emit(
+      at,
+      1.2,
+      (ctx, out, t) => {
+        VehicleSounds.burst(ctx, out, t, 'lowpass', heavy ? 1400 : 3000, 150, heavy ? 0.4 : 0.12, heavy ? 0.9 : 0.5)
+        VehicleSounds.ping(ctx, out, t, 'sine', heavy ? 95 : 160, 38, heavy ? 0.35 : 0.1, heavy ? 0.9 : 0.4)
+        if (heavy) {
+          VehicleSounds.ping(ctx, out, t, 'square', 1700, 1500, 0.05, 0.06, 0.35)
+          VehicleSounds.ping(ctx, out, t, 'square', 2300, 2000, 0.04, 0.05, 0.4)
+        }
+      },
+      0,
+      reach,
+    )
   }
 
   /** A shell glancing off armor: a ringing metallic ping with a short scrape of sparks under it. */
@@ -892,7 +1008,7 @@ export class VehicleSounds {
       filter.Q.value = 0.7
       const gain = ctx.createGain()
       gain.gain.value = 0
-      noise.connect(filter).connect(gain).connect(this.master)
+      noise.connect(filter).connect(gain).connect(this.dry ?? this.master)
       noise.start()
       this.skiHiss = { filter, gain }
     }
@@ -1209,18 +1325,24 @@ export class VehicleSounds {
     if (rounds <= 0) return
     const spacing = 1 / 12
     const recorded = this.ready() && this.bank ? this.bank.pick('mg') : null
-    this.emit(at, 0.2 + rounds * spacing, (ctx, out, t) => {
-      for (let k = 0; k < rounds; k++) {
-        const delay = k * spacing
-        if (recorded) {
-          const buffer = this.bank?.pick('mg') ?? recorded
-          VehicleSounds.sample(ctx, out, t, buffer, rear ? 0.55 : 0.75, rear ? 1.25 : 1, this.distanceTo(at), delay)
-          continue
+    this.emit(
+      at,
+      0.2 + rounds * spacing,
+      (ctx, out, t) => {
+        for (let k = 0; k < rounds; k++) {
+          const delay = k * spacing
+          if (recorded) {
+            const buffer = this.bank?.pick('mg') ?? recorded
+            VehicleSounds.sample(ctx, out, t, buffer, rear ? 0.55 : 0.75, rear ? 1.25 : 1, delay)
+            continue
+          }
+          VehicleSounds.burst(ctx, out, t, 'bandpass', rear ? 3400 : 2600, 700, 0.06, rear ? 0.45 : 0.55, delay)
+          VehicleSounds.ping(ctx, out, t, 'sine', rear ? 220 : 170, 60, 0.05, rear ? 0.35 : 0.5, delay)
         }
-        VehicleSounds.burst(ctx, out, t, 'bandpass', rear ? 3400 : 2600, 700, 0.06, rear ? 0.45 : 0.55, delay)
-        VehicleSounds.ping(ctx, out, t, 'sine', rear ? 220 : 170, 60, 0.05, rear ? 0.35 : 0.5, delay)
-      }
-    })
+      },
+      0,
+      GUN_REACH,
+    )
   }
 
   /** A door closing, heard in the listener's own head. */

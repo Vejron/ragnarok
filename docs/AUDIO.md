@@ -1,4 +1,4 @@
-# Audio: engines, the ground, footsteps, launches, water and destruction
+# Audio: engines, the ground, footsteps, launches, water, destruction and the world about you
 
 Each vehicle's engine is made firing by firing on the audio thread, from a description of the real machine. It revs with the driver's throttle, through its own gearbox. Under the engine, the wheels, tracks or hull are heard on the ground they roll over. Soldiers' feet are heard on what they step on. Rockets, bombs and grenades are heard leaving and in flight, rounds crack past and strike, and splashes, breaking glass and falling buildings are heard.
 
@@ -160,6 +160,41 @@ A splash is one sharp click over a quieter body of water. Normalised by its peak
 
 Footsteps, impacts, cracks and small splashes never take the last five of the fourteen one-shot slots, so a blast is always heard.
 
+## Far sounds, and the bus
+
+Everything heard in the world goes through one bus (`audioBus` in `audio.ts`): the vehicle sounds, the one-shots, the ambience and the rooster. The bus is a muffle (a low-pass and a level) and one compressor. Music and voice chat bypass it: neither is a sound of the place you are in, and a teammate must be understood from inside a tank.
+
+- **Muffled.** `setMuffle` dulls the world to 1.4 kHz at 70% in a closed seat (a `SeatView` marked `enclosed`: the tanks, the Strf, the Pbv and the AMV, the submarine, the helicopter, the Titan, the bus and the sports car) and to 380 Hz at 40% with the camera under water. The listener's own engine, their hits, hurts and door, and the hiss of their skis go to the bus's `dry` side and are never dulled. A vehicle the listener gets into or out of has its voice made again on the right side.
+- **Late and dull.** Every positioned one-shot arrives as late as sound takes from it (343 m/s, no cap) through a low-pass that air closes with distance (`airCut`: 18 kHz close by, 1.6 kHz at 500 m, 350 Hz at the floor). This holds for the synthesised sounds as much as the recorded ones.
+- **Carried far.** Guns and machine guns (800 m), small blasts (1.1 km), cannon and vehicles blowing up (1.6 km) carry past the 160 m everything else stops at, on a panner that falls away more slowly. Part of each goes to an echo off the land (a `ConvolverNode` over a made impulse: a slap off the nearest slope, a later one and a darkening roll), more of it the farther the shot (`echoLevel`), so a fight a kilometre off is heard as late, dull rolling cracks. A shot from beyond 160 m leaves six of the fourteen slots free for nearer sounds.
+
+## Ambience
+
+`ambience.ts` is the sound of the world when nobody is shooting. All of it is made from noise and tones, with nothing to load. The game tells it what is about the listener (`Surround`) every frame, and looks round for the costly parts every quarter of a second (`Game.hearSurroundings`):
+
+- the time of day, cloud and rain, from the sky and the weather;
+- how wooded it is: standing trees within 30 m, 25 of them making deep forest (`WorldView.treesNear`);
+- how near water is, and whether it runs: the water level looked up in rings out to 50 m, and the current where it was found (`Game.nearestWater`). Still water that has frozen over is silent;
+- the height above the ground, and whether the soldier is under a roof (the ray up from the head that `roomArm` uses).
+
+What is heard:
+
+| Layer | What it is | When |
+|---|---|---|
+| Wind | brown noise, its low-pass opening in gusts | always; stronger under cloud, in rain and higher up, less among trees and indoors |
+| Leaves | a hiss that brightens in gusts | with the wind, among trees |
+| Water | lapping in slow swells, or a steady brighter run for a stream | within 50 m of water |
+| Rain | a wide hiss outdoors, a dull drumming on the roof under one | rain |
+| Crickets | a made loop of a few chirping crickets in each ear | summer nights, in the open more than in the forest |
+| Birds | a falling trill with a flourish, a two-note whistle or a warble, 12 to 55 m off and up in the trees | by day, most at the dawn chorus and again at dusk, more in the forest, few in winter, none in rain |
+| Gulls | a few harsh falling cries | by still water by day |
+| Owls | a tawny owl's "hoo, hu-hoooo" | at night in the forest |
+| Thunder | a crack when near, then a long low roll in swells | each lightning strike, as long after the flash as sound takes |
+
+Each layer runs only while it is heard, and stops its source after five silent seconds, so a quiet scene runs nothing. Under a roof everything outside is dulled to 1.5 kHz.
+
+**Thunder** is the same for every player. Lightning strikes in the weather's slots (`strikeIn` in `render/weather.ts`), and each strike has a distance hashed from its slot (`strikeDistance`, 0.4 to 6 km, most of them far). Its thunder is sent on its way as the flash is seen, and is heard `distance / 343` seconds later. A strike more than two seconds past its thunder (a player who has just joined) is let go.
+
 ## Listening without the game
 
 ```sh
@@ -198,14 +233,17 @@ This writes a WAV for every engine, plus `grounds.wav`. Each engine idles, is bl
 - `destruction.spec.ts`: every falling piece heard landing once.
 - `glass.spec.ts`: a blast heard once, with the panes it broke.
 - `sfx.spec.ts`: every sample `SAMPLES` names is in `public/sfx`.
+- `vehicleaudio.spec.ts` (far sounds): a gunshot 500 m off heard late and dull and mostly echo, blasts carried far while crashes and steps stop close by, and far shots leaving slots for near ones.
+- `ambience.spec.ts`: birds at dawn more than at noon and none at night, rain and winter quietening them, crickets and owls at night and no crickets in winter, rain drumming on the roof indoors, wind harder in a storm and higher up, leaves only among trees, water and gulls only near still water, only heard beds running, birds singing in a wood at dawn, and thunder following its flash by its distance, once, and only in a storm.
+
+The fake Web Audio context these share is `__tests__/fakeaudio.ts`.
 
 ## Not done, or not checked
 
 - Not yet heard in the game. The engines have been rendered to WAVs and measured, and the worklet has rendered in headless Chrome, but levels and tone are first guesses to tune by ear.
 - The mech walker's, hen's and Titan's feet keep their own clanks and thuds, with no ground under them.
-- There is no ambient sound: no wind, rain, shore or birds.
+- The ambience has not been heard in the game: its levels and its birds are first guesses to tune by ear. It has run in headless Chrome. There are no recordings for it yet; `sfx.ts` could take them as it does the guns'.
 - Small actions are silent: reloading, an empty click, a weapon switch, a pickup, a parachute opening, gates, and other players getting into vehicles.
 - Deaths, gibs and knockdowns make no sound of their own.
 - A round striking a tree is heard as earth.
 - The new recordings were chosen by their length, loudness and brightness, not by ear.
-- There is no muffling inside a closed vehicle or under water.

@@ -13,7 +13,7 @@ import { DIESEL_SIX } from './engines'
 import { DRIVE, type VehicleKind } from './kind'
 
 /** A troop in the back: sealed in, sees out from behind the hull, and gets out by the rear doors. */
-const TROOP: SeatView = { rig: { name: 'passenger' }, role: 'passenger', board: 'E: ride in the back' }
+const TROOP: SeatView = { rig: { name: 'passenger' }, role: 'passenger', board: 'E: ride in the back', enclosed: true }
 
 export const PBV: VehicleKind = {
   kind: KIND_PBV,
@@ -23,9 +23,9 @@ export const PBV: VehicleKind = {
     distance: PBV_DISTANCE,
     reload: PBV_CANNON_COOLDOWN_TICKS,
     seats: [
-      { rig: DRIVE, role: 'driver', board: 'E: drive the Pbv 302', chase: true },
+      { rig: DRIVE, role: 'driver', board: 'E: drive the Pbv 302', chase: true, enclosed: true },
       // The turret turns all the way round; the gauge shows the barrel's heat.
-      { rig: { name: 'gun', hull: [Math.PI, PBV_BARREL_MIN, PBV_BARREL_MAX] }, role: 'gunner', board: 'E: man the cannon', sight: true, gauges: ['heat'] },
+      { rig: { name: 'gun', hull: [Math.PI, PBV_BARREL_MIN, PBV_BARREL_MAX] }, role: 'gunner', board: 'E: man the cannon', sight: true, gauges: ['heat'], enclosed: true },
       TROOP,
       TROOP,
     ],

@@ -12,7 +12,7 @@ export const SPORTS: VehicleKind = {
   kind: KIND_SPORTS,
   model: (id) => new CarModel('sports', id),
   load: loadCarModels,
-  ride: { distance: DRIVING_DISTANCE, reload: SHELL_COOLDOWN_TICKS, seats: [{ rig: DRIVE, role: 'driver', board: 'E: drive the sports car', chase: true }, RIDE_ALONG] },
+  ride: { distance: DRIVING_DISTANCE, reload: SHELL_COOLDOWN_TICKS, seats: [{ rig: DRIVE, role: 'driver', board: 'E: drive the sports car', chase: true, enclosed: true }, RIDE_ALONG] },
   sound: {
     chop: PLAIN_CHOP,
     engine: { name: 'gears', synth: PETROL_V8, idle: 850, redline: 7200, spin: 0.45, shifts: [0, 0.16, 0.32, 0.5, 0.72], top: SPORTS_MAX_SPEED, level: 0.42 },

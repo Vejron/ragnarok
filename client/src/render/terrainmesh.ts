@@ -23,6 +23,7 @@ import {
   DETAIL_SLOPE_SCALE,
   type TileData,
 } from '@/world'
+import { FLOOR_HEATH, FLOOR_LEAF, FLOOR_MOSS, FOREST_CELL, STAND_FLOORS, WOOD_STRIDE, forestOf, standOf } from './forest'
 import { applyMoves, frayMoves } from './fray'
 import { winter } from './season'
 import { CAVITY_RADIUS, heightSampler, ringMean, toneOf, type HeightSource } from './shade'
@@ -129,6 +130,131 @@ const COVER_LAYERS: Record<number, readonly CoverLayer[]> = {
   [COVER_MARSH]: [{ period: 128, cells: 20, strength: 0.2 }],
   [COVER_MARSH_DEEP]: [{ period: 128, cells: 20, strength: 0.2 }],
   [COVER_MARSH_FAINT]: [{ period: 128, cells: 20, strength: 0.2 }],
+}
+
+/**
+ * A wood's floor under each stand (`forest.ts`), sRGB, and what is painted over it. A wood with too
+ * few trees near to say (`FLOOR_MIXED`) keeps `COVER_WOOD`'s.
+ */
+export const FLOOR_COLORS: Record<number, number> = {
+  // Pine heath: dry and open, the olive of lingonberry and heather.
+  [FLOOR_HEATH]: 0x6d7648,
+  // Under spruce: moss, deep green in the shade.
+  [FLOOR_MOSS]: 0x4a6c35,
+  // Under birch: grass and herbs, the freshest green in the wood.
+  [FLOOR_LEAF]: 0x6b9549,
+}
+
+const FLOOR_LAYERS: Record<number, readonly CoverLayer[]> = {
+  // Cushions of pale reindeer lichen a metre or two across, mats of dark lingonberry, and needles.
+  [FLOOR_HEATH]: [
+    { period: 128, cells: 18, strength: 0.28 },
+    { period: 64, cells: 14, strength: 0.4, tint: 0x4f6a3a, share: 0.3 },
+    { period: 64, cells: 22, strength: 0.4, tint: 0x8a6c44, share: 0.2 },
+    { period: 64, cells: 40, strength: 0.6, tint: 0xb4bca2, share: 0.2 },
+  ],
+  // Feather moss in brighter drifts, damp hollows gone dark, and bare needles in the deepest shade.
+  [FLOOR_MOSS]: [
+    { period: 128, cells: 18, strength: 0.3 },
+    { period: 128, cells: 14, strength: 0.5, tint: 0x34492a, share: 0.22 },
+    { period: 64, cells: 30, strength: 0.45, tint: 0x6f9a3e, share: 0.28 },
+    { period: 64, cells: 26, strength: 0.4, tint: 0x5c5034, share: 0.14 },
+  ],
+  // Lusher and drier grass, and last year's leaves.
+  [FLOOR_LEAF]: [
+    { period: 128, cells: 16, strength: 0.3 },
+    { period: 64, cells: 20, strength: 0.4, tint: 0x58a03e, share: 0.25 },
+    { period: 64, cells: 28, strength: 0.4, tint: 0x97824a, share: 0.2 },
+  ],
+}
+
+/**
+ * What a tree drops round its foot, by its stand (the order of `STAND_FLOORS`): its colour (sRGB),
+ * how opaque at the trunk, and how far out it lies as a share of the crown's radius. A spruce's
+ * needles lie thick in its own deep shade, a pine's thin and rust-brown, a birch's leaves pale.
+ */
+const LITTER: readonly { color: number; strength: number; reach: number }[] = [
+  { color: 0x8c6c44, strength: 0.45, reach: 0.75 },
+  { color: 0x6e5236, strength: 0.7, reach: 1.05 },
+  { color: 0x94864f, strength: 0.3, reach: 0.85 },
+]
+/** No tree's litter lies nearer in than this, metres: a young tree drops some too. */
+const LITTER_MIN = 0.9
+/** Texels across a litter's picture, which is drawn at each tree's size. */
+const LITTER_PIXELS = 64
+
+/** A canvas `pixels` square with its context, or null where there is none to make (tests). */
+function scratchCanvas(pixels: number): Painter | null {
+  const canvas = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(pixels, pixels) : typeof document !== 'undefined' ? Object.assign(document.createElement('canvas'), { width: pixels, height: pixels }) : null
+  return (canvas?.getContext('2d') as Painter | null | undefined) ?? null
+}
+
+/** Each stand's litter as a soft disc, made once. */
+let litters: (CanvasImageSource | null)[] | undefined
+
+function litterDiscs(): (CanvasImageSource | null)[] {
+  litters ??= LITTER.map(({ color }) => {
+    const ctx = scratchCanvas(LITTER_PIXELS)
+    if (!ctx) return null
+    const half = LITTER_PIXELS / 2
+    const rgb = `${color >> 16}, ${(color >> 8) & 255}, ${color & 255}`
+    const fade = ctx.createRadialGradient(half, half, 0, half, half, half)
+    fade.addColorStop(0, `rgba(${rgb}, 1)`)
+    fade.addColorStop(0.45, `rgba(${rgb}, 0.8)`)
+    fade.addColorStop(1, `rgba(${rgb}, 0)`)
+    ctx.fillStyle = fade
+    ctx.fillRect(0, 0, LITTER_PIXELS, LITTER_PIXELS)
+    return ctx.canvas
+  })
+  return litters
+}
+
+/**
+ * The floors of a tile's stands, to lay over its woods: each stand's ground (`FLOOR_COLORS` and its
+ * layers) as opaque as the stand's share of the trees there, fading between the cells of the forest's
+ * grid, and over it each tree's litter. Clear where no stand is. Null where there is no canvas.
+ */
+function paintFloors(woods: Float32Array, x0: number, z0: number, size: number, pixels: number): CanvasImageSource | null {
+  const forest = forestOf(woods, x0, z0, size)
+  const out = scratchCanvas(pixels), stand = scratchCanvas(pixels), mask = scratchCanvas(forest.n)
+  if (!out || !stand || !mask) return null
+  const scale = pixels / size
+  const { n, shares } = forest
+  const whole = (ctx: Painter) => () => {
+    ctx.beginPath()
+    ctx.rect(0, 0, pixels, pixels)
+  }
+  STAND_FLOORS.forEach((floor, k) => {
+    const image = mask.createImageData(n, n)
+    let any = false
+    for (let i = 0; i < n * n; i++) {
+      const share = Math.round(shares[i * 3 + k]! * 255)
+      any ||= share > 0
+      image.data.set([255, 255, 255, share], i * 4)
+    }
+    if (!any) return
+    mask.putImageData(image, 0, 0)
+    stand.globalCompositeOperation = 'source-over'
+    stand.fillStyle = css(FLOOR_COLORS[floor]!)
+    stand.fillRect(0, 0, pixels, pixels)
+    paintLayers(stand, FLOOR_LAYERS[floor]!, 64 + floor, x0, z0, scale, whole(stand))
+    // Kept only where the stand is: a grid cell's share, smoothed out to its neighbours'.
+    stand.globalCompositeOperation = 'destination-in'
+    stand.imageSmoothingEnabled = true
+    stand.drawImage(mask.canvas, 0, 0, n, n, 0, 0, n * FOREST_CELL * scale, n * FOREST_CELL * scale)
+    out.drawImage(stand.canvas, 0, 0)
+  })
+  const discs = litterDiscs()
+  for (let i = 0; i < woods.length; i += WOOD_STRIDE) {
+    const k = standOf(woods[i + 3]!)
+    const disc = k === undefined ? null : discs[k]
+    if (k === undefined || !disc) continue
+    const radius = Math.max(LITTER_MIN, woods[i + 2]! * LITTER[k]!.reach) * scale
+    out.globalAlpha = LITTER[k]!.strength
+    out.drawImage(disc, (woods[i]! - x0) * scale - radius, (woods[i + 1]! - z0) * scale - radius, radius * 2, radius * 2)
+  }
+  out.globalAlpha = 1
+  return out.canvas
 }
 
 /** Texels along a layer's noise tile. */
@@ -639,8 +765,12 @@ export function coverPixels(size: number): number {
 
 const css = (color: number) => `#${color.toString(16).padStart(6, '0')}`
 
-/** What of a tile its cover is painted from: the cover, the crops on it, and the houses a garden has gravel round. */
-export type CoverSource = Pick<TileData, 'cover'> & Partial<Pick<TileData, 'crops'>> & { buildings?: readonly { footprint: readonly (readonly [number, number])[] }[] }
+/** What of a tile its cover is painted from: the cover, the crops on it, the houses a garden has gravel round and the trees of its woods. */
+export type CoverSource = Pick<TileData, 'cover'> & Partial<Pick<TileData, 'crops'>> & {
+  buildings?: readonly { footprint: readonly (readonly [number, number])[] }[]
+  /** The tile's trees (`woodsOf`), for the floors of its woods. */
+  woods?: Float32Array
+}
 
 /**
  * Paints a tile's ground cover, seen from above, into `ctx`, `pixels` square. Canvas `(0, 0)` is
@@ -682,6 +812,9 @@ export function paintCover(
     }
   }
 
+  // The floors of the woods' stands, painted once and laid into each wood.
+  const floors = tile.woods && tile.woods.length > 0 && tile.cover.some(({ kind }) => kind === COVER_WOOD) ? paintFloors(tile.woods, x0, z0, size, pixels) : null
+
   for (const { kind, rings } of tile.cover) {
     const outline = () => {
       ctx.beginPath()
@@ -695,6 +828,13 @@ export function paintCover(
     ctx.fill('evenodd')
     const layers = COVER_LAYERS[kind]
     if (layers) paintLayers(ctx, layers, kind, x0, z0, scale, outline)
+    if (kind === COVER_WOOD && floors) {
+      ctx.save()
+      outline()
+      ctx.clip('evenodd')
+      ctx.drawImage(floors, 0, 0)
+      ctx.restore()
+    }
     if (kind === COVER_GARDEN && tile.buildings?.length) {
       // Gravel round each house, as far as the garden goes: a line along its walls, half of it under the house.
       ctx.save()

@@ -8,7 +8,8 @@ import { COVER_COLORS, GRASS_COLOR } from './cover'
 import { GROUND_LIGHT_WGSL } from './groundlight'
 import { isRock } from './rocks'
 import { normalAt } from './shade'
-import { GARDEN_SHADE, grassMask, type GrassMask } from './grassmask'
+import { FLOOR_HEATH, FLOOR_LEAF, FLOOR_MIXED, FLOOR_MOSS } from './forest'
+import { GARDEN_SHADE, SHADE_FLOORS, grassMask, type GrassMask } from './grassmask'
 import { inMarshPool, marshField, marshPoolLevel } from './marshnoise'
 
 export { grassMask, type GrassMask }
@@ -80,10 +81,17 @@ export function tierFor(density: GrassDensity, distance: number) {
 
 /**
  * Grass colour per cell of a mask: 0 for no grass, else an index into `PALETTE`. The last three are a
- * marsh's sedge (`MARSH_SHADES`), damp to bog, yellowing and browning the wetter it is, and after them a
- * garden's lawn (`GARDEN_SHADE`).
+ * marsh's sedge (`MARSH_SHADES`), damp to bog, yellowing and browning the wetter it is, after them a
+ * garden's lawn (`GARDEN_SHADE`), and last what grows under pine, spruce and birch (`FLOOR_SHADES`): a
+ * heath's pale hair-grass, the few dark blades the moss lets through, and a birch wood's fresh green.
  */
-const PALETTE = [0, GRASS_COLOR, COVER_COLORS[COVER_PARK]!, COVER_COLORS[COVER_WOOD]!, 0x9fae62, 0x9a9f55, 0x8e8a4c, COVER_COLORS[COVER_GARDEN]!].map((hex) => Color.hex(hex))
+const PALETTE = [0, GRASS_COLOR, COVER_COLORS[COVER_PARK]!, COVER_COLORS[COVER_WOOD]!, 0x9fae62, 0x9a9f55, 0x8e8a4c, COVER_COLORS[COVER_GARDEN]!, 0x8f9c5c, 0x5c8540, 0x70a548].map((hex) => Color.hex(hex))
+/**
+ * How much of a meadow's grass grows on each forest floor, as a share of the blades: thin on a
+ * heath, next to none in the moss under spruce, thick under birch. The shrubs and ferns of
+ * `forestfloor.ts` stand where the grass does not.
+ */
+const FLOOR_GRASS: Record<number, number> = { [FLOOR_MIXED]: 0.5, [FLOOR_HEATH]: 0.3, [FLOOR_MOSS]: 0.12, [FLOOR_LEAF]: 1 }
 /** A mown lawn's blades against a meadow's. */
 const LAWN_HEIGHT = 0.3
 /** How wet the ground of each `PALETTE` entry is: as `surfaceWetness` has the marsh's grades. */
@@ -93,7 +101,7 @@ const COTTON = Color.hex(0xf4f1e6)
 
 
 /** A small, fast hash to [0, 1): the same chunk always grows the same blades. */
-function random(seed: number) {
+export function random(seed: number) {
   let s = seed >>> 0
   return () => {
     s = (s + 0x6d2b79f5) >>> 0
@@ -180,7 +188,7 @@ function sedge(x: number, z: number, wet: number, chance: number, height: number
 }
 
 /** Smooth noise in 0..1 on a lattice of unit cells. */
-function valueNoise(x: number, z: number) {
+export function valueNoise(x: number, z: number) {
   const ix = Math.floor(x), iz = Math.floor(z)
   const fx = x - ix, fz = z - iz
   const corner = (i: number, j: number) => {
@@ -224,8 +232,9 @@ export const MEADOW: Growth = {
     // A lawn is mown: short, and even all over.
     if (shade === GARDEN_SHADE) return { height: height * LAWN_HEIGHT, head: false, tuft: false }
     const patch = patchAt(x, z)
-    // A few stray tufts grow between the patches.
-    if (chance > patch * 0.96 + 0.04) return null
+    const floor = SHADE_FLOORS[shade]
+    // A few stray tufts grow between the patches; fewer blades of either on a forest's floor.
+    if (chance > (patch * 0.96 + 0.04) * (floor === undefined ? 1 : FLOOR_GRASS[floor]!)) return null
     // Taller in the thick of a patch, short at its edge.
     return { height: height * (0.55 + 0.6 * patch), head: false, tuft: false }
   },

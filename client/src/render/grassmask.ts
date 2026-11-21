@@ -1,6 +1,7 @@
 import { BUILDING_BRIDGE, COVER_GARDEN, COVER_GOLF_BUNKER, COVER_GOLF_FAIRWAY, COVER_GOLF_GREEN, COVER_GOLF_TEE, COVER_INDUSTRIAL, COVER_PARK, COVER_ROCK, COVER_THICKET_FIGHT, COVER_THICKET_SLOW, COVER_THICKET_WALK, COVER_URBAN, COVER_WOOD, type Building, type Point2, type TileData } from '@/world'
 import { rasterSurface, SURFACE_CELL, SURFACE_GRASS, SURFACE_MUD, SURFACE_MUD_DEEP, SURFACE_MUD_FAINT } from '@/sim/surface'
 import type { TileGround } from '@/sim/terrain'
+import { FLOOR_HEATH, FLOOR_LEAF, FLOOR_MIXED, FLOOR_MOSS, floorAt, type Forest } from './forest'
 import { applyMoves, frayMoves } from './fray'
 import { APRON_WIDTH } from './terrainmesh'
 
@@ -11,6 +12,21 @@ import { APRON_WIDTH } from './terrainmesh'
 
 /** The `PALETTE` entry of a garden's lawn, which `grass.ts` grows short. */
 export const GARDEN_SHADE = 7
+
+/**
+ * The `PALETTE` entries of a forest's floor by the stand over it (`FLOOR_*`): what grows there is not
+ * a meadow's grass (`grass.ts`), and `forestfloor.ts` stands its shrubs and ferns by the same cells.
+ */
+export const FLOOR_SHADES: Record<number, number> = { [FLOOR_MIXED]: 3, [FLOOR_HEATH]: 8, [FLOOR_MOSS]: 9, [FLOOR_LEAF]: 10 }
+/** The floor (`FLOOR_*`) of a `PALETTE` entry, or undefined for ground that is no forest's. */
+export const SHADE_FLOORS: Record<number, number> = Object.fromEntries(Object.entries(FLOOR_SHADES).map(([floor, shade]) => [shade, Number(floor)]))
+
+/** A cell's own draw, 0 to 1, for which of a mixed stand's floors it has. */
+function cellPick(column: number, row: number, x0: number, z0: number): number {
+  let h = Math.imul(Math.round(x0 / SURFACE_CELL) + column, 0x27d4eb2d) ^ Math.imul(Math.round(z0 / SURFACE_CELL) + row, 0x165667b1)
+  h = Math.imul(h ^ (h >>> 15), 0x85ebca77)
+  return ((h ^ (h >>> 13)) >>> 0) / 4294967296
+}
 
 /** The `PALETTE` entry (`grass.ts`) for each cover's grass; 0 for none. A golf course's mown surfaces have no tall blades. */
 const COVER_SHADE: Record<number, number> = {
@@ -82,16 +98,20 @@ function nearSegment([ax, az]: Point2, [bx, bz]: Point2, half: number, x0: numbe
 /**
  * Where grass grows on a tile: ground the terrain paints green (plain grass, parks and woods), and
  * sedge in a marsh, that is not a road, track, water or sand, and not under a building. Paved land is left bare, and a
- * garden is lawn up to the gravel round its houses. `surface` is the tile's `rasterSurface`,
+ * garden is lawn up to the gravel round its houses. A wood's cells are those of the stand over them
+ * (`FLOOR_SHADES`), where the tile's `forest` is given. `surface` is the tile's `rasterSurface`,
  * when it has been worked out already.
  */
-export function grassMask(tile: Pick<TileData, 'cover' | 'roads' | 'water' | 'streams'> & Partial<Pick<TileData, 'rails'>> & { buildings: readonly (Pick<Building, 'footprint'> & { kind?: number })[] }, x0: number, z0: number, size: number, ground: TileGround | null = null, surface = rasterSurface(tile, x0, z0, size, ground)): GrassMask {
+export function grassMask(tile: Pick<TileData, 'cover' | 'roads' | 'water' | 'streams'> & Partial<Pick<TileData, 'rails'>> & { buildings: readonly (Pick<Building, 'footprint'> & { kind?: number })[] }, x0: number, z0: number, size: number, ground: TileGround | null = null, surface = rasterSurface(tile, x0, z0, size, ground), forest: Forest | null = null): GrassMask {
   const { side } = surface
   const cells = new Uint8Array(side * side).fill(1)
   for (const cover of tile.cover) {
     const shade = COVER_SHADE[cover.kind]
     if (shade === undefined) continue
-    fillRings(cover.rings, x0, z0, side, (row, column) => (cells[row * side + column] = shade))
+    const stands = cover.kind === COVER_WOOD ? forest : null
+    fillRings(cover.rings, x0, z0, side, (row, column) => {
+      cells[row * side + column] = stands ? FLOOR_SHADES[floorAt(stands, x0 + (column + 0.5) * SURFACE_CELL, z0 + (row + 0.5) * SURFACE_CELL, cellPick(column, row, x0, z0))]! : shade
+    })
   }
   // Frayed where natural ground meets natural ground, as the painted ground is.
   applyMoves(cells, 1, frayMoves(tile, x0, z0, side * SURFACE_CELL, side))

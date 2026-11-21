@@ -36,7 +36,7 @@ import { fistsFromHands } from './xr/hands'
 import { dayPhase } from './render/daynight'
 import { DamageNumbers } from './render/damagenumbers'
 import { Particles } from './render/particles'
-import { setIced, setWinter, winter } from './render/season'
+import { iced, setIced, setWinter, winter } from './render/season'
 import { Skidmarks } from './render/skidmarks'
 import { SkiTracks } from './render/skitracks'
 import { Snowfall } from './render/snowfall'
@@ -68,6 +68,7 @@ import { loadQuality, PRESETS, resolveQuality, saveQuality, type Quality } from 
 import { AdaptiveScale } from './render/adaptive'
 import { Grass, GRASS_FULL, GRASS_LITE, STUBBLE, STUBBLE_DENSITY, WHEAT, WHEAT_DENSITY } from './render/grass'
 import { CropLid } from './render/croplid'
+import { FLOOR_FULL, FLOOR_LITE, ForestFloor } from './render/forestfloor'
 import { Stones } from './render/stones'
 import { AIM_DISTANCE_SCALE, DEFAULT_FOV, ON_FOOT_DISTANCE, ON_FOOT_HEIGHT, ON_FOOT_SHOULDER, Scene } from './render/scene'
 import { BallCam } from './render/ballcam'
@@ -92,6 +93,9 @@ import { CollectiveLever } from './sim/collective'
 import { loadRoosterModel } from './render/rooster'
 import { loadAnimalModels } from './render/animal'
 import { VehicleSounds } from './vehicleaudio'
+import { Ambience, FOREST_FULL, FOREST_REACH, WATER_REACH, type Surround } from './ambience'
+import { setMuffle } from './audio'
+import { smoothstep } from './math'
 import { ZombieVoices } from './zombievoices'
 import { HIT_DEALT, HIT_KILL, HIT_TAKEN, HitFeedback } from './feedback'
 import { freezeWater, setWaterRiver, setWaterTime } from './render/water'
@@ -196,6 +200,13 @@ const AIM_LOOK_SCALE = 0.6
 const FEED_LOST_MS = 700
 /** A ceiling this near over the head, metres, means the soldier is indoors and the camera keeps to the room. */
 const CEILING_ABOVE = 12
+/** Seconds between looks round for what the ambience needs that costs something to find: trees, water, a roof. */
+const SURROUND_PROBE = 0.25
+/** The rings, metres out, and how many points round each, that water is looked for in. */
+const WATER_RINGS = [6, 14, 26, 38, 50] as const
+const WATER_POINTS = 8
+/** A stream running this fast or faster, m/s, is heard running rather than lapping. */
+const RUNNING = 0.8
 /** Indoors the camera keeps this far off the wall behind it, comes no nearer the shoulder than `ROOM_ARM_MIN`, and is let back out at `ROOM_ARM_EASE` m/s. */
 const ROOM_CAMERA_GAP = 0.25
 const ROOM_ARM_MIN = 0.35
@@ -290,6 +301,7 @@ export class Game {
   private crops: Grass | null = null
   private cropLid: CropLid | null = null
   private stones: Stones | null = null
+  private forestFloor: ForestFloor | null = null
   private waters: Waters | null = null
   /** The waves' clock this frame, seconds into their loop (`waveTime`). */
   private waveClock = 0
@@ -327,6 +339,10 @@ export class Game {
   private poleIn = 0
   /** Engines, tyres, crashes and guns. */
   private readonly sounds = new VehicleSounds()
+  /** The wind, weather, wildlife and water the player hears about them. */
+  private readonly ambience = new Ambience()
+  private readonly surround: Surround = { at: [0, 0, 0], phase: 0.5, seconds: null, cover: 0.4, rain: 0, winter: false, forest: 0, water: 0, flowing: 0, height: 0, indoors: false }
+  private surroundProbe = 0
   /** The zombies' groans and growls. */
   private readonly zombieVoices = new ZombieVoices(this.sounds)
   private readonly music = new TankMusic()
@@ -624,6 +640,9 @@ export class Game {
     this.scene.scene.add(this.crops.root, this.cropLid.root)
     this.stones = this.view.stones = new Stones(world.halfExtent, world.tileSize, (x, z) => terrain.sample(x, z))
     this.scene.scene.add(this.stones.root)
+    const grass = this.grass
+    this.forestFloor = this.view.forestFloor = new ForestFloor(world.halfExtent, world.tileSize, (x, z) => terrain.sample(x, z), (x, z) => grass.growsAt(x, z))
+    this.scene.scene.add(this.forestFloor.root)
     this.applyGrass(this.scene.look)
     if (!world.bytes) throw new Error('the manifest came without its bytes')
     const motor = await SimMotor.create(world.bytes)
@@ -1160,6 +1179,7 @@ export class Game {
       this.trails.blowing(seaWind.blowing)
       setTreeWind(seaWind.blowing)
       this.grass?.blowing(seaWind.blowing)
+      this.forestFloor?.blowing(seaWind.blowing)
       this.crops?.blowing(seaWind.blowing)
       this.cropLid?.blowing(seaWind.blowing)
       setWaterTime(this.waveClock)
@@ -1195,6 +1215,7 @@ export class Game {
     this.events.smokeBarrels(dt)
     this.drawAims(moment)
     this.updateEffects(dt)
+    this.hearSurroundings(dt, renderTick, view, moment.seated, position)
 
     const cars = this.vehicles.placed
     const standing = !moment.seated && this.player.alive
@@ -1210,6 +1231,7 @@ export class Game {
     }
     this.surroundings.bendGrass(standing ? position : null, this.soldiers.nearby, cars)
     this.stones?.update(this.scene.camera.position.x, this.scene.camera.position.z)
+    this.forestFloor?.update(this.scene.camera.position.x, this.scene.camera.position.z)
     const nearby = [...this.soldiers.nearby, ...this.riders.seated, ...this.liftRiders.seated]
     this.avatars.sweep((key) => this.surroundings.dry(key))
     this.zombieVoices.sweep()
@@ -1794,6 +1816,56 @@ export class Game {
     return now === NO_WATER ? 0 : now - this.waters.surfaceAt(x, z, waveTime(tick))
   }
 
+  /**
+   * Tells the ambience what is about the listener, looking round for the costly parts (trees, water, a
+   * roof) every `SURROUND_PROBE` seconds, and muffles the world for a listener in a closed seat or under water.
+   */
+  private hearSurroundings(dt: number, renderTick: number, view: SeatView | null, seated: boolean, position: readonly number[]) {
+    const eye = this.scene.camera.position
+    const s = this.surround
+    s.at = [eye.x, eye.y, eye.z]
+    s.phase = this.scene.phase
+    s.seconds = this.clock.synced ? renderTick / TICK_RATE : null
+    s.cover = this.scene.cover
+    s.rain = this.scene.rain
+    s.winter = winter
+    this.surroundProbe -= dt
+    if (this.surroundProbe <= 0) {
+      this.surroundProbe = SURROUND_PROBE
+      s.forest = Math.min(1, this.view.treesNear(eye.x, eye.z, FOREST_REACH) / FOREST_FULL)
+      const water = this.nearestWater(eye.x, eye.z)
+      const running = water ? smoothstep(RUNNING * 0.4, RUNNING, water.flow) : 0
+      // Still water that has frozen over is silent.
+      s.water = water && !(iced && running < 0.5) ? 1 - smoothstep(4, WATER_REACH, water.distance) : 0
+      s.flowing = running
+      const ground = this.terrain?.sample(eye.x, eye.z) ?? null
+      s.height = ground === null ? 0 : eye.y - ground
+      const head: Vec3 = [position[0]!, position[1]! + ON_FOOT_HEIGHT, position[2]!]
+      s.indoors = !seated && this.player.alive && (this.motor?.castRay(head, [0, 1, 0], CEILING_ABOVE) ?? null) !== null
+    }
+    this.ambience.update(s, dt)
+    const level = this.waters?.surfaceAt(eye.x, eye.z, this.waveClock) ?? NO_WATER
+    const underwater = level !== NO_WATER && eye.y < level
+    setMuffle(underwater ? 'water' : view?.enclosed && this.player.alive ? 'cabin' : 'none')
+  }
+
+  /** The nearest water to `(x, z)` within `WATER_REACH`, metres off, and how fast it runs there, m/s; null with none. */
+  private nearestWater(x: number, z: number): { distance: number; flow: number } | null {
+    const waters = this.waters
+    if (!waters) return null
+    const at = (px: number, pz: number, distance: number) => (waters.levelAt(px, pz) === NO_WATER ? null : { distance, flow: Math.hypot(...waters.flowAt(px, pz)) })
+    const here = at(x, z, 0)
+    if (here) return here
+    for (const ring of WATER_RINGS) {
+      for (let k = 0; k < WATER_POINTS; k++) {
+        const angle = (k / WATER_POINTS) * Math.PI * 2 + ring
+        const found = at(x + Math.cos(angle) * ring, z + Math.sin(angle) * ring, ring)
+        if (found) return found
+      }
+    }
+    return null
+  }
+
   /** Whether the local soldier's eyes are under the water, waves and all, as the server's `Physics::submerged` has it. */
   private submerged(local: CharacterState): boolean {
     const level = this.waters?.surfaceAt(local.position[0], local.position[2], this.waveClock) ?? NO_WATER
@@ -1909,6 +1981,8 @@ export class Game {
   private applyGrass(look: Look) {
     this.grass?.setDensity(this.scene.quality.grass === 'full' ? GRASS_FULL : GRASS_LITE)
     this.grass?.setEnabled(look.grass && !winter)
+    this.forestFloor?.setDensity(this.scene.quality.grass === 'full' ? FLOOR_FULL : FLOOR_LITE)
+    this.forestFloor?.setPlants(look.grass && !winter)
     // The fields are not a matter of taste or of quality: wheat hides people, so everyone has the same.
     // A winter world's are stubble through the snow, which hides no one.
     this.crops?.setGrowth(winter ? STUBBLE : WHEAT)
@@ -1987,6 +2061,7 @@ export class Game {
     this.stains.dispose()
     this.scorches.dispose()
     this.sounds.dispose()
+    this.ambience.dispose()
     this.music.dispose()
     this.debris.dispose()
     this.view.dispose()
@@ -1999,6 +2074,7 @@ export class Game {
     this.crops?.dispose()
     this.cropLid?.dispose()
     this.stones?.dispose()
+    this.forestFloor?.dispose()
     this.trajectory.dispose()
     this.mortarArc.dispose()
     this.scene.dispose()

@@ -16,9 +16,9 @@ export const SUBMARINE: VehicleKind = {
     distance: SUB_DISTANCE,
     reload: null,
     seats: [
-      { rig: DRIVE, role: 'captain', board: 'E: take command of the submarine' },
+      { rig: DRIVE, role: 'captain', board: 'E: take command of the submarine', enclosed: true },
       // Holding aim zooms the periscope, as a gun's sight does.
-      { rig: { name: 'periscope' }, role: 'periscope', board: 'E: man the periscope', sight: true },
+      { rig: { name: 'periscope' }, role: 'periscope', board: 'E: man the periscope', sight: true, enclosed: true },
     ],
   },
   sound: {

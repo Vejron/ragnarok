@@ -7,7 +7,7 @@ import { ConstructView } from './render/construct'
 import { disposeTile, rebuildBuildings, rebuildLines, remeshTerrain, replaceRibbons, restitchTerrain, shadeTerrain, tileGroup } from './render/world'
 import { ribbonsOf } from './render/groundmesh'
 import { TileWorker } from './render/tileworker'
-import { prepareTile, tileParts, type PreparedTile, type TileInput, type TileParts } from './render/tileprep'
+import { prepareTile, tileParts, type PreparedTile, type TileInput } from './render/tileprep'
 import { buildingBuffers } from './render/buildingmesh'
 import { reliefPixels, terrainBuffers, terrainLevel, TERRAIN_LOD_ERRORS, type Pixels } from './render/terrainmesh'
 import { winter } from './render/season'
@@ -25,9 +25,10 @@ import { CRATER_MAX_DEPTH } from './sim/consts.generated'
 import { digCrater, groundOf, type Terrain, type TileGround } from './sim/terrain'
 import type { Grass } from './render/grass'
 import type { CropLid } from './render/croplid'
+import type { ForestFloor } from './render/forestfloor'
 import type { Stones } from './render/stones'
 import { Smoulders } from './render/smoulder'
-import { lineKindDef, type TileData, type TileRef, type WorldData } from './world'
+import { lineKindDef, TREE_BUSH, TREE_FLAG, type TileData, type TileRef, type WorldData } from './world'
 
 /** Tiles are keyed by `row * 65536 + col`, as the server names the objects in them. */
 export const tileKey = (col: number, row: number) => row * 65536 + col
@@ -102,6 +103,8 @@ export class WorldView {
   crops: Grass | null = null
   cropLid: CropLid | null = null
   stones: Stones | null = null
+  /** What stands on the forests' floors. It reads the grass's mask, so it is told of a tile after the grass is. */
+  forestFloor: ForestFloor | null = null
   waters: Waters | null = null
   /** What is solid to the local soldier and the vehicle it drives: the server's physics. */
   motor: SimMotor | null = null
@@ -428,7 +431,7 @@ export class WorldView {
    * buildings' cells are the ones the client keeps), its terrain at level `level`, and without the
    * buildings that are down or in shards now.
    */
-  private tileInput(ref: TileRef, tile: TileData, parts: TileParts, level: number): TileInput {
+  private tileInput(ref: TileRef, tile: TileData, parts: TileInput['tile'], level: number): TileInput {
     const world = this.world
     const ground = this.groundFor(ref, tile)
     const place = world ? { x0: -world.halfExtent + ref.col * world.tileSize, z0: -world.halfExtent + ref.row * world.tileSize, size: world.tileSize } : undefined
@@ -472,6 +475,7 @@ export class WorldView {
       this.crops?.regrowTile({ col, row })
       this.cropLid?.regrowTile({ col, row })
       this.stones?.regrowTile({ col, row })
+      this.forestFloor?.regrowTile({ col, row })
       this.reground(key)
     }
   }
@@ -492,6 +496,7 @@ export class WorldView {
       this.crops?.dent(crater.x / 100, crater.z / 100, crater.radius / 100)
       this.cropLid?.dent(crater.x / 100, crater.z / 100, crater.radius / 100)
       this.stones?.dent(crater.x / 100, crater.z / 100, crater.radius / 100)
+      this.forestFloor?.dent(crater.x / 100, crater.z / 100, crater.radius / 100)
       // Marked on the ground by its shader (SCORCH.md), fading with its age.
       this.scene.craters.add(crater.x / 100, crater.z / 100, crater.radius / 100, crater.depth / 100, now - crater.age, crater)
       if (live) {
@@ -595,6 +600,7 @@ export class WorldView {
     this.crops?.addTile(ref, tile, ground)
     this.cropLid?.addTile(ref, tile, ground)
     this.stones?.addTile(ref, tile, ground)
+    this.forestFloor?.addTile(ref, tile)
     if (ground) {
       for (const crater of this.marked) {
         if (!reaches(ground, crater)) continue
@@ -655,6 +661,7 @@ export class WorldView {
       this.crops?.removeTile(ref)
       this.cropLid?.removeTile(ref)
       this.stones?.removeTile(ref)
+      this.forestFloor?.removeTile(ref)
       this.waters?.delete(ref)
       this.motor?.removeTile(ref)
       this.builder?.drop(ref.col, ref.row)
@@ -741,6 +748,30 @@ export class WorldView {
       const loaded = this.loaded.get(key)
       if (group && loaded) rebuildBuildings(group, loaded.tile, loaded.salt, this.undrawnBuildings(key))
     }
+  }
+
+  /** How many standing trees (not bushes or flags) are within `radius` metres of `(x, z)`, in the tiles drawn now. */
+  treesNear(x: number, z: number, radius: number): number {
+    const world = this.world
+    if (!world) return 0
+    const r2 = radius * radius
+    const c0 = Math.floor((x - radius + world.halfExtent) / world.tileSize)
+    const c1 = Math.floor((x + radius + world.halfExtent) / world.tileSize)
+    const r0 = Math.floor((z - radius + world.halfExtent) / world.tileSize)
+    const r1 = Math.floor((z + radius + world.halfExtent) / world.tileSize)
+    let count = 0
+    for (let row = r0; row <= r1; row++) {
+      for (let col = c0; col <= c1; col++) {
+        const loaded = this.loaded.get(tileKey(col, row))
+        if (!loaded) continue
+        const felled = this.fellTrees.get(tileKey(col, row))
+        loaded.tile.trees.forEach((tree, index) => {
+          if (tree.kind === TREE_BUSH || tree.kind === TREE_FLAG || felled?.has(index)) return
+          if ((tree.x - x) ** 2 + (tree.z - z) ** 2 <= r2) count++
+        })
+      }
+    }
+    return count
   }
 
   /**

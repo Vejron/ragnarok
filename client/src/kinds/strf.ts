@@ -10,7 +10,7 @@ import { DIESEL_V8 } from './engines'
 import { DRIVE, type VehicleKind } from './kind'
 
 /** A troop in the back: sealed in, sees out from behind the hull, and gets out by the ramp. */
-const TROOP: SeatView = { rig: { name: 'passenger' }, role: 'passenger', board: 'E: ride in the back' }
+const TROOP: SeatView = { rig: { name: 'passenger' }, role: 'passenger', board: 'E: ride in the back', enclosed: true }
 
 export const STRF: VehicleKind = {
   kind: KIND_STRF,
@@ -20,9 +20,9 @@ export const STRF: VehicleKind = {
     distance: STRF_DISTANCE,
     reload: STRF_CANNON_COOLDOWN_TICKS,
     seats: [
-      { rig: DRIVE, role: 'driver', board: 'E: drive the Strf 90', chase: true },
+      { rig: DRIVE, role: 'driver', board: 'E: drive the Strf 90', chase: true, enclosed: true },
       // The turret turns all the way round; the gauges show the round loaded (AP or HE) and the barrel's heat.
-      { rig: { name: 'gun', hull: [Math.PI, STRF_BARREL_MIN, STRF_BARREL_MAX] }, role: 'gunner', board: 'E: man the cannon', sight: true, gauges: ['ammo', 'heat'] },
+      { rig: { name: 'gun', hull: [Math.PI, STRF_BARREL_MIN, STRF_BARREL_MAX] }, role: 'gunner', board: 'E: man the cannon', sight: true, gauges: ['ammo', 'heat'], enclosed: true },
       TROOP,
       TROOP,
     ],

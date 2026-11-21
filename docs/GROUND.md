@@ -19,7 +19,8 @@ wander and fray, where OpenStreetMap drew them straight.
 
 `COVER_COLORS` (`client/src/render/terrainmesh.ts`) has each cover's colour: a forest's floor is the
 dark green and brown of moss, needles and bilberry, a meadow a duller green than a map's, sand
-grey-beige, rock a cool grey. The minimap keeps its map colours.
+grey-beige, rock a cool grey. The minimap keeps its map colours. A wood is painted again by the
+trees that stand in it, pine heath, spruce moss or birch wood ([FOREST-FLOOR.md](FOREST-FLOOR.md)).
 
 Over the flat colour `paintCover` lays each cover's layers (`COVER_LAYERS`), as it paints the tile's
 cover texture in the tile worker. A layer is a small noise tile that repeats (`layerNoise`), made once

@@ -22,7 +22,7 @@ const RAIN_FULL = 0.86
 /** How long the ground stays wet after the rain stops, seconds. */
 const DRYING = 300
 /** Lightning: in slots of this many seconds, each with this chance of a strike, once the rain is this hard. */
-const STRIKE_SLOT = 6
+export const STRIKE_SLOT = 6
 const STRIKE_CHANCE = 0.4
 const STORM = 0.6
 
@@ -52,7 +52,7 @@ export function weatherAt(seconds: number, wintry: boolean, out: Weather = creat
   // A rainbow as the rain clears: the weather on its way down through the edge of the rain.
   const clearing = Math.min(1, Math.max(0, (n - spell(seconds + 120)) * 40))
   out.rainbow = smoothstep(RAIN_FROM - 0.12, RAIN_FROM - 0.04, n) * (1 - smoothstep(RAIN_FROM - 0.01, RAIN_FROM + 0.04, n)) * clearing
-  out.flash = out.rain > STORM ? lightning(seconds) * smoothstep(STORM, 0.95, out.rain) : 0
+  out.flash = out.rain > STORM ? lightning(seconds) * storminess(out.rain) : 0
   return out
 }
 
@@ -86,12 +86,29 @@ function lightning(seconds: number): number {
   let flash = 0
   // The slot before too, so a strike late in it carries over the edge.
   for (const k of [slot - 1, slot]) {
-    if (hash(k * 7 + 3) >= STRIKE_CHANCE) continue
-    const t = seconds - (k * STRIKE_SLOT + hash(k * 13 + 1) * (STRIKE_SLOT - 1))
+    const strike = strikeIn(k)
+    if (strike === null) continue
+    const t = seconds - strike
     if (t < -0.3 || t > 1) continue
     flash += Math.exp(-((t / 0.05) ** 2)) + 0.7 * Math.exp(-(((t - 0.16) / 0.04) ** 2)) + 0.45 * Math.exp(-(((t - 0.34) / 0.07) ** 2))
   }
   return flash
+}
+
+/** When lightning strikes in slot `slot` (of `STRIKE_SLOT` seconds), seconds into the clock, or null if it does not; it strikes only in a storm (`storminess`). */
+export function strikeIn(slot: number): number | null {
+  if (hash(slot * 7 + 3) >= STRIKE_CHANCE) return null
+  return slot * STRIKE_SLOT + hash(slot * 13 + 1) * (STRIKE_SLOT - 1)
+}
+
+/** How stormy rain of `rain` (0 to 1) is, 0 to 1: lightning strikes, and is heard, only above 0. */
+export function storminess(rain: number): number {
+  return rain > STORM ? smoothstep(STORM, 0.95, rain) : 0
+}
+
+/** How far off the strike of slot `slot` is, metres, the same for every player: a few in a hundred close overhead, most kilometres off. */
+export function strikeDistance(slot: number): number {
+  return 400 + 5600 * hash(slot * 29 + 11) ** 1.5
 }
 
 /** A hash of an integer, 0 to 1. */

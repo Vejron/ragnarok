@@ -374,6 +374,11 @@ export class Scene {
     this.drawn.moonPhase = this.moonPhase
   }
 
+  /** How much of the sky is cloud, 0 to 1 (`Weather.cover`). */
+  get cover() {
+    return this.weather.cover
+  }
+
   /** How hard it is raining, 0 to 1 (`Weather.rain`). */
   get rain() {
     return this.weather.rain

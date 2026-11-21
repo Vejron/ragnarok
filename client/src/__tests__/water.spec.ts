@@ -134,7 +134,7 @@ describe('water', () => {
     const foam = new Uint8Array([0, 9, 200])
     const stir = new Int8Array([0, 0, 3, -1, 0, 0])
     const lane = new Int16Array([0, 700, 0])
-    const tile = { cover: [], roads: [], rails: [], ski: [], water: new Float32Array(3), reach, flow, foam, stir, lane, streams: [], bridges: [], collision: null, buildings: [] } as unknown as TileData
+    const tile = { cover: [], roads: [], rails: [], ski: [], water: new Float32Array(3), reach, flow, foam, stir, lane, streams: [], bridges: [], collision: null, buildings: [], trees: [] } as unknown as TileData
     expect(tileParts(tile).reach).toBe(reach)
     expect(tileParts(tile).flow).toBe(flow)
     expect(tileParts(tile).foam).toBe(foam)

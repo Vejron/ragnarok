@@ -13,7 +13,7 @@ export const BUS: VehicleKind = {
   model: (id) => new CarModel('bus', id),
   load: loadCarModels,
   // Twelve metres of bus want the camera further back than a car does. Every seat past the driver's is a passenger's.
-  ride: { distance: DRIVING_DISTANCE * 2, reload: SHELL_COOLDOWN_TICKS, seats: [{ rig: DRIVE, role: 'driver', board: 'E: drive the bus', chase: true }, { ...RIDE_ALONG, board: 'E: board the bus' }] },
+  ride: { distance: DRIVING_DISTANCE * 2, reload: SHELL_COOLDOWN_TICKS, seats: [{ rig: DRIVE, role: 'driver', board: 'E: drive the bus', chase: true, enclosed: true }, { ...RIDE_ALONG, board: 'E: board the bus', enclosed: true }] },
   sound: {
     chop: PLAIN_CHOP,
     // A big diesel at the back: a low drone, slow through its gears.

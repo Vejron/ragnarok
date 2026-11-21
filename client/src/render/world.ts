@@ -6,6 +6,7 @@ import type { TileData } from '@/world'
 import { buildingBuffers, type BuildingBuffers } from './buildingmesh'
 import type { GlassBuffers } from './glass'
 import { GRASS_COLOR, bakeTerrainTexture, coverTexture, reliefTexture } from './cover'
+import { woodsOf } from './forest'
 import type { Ribbon } from './groundmesh'
 import type { HeightSource } from './shade'
 import { packMarsh, wetnessPixels } from './marshnoise'
@@ -99,9 +100,9 @@ export function buildGround(halfExtent: number, y = 0): Mesh {
  * its shading the relief map, both the tile's own, so the mesh can be simplified without losing
  * either. A cover nothing painted yet is baked here.
  */
-function buildTerrain(tile: Pick<TileData, 'cover' | 'detail' | 'stones'>, ground: TileGround, terrain: NonNullable<PreparedTile['terrain']>, cover: PreparedTile['cover'], shore: Shore | null): Mesh {
+function buildTerrain(tile: Pick<TileData, 'cover' | 'detail' | 'stones'> & Partial<Pick<TileData, 'trees'>>, ground: TileGround, terrain: NonNullable<PreparedTile['terrain']>, cover: PreparedTile['cover'], shore: Shore | null): Mesh {
   const { x0, z0, cell, side } = ground
-  const map = cover === undefined ? bakeTerrainTexture(tile, x0, z0, cell * (side - 1)) : cover ? coverTexture(cover) : null
+  const map = cover === undefined ? bakeTerrainTexture({ ...tile, ...(tile.trees ? { woods: woodsOf(tile.trees) } : {}) }, x0, z0, cell * (side - 1)) : cover ? coverTexture(cover) : null
   const size = cell * (side - 1)
   const wet = terrain.wet === undefined ? wetnessPixels(tile, x0, z0, size, terrain.relief.width) : terrain.wet
   const normalMap = reliefTexture(wet ? packMarsh(terrain.relief, wet) : terrain.relief)

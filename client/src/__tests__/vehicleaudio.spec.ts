@@ -1,70 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { VehicleSounds } from '@/vehicleaudio'
+import { airCut, echoLevel, VehicleSounds } from '@/vehicleaudio'
 import type { SoundInput } from '@/sim/engine'
 import { KIND_HELI, KIND_JEEP, KIND_PLANE, KIND_TANK, KIND_WALKER } from '@/net/codec'
 import { assumeWorklet } from '@/sound/worklet'
-
-class Param {
-  value = 0
-  setValueAtTime() {}
-  setTargetAtTime() {}
-  linearRampToValueAtTime() {}
-  exponentialRampToValueAtTime() {}
-  cancelScheduledValues() {}
-}
-
-/** A node that accepts everything Web Audio code does to one, and counts what starts and stops. */
-class Node {
-  type = ''
-  buffer: unknown = null
-  loop = false
-  frequency = new Param()
-  gain = new Param()
-  Q = new Param()
-  positionX = new Param()
-  positionY = new Param()
-  positionZ = new Param()
-  panningModel = ''
-  distanceModel = ''
-  refDistance = 0
-  rolloffFactor = 0
-  maxDistance = 0
-  started = 0
-  stopped = 0
-  constructor(private readonly log: { sources: Node[] }, readonly kind: string) {}
-  connect<T>(to: T): T {
-    return to
-  }
-  disconnect() {}
-  start() {
-    this.started++
-    this.log.sources.push(this)
-  }
-  stop() {
-    this.stopped++
-  }
-}
-
-class FakeContext {
-  readonly log = { sources: [] as Node[] }
-  currentTime = 0
-  sampleRate = 8000
-  destination = new Node(this.log, 'destination')
-  listener = {
-    positionX: new Param(), positionY: new Param(), positionZ: new Param(),
-    forwardX: new Param(), forwardY: new Param(), forwardZ: new Param(),
-    upX: new Param(), upY: new Param(), upZ: new Param(),
-  }
-  createGain() { return new Node(this.log, 'gain') }
-  createOscillator() { return new Node(this.log, 'osc') }
-  createBiquadFilter() { return new Node(this.log, 'filter') }
-  createBufferSource() { return new Node(this.log, 'noise') }
-  createPanner() { return new Node(this.log, 'panner') }
-  createDynamicsCompressor() { return new Node(this.log, 'compressor') }
-  createBuffer(_: number, length: number) {
-    return { getChannelData: () => new Float32Array(length) }
-  }
-}
+import { FakeContext, Param } from './fakeaudio'
 
 const sounds = () => {
   const ctx = new FakeContext()
@@ -162,7 +101,7 @@ describe('VehicleSounds', () => {
 
   it('rattles a machine gun a round at a time, in one slot', () => {
     const { ctx, sounds: s } = sounds()
-    s.machineGun([400, 0, 0], 2)
+    s.machineGun([900, 0, 0], 2)
     expect(ctx.log.sources.length).toBe(0)
     s.machineGun([10, 0, 0], 3)
     expect(ctx.log.sources.length).toBe(6)
@@ -176,6 +115,35 @@ describe('VehicleSounds', () => {
     const before = ctx.log.sources.length
     s.explosion([5, 0, 0])
     expect(ctx.log.sources.length).toBeGreaterThan(before)
+  })
+
+  it('hears a gunshot 500 m away late, at the speed of sound, and dulled', () => {
+    const { ctx, sounds: s } = sounds()
+    s.gunshot([500, 0, 0], 'rifle')
+    expect(ctx.log.sources.length).toBeGreaterThan(0)
+    for (const source of ctx.log.sources) expect(source.startedAt).toBeGreaterThanOrEqual(500 / 343)
+    expect(airCut(500)).toBeLessThan(2000)
+    expect(airCut(5)).toBeGreaterThan(15000)
+    // Far off, more of it is echo than shot; close by, hardly any.
+    expect(echoLevel(500)).toBeGreaterThan(12 / 500)
+    expect(echoLevel(10)).toBeLessThan(0.1)
+  })
+
+  it('carries blasts and guns far but still stops footsteps and crashes close by', () => {
+    const { ctx, sounds: s } = sounds()
+    s.crash([300, 0, 0], 20)
+    s.step([300, 0, 0], 'grass', 1)
+    expect(ctx.log.sources.length).toBe(0)
+    s.explosion([1200, 0, 0])
+    expect(ctx.log.sources.length).toBeGreaterThan(0)
+  })
+
+  it('keeps slots free for nearer sounds while far shots are in the air', () => {
+    const { ctx, sounds: s } = sounds()
+    for (let i = 0; i < 30; i++) s.gunshot([600, 0, 0], 'rifle')
+    const far = ctx.log.sources.length
+    s.crash([10, 0, 0], 20)
+    expect(ctx.log.sources.length).toBeGreaterThan(far)
   })
 
   describe('with the engine worklet loaded', () => {

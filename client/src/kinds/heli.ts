@@ -15,7 +15,7 @@ export const HELI: VehicleKind = {
     distance: HELI_DISTANCE,
     reload: HELI_GUN_COOLDOWN_TICKS,
     downwash: { reach: 18, radius: 6 },
-    seats: [{ rig: { name: 'pilot' }, role: 'pilot', board: 'E: fly', lever: true, gauges: ['rotor'] }, { rig: { name: 'gun', hull: [HELI_GUN_YAW_LIMIT, HELI_GUN_PITCH_MIN, HELI_GUN_PITCH_MAX] }, role: 'gunner', board: 'E: man the nose gun' }],
+    seats: [{ rig: { name: 'pilot' }, role: 'pilot', board: 'E: fly', lever: true, gauges: ['rotor'], enclosed: true }, { rig: { name: 'gun', hull: [HELI_GUN_YAW_LIMIT, HELI_GUN_PITCH_MIN, HELI_GUN_PITCH_MAX] }, role: 'gunner', board: 'E: man the nose gun', enclosed: true }],
   },
   sound: {
     chop: PLAIN_CHOP,

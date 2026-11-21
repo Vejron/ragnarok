@@ -23,9 +23,9 @@ export const AMV: VehicleKind = {
     reload: AMV_COOLDOWN_TICKS,
     refill: AMV_RELOAD_TICKS,
     seats: [
-      { rig: DRIVE, role: 'driver', board: 'E: drive the AMV', chase: true },
+      { rig: DRIVE, role: 'driver', board: 'E: drive the AMV', chase: true, enclosed: true },
       { rig: { name: 'mortar' }, role: 'mortar', board: 'E: man the mortar', gauges: ['range'], arc: 'mortar' },
-      { rig: { name: 'passenger' }, role: 'passenger', board: 'E: ride in the back' },
+      { rig: { name: 'passenger' }, role: 'passenger', board: 'E: ride in the back', enclosed: true },
     ],
   },
   // A big diesel truck: low, with a hard knock.

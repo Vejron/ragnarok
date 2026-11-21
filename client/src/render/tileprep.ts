@@ -3,6 +3,7 @@ import type { TileGround } from '@/sim/terrain'
 import type { Building, TileData } from '@/world'
 import { buildingBuffers, buildingTransferables, type BuildingBuffers } from './buildingmesh'
 import { drapedMeshes, drapedTransferables, type Draped } from './groundmesh'
+import { forestOf, woodsOf } from './forest'
 import { grassMask, type GrassMask } from './grassmask'
 import { wetnessPixels } from './marshnoise'
 import type { HeightSource } from './shade'
@@ -19,18 +20,21 @@ import { reliefPixels, terrainBuffers, TERRAIN_LOD_ERRORS, type CoverSource, typ
 /** What of a tile `prepareTile` reads: small enough to send to the worker (`tileParts`). */
 export type TileParts = Pick<TileData, 'cover' | 'crops' | 'detail' | 'roads' | 'rails' | 'ski' | 'water' | 'reach' | 'flow' | 'foam' | 'stir' | 'lane' | 'streams' | 'bridges' | 'collision' | 'look'> & {
   buildings: readonly Pick<Building, 'first' | 'walls' | 'roof' | 'roofKind' | 'kind' | 'cells' | 'footprint' | 'paint' | 'look'>[]
+  /** The tile's trees as the forest's floor reads them (`woodsOf`). */
+  woods: Float32Array
 }
 
-/** The parts of `tile` `prepareTile` reads, leaving out what the worker has no use for (trees, the file's bytes). */
+/** The parts of `tile` `prepareTile` reads, leaving out what the worker has no use for (all of a tree but where it stands and what it is, the file's bytes). */
 export function tileParts(tile: TileData): TileParts {
   const { cover, crops, detail, roads, rails, ski, water, reach, flow, foam, stir, lane, streams, bridges, collision, look } = tile
   const buildings = tile.buildings.map(({ first, walls, roof, roofKind, kind, cells, footprint, paint, look }) => ({ first, walls, roof, roofKind, kind, cells, footprint, paint, look: look ?? null }))
-  return { cover, ...(crops ? { crops } : {}), ...(detail ? { detail } : {}), roads, rails, ski, water, ...(reach ? { reach } : {}), ...(flow ? { flow } : {}), ...(foam ? { foam } : {}), ...(stir ? { stir } : {}), ...(lane ? { lane } : {}), streams, bridges, collision, ...(look ? { look } : {}), buildings }
+  return { cover, ...(crops ? { crops } : {}), ...(detail ? { detail } : {}), roads, rails, ski, water, ...(reach ? { reach } : {}), ...(flow ? { flow } : {}), ...(foam ? { foam } : {}), ...(stir ? { stir } : {}), ...(lane ? { lane } : {}), streams, bridges, collision, ...(look ? { look } : {}), buildings, woods: woodsOf(tile.trees) }
 }
 
 /** What `prepareTile` makes a tile from. */
 export interface TileInput {
-  tile: TileParts
+  /** The tile's parts, or on the main thread all of it: its `trees` then stand for the `woods` made of them. */
+  tile: Omit<TileParts, 'woods'> & { woods?: Float32Array; trees?: TileData['trees'] }
   /** Its ground, or null on a flat world. */
   ground: TileGround | null
   /** Keeps building colours stable between reloads and varied across tiles. */
@@ -72,15 +76,17 @@ export function prepareTile(input: TileInput, around?: HeightSource, paint?: Cov
   const { tile, ground, place } = input
   const error = TERRAIN_LOD_ERRORS[Math.min(Math.max(input.level, 0), TERRAIN_LOD_ERRORS.length - 1)]!
   const surface = place ? rasterSurface(tile, place.x0, place.z0, place.size, ground) : null
+  const woods = tile.woods ?? woodsOf(tile.trees ?? [])
+  const forest = place ? forestOf(woods, place.x0, place.z0, place.size) : null
   return {
     level: input.level,
     undrawn: [...input.undrawn],
     terrain: ground ? terrainOf(tile, ground, error, around) : null,
-    ...(paint && ground ? { cover: paint(tile, ground) } : {}),
+    ...(paint && ground ? { cover: paint({ ...tile, woods }, ground) } : {}),
     draped: ground ? drapedMeshes(tile, ground, around) : null,
     buildings: buildingBuffers(tile, input.salt, new Set(input.undrawn)),
     surface,
-    grass: place && surface ? grassMask(tile, place.x0, place.z0, place.size, ground, surface) : null,
+    grass: place && surface ? grassMask(tile, place.x0, place.z0, place.size, ground, surface, forest) : null,
   }
 }
 
