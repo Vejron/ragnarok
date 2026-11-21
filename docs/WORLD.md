@@ -441,7 +441,8 @@ to spare after the cells round its underside down, because the height model rare
 embankments the road above stands on. A road running alongside the deck does not count, nor one that
 ends at a deck's end (a road joining the bridge), but one OSM cuts in two under the middle of the
 deck does. A ramp is held up the same over a road it crosses, unless it has come down to within
-0.3 m of it (`AT_GRADE`): that is a crossroads on the ground past the bridge's end. Piers stand under stretches more than 2 m up, except
+0.3 m of it (`AT_GRADE`): that is a crossroads on the ground past the bridge's end. A deck over two
+roads never dips between them: it runs level from one crest to the next (`fill_sags`). Piers stand under stretches more than 2 m up, except
 where a road, a track or another bridge goes under; another bridge running alongside (the other
 carriageway of a divided road on a deck of its own) does not count. A footway or cycleway crossing beside a road
 bridge all the way is on the same bridge: it gets no bridge of its own, and the road's deck is

@@ -366,6 +366,23 @@ fn need_over(arcs: &[f64], under: &[&Under]) -> Vec<f64> {
     arcs.iter().map(|&arc| under.iter().filter(|u| (arc - u.middle).abs() <= u.reach).map(|u| u.top).fold(f64::NEG_INFINITY, f64::max)).collect()
 }
 
+/// Raises the deck's heights `y` where it would sag between two crests, to the lower of the two: a
+/// bridge over two roads rises over the first and runs level to the second, rather than dipping
+/// between them.
+fn fill_sags(y: &mut [f64]) {
+    let mut before = vec![f64::MIN; y.len()];
+    let mut after = vec![f64::MIN; y.len()];
+    for i in 0..y.len() {
+        before[i] = if i > 0 { before[i - 1].max(y[i]) } else { y[i] };
+    }
+    for i in (0..y.len()).rev() {
+        after[i] = if i + 1 < y.len() { after[i + 1].max(y[i]) } else { y[i] };
+    }
+    for i in 0..y.len() {
+        y[i] = y[i].max(before[i].min(after[i]));
+    }
+}
+
 /// Raises `y` so that no node is more than `MAX_GRADE` below a neighbour, in both directions.
 fn limit_grade(y: &mut [f64], arcs: &[f64]) {
     for i in 1..y.len() {
@@ -546,6 +563,10 @@ pub fn build(points: &[P], width: f64, kind: u8, pylons: Pylons, measured: &[[f6
         let required: Vec<f64> = (0..all.len()).map(|i| if deck.contains(&i) { all[i].level.map_or(all[i].g + LIFT, |level| level + lift).max(over[i]) } else { over[i] }).collect();
         let mut y: Vec<f64> = (0..all.len()).map(|i| if deck.contains(&i) { (h0 + (h1 - h0) * (arcs[i] - a0) / arc + LIFT).max(required[i]) } else { required[i] }).collect();
         limit_grade(&mut y, &arcs);
+        // The deck, and a ramp held up over a road, from the first thing that holds it up to the last.
+        let held: Vec<usize> = (0..all.len()).filter(|&i| deck.contains(&i) || over[i].is_finite()).collect();
+        let span = held.first().copied().unwrap_or(deck.start)..=held.last().copied().unwrap_or(deck.end - 1);
+        fill_sags(&mut y[span.clone()]);
         // Soften the corners the envelope leaves on the deck, never dipping under what is needed.
         for _ in 0..3 {
             let before = y.clone();
@@ -559,6 +580,8 @@ pub fn build(points: &[P], width: f64, kind: u8, pylons: Pylons, measured: &[[f6
                 let i = deck.start + k;
                 y[i] = m.max(all[i].g + LIFT).max(over[i]);
             }
+        } else {
+            fill_sags(&mut y[span]);
         }
         limit_grade(&mut y, &arcs);
         for (i, y) in y.iter_mut().enumerate().filter(|(i, _)| !deck.contains(i)) {
@@ -1025,6 +1048,19 @@ mod tests {
         let landing: &[P] = &[[x, -80.0], [x, 80.0]];
         let with_landing = build(&[[-20.0, 0.0], [20.0, 0.0]], 8.0, ROAD_MAJOR, Pylons::None, &[], &[(under, 10.0), (landing, 7.0)], &ground, &[], 1000.0);
         assert_eq!(reach(&with_landing), reach(&alone));
+    }
+
+    #[test]
+    fn a_deck_over_two_roads_runs_level_between_them_and_does_not_sag() {
+        // Flat ground: a 160 m bridge over two roads 60 m apart.
+        let ground = Ground::default();
+        let (west, east): (&[P], &[P]) = (&[[-30.0, -80.0], [-30.0, 80.0]], &[[30.0, -80.0], [30.0, 80.0]]);
+        let pieces = build(&[[-80.0, 0.0], [80.0, 0.0]], 8.0, ROAD_MAJOR, Pylons::None, &[], &[(west, 8.0), (east, 8.0)], &ground, &[], 1000.0);
+        // The roadway's height along the bridge, every metre, from its highest vertex in each strip.
+        let top = |x: f64| pieces.iter().filter(|p| p.deck).flat_map(|p| p.tris.iter().flatten()).filter(|v| (v[0] - x).abs() < 1.6).map(|v| v[1]).fold(f64::MIN, f64::max);
+        let between: Vec<f64> = (-30..=30).map(|x| top(f64::from(x))).collect();
+        let crest = top(-30.0).min(top(30.0));
+        assert!(between.iter().all(|&y| y >= crest - 0.01), "the deck dips between the roads: {between:?}");
     }
 
     #[test]
