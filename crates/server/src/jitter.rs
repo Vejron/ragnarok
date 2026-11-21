@@ -25,6 +25,10 @@ pub struct JitterBuffer {
     primed: bool,
     last: InputFrame,
     starved: u32,
+    /// Frames thrown away because the queue grew past `MAX`, over the player's whole session.
+    pub dropped: u64,
+    /// Ticks that had no frame of the client's to apply, since its first one arrived.
+    pub underruns: u64,
 }
 
 /// What the simulation should apply this tick.
@@ -48,6 +52,7 @@ impl JitterBuffer {
         if self.frames.len() > MAX {
             let excess = self.frames.len() - TARGET;
             self.frames.drain(..excess);
+            self.dropped += excess as u64;
         }
     }
 
@@ -66,6 +71,9 @@ impl JitterBuffer {
         // Underrun: keep walking the way the player was, but never re-trigger a jump, a use or a shot. After a while,
         // stand still.
         self.starved = self.starved.saturating_add(1);
+        if self.newest != 0 {
+            self.underruns += 1;
+        }
         let mut repeat = self.last;
         repeat.buttons &= !(BUTTON_JUMP | BUTTON_USE | BUTTON_FIRE | BUTTON_SLIDE | BUTTON_RELOAD | BUTTON_CHUTE | BUTTON_AMMO | BUTTON_LAMP | BUTTON_SKIS);
         if self.starved > STARVE_LIMIT {
@@ -151,6 +159,19 @@ mod tests {
         let frames: Vec<_> = (1..=MAX as u32 + 1).map(frame).collect();
         buffer.push(&frames);
         assert_eq!(buffer.len(), TARGET);
+        assert_eq!(buffer.dropped, MAX as u64 - 1);
         assert_eq!(buffer.pop().input.seq(), MAX as u32);
+    }
+
+    #[test]
+    fn underruns_are_counted_once_frames_have_come() {
+        let mut buffer = JitterBuffer::default();
+        buffer.pop();
+        assert_eq!(buffer.underruns, 0, "nothing was missed before the first frame");
+        buffer.push(&[frame(1), frame(2)]);
+        buffer.pop();
+        buffer.pop();
+        buffer.pop();
+        assert_eq!(buffer.underruns, 1);
     }
 }

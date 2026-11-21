@@ -225,7 +225,7 @@ function status(p: Painter, s: HudStats): number {
     if (text && (s.netStats || s.voice.talking || s.voice.mic === 'denied' || s.voice.peers > 0)) pills.push({ text, color: s.voice.talking ? GREEN_CSS : INK })
   }
   if (s.netStats && s.status === 'CONNECTED') pills.push({ text: `${s.kills} kills · ${s.deaths} deaths`, color: INK })
-  if (s.netStats) pills.push({ text: `tiles ${s.tiles} · interp ${Math.round(s.interpDelayMs)} ms · fix ${s.correction.toFixed(2)} m · unacked ${s.pending}`, color: INK, weight: 600 })
+  if (s.netStats) pills.push({ text: `tiles ${s.tiles} · interp ${Math.round(s.interpDelayMs)} ms · fix ${s.correction.toFixed(2)} m · unacked ${s.pending} · link ${s.link}`, color: INK, weight: 600 })
   // Wrap before the minimap, which a touch screen does without.
   const limit = s.touch ? p.width - 12 : p.width - 12 - (miniSize(p.width, p.height) + 4) - 12
   let x = 12

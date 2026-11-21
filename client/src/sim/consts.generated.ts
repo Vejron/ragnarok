@@ -2,7 +2,13 @@
 // change the Rust and run `npm run gen:consts`. Client-only constants live in consts.ts.
 
 /** Wire schema version. Bumped on any incompatible protocol or world-format change. */
-export const PROTOCOL_VERSION = 90
+export const PROTOCOL_VERSION = 91
+
+/** Why a page closes its session (`Bye`): the tab is closing or reloading. */
+export const BYE_LEAVING = 0
+
+/** Why a page closes its session (`Bye`): it rejoins, because the session went dead or out of step. */
+export const BYE_REJOINING = 1
 
 /**
  * Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is

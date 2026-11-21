@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Mesh } from '@ragnarok/engine'
 import { FLOOR_HEATH, FLOOR_LEAF, FLOOR_MIXED, FLOOR_MOSS, floorAt, forestOf, standAt, woodsOf } from '@/render/forest'
-import { FLOOR_FULL, FLOOR_LITE, FloorBuilder, ForestFloor, addFern, addStone, addStump, addTrunk, driftsAt } from '@/render/forestfloor'
+import { FLOOR_FULL, FLOOR_LITE, FloorBuilder, ForestFloor, addFern, addStone, addStump, driftsAt } from '@/render/forestfloor'
 import { chunkBlades, GRASS_CHUNK, random } from '@/render/grass'
 import { FLOOR_SHADES, grassMask } from '@/render/grassmask'
 import { COVER_WOOD, TREE_BIRCH, TREE_BUSH, TREE_PINE, TREE_ROCK_BOULDER, TREE_SPRUCE, type Point2, type Tree } from '@/world'
@@ -82,7 +82,6 @@ describe('the forest floor', () => {
     const out = new FloorBuilder()
     addFern(out, 5, 2, 7, [0, 1, 0], 0.25, random(1))
     addStump(out, { bark: { r: 1, g: 1, b: 1 }, mark: { r: 0, g: 0, b: 0 }, moss: 0.5 } as never, 9, 2, 3, random(2))
-    addTrunk(out, { bark: { r: 1, g: 1, b: 1 }, mark: { r: 0, g: 0, b: 0 }, moss: 0.5 } as never, [0, 2, 0], [6, 2.5, 0], 0.2, random(3))
     addStone(out, 0.8, 20, 2, 20, 0.3, 0.2, random(4))
     const geometry = out.geometry()
     expect(Math.max(...geometry.indices!)).toBe(geometry.vertexCount - 1)
@@ -129,7 +128,7 @@ describe('the forest floor', () => {
     expect(plants.length).toBeGreaterThan(5000)
     expect(timber.length).toBeGreaterThan(200)
     for (const [x, y, z] of [...plants, ...timber]) {
-      // A fern's frond or a trunk's end may reach a little past where its foot stands.
+      // A fern's frond may reach a little past where its foot stands.
       expect(x!).toBeLessThan(1.5)
       expect(z!).toBeGreaterThan(-45)
       expect(y!).toBeGreaterThan(2.5)

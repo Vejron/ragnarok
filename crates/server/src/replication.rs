@@ -25,6 +25,8 @@ pub struct Replica {
     acked: u32,
     /// What the client held after each recent snapshot, oldest first.
     sent: VecDeque<(u32, Held)>,
+    /// Snapshots not sent because the session's outbox had no room: it was not keeping up.
+    pub skipped: u64,
 }
 
 /// One entity of the world, made ready to send: what anyone is told of it, and all of it, for its

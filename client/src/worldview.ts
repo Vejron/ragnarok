@@ -26,6 +26,7 @@ import { digCrater, groundOf, type Terrain, type TileGround } from './sim/terrai
 import type { Grass } from './render/grass'
 import type { CropLid } from './render/croplid'
 import type { ForestFloor } from './render/forestfloor'
+import type { Gardens } from './render/gardens'
 import type { Stones } from './render/stones'
 import { Smoulders } from './render/smoulder'
 import { lineKindDef, TREE_BUSH, TREE_FLAG, type TileData, type TileRef, type WorldData } from './world'
@@ -105,6 +106,8 @@ export class WorldView {
   stones: Stones | null = null
   /** What stands on the forests' floors. It reads the grass's mask, so it is told of a tile after the grass is. */
   forestFloor: ForestFloor | null = null
+  /** What grows round the houses, where the tile's `gardenPlan` put it. */
+  gardens: Gardens | null = null
   waters: Waters | null = null
   /** What is solid to the local soldier and the vehicle it drives: the server's physics. */
   motor: SimMotor | null = null
@@ -476,6 +479,7 @@ export class WorldView {
       this.cropLid?.regrowTile({ col, row })
       this.stones?.regrowTile({ col, row })
       this.forestFloor?.regrowTile({ col, row })
+      this.gardens?.regrowTile({ col, row })
       this.reground(key)
     }
   }
@@ -497,6 +501,7 @@ export class WorldView {
       this.cropLid?.dent(crater.x / 100, crater.z / 100, crater.radius / 100)
       this.stones?.dent(crater.x / 100, crater.z / 100, crater.radius / 100)
       this.forestFloor?.dent(crater.x / 100, crater.z / 100, crater.radius / 100)
+      this.gardens?.dent(crater.x / 100, crater.z / 100, crater.radius / 100)
       // Marked on the ground by its shader (SCORCH.md), fading with its age.
       this.scene.craters.add(crater.x / 100, crater.z / 100, crater.radius / 100, crater.depth / 100, now - crater.age, crater)
       if (live) {
@@ -601,6 +606,7 @@ export class WorldView {
     this.cropLid?.addTile(ref, tile, ground)
     this.stones?.addTile(ref, tile, ground)
     this.forestFloor?.addTile(ref, tile)
+    this.gardens?.addTile(ref, prepared.gardens)
     if (ground) {
       for (const crater of this.marked) {
         if (!reaches(ground, crater)) continue
@@ -662,6 +668,7 @@ export class WorldView {
       this.cropLid?.removeTile(ref)
       this.stones?.removeTile(ref)
       this.forestFloor?.removeTile(ref)
+      this.gardens?.removeTile(ref)
       this.waters?.delete(ref)
       this.motor?.removeTile(ref)
       this.builder?.drop(ref.col, ref.row)

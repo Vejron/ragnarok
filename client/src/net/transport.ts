@@ -1,8 +1,13 @@
 import { MAX_PACKET } from '@/sim/consts'
-import { decodeServer, type ServerMessage } from './codec'
+import { decodeServer, encodeBye, type ServerMessage } from './codec'
 import { frame, FrameReader } from './frames'
 
 export type ConnectionStatus = 'OFFLINE' | 'CONNECTING' | 'CONNECTED'
+
+/** Times a `bye` is sent, as any one datagram can be lost. */
+const BYES = 3
+/** How long `leave` lets its byes go out before it closes the session, ms. */
+const BYE_GRACE_MS = 100
 
 /**
  * WebTransport session to the game server: datagrams for snapshots, inputs and pings, and one
@@ -69,6 +74,24 @@ export class Transport {
     )
     const framed = frame(bytes)
     void this.signaling.then((writer) => writer?.write(framed).catch(() => {}))
+  }
+
+  /**
+   * Tells the server this page is closing its session, for `reason` (`BYE_*`), so the player leaves the
+   * game at once: the server cannot see the session close itself while the connection stays open.
+   */
+  bye(reason: number) {
+    const bytes = encodeBye(reason)
+    for (let i = 0; i < BYES; i++) this.send(bytes)
+  }
+
+  /** Says `bye` for `reason`, then closes the session once the byes have had a moment to go out. */
+  async leave(reason: number) {
+    const session = this.session
+    if (!session) return
+    this.bye(reason)
+    await new Promise((resolve) => setTimeout(resolve, BYE_GRACE_MS))
+    if (this.session === session) this.close()
   }
 
   close() {

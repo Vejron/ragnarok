@@ -97,10 +97,13 @@ impl Game {
             // short of filling it: a lost one is harmless, but a reliable message with no room costs the
             // player their session.
             if outbox.capacity() <= outbox.max_capacity() * RESERVED_FOR_RELIABLE / 4 {
+                replica.skipped += 1;
                 continue;
             }
             let snapshot = replica.snapshot(at, &everything, own);
-            let _ = outbox.try_send(Outgoing::Datagram(snapshot.into()));
+            if outbox.try_send(Outgoing::Datagram(snapshot.into())).is_err() {
+                replica.skipped += 1;
+            }
         }
     }
 }

@@ -71,6 +71,10 @@ export const COVER_COLORS: Record<number, number> = {
 /** The gravel round a house in a garden (`APRON_WIDTH`), sRGB. */
 export const GRAVEL_COLOR = 0xaaa192
 
+/** A garden's flower bed (`gardenplan.ts`): dug soil, and its edge. */
+const BED_COLOR = 0x4d3b2b
+const BED_EDGE = 0x3a2c20
+
 /** How far out from a house's walls its gravel reaches in a garden, metres. */
 export const APRON_WIDTH = 2
 
@@ -765,11 +769,13 @@ export function coverPixels(size: number): number {
 
 const css = (color: number) => `#${color.toString(16).padStart(6, '0')}`
 
-/** What of a tile its cover is painted from: the cover, the crops on it, the houses a garden has gravel round and the trees of its woods. */
+/** What of a tile its cover is painted from: the cover, the crops on it, the houses a garden has gravel round, the trees of its woods and its flower beds. */
 export type CoverSource = Pick<TileData, 'cover'> & Partial<Pick<TileData, 'crops'>> & {
   buildings?: readonly { footprint: readonly (readonly [number, number])[] }[]
   /** The tile's trees (`woodsOf`), for the floors of its woods. */
   woods?: Float32Array
+  /** Its gardens' flower beds (`GardenPlan.beds`), dug soil. */
+  beds?: Float32Array
 }
 
 /**
@@ -869,5 +875,20 @@ export function paintCover(
     const image = ctx.getImageData(0, 0, pixels, pixels)
     applyMoves(image.data, 4, moves)
     ctx.putImageData(image, 0, 0)
+  }
+
+  // Flower beds, dug dark soil edged a shade darker, over whatever the garden was. Not under a winter's snow.
+  const beds = winter ? undefined : tile.beds
+  if (beds && beds.length > 0) {
+    ctx.fillStyle = css(BED_COLOR)
+    ctx.strokeStyle = css(BED_EDGE)
+    ctx.lineWidth = Math.max(1, 0.08 * scale)
+    for (let i = 0; i + 8 <= beds.length; i += 8) {
+      ctx.beginPath()
+      for (let k = 0; k < 4; k++) (k === 0 ? ctx.moveTo : ctx.lineTo).call(ctx, ...at([beds[i + k * 2]!, beds[i + k * 2 + 1]!]))
+      ctx.closePath()
+      ctx.fill()
+      ctx.stroke()
+    }
   }
 }

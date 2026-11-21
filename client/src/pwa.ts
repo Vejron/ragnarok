@@ -34,26 +34,34 @@ export function applyUpdate() {
 }
 
 /**
- * For a page the server no longer speaks to: fetches the new build, if there is one, and reloads into
- * it. `reason` names what the server runs; a page reloads once per reason, so a server ahead of every
- * build there is leaves the page standing with its warning rather than reloading round and round.
+ * For a page that does not match the server (another protocol, build or world): forgets the world the
+ * service worker kept, fetches the new build if there is one, and reloads into it. `reason` names what
+ * the server runs; a page reloads once per reason, so a server ahead of every build there is leaves
+ * the page standing with its warning rather than reloading round and round. False when it will not
+ * reload: it already did for this reason.
  */
-export async function updateNow(reason: string) {
+export async function updateNow(reason: string): Promise<boolean> {
   const key = 'ragnarok:reloaded-for'
   try {
-    if (sessionStorage.getItem(key) === reason) return
+    if (sessionStorage.getItem(key) === reason) return false
     sessionStorage.setItem(key, reason)
   } catch {
-    return
+    return false
   }
+  // The manifest is asked for afresh anyway (`loadManifest`); this also drops a minimap kept from before.
+  await globalThis.caches?.delete('world').catch(() => false)
   await check()
   if (registration?.waiting || registration?.installing) {
     updateReady.value = true
     // Lets an installing worker finish; `onNeedRefresh` has run by the time it waits.
     const waiting = registration.waiting ?? (await installed(registration.installing!))
-    if (waiting) return applyUpdate()
+    if (waiting) {
+      applyUpdate()
+      return true
+    }
   }
   location.reload()
+  return true
 }
 
 function installed(worker: ServiceWorker): Promise<ServiceWorker | null> {

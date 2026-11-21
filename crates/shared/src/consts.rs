@@ -32,7 +32,12 @@ pub use crate::vehicles::titan::*;
 pub use crate::vehicles::walker::*;
 
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
-pub const PROTOCOL_VERSION: u8 = 90;
+pub const PROTOCOL_VERSION: u8 = 91;
+
+/// Why a page closes its session (`Bye`): the tab is closing or reloading.
+pub const BYE_LEAVING: u8 = 0;
+/// Why a page closes its session (`Bye`): it rejoins, because the session went dead or out of step.
+pub const BYE_REJOINING: u8 = 1;
 
 /// Entity kinds, the `kind` component: which model a client draws. A vehicle kind's definition is
 /// `crate::vehicles`.

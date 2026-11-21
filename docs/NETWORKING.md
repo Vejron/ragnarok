@@ -11,9 +11,9 @@ This is the wire protocol between the browser client and the game server. Rust i
    - Production: `https://<host>/transport` with an ACME certificate. UDP 443 carries HTTP/3.
 2. **Origin check:** the server rejects any other origin. In production only `https://$RAGNAROK_DOMAIN` is allowed, and in development only `http://localhost:5173` and `http://127.0.0.1:5173`.
 3. **Admission:** at 64 players the room is full and the session is refused.
-4. **Welcome:** the server sends `welcome` first on its reliable stream (below). The client ignores snapshots until it has one.
+4. **Welcome:** the server sends `welcome` first on its reliable stream (below). The client ignores snapshots until it has one. A page whose protocol, build or world differs from the server's does not play: see [Same build, same world](#same-build-same-world).
 5. **Play:** the client sends `input` datagrams every tick and a `ping` every second. The server sends a `snapshot` datagram every 2 ticks, holding what changed near that player since the snapshot they last acknowledged (below).
-6. **End:** the session ends on close, error, or after 10 s without any datagram. The server then removes the player and sends `leave` to everyone else.
+6. **End:** the session ends on a `bye`, close, error, or after 10 s without any datagram. The server then removes the player, sends `leave` to everyone else, and logs one `session ended` line with the reason and what the session carried (below, [Debugging](#debugging-with-a-bad-network)). The client also ends a session that has gone dead or out of step and rejoins: see [Healing](#healing).
 
 ## Messages
 
@@ -23,10 +23,11 @@ All messages are MessagePack arrays whose first element is a tag. The client→s
 
 | Tag | Name | Shape | Notes |
 |---|---|---|---|
-| 0 | `input` | `[0, version, baseline u32, [frame, …]]` | 1–4 frames, oldest first. Throttled to one per 8 ms. `baseline` is the `server_tick` of the newest snapshot the client has rebuilt, or 0 for none |
+| 0 | `input` | `[0, version, baseline u32, [frame, …]]` | 1–4 frames, oldest first. Taken at 75 a second on average and up to 30 at once (a token bucket), so the several a slow frame sends together, or a queue a hiccup delivers at once, all count; past that they are shed. `baseline` is the `server_tick` of the newest snapshot the client has rebuilt, or 0 for none |
 | 1 | `ping` | `[1, nonce u32]` | Echoed as `pong`. Throttled to one per 100 ms. |
 | 2 | `rtc` | `[2, peer u32, kind u8, json string]` | Voice signaling for player `peer`. **Not a datagram**: sent on one unidirectional stream the client opens, each message behind a 4-byte big-endian length (as below). `kind` 0 offer, 1 answer, 2 ICE candidate; `json` is the session description or candidate. Server drops more than 64 a second, payloads over 8 KiB and frames over 8 KiB + 64 |
 | 3 | `hands` | `[3, lx, ly, lz, rx, ry, rz i16, flags u8]` | Where a Titan's pilot wants its left and right fists, centimetres in its hull frame (+X right, +Y up, −Z ahead), sent every tick while piloting one; the newest wins, and a pilot who sends none for half a second lets the arms hang. `flags`: 1 and 2 close the left and the right hand, 4 and 8 say that hand is being moved at all. Throttled to one per 8 ms, and ignored from anyone who is not a Titan's pilot (protocol 77, [VEHICLES-XIV.md](VEHICLES-XIV.md)) |
+| 4 | `bye` | `[4, reason u8]` | The page is closing its session: `BYE_LEAVING` (0, the tab is closing or reloading) or `BYE_REJOINING` (1, it rejoins to heal the session, [Healing](#healing)). Sent 3 times, as a datagram can be lost. The server cannot see a WebTransport session close while the QUIC connection under it stays open, so without it the player would stand on in the world until the idle timeout (protocol 91) |
 
 `frame` is `[seq u32, strafe i8, forward i8, yaw i16, buttons u8, pitch i16, view u16, slot u8, collective u8]`:
 
@@ -48,12 +49,12 @@ Each datagram repeats the newest 4 frames, so a single lost datagram loses nothi
 
 ### Server → client
 
-**Reliable stream.** The server opens one unidirectional stream per session, when it has its first reliable message (`welcome`), and writes every reliable message to it, in order. Each message is a 4-byte big-endian length and then that many bytes of MessagePack. Messages therefore arrive in the order they were sent: a `kill` never overtakes the `leave` of its victim, and the joiner's `profiles`, `scores`, `destroyed`, `damaged`, `carved`, `dug`, `cratered` and `built` catch-up come right behind the `welcome`. The client refuses a length over 4 MiB and drops the session on a malformed stream. The server drops a session whose stream accepts nothing for 5 s, or whose outgoing queue (64 messages, shared with snapshots) is full when a reliable message is due, rather than let it miss one: it reconnects and gets the catch-up.
+**Reliable stream.** The server opens one unidirectional stream per session, when it has its first reliable message (`welcome`), and writes every reliable message to it, in order. Each message is a 4-byte big-endian length and then that many bytes of MessagePack. Messages therefore arrive in the order they were sent: a `kill` never overtakes the `leave` of its victim, and the joiner's `profiles`, `scores`, `destroyed`, `damaged`, `carved`, `dug`, `cratered` and `built` catch-up come right behind the `welcome`. The client refuses a length over 4 MiB and drops the session on a malformed stream. The server writes the stream from a task of its own, fed by a queue of up to 1024 messages, so a client slow to read it (a big catch-up on a busy first load) never holds up its datagrams: inputs are still read and snapshots still sent. The server drops a session whose stream accepts nothing for 5 s, whose reliable queue is full, or whose outgoing queue (64 messages, shared with snapshots) is full when a reliable message is due, rather than let it miss one: it reconnects and gets the catch-up.
 
 
 | Tag | Name | Channel | Shape |
 |---|---|---|---|
-| 0 | `welcome` | reliable stream | `[0, version, entity_id u32, tick_rate u8, snapshot_every u8, world_hash u32]` |
+| 0 | `welcome` | reliable stream | `[0, version, entity_id u32, tick_rate u8, snapshot_every u8, world_hash u32, build u32]` |
 | 1 | `snapshot` | datagram | `[1, server_tick u32, baseline u32, ack u32, ride u32, [update, …], [removed u32, …], [shot, …], [bullet, …]]` |
 | 2 | `pong` | datagram | `[2, nonce u32]` |
 | 3 | `leave` | reliable stream | `[3, entity_id u32]` |
@@ -91,7 +92,49 @@ Each datagram repeats the newest 4 frames, so a single lost datagram loses nothi
 - `dug` is sent to a joiner before the craters, in batches: every tile whose ground craters changed, as its difference from the tile file's heights in whole centimetres. `runs` covers the tile's `side × side` samples row-major (as `Tile::ground`): `skip` unchanged samples, then `count` changed ones and their values, repeated. The client lays it on the tile's file heights when it streams in, before the craters dug since it joined, so a joiner's ground is the server's however many craters there have been.
 - `built` tells everyone what happened to the cubes players build with bricks ([BUILDING.md](BUILDING.md)). A cube is named by its place on the buildings' lattice of 72 cm cubes, `(x, y, z)` with its corner at `CELL` (72) cm times each (`crates/shared/src/construct.rs`), not by a building's cell number, as a build can go past any building's grid. `placed` are new cubes with their colour (the builder's, `PLAYER_COLORS`) and material (`construct::MATERIALS`, how tough it is). `removed` are cubes dug out, shot out, rammed or blasted, and `fell` are cubes left with nothing holding them up, which come down. Everything that changed in a tick is one message. Both sides keep the same cubes and collide with them as boxes merged by one deterministic pass, a chunk of 16³ cubes at a time (`chunk_boxes`, the WASM `setConstructChunk` on the client). `live` is false for the catch-up a joiner gets after `welcome`: every cube there is under `placed`, in messages of at most 32 768 cubes, with nothing animated.
 - `rtc` relays proximity voice signaling. The server writes `peer` itself (the sender's entity id), so it cannot be forged, and drops it silently if the receiver's queue is full: WebRTC retries. The voice itself goes peer to peer between players within about 40 m (up to 8 connections, opened at 35 m and closed at 50 m); the lower entity id sends the offer. ICE uses STUN, plus TURN from `VITE_ICE_SERVERS` if set.
-- `world_hash` is FNV-1a over `world.msgpack`. A mismatch means the client loaded a different world than the server simulates.
+- `world_hash` is FNV-1a over `world.msgpack`, and `build` over the client build the server hands out (its `build.txt`), 0 when it hands out none (in development). Either one differing means the page would predict against another world or other rules than the server's: see [Same build, same world](#same-build-same-world).
+
+## Same build, same world
+
+A page only plays against a server that runs its protocol, its build and its world. Anything else
+predicts against other rules or other ground, is corrected by every snapshot and feels like heavy
+input lag, which is what a page kept from before a deploy did.
+
+- **Builds are named.** Every client build gets an id (`vite.config.ts`): it is in the page as
+  `__BUILD_ID__` and beside the files as `dist/build.txt`. The server hashes `build.txt` when it starts
+  (`served_build` in `main.rs`) and names it in `welcome`; a page from another build is one a service
+  worker kept.
+- **The world is always asked for.** The server sends `world.msgpack`, `minimap.webp` and
+  `worlds/active.json` with `Cache-Control: no-cache`, so a browser revalidates them (a 304 when they
+  are unchanged), and the client fetches the manifest with `cache: 'no-cache'`, so the service worker's
+  NetworkFirst cannot hand back an old one either. Tiles are named by their hash and are never stale.
+- **A mismatch stops the page and reloads it** (`Game.outdated`, `updateNow` in `pwa.ts`): it says
+  `bye`, drops the service worker's `world` cache, switches to a waiting build if there is one and
+  reloads. It reloads once for each thing the server runs, so a page that still does not match after
+  that stays stopped and asks for a hard reload rather than reloading round and round.
+
+## Healing
+
+The client watches its session (`ConnectionHealth`, `client/src/net/health.ts`) and ends it when it has
+gone wrong, then rejoins with a fresh welcome, catch-up, replica, clock and inputs: what reloading the
+page did. It says `bye` first, so the server removes the old player at once. It checks once a second:
+
+| Trouble | Means | Done |
+|---|---|---|
+| No `welcome` 10 s after connecting, or nothing from the server for 5 s | the session is dead | reconnect |
+| Of the last 4 s of reconciles (at least 40), 60 per cent put the soldier or the vehicle they drive right by more than 0.5 m, or 4 snap them back more than 3 m | the page and the server no longer agree about where the player is | resync |
+| An input sent 3 s ago is still not acknowledged while snapshots arrive | the server is not getting the inputs | resync |
+| Snapshots arrive but none can be rebuilt for 3 s (their baselines are not held) | the replica cannot catch up | resync |
+
+- Nothing is judged for 3 s after a welcome, while the catch-up and the first snapshots settle the
+  soldier, and a check that comes over 2 s late (a blocked main thread, a tab put away) is skipped once,
+  so what was queued meanwhile is read before anything is judged. A tab that sends nothing has nothing
+  unacknowledged.
+- A resync waits 30 s after the last one. After 3 within 3 minutes rejoining is not helping: the page
+  reloads once (`updateNow('resync')`), and after that only warns.
+- The HUD says "Connection lost: reconnecting…" or "Out of step with the server: rejoining…" until the
+  next welcome, and the network pill (`netStats`) shows what the monitor makes of the session as
+  `link`.
 
 ## Entities and components
 
@@ -233,7 +276,7 @@ arrives in a later snapshot, nearest first. `removed` is never shed.
 |---|---|
 | Simulation tick | 60 Hz |
 | Snapshot rate | 30 Hz |
-| Input datagrams | 60 Hz, about 35 bytes each, so about 2 KB/s up |
+| Input datagrams | 60 Hz, about 35 bytes each, so about 2 KB/s up; taken at 75 a second, up to 30 at once |
 | Snapshot size | about 25 bytes of header, plus about 19 per new soldier or 7 per moving one, 25 to 40 per new vehicle or about 10 to 15 per changing one, and 20 more for the driver. Only what is in range and has changed is sent: 30 players running in view is about 230 bytes, so about 7 KB/s down. Standing still costs nothing |
 | Max datagram | 1200 bytes; bigger ones are dropped unread |
 | Room size | 64 players |
@@ -242,7 +285,7 @@ arrives in a later snapshot, nearest first. `removed` is never shed.
 
 ## Versioning
 
-Bump `PROTOCOL_VERSION` (Rust and TS) on any incompatible change. The server drops inputs with another version. The client refuses a `welcome` with another version and asks for a reload. `WORLD_VERSION` versions the world file separately.
+Bump `PROTOCOL_VERSION` (Rust and TS) on any incompatible change. The server drops inputs with another version. The client refuses a `welcome` with another version, or another build or world, and reloads ([Same build, same world](#same-build-same-world)). `WORLD_VERSION` versions the world file separately.
 
 ## Debugging with a bad network
 
@@ -253,3 +296,17 @@ RAGNAROK_SIM_LATENCY_MS=60 RAGNAROK_SIM_JITTER_MS=30 RAGNAROK_SIM_LOSS=0.05 carg
 ```
 
 Each value applies one way, so RTT grows by about twice the latency. Jitter is uniform in `[0, jitter)` and reorders datagrams. Reliable streams are not delayed.
+
+When a session ends, the server logs what it saw, which tells a bad connection from a bad client:
+
+```
+session ended id=105 reason="client rejoining" seconds=48 datagrams_in=2991 datagrams_out=1469 inputs_shed=0 reliable=4
+player left id=105 frames_dropped=0 underruns=1 snapshots_skipped=0 players=0
+```
+
+`reason` is `client left` or `client rejoining` (a `bye`), `idle`, `closed`, `reliable stream stalled`,
+`reliable backlog full` and so on. `inputs_shed` are input datagrams over the token bucket,
+`frames_dropped` input frames thrown away because the jitter buffer overflowed, `underruns` ticks with
+no fresh input to apply (the server repeated the last one, which the client then has corrected), and
+`snapshots_skipped` snapshots not sent because the session was not draining its outbox. In the browser
+the console says `connection: …` whenever the client heals a session.

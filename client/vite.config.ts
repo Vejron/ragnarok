@@ -2,7 +2,7 @@ import { createReadStream, existsSync, mkdirSync, statSync, writeFileSync } from
 import { extname, join, normalize } from 'node:path'
 import { fileURLToPath, URL } from 'node:url'
 
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import ui from '@nuxt/ui/vite'
 import { VitePWA } from 'vite-plugin-pwa'
@@ -115,9 +115,25 @@ const pwa = VitePWA({
   },
 })
 
+/** This build's id: a new one each time the client is built. */
+const BUILD_ID = Date.now().toString(36)
+
+/**
+ * Names the build: `dist/build.txt`, which the server reads and names in `welcome`, and `__BUILD_ID__`
+ * in the page, so a page a service worker kept from an earlier build knows it is one and reloads
+ * (NETWORKING.md, "Same build, same world"). Empty in development, where nothing is checked.
+ */
+const buildId: Plugin = {
+  name: 'build-id',
+  config: (_, { command }) => ({ define: { __BUILD_ID__: JSON.stringify(command === 'build' ? BUILD_ID : '') } }),
+  generateBundle() {
+    this.emitFile({ type: 'asset', fileName: 'build.txt', source: BUILD_ID })
+  },
+}
+
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [vue(), ui({ ui: { colors: { primary: 'amber', neutral: 'zinc' } } }), editorWorlds, screenshots, pwa],
+  plugins: [vue(), ui({ ui: { colors: { primary: 'amber', neutral: 'zinc' } } }), editorWorlds, screenshots, buildId, pwa],
   server: {
     proxy: {
       // The map editor's API (`cargo run -p editor`).

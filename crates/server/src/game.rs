@@ -83,6 +83,9 @@ pub struct Game {
     /// sync for good; it is disconnected and rejoins with the catch-up instead.
     stalled: Vec<u32>,
     world_hash: u32,
+    /// The client build this server hands out, as `welcome` names it (`served_build` in `main.rs`),
+    /// or 0 when it serves none: the client then skips the check.
+    pub build: u32,
     /// The world's scenario, if it has one (see `scenario`).
     pub scenario: Option<Scenario>,
 }
@@ -136,6 +139,7 @@ impl Game {
             stalled: Vec::new(),
             replicas: BTreeMap::new(),
             world_hash,
+            build: 0,
             scenario: None,
         };
         let names: Vec<&str> = game.mechanics.iter().map(|mechanic| mechanic.name()).collect();
@@ -195,7 +199,7 @@ impl Game {
             return None;
         }
         let id = self.world.alloc_id();
-        let welcome = encode(&Welcome { tag: S_WELCOME, version: PROTOCOL_VERSION, id, tick_rate: TICK_RATE as u8, snapshot_every: SNAPSHOT_EVERY as u8, world_hash: self.world_hash });
+        let welcome = encode(&Welcome { tag: S_WELCOME, version: PROTOCOL_VERSION, id, tick_rate: TICK_RATE as u8, snapshot_every: SNAPSHOT_EVERY as u8, world_hash: self.world_hash, build: self.build });
         if outbox.try_send(Outgoing::Reliable(welcome.into())).is_err() {
             return None;
         }
@@ -227,11 +231,14 @@ impl Game {
         for mechanic in &mut self.mechanics {
             mechanic.on_leave(&mut self.world, id);
         }
+        // How their inputs and snapshots fared, for telling a bad connection from a bad client.
+        let (frames_dropped, underruns) = self.world.entities.get::<Player>(id).map_or((0, 0), |player| (player.inputs.dropped, player.inputs.underruns));
+        let snapshots_skipped = self.replicas.get(&id).map_or(0, |replica| replica.skipped);
         self.world.entities.despawn(id);
         self.outboxes.remove(&id);
         self.replicas.remove(&id);
         self.broadcast(encode(&Leave { tag: S_LEAVE, id }));
-        tracing::info!(id, players = self.world.entities.count::<Player>(), "player left");
+        tracing::info!(id, frames_dropped, underruns, snapshots_skipped, players = self.world.entities.count::<Player>(), "player left");
     }
 
     /// Adds a bot living at `home` on `team` (`TEAM_BOTS` or above) that walks round `route`

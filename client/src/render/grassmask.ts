@@ -98,11 +98,11 @@ function nearSegment([ax, az]: Point2, [bx, bz]: Point2, half: number, x0: numbe
 /**
  * Where grass grows on a tile: ground the terrain paints green (plain grass, parks and woods), and
  * sedge in a marsh, that is not a road, track, water or sand, and not under a building. Paved land is left bare, and a
- * garden is lawn up to the gravel round its houses. A wood's cells are those of the stand over them
+ * garden is lawn up to the gravel round its houses, and none in its flower `beds`. A wood's cells are those of the stand over them
  * (`FLOOR_SHADES`), where the tile's `forest` is given. `surface` is the tile's `rasterSurface`,
  * when it has been worked out already.
  */
-export function grassMask(tile: Pick<TileData, 'cover' | 'roads' | 'water' | 'streams'> & Partial<Pick<TileData, 'rails'>> & { buildings: readonly (Pick<Building, 'footprint'> & { kind?: number })[] }, x0: number, z0: number, size: number, ground: TileGround | null = null, surface = rasterSurface(tile, x0, z0, size, ground), forest: Forest | null = null): GrassMask {
+export function grassMask(tile: Pick<TileData, 'cover' | 'roads' | 'water' | 'streams'> & Partial<Pick<TileData, 'rails'>> & { buildings: readonly (Pick<Building, 'footprint'> & { kind?: number })[] }, x0: number, z0: number, size: number, ground: TileGround | null = null, surface = rasterSurface(tile, x0, z0, size, ground), forest: Forest | null = null, beds?: Float32Array): GrassMask {
   const { side } = surface
   const cells = new Uint8Array(side * side).fill(1)
   for (const cover of tile.cover) {
@@ -130,6 +130,12 @@ export function grassMask(tile: Pick<TileData, 'cover' | 'roads' | 'water' | 'st
       })
     }
     fillRings([ring], x0, z0, side, (row, column) => (cells[row * side + column] = 0))
+  }
+  // Nor in a garden's flower beds (`gardenPlan`): four corners each, the first two along the wall.
+  for (let i = 0; beds && i + 8 <= beds.length; i += 8) {
+    const along: [Point2, Point2] = [[(beds[i]! + beds[i + 6]!) / 2, (beds[i + 1]! + beds[i + 7]!) / 2], [(beds[i + 2]! + beds[i + 4]!) / 2, (beds[i + 3]! + beds[i + 5]!) / 2]]
+    const half = Math.hypot(beds[i + 6]! - beds[i]!, beds[i + 7]! - beds[i + 1]!) / 2 + 0.6
+    nearSegment(along[0], along[1], half, x0, z0, side, (at) => (cells[at] = 0))
   }
   // Streams are drawn as ribbons on the ground: keep the blades out of the water.
   for (const stream of tile.streams) {

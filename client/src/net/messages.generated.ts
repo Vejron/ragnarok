@@ -8,6 +8,7 @@ export const C_INPUT = 0
 export const C_PING = 1
 export const C_RTC = 2
 export const C_HANDS = 3
+export const C_BYE = 4
 export const S_WELCOME = 0
 export const S_SNAPSHOT = 1
 export const S_PONG = 2
@@ -64,6 +65,10 @@ export interface Ping {
   nonce: number
 }
 
+export interface Bye {
+  reason: number
+}
+
 export interface ClientHands {
   lx: number
   ly: number
@@ -81,6 +86,7 @@ export interface Welcome {
   tickRate: number
   snapshotEvery: number
   worldHash: number
+  build: number
 }
 
 export interface HullMark {
@@ -481,14 +487,15 @@ function decodeDugTile(r: unknown): DugTile | undefined {
 }
 
 function decodeWelcome(r: readonly unknown[]): Welcome | undefined {
-  if (r.length !== 6) return undefined
+  if (r.length !== 7) return undefined
   const version = w.int(r[1])
   const id = w.int(r[2])
   const tickRate = w.int(r[3])
   const snapshotEvery = w.int(r[4])
   const worldHash = w.int(r[5])
-  if (version === undefined || id === undefined || tickRate === undefined || snapshotEvery === undefined || worldHash === undefined) return undefined
-  return { type: 'welcome', version, id, tickRate, snapshotEvery, worldHash }
+  const build = w.int(r[6])
+  if (version === undefined || id === undefined || tickRate === undefined || snapshotEvery === undefined || worldHash === undefined || build === undefined) return undefined
+  return { type: 'welcome', version, id, tickRate, snapshotEvery, worldHash, build }
 }
 
 function decodeSnapshot(r: readonly unknown[]): Snapshot | undefined {
@@ -721,6 +728,8 @@ export const writeInputFrame = (m: InputFrame): unknown[] => [m.seq, m.strafe, m
 export const writeClientInput = (m: ClientInput): unknown[] => [C_INPUT, m.version, m.baseline, m.frames.map(writeInputFrame)]
 
 export const writePing = (m: Ping): unknown[] => [C_PING, m.nonce]
+
+export const writeBye = (m: Bye): unknown[] => [C_BYE, m.reason]
 
 export const writeClientHands = (m: ClientHands): unknown[] => [C_HANDS, m.lx, m.ly, m.lz, m.rx, m.ry, m.rz, m.flags]
 

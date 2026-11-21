@@ -83,9 +83,10 @@ fn samples() -> Vec<(&'static str, Vec<u8>)> {
     vec![
         case("input", C_INPUT, &sample_input()),
         case("ping", C_PING, &Ping { tag: C_PING, nonce: 5 }),
+        case("bye", C_BYE, &Bye { tag: C_BYE, reason: BYE_REJOINING }),
         case("hands", C_HANDS, &ClientHands { tag: C_HANDS, lx: -1000, ly: -1500, lz: -300, rx: 850, ry: 600, rz: -2400, flags: HANDS_GRIP_RIGHT | HANDS_REACH_RIGHT }),
         case("rtcOut", C_RTC, &Rtc { tag: C_RTC, peer: 5, kind: RTC_ICE, json: "x".into() }),
-        case("welcome", S_WELCOME, &Welcome { tag: S_WELCOME, version: PROTOCOL_VERSION, id: 70_000, tick_rate: 60, snapshot_every: 2, world_hash: 0xdead_beef }),
+        case("welcome", S_WELCOME, &Welcome { tag: S_WELCOME, version: PROTOCOL_VERSION, id: 70_000, tick_rate: 60, snapshot_every: 2, world_hash: 0xdead_beef, build: 0x1234_5678 }),
         case("snapshot", S_SNAPSHOT, &sample_snapshot()),
         case("pong", S_PONG, &Pong { tag: S_PONG, nonce: 5 }),
         case("leave", S_LEAVE, &Leave { tag: S_LEAVE, id: 9 }),

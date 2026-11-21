@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { encode } from '@msgpack/msgpack'
-import { decodeServer, NOTICE_OBJECTIVE, encodeInput, encodeHands, encodePing, HANDS_GRIP_RIGHT, HANDS_REACH_RIGHT, encodeRtc, RTC_ICE, FLAG_DEAD, FLAG_GROUNDED, toMrad, TURRET_STOWED, DEATH_ROADKILL, WEAPON_ROADKILL, WEAPON_SNIPER } from '@/net/codec'
+import { decodeServer, NOTICE_OBJECTIVE, encodeBye, encodeInput, encodeHands, encodePing, HANDS_GRIP_RIGHT, HANDS_REACH_RIGHT, encodeRtc, RTC_ICE, FLAG_DEAD, FLAG_GROUNDED, toMrad, TURRET_STOWED, DEATH_ROADKILL, WEAPON_ROADKILL, WEAPON_SNIPER } from '@/net/codec'
 import { Replica } from '@/net/replica'
 import type { Update } from '@/net/replicated'
-import { BUTTON_FIRE, BUTTON_JUMP, BUTTON_RUN, PROTOCOL_VERSION } from '@/sim/consts'
+import { BUTTON_FIRE, BUTTON_JUMP, BUTTON_RUN, BYE_REJOINING, PROTOCOL_VERSION } from '@/sim/consts'
 import fixture from './messages.fixture.json'
 
 // `messages.fixture.json` holds every message as the Rust tests encode it (`crates/shared/src/protocol/tests.rs`).
@@ -105,7 +105,7 @@ describe('codec', () => {
   })
 
   it('decodes the welcome, pongs and leaving', () => {
-    expect(decodeServer(bytes('welcome'))).toEqual({ type: 'welcome', version: PROTOCOL_VERSION, id: 70000, tickRate: 60, snapshotEvery: 2, worldHash: 0xdeadbeef })
+    expect(decodeServer(bytes('welcome'))).toEqual({ type: 'welcome', version: PROTOCOL_VERSION, id: 70000, tickRate: 60, snapshotEvery: 2, worldHash: 0xdeadbeef, build: 0x12345678 })
     expect(decodeServer(bytes('pong'))).toEqual({ type: 'pong', nonce: 5 })
     expect(decodeServer(bytes('leave'))).toEqual({ type: 'leave', id: 9 })
     expect(decodeServer(encode([0, 1, 2, 3, 4]))).toBeNull()
@@ -131,6 +131,7 @@ describe('codec', () => {
 
   it('round-trips pings and wraps angles', () => {
     expect([...encodePing(5)]).toEqual(fixture.ping)
+    expect([...encodeBye(BYE_REJOINING)]).toEqual(fixture.bye)
     // A Titan's pilot's hands, already in centimetres.
     expect([...encodeHands({ lx: -1000, ly: -1500, lz: -300, rx: 850, ry: 600, rz: -2400, flags: HANDS_GRIP_RIGHT | HANDS_REACH_RIGHT })]).toEqual(fixture.hands)
     expect(toMrad(Math.PI * 2 + 1)).toBe(1000)

@@ -19,6 +19,8 @@ pub const C_PING: u8 = 1;
 pub const C_RTC: u8 = 2;
 /// Where a Titan's pilot wants its fists (`ClientHands`).
 pub const C_HANDS: u8 = 3;
+/// The page is closing its session (`Bye`).
+pub const C_BYE: u8 = 4;
 
 /// Server → client tags.
 pub const S_WELCOME: u8 = 0;
@@ -365,14 +367,22 @@ messages! {
     /// A latency probe, echoed as a `Pong`.
     [C_PING] Ping { nonce: u32 }
 
+    /// The page is closing its session: `reason` is `BYE_LEAVING` (the tab is closing or reloading) or
+    /// `BYE_REJOINING` (it rejoins to heal the session). Sent a few times over, as a datagram can be lost.
+    /// The server cannot see a WebTransport session close on a connection that stays open, so without
+    /// it the player would stand on in the world until the idle timeout.
+    [C_BYE] Bye { reason: u8 }
+
     /// Where a Titan's pilot wants its two fists, in centimetres in its hull frame (+X right, +Y up, -Z ahead), and
     /// `HANDS_*` flags: which hands are closed and which are being moved at all. Sent every tick while
     /// piloting one, newest wins; a pilot who stops sending lets the arms hang.
     #[derive(Copy, Default, Eq)]
     [C_HANDS] ClientHands { lx: i16, ly: i16, lz: i16, rx: i16, ry: i16, rz: i16, flags: u8 }
 
-    /// Sent once on a reliable stream.
-    [S_WELCOME] Welcome { version: u8, id: u32, tick_rate: u8, snapshot_every: u8, world_hash: u32 }
+    /// Sent once on a reliable stream. `world_hash` is the FNV hash of the `world.msgpack` the server
+    /// runs, and `build` that of the client build it hands out (0 when it hands out none, in
+    /// development): a page whose world or build differs must reload rather than play.
+    [S_WELCOME] Welcome { version: u8, id: u32, tick_rate: u8, snapshot_every: u8, world_hash: u32, build: u32 }
 
     /// Something that just happened, for drawing; `x, y, z` is where it ended. A rifle shot is a tracer
     /// from the shooter's own position to there; a rocket or a wreck is a burst at there (the shooter is

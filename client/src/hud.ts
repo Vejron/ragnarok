@@ -26,6 +26,8 @@ export interface HudStats {
   tiles: number
   correction: number
   pending: number
+  /** What the connection's health monitor makes of the session (`ConnectionHealth.state`): "ok", or what is wrong. */
+  link: string
   /** Show the network numbers (ping, players in view, the tally, the sync line); else just the connection. */
   netStats: boolean
   locked: boolean

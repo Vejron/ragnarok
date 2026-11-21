@@ -2,10 +2,10 @@
 
 The ground under the trees was one green with grass tufts on it. It is now the floor of the forest
 that stands there: a pine heath, the moss under spruce, or a birch wood, each painted in its own
-colours and grown with its own plants, with stumps, fallen trunks and mossy stones among them.
+colours and grown with its own plants, with stumps and mossy stones among them.
 
 It is all the client's, and all for show, as the grass is. Nothing in a world's files changed, the
-server knows none of it, and nothing here is solid: a foot goes through a fallen trunk.
+server knows none of it, and nothing here is solid: a foot goes through a stump.
 
 ## Which forest stands where
 
@@ -54,11 +54,11 @@ far off. Painting a wooded tile takes the worker 0.3 ms longer than it did (1100
   hummock of moss (a low mound), or a fern (five to seven arched fronds). Shrubs and ferns grow in
   drifts some ten metres across, each their own (`driftsAt`), with open floor between. All of it is lit
   as the ground under it and sways a little in the wind.
-- **Stumps, fallen trunks and stones** (the `deadwood` layer). 30 places are tried in every 32 m
-  square (`TIMBER`): a stump at about one in eight, a trunk of 3 to 8 m at one in ten, a stone under
-  half a metre at one in five, most of each in the spruce. Their bark is the stand's (a birch's is
-  white), and moss takes what faces up, most under spruce. A trunk lies only where the ground
-  carries it from end to end, and none of the three stands in a tree, a rock or a crater.
+- **Stumps and stones** (the `deadwood` layer). 30 places are tried in every 32 m square
+  (`TIMBER`): a stump at about one in eight and a stone under half a metre at one in five, most of
+  each in the spruce. A stump's bark is the stand's (a birch's is white), and moss takes what faces
+  up, most under spruce. Neither stands in a tree, a rock or a crater. Fallen trunks were tried and
+  taken out: they added nothing to the look.
 
 Where things stand is asked of the grass's mask (`Grass.growsAt`), so nothing grows on a road, in
 water, under a house, on bare rock or in a crater, and a shell's crater clears what stood there.
@@ -67,6 +67,8 @@ In a winter world the plants are under the snow (as the grass is) and the timber
 faces up. Turning the grass off turns the plants off; the timber stays.
 
 ## How it is drawn, and what it costs
+
+The gardens round houses are drawn the same way, by the same `ChunkLayer` ([GARDENS.md](GARDENS.md)).
 
 Each layer is built on the CPU in square chunks about the camera (16 m for the plants, 32 m for the
 timber), one merged mesh a chunk, two chunks a frame at most. A chunk of plants takes 0.7 ms to
@@ -91,7 +93,6 @@ The grass in the same views is 0.03 to 0.05 ms, and under conifers there is now 
 
 ## Not done
 
-- The timber is not solid, and bots see through it. A trunk to take cover behind would be the
-  importer's to place, as its rocks are.
+- The stumps and stones are not solid, and bots see through them.
 - Hollows are painted, not dug: the ground's heights are the laser's.
 - A thicket from an orienteering map keeps its own green.

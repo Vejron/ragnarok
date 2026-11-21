@@ -4,6 +4,7 @@ import type { Building, TileData } from '@/world'
 import { buildingBuffers, buildingTransferables, type BuildingBuffers } from './buildingmesh'
 import { drapedMeshes, drapedTransferables, type Draped } from './groundmesh'
 import { forestOf, woodsOf } from './forest'
+import { gardenPlan, type GardenPlan } from './gardenplan'
 import { grassMask, type GrassMask } from './grassmask'
 import { wetnessPixels } from './marshnoise'
 import type { HeightSource } from './shade'
@@ -19,22 +20,29 @@ import { reliefPixels, terrainBuffers, TERRAIN_LOD_ERRORS, type CoverSource, typ
 
 /** What of a tile `prepareTile` reads: small enough to send to the worker (`tileParts`). */
 export type TileParts = Pick<TileData, 'cover' | 'crops' | 'detail' | 'roads' | 'rails' | 'ski' | 'water' | 'reach' | 'flow' | 'foam' | 'stir' | 'lane' | 'streams' | 'bridges' | 'collision' | 'look'> & {
-  buildings: readonly Pick<Building, 'first' | 'walls' | 'roof' | 'roofKind' | 'kind' | 'cells' | 'footprint' | 'paint' | 'look'>[]
+  buildings: readonly Pick<Building, 'first' | 'walls' | 'roof' | 'roofKind' | 'kind' | 'cells' | 'footprint' | 'paint' | 'look' | 'front'>[]
   /** The tile's trees as the forest's floor reads them (`woodsOf`). */
   woods: Float32Array
+  /** Where its graves stand, x and z each: no garden is grown in a churchyard. */
+  graves?: Float32Array
+}
+
+/** Where `graves` stand, x and z each. */
+export function gravesOf(graves: TileData['graves']): Float32Array {
+  return Float32Array.from((graves ?? []).flatMap(({ x, z }) => [x, z]))
 }
 
 /** The parts of `tile` `prepareTile` reads, leaving out what the worker has no use for (all of a tree but where it stands and what it is, the file's bytes). */
 export function tileParts(tile: TileData): TileParts {
   const { cover, crops, detail, roads, rails, ski, water, reach, flow, foam, stir, lane, streams, bridges, collision, look } = tile
-  const buildings = tile.buildings.map(({ first, walls, roof, roofKind, kind, cells, footprint, paint, look }) => ({ first, walls, roof, roofKind, kind, cells, footprint, paint, look: look ?? null }))
-  return { cover, ...(crops ? { crops } : {}), ...(detail ? { detail } : {}), roads, rails, ski, water, ...(reach ? { reach } : {}), ...(flow ? { flow } : {}), ...(foam ? { foam } : {}), ...(stir ? { stir } : {}), ...(lane ? { lane } : {}), streams, bridges, collision, ...(look ? { look } : {}), buildings, woods: woodsOf(tile.trees) }
+  const buildings = tile.buildings.map(({ first, walls, roof, roofKind, kind, cells, footprint, paint, look, front }) => ({ first, walls, roof, roofKind, kind, cells, footprint, paint, look: look ?? null, front }))
+  return { cover, ...(crops ? { crops } : {}), ...(detail ? { detail } : {}), roads, rails, ski, water, ...(reach ? { reach } : {}), ...(flow ? { flow } : {}), ...(foam ? { foam } : {}), ...(stir ? { stir } : {}), ...(lane ? { lane } : {}), streams, bridges, collision, ...(look ? { look } : {}), buildings, woods: woodsOf(tile.trees), graves: gravesOf(tile.graves) }
 }
 
 /** What `prepareTile` makes a tile from. */
 export interface TileInput {
   /** The tile's parts, or on the main thread all of it: its `trees` then stand for the `woods` made of them. */
-  tile: Omit<TileParts, 'woods'> & { woods?: Float32Array; trees?: TileData['trees'] }
+  tile: Omit<TileParts, 'woods' | 'graves'> & { woods?: Float32Array; trees?: TileData['trees']; graves?: Float32Array | TileData['graves'] }
   /** Its ground, or null on a flat world. */
   ground: TileGround | null
   /** Keeps building colours stable between reloads and varied across tiles. */
@@ -63,6 +71,8 @@ export interface PreparedTile {
   /** What lies under each cell (`Surfaces`), and where grass grows (`Grass`); null without `place`. */
   surface: TileSurface | null
   grass: GrassMask | null
+  /** What grows in its houses' gardens (`gardenPlan`); null without `place`. */
+  gardens: GardenPlan | null
 }
 
 /** Paints a tile's cover, seen from above, into a bitmap, or null when there is no canvas. */
@@ -78,15 +88,18 @@ export function prepareTile(input: TileInput, around?: HeightSource, paint?: Cov
   const surface = place ? rasterSurface(tile, place.x0, place.z0, place.size, ground) : null
   const woods = tile.woods ?? woodsOf(tile.trees ?? [])
   const forest = place ? forestOf(woods, place.x0, place.z0, place.size) : null
+  const graves = tile.graves instanceof Float32Array ? tile.graves : gravesOf(tile.graves)
+  const gardens = surface ? gardenPlan(tile, surface, woods, graves) : null
   return {
     level: input.level,
     undrawn: [...input.undrawn],
     terrain: ground ? terrainOf(tile, ground, error, around) : null,
-    ...(paint && ground ? { cover: paint({ ...tile, woods }, ground) } : {}),
+    ...(paint && ground ? { cover: paint({ ...tile, woods, ...(gardens ? { beds: gardens.beds } : {}) }, ground) } : {}),
     draped: ground ? drapedMeshes(tile, ground, around) : null,
     buildings: buildingBuffers(tile, input.salt, new Set(input.undrawn)),
     surface,
-    grass: place && surface ? grassMask(tile, place.x0, place.z0, place.size, ground, surface, forest) : null,
+    grass: place && surface ? grassMask(tile, place.x0, place.z0, place.size, ground, surface, forest, gardens?.beds) : null,
+    gardens,
   }
 }
 
@@ -111,5 +124,6 @@ export function preparedTransferables(prepared: PreparedTile): Transferable[] {
   if (prepared.buildings) out.push(...buildingTransferables(prepared.buildings))
   if (prepared.surface) out.push(prepared.surface.cells.buffer as ArrayBuffer)
   if (prepared.grass) out.push(prepared.grass.cells.buffer as ArrayBuffer)
+  if (prepared.gardens) out.push(prepared.gardens.items.buffer as ArrayBuffer, prepared.gardens.beds.buffer as ArrayBuffer)
   return out
 }

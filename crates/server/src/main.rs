@@ -111,6 +111,28 @@ fn add_test_tanks(game: &mut game::Game) {
     }
 }
 
+/// Where the client's built files are, which the server hands out in production.
+fn dist_path() -> String {
+    env("RAGNAROK_DIST").unwrap_or_else(|| "client/dist".into())
+}
+
+/// The client build this server hands out, for `welcome`: the FNV hash of the `build.txt` Vite writes
+/// beside the client's files, or 0 when it hands out none (in development Vite serves the client). A
+/// page from any other build (one a service worker kept from before a deploy) predicts with other
+/// tables and physics than the server's, so it must reload rather than play.
+fn served_build() -> u32 {
+    if env("RAGNAROK_DOMAIN").is_none() {
+        return 0;
+    }
+    match std::fs::read(Path::new(&dist_path()).join("build.txt")) {
+        Ok(id) => world_hash(id.trim_ascii()),
+        Err(error) => {
+            tracing::warn!(%error, "no build.txt beside the client's files: pages are not checked against this build");
+            0
+        }
+    }
+}
+
 /// How long browsers keep the client's files: Vite's hashed `assets/` for good, and whatever names the
 /// current build (the pages, the service worker, the app manifest) only after asking, so a new build
 /// reaches installed apps on their next check.
@@ -125,6 +147,10 @@ async fn cache_headers(req: &mut Request, depot: &mut Depot, res: &mut Response,
         || path.ends_with(".webmanifest")
         || path == "/sw.js"
         || path.starts_with("/workbox-")
+        // The world must be the one the server runs: always asked for, and a 304 when it is unchanged.
+        || path.ends_with("/world.msgpack")
+        || path == "/minimap.webp"
+        || path.ends_with("/active.json")
     {
         "no-cache"
     } else {
@@ -144,6 +170,7 @@ async fn main() -> Result<()> {
     let (world, hash) = load_world()?;
     let (commands, receiver) = mpsc::channel(session::COMMAND_CAPACITY);
     let mut game = game::Game::new(world, hash)?;
+    game.build = served_build();
     let scenario_path = Path::new(&world_path()).with_file_name("scenario.json");
     game.scenario = scenario::load(&scenario_path, &game.world.map)?;
     if let Some(home) = game.scenario.as_ref().and_then(scenario::Scenario::backpack) {
@@ -173,7 +200,7 @@ async fn main() -> Result<()> {
     }));
 
     if let Some(domain) = domain {
-        let dist = env("RAGNAROK_DIST").unwrap_or_else(|| "client/dist".into());
+        let dist = dist_path();
         router = router.push(Router::with_path("{*path}").hoop(cache_headers).get(StaticDir::new([dist]).defaults("index.html")));
         let cache = env("RAGNAROK_ACME_CACHE").unwrap_or_else(|| "crates/server/acme".into());
         let staging = env("RAGNAROK_ACME_STAGING").is_some();

@@ -11,13 +11,13 @@ import { normalAt } from './shade'
 
 /*
  * What stands on a forest's floor (FOREST-FLOOR.md): bilberry, lingonberry and heather, cushions of
- * moss and lichen, ferns, and among them stumps, fallen trunks and mossy stones. Which of them, and how
+ * moss and lichen, ferns, and among them stumps and mossy stones. Which of them, and how
  * many, follows the stand over the spot (`forest.ts`): a pine heath, the moss under spruce, a birch
  * wood. It is all for show, as the grass is: the server knows none of it, and nothing here is solid.
  *
  * Two layers, each built on the CPU in square chunks about the camera, one merged mesh a chunk. The
  * plants are many and small, so they reach a few tens of metres and thin out over that as the grass
- * does; the stumps, trunks and stones are few and reach as far as a wood is seen into. Everything
+ * does; the stumps and stones are few and reach as far as a wood is seen into. Everything
  * shrinks into its own foot at the end of its reach, so nothing pops.
  */
 
@@ -29,7 +29,7 @@ export interface FloorDensity {
   full: number
   /** Metres from the camera where the last plants have shrunk away. */
   far: number
-  /** Metres from the camera where the stumps, trunks and stones have shrunk away. */
+  /** Metres from the camera where the stumps and stones have shrunk away. */
   timber: number
 }
 
@@ -63,7 +63,7 @@ const LICHEN: Mound = { radius: [0.15, 0.38], height: [0.05, 0.11], low: hex(0x8
 const HUMMOCK: Mound = { radius: [0.45, 1.0], height: [0.12, 0.26], low: hex(0x44682f), high: hex(0x6f9c3c), ragged: 0.15 }
 
 /** A dwarf shrub: a clump of sprigs, each a leaf-shaped blade standing out of the floor. */
-interface Shrub {
+export interface Shrub {
   /** The clump's radius, metres: a least and a most. */
   radius: readonly [number, number]
   /** Sprigs in a clump: a least and a most. */
@@ -76,8 +76,10 @@ interface Shrub {
   /** A sprig's colour at its foot and at its tip. */
   low: Color
   high: Color
-  /** The colour of this share of the tips, heather's flowers; none without. */
+  /** The colour of the flowering tips, heather's; none without. */
   bloom?: Color
+  /** The share of the tips in flower, 0.45 unless said. */
+  blooms?: number
   /** How far the wind moves a tip, as offset per metre of height squared. */
   sway: number
 }
@@ -116,17 +118,17 @@ const DEADWOOD: Record<number, Deadwood> = {
   [FLOOR_LEAF]: { bark: hex(0xd4d0c2), mark: hex(0x3a3632), moss: 0.4 },
 }
 
-/** The chance of a stump, a fallen trunk and a stone at a place tried for timber, by the floor. */
-const TIMBER: Record<number, readonly [number, number, number]> = {
-  [FLOOR_MIXED]: [0.13, 0.09, 0.2],
-  [FLOOR_HEATH]: [0.12, 0.06, 0.16],
-  [FLOOR_MOSS]: [0.14, 0.12, 0.3],
-  [FLOOR_LEAF]: [0.1, 0.09, 0.12],
+/** The chance of a stump and of a stone at a place tried for timber, by the floor. */
+const TIMBER: Record<number, readonly [number, number]> = {
+  [FLOOR_MIXED]: [0.13, 0.2],
+  [FLOOR_HEATH]: [0.12, 0.16],
+  [FLOOR_MOSS]: [0.14, 0.3],
+  [FLOOR_LEAF]: [0.1, 0.12],
 }
 
 const MOSS_DARK = hex(0x35561f)
 const MOSS_LIGHT = hex(0x6c9a36)
-/** A stump's cut face and a trunk's broken end: old wood, greyed. */
+/** A stump's cut face: old wood, greyed. */
 const HEARTWOOD = hex(0x9c8560)
 const STONE = hex(0x7c7b77)
 
@@ -174,17 +176,16 @@ export class FloorBuilder {
   }
 }
 
-const mix = (a: Color, b: Color, t: number) => new Color(a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t)
-const lerp = ([a, b]: readonly [number, number], t: number) => a + (b - a) * t
-const unit = (x: number, y: number, z: number): [number, number, number] => {
+export const mix = (a: Color, b: Color, t: number) => new Color(a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t)
+export const lerp = ([a, b]: readonly [number, number], t: number) => a + (b - a) * t
+export const unit = (x: number, y: number, z: number): [number, number, number] => {
   const inv = 1 / Math.max(1e-6, Math.hypot(x, y, z))
   return [x * inv, y * inv, z * inv]
 }
 
-/** Sides of a mound, a stump and a trunk. */
+/** Sides of a mound and of a stump. */
 const MOUND_SIDES = 6
 const STUMP_SIDES = 7
-const TRUNK_SIDES = 6
 
 /**
  * A cushion at `(x, y, z)` on ground of normal `n`: a ring on the ground, a ring part of the way up
@@ -242,7 +243,7 @@ export function addShrub(out: FloorBuilder, shrub: Shrub, x: number, y: number, 
     const half = length * shrub.width * 0.5
     const [sx, sz] = [(-oz * Math.cos(twist) + ox * Math.sin(twist)) * half, (ox * Math.cos(twist) + oz * Math.sin(twist)) * half]
     const tone = 0.85 + 0.3 * next()
-    const tip = shrub.bloom && next() < 0.45 ? shrub.bloom : shrub.high
+    const tip = shrub.bloom && next() < (shrub.blooms ?? 0.45) ? shrub.bloom : shrub.high
     const first = out.vertices
     const mid = [foot[0]! + ox * along * 0.5, foot[1]! + up * 0.55, foot[2]! + oz * along * 0.5]
     out.vertex(foot, n, shrub.low, tone * 0.8, 0, x, rootY, z, rank)
@@ -316,51 +317,6 @@ export function addStump(out: FloorBuilder, wood: Deadwood, x: number, y: number
   }
 }
 
-/**
- * A fallen trunk from `a` to `b` (each `[x, y, z]` on the ground), `radius` thick at `a` and thinner at
- * `b`: sunk a little into the floor, moss along what faces up, a broken end at each.
- */
-export function addTrunk(out: FloorBuilder, wood: Deadwood, a: readonly number[], b: readonly number[], radius: number, next: () => number) {
-  const along = unit(b[0]! - a[0]!, b[1]! - a[1]!, b[2]! - a[2]!)
-  const side = unit(-along[2], 0, along[0])
-  const up = [along[1] * side[2] - along[2] * side[1], along[2] * side[0] - along[0] * side[2], along[0] * side[1] - along[1] * side[0]] as const
-  const lift = up[1] < 0 ? -1 : 1
-  const rings: number[] = []
-  const ends = [[a, radius, -1], [b, radius * 0.7, 1]] as const
-  for (const [end, r, facing] of ends) {
-    // The trunk's axis is most of its radius over the ground; the root is under it.
-    const centre = [end[0]!, end[1]! + r * 0.7, end[2]!]
-    const rootY = end[1]! - r - 0.1
-    rings.push(out.vertices)
-    for (let k = 0; k < TRUNK_SIDES; k++) {
-      const angle = (k / TRUNK_SIDES) * Math.PI * 2
-      const [cs, sn] = [Math.cos(angle), Math.sin(angle) * lift]
-      const normal = [side[0] * cs + up[0] * sn, side[1] * cs + up[1] * sn, side[2] * cs + up[2] * sn]
-      const bark = next() < 0.3 ? wood.mark : wood.bark
-      const mossy = Math.min(1, Math.max(0, normal[1]! * 1.4) * wood.moss * (0.6 + 0.8 * next()))
-      const color = mix(bark, mix(MOSS_DARK, MOSS_LIGHT, next()), mossy)
-      out.vertex([centre[0]! + normal[0]! * r, centre[1]! + normal[1]! * r, centre[2]! + normal[2]! * r], normal, color, 0.85 + 0.15 * Math.max(0, normal[1]!), 0, end[0]!, rootY, end[2]!, 0)
-    }
-    // The broken end: a point pushed out a little, its faces lit as the end faces.
-    const outward = [along[0] * facing, along[1] * facing, along[2] * facing]
-    const cap = out.vertices
-    const tip = out.vertex([centre[0]! + outward[0]! * r * 0.5, centre[1]! + outward[1]! * r * 0.5, centre[2]! + outward[2]! * r * 0.5], outward, HEARTWOOD, 0.8, 0, end[0]!, rootY, end[2]!, 0)
-    for (let k = 0; k < TRUNK_SIDES; k++) {
-      const p = out.positions.slice((cap - TRUNK_SIDES + k) * 3, (cap - TRUNK_SIDES + k) * 3 + 3)
-      out.vertex(p, outward, HEARTWOOD, 0.6, 0, end[0]!, rootY, end[2]!, 0)
-    }
-    for (let k = 0; k < TRUNK_SIDES; k++) {
-      const [p, q] = [tip + 1 + k, tip + 1 + ((k + 1) % TRUNK_SIDES)]
-      out.indices.push(...(facing < 0 ? [tip, p, q] : [tip, q, p]))
-    }
-  }
-  const [ra, rb] = rings as [number, number]
-  for (let k = 0; k < TRUNK_SIDES; k++) {
-    const j = (k + 1) % TRUNK_SIDES
-    out.indices.push(ra + k, rb + k, ra + j, ra + j, rb + k, rb + j)
-  }
-}
-
 /** A stone at `(x, y, z)`, `radius` across and `height` high: one of a few carved shapes, mossed on what faces up. */
 export function addStone(out: FloorBuilder, moss: number, x: number, y: number, z: number, radius: number, height: number, next: () => number) {
   stoneShapes ??= STONE_CARVINGS.map((carving, i) => carveRock(carving, 311 + i * 53, 1))
@@ -429,8 +385,12 @@ interface Chunk {
 const chunkKey = (cx: number, cz: number) => (cz + 32768) * 65536 + (cx + 32768)
 const chunkAt = (key: number): [number, number] => [(key % 65536) - 32768, Math.floor(key / 65536) - 32768]
 
-/** One layer's chunks about the camera. */
-class Layer {
+/**
+ * One layer of small things about the camera, in square chunks `size` metres a side, each one merged
+ * mesh built by `build` (a `FloorBuilder`'s), shrinking into their roots with distance. Gardens
+ * (`gardens.ts`) are drawn by one too. With `shadows` the things cast them.
+ */
+export class ChunkLayer {
   readonly root = new Group()
   readonly material: ShaderMaterial
   private readonly chunks = new Map<number, Chunk>()
@@ -439,6 +399,7 @@ class Layer {
     name: string,
     private readonly size: number,
     private readonly build: (cx: number, cz: number) => Geometry | null,
+    private readonly shadows = false,
   ) {
     this.root.name = name
     this.material = new ShaderMaterial({
@@ -488,7 +449,7 @@ class Layer {
       const mesh = new Mesh(geometry, this.material)
       // An empty chunk is kept too, so it is not tried again every frame.
       mesh.visible = geometry.vertexCount > 0
-      mesh.castShadow = false
+      mesh.castShadow = this.shadows
       mesh.receiveShadow = true
       const old = this.chunks.get(key)
       if (old) this.drop(key, old)
@@ -528,8 +489,8 @@ type Standing = readonly [number, number, number]
 /** The forest's floor about the camera, over every streamed-in tile's woods. */
 export class ForestFloor {
   readonly root = new Group()
-  private readonly plants: Layer
-  private readonly timber: Layer
+  private readonly plants: ChunkLayer
+  private readonly timber: ChunkLayer
   private density: FloorDensity = FLOOR_FULL
   private plantsOn = true
   /** What stands on each tile, by the timber chunk it stands in. */
@@ -548,8 +509,8 @@ export class ForestFloor {
     private readonly floorAt: (x: number, z: number) => number,
   ) {
     this.root.name = 'forestfloor'
-    this.plants = new Layer('undergrowth', PLANT_CHUNK, (cx, cz) => this.buildPlants(cx, cz))
-    this.timber = new Layer('deadwood', TIMBER_CHUNK, (cx, cz) => this.buildTimber(cx, cz))
+    this.plants = new ChunkLayer('undergrowth', PLANT_CHUNK, (cx, cz) => this.buildPlants(cx, cz))
+    this.timber = new ChunkLayer('deadwood', TIMBER_CHUNK, (cx, cz) => this.buildTimber(cx, cz))
     this.root.add(this.plants.root, this.timber.root)
     this.applyDensity()
   }
@@ -700,40 +661,16 @@ export class ForestFloor {
       if (floor === undefined) continue
       const y = this.heightAt(x, z)
       if (y === null) continue
-      const [stump, trunk, stone] = TIMBER[floor]!
+      const [stump, stone] = TIMBER[floor]!
       const wood = DEADWOOD[floor]!
       if (pick < stump) {
         if (this.clear(x, z, 0.5)) addStump(out, wood, x, y, z, own)
-      } else if (pick < stump + trunk) {
-        this.fell(out, wood, x, y, z, own)
-      } else if (pick < stump + trunk + stone) {
+      } else if (pick < stump + stone) {
         const radius = 0.18 + own() * 0.27
         if (this.clear(x, z, radius)) addStone(out, wood.moss, x, y, z, radius, radius * (0.5 + 0.4 * own()), own)
       }
     }
     return out.vertices > 0 ? out.geometry() : null
-  }
-
-  /** A fallen trunk through `(x, y, z)`, if it can lie there: on the forest's floor all its length, on ground that carries it, and through no standing tree. */
-  private fell(out: FloorBuilder, wood: Deadwood, x: number, y: number, z: number, next: () => number) {
-    const length = 3 + next() * 5, radius = 0.1 + next() * 0.12
-    const yaw = next() * Math.PI * 2
-    const [dx, dz] = [(Math.cos(yaw) * length) / 2, (Math.sin(yaw) * length) / 2]
-    const ends: number[][] = []
-    for (const side of [-1, 1]) {
-      const [ex, ez] = [x + dx * side, z + dz * side]
-      const ey = this.floor(ex, ez) === undefined ? null : this.heightAt(ex, ez)
-      if (ey === null) return
-      ends.push([ex, ey, ez])
-    }
-    const [a, b] = ends as [number[], number[]]
-    // Not up a bank, nor bridging a hollow, nor through a hump.
-    if (Math.abs(a[1]! - b[1]!) > length * 0.3 || Math.abs((a[1]! + b[1]!) / 2 - y) > radius) return
-    for (let k = 0; k <= 6; k++) {
-      const t = k / 6
-      if (!this.clear(a[0]! + (b[0]! - a[0]!) * t, a[2]! + (b[2]! - a[2]!) * t, radius + 0.15)) return
-    }
-    addTrunk(out, wood, a, b, radius, next)
   }
 
   dispose() {

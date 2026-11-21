@@ -772,7 +772,8 @@ export async function loadManifest(url?: string): Promise<{ world: WorldData; ha
     await resolveWorldBase()
     url = `${WORLD_BASE}world.msgpack`
   }
-  const response = await fetch(url)
+  // Always asked for (a 304 when unchanged): a copy kept from before a deploy is another world than the server's.
+  const response = await fetch(url, { cache: 'no-cache' })
   if (!response.ok) throw new Error(`${url}: ${response.status}; run \`cargo run -p osm-import\``)
   const bytes = new Uint8Array(await response.arrayBuffer())
   return { world: decodeManifest(bytes), hash: worldHash(bytes) }

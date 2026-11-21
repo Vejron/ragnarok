@@ -1,6 +1,6 @@
 import { decode, encode } from '@msgpack/msgpack'
 import { PROTOCOL_VERSION } from '@/sim/consts'
-import { decodeMessage, writeClientHands, writeClientInput, writePing, writeRtc, type ClientHands, type InputFrame, type ServerMessage } from './messages.generated'
+import { decodeMessage, writeBye, writeClientHands, writeClientInput, writePing, writeRtc, type ClientHands, type InputFrame, type ServerMessage } from './messages.generated'
 
 /**
  * Wire format: MessagePack arrays with a leading tag, fixed-point integers, no field names. The
@@ -268,6 +268,11 @@ export function encodeHands(hands: ClientHands): Uint8Array {
 
 export function encodePing(nonce: number): Uint8Array {
   return encode(writePing({ nonce }))
+}
+
+/** The page is closing its session, for `reason` (`BYE_*`). */
+export function encodeBye(reason: number): Uint8Array {
+  return encode(writeBye({ reason }))
 }
 
 /** Decodes any server message, or returns null for anything malformed or unknown. */

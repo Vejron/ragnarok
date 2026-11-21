@@ -4,9 +4,10 @@ import {
 import type { DriveState, Entity } from './entities/units'
 import { Backoff } from './net/backoff'
 import { RttEstimator, ServerClock } from './net/clock'
+import { ConnectionHealth } from './net/health'
 import { Transport } from './net/transport'
 import {
-  BUTTON_ALT, BUTTON_CHUTE, BUTTON_CROUCH, BUTTON_FIRE, BUTTON_JUMP, BUTTON_LAMP, BUTTON_RELOAD, BUTTON_RUN, CROUCH_EYE_DROP, PRONE_EYE_HEIGHT, SLIDE_MIN_SPEED, EYE_HEIGHT, INPUT_REDUNDANCY, PLAYER_MAX_HP, PROTOCOL_VERSION,
+  BUTTON_ALT, BUTTON_CHUTE, BUTTON_CROUCH, BUTTON_FIRE, BUTTON_JUMP, BUTTON_LAMP, BUTTON_RELOAD, BUTTON_RUN, BYE_LEAVING, BYE_REJOINING, CROUCH_EYE_DROP, PRONE_EYE_HEIGHT, SLIDE_MIN_SPEED, EYE_HEIGHT, INPUT_REDUNDANCY, PLAYER_MAX_HP, PROTOCOL_VERSION,
   SHELL_COOLDOWN_TICKS, STANDING_Y, STANCE_CHUTE, STANCE_DIVE, STANCE_DOWN, STANCE_PRONE, STANCE_SWIM, STANCE_GHOST,
   TICK_MS, TICK_RATE, TITAN_FIST_RADIUS, TITAN_REACH, LIFT_RIDER_CENTRE, BLOOM_RECOVER, STAMINA_FULL, ONE_ARM_SWAY, BACKPACK_SPEED, CARRY_SKIS, SUB_LAUNCH_DEPTH } from './sim/consts'
 import { easeSway, sway, swayAmplitude } from './sway'
@@ -69,6 +70,7 @@ import { AdaptiveScale } from './render/adaptive'
 import { Grass, GRASS_FULL, GRASS_LITE, STUBBLE, STUBBLE_DENSITY, WHEAT, WHEAT_DENSITY } from './render/grass'
 import { CropLid } from './render/croplid'
 import { FLOOR_FULL, FLOOR_LITE, ForestFloor } from './render/forestfloor'
+import { GARDENS_FULL, GARDENS_LITE, Gardens } from './render/gardens'
 import { Stones } from './render/stones'
 import { AIM_DISTANCE_SCALE, DEFAULT_FOV, ON_FOOT_DISTANCE, ON_FOOT_HEIGHT, ON_FOOT_SHOULDER, Scene } from './render/scene'
 import { BallCam } from './render/ballcam'
@@ -129,7 +131,7 @@ import { Headlights } from './entities/presenters/headlights'
 import { Roosters } from './entities/presenters/roosters'
 import { Animals } from './entities/presenters/animals'
 import { TileStreamer } from './stream'
-import { frozen, loadManifest, NO_WATER, THEME_WINTER, WORLD_BASE, type TileData, type TileRef, type WorldData } from './world'
+import { frozen, loadManifest, NO_WATER, THEME_WINTER, WORLD_BASE, worldHash, type TileData, type TileRef, type WorldData } from './world'
 import { updateNow } from './pwa'
 import { HudLayer } from '@ragnarok/engine'
 import { InGameHud } from './hud/index'
@@ -163,6 +165,8 @@ const riders = (cars: ReadonlyMap<number, Placed>, seen: ReadonlySet<number>, lo
 /** Fixed ticks run per animation frame at most, so a backgrounded tab does not spiral. */
 const MAX_TICKS_PER_FRAME = 8
 const PING_INTERVAL_MS = 1000
+/** This page's build, as the server names the one it hands out in `welcome`: 0 in development, where nothing is checked. */
+const BUILD = __BUILD_ID__ ? worldHash(new TextEncoder().encode(__BUILD_ID__)) : 0
 /** Mouse-look is this much slower down a scope, to match the narrower view. */
 const SCOPE_LOOK_SCALE = 0.3
 /** Down a scope, a shot leaves this far ahead of the eye and this far below it, metres: the soldier holding the gun is not drawn. */
@@ -302,6 +306,7 @@ export class Game {
   private cropLid: CropLid | null = null
   private stones: Stones | null = null
   private forestFloor: ForestFloor | null = null
+  private gardens: Gardens | null = null
   private waters: Waters | null = null
   /** The waves' clock this frame, seconds into their loop (`waveTime`). */
   private waveClock = 0
@@ -484,9 +489,13 @@ export class Game {
   private readonly backoff = new Backoff()
   private pingTimer = 0
   private disposed = false
-  /** Set when reconnecting cannot help (protocol mismatch); only a reload can. */
+  /** Set when reconnecting cannot help (another protocol, build or world); only a reload can. */
   private halted = false
   private warning: string | null = null
+  /** Watches the session for being dead or out of step with the server, and says when to rejoin. */
+  private readonly health = new ConnectionHealth()
+  /** What the HUD says while a lost session is being rejoined; null while joined, or never joined. */
+  private rejoining: string | null = null
 
   constructor(container: HTMLElement, private readonly onStats: (stats: HudStats) => void) {
     this.scene = new Scene(container)
@@ -545,6 +554,7 @@ export class Game {
     this.transport = new Transport(
       (message) => this.handle(message),
       (status) => {
+        if (status === 'CONNECTED') this.health.connected(performance.now())
         if (status === 'OFFLINE') this.onDisconnect()
       },
     )
@@ -643,6 +653,8 @@ export class Game {
     const grass = this.grass
     this.forestFloor = this.view.forestFloor = new ForestFloor(world.halfExtent, world.tileSize, (x, z) => terrain.sample(x, z), (x, z) => grass.growsAt(x, z))
     this.scene.scene.add(this.forestFloor.root)
+    this.gardens = this.view.gardens = new Gardens(world.halfExtent, world.tileSize, (x, z) => terrain.sample(x, z))
+    this.scene.scene.add(this.gardens.root)
     this.applyGrass(this.scene.look)
     if (!world.bytes) throw new Error('the manifest came without its bytes')
     const motor = await SimMotor.create(world.bytes)
@@ -687,9 +699,14 @@ export class Game {
     // and the server does not drop it as idle.
     this.pingTimer = window.setInterval(() => {
       if (this.localId !== null) this.transport.send(encodePing(this.rtt.next(performance.now())))
+      this.checkHealth()
     }, PING_INTERVAL_MS)
+    window.addEventListener('pagehide', this.onPageHide)
     void this.connect()
   }
+
+  /** The tab is closing or reloading: the player leaves the game now, not at the idle timeout. */
+  private readonly onPageHide = () => this.transport.bye(BYE_LEAVING)
 
   private async connect() {
     if (this.disposed) return
@@ -701,7 +718,42 @@ export class Game {
     }
   }
 
+  /**
+   * Rejoins a session that has gone dead or out of step with the server, as reloading the page did:
+   * a fresh welcome, catch-up, replica, clock and inputs (NETWORKING.md, "Healing").
+   */
+  private checkHealth() {
+    if (this.disposed || this.halted) return
+    const trouble = this.health.check(performance.now())
+    if (!trouble) return
+    console.warn(`connection: ${trouble.kind} (${trouble.reason})`)
+    if (trouble.kind === 'give-up') {
+      void updateNow('resync').then((reloading) => {
+        if (!reloading) this.warning = 'The connection keeps falling out of step with the server. Reload the page.'
+      })
+      return
+    }
+    this.rejoining = trouble.kind === 'resync' ? 'Out of step with the server: rejoining…' : 'Connection lost: reconnecting…'
+    void this.transport.leave(BYE_REJOINING)
+  }
+
+  /**
+   * The server runs another protocol, build or world than this page (`reason` names it, `what` says
+   * it): playing on would predict against other rules or other ground and be corrected all the time,
+   * so the page stops and reloads into what the server runs.
+   */
+  private outdated(reason: string, what: string) {
+    this.halted = true
+    this.warning = `${what}: updating…`
+    void this.transport.leave(BYE_LEAVING)
+    void updateNow(reason).then((reloading) => {
+      if (!reloading) this.warning = `${what}. Hard-reload the page (Ctrl+Shift+R, or Cmd+Shift+R on a Mac).`
+    })
+  }
+
   private onDisconnect() {
+    this.health.disconnected()
+    if (this.localId !== null) this.rejoining ??= 'Connection lost: reconnecting…'
     this.localId = null
     this.awaitingCatchUp = false
     this.seat = null
@@ -745,19 +797,14 @@ export class Game {
 
   private handle(message: ServerMessage) {
     const now = performance.now()
+    this.health.heard(now)
     switch (message.type) {
       case 'welcome':
-        if (message.version !== PROTOCOL_VERSION) {
-          this.warning = `Server speaks protocol ${message.version}, this page ${PROTOCOL_VERSION}. Reload.`
-          void updateNow(`protocol ${message.version}`)
-          this.halted = true
-          this.transport.close()
-          return
-        }
-        if (message.worldHash !== this.worldHash) {
-          this.warning = 'Server world differs from this page’s world.msgpack. Reload.'
-          void updateNow(`world ${message.worldHash}`)
-        }
+        if (message.version !== PROTOCOL_VERSION) return this.outdated(`protocol ${message.version}`, `The server speaks protocol ${message.version}, this page ${PROTOCOL_VERSION}`)
+        if (message.build !== 0 && BUILD !== 0 && message.build !== BUILD) return this.outdated(`build ${message.build}`, 'The server runs a newer build than this page')
+        if (message.worldHash !== this.worldHash) return this.outdated(`world ${message.worldHash}`, 'The server runs another world than this page loaded')
+        this.health.welcomed(now)
+        this.rejoining = null
         this.backoff.reset()
         this.localId = this.avatars.localId = message.id
         this.awaitingCatchUp = true
@@ -862,6 +909,7 @@ export class Game {
     // Snapshots list what changed since a baseline. One that names a baseline we do not hold
     // is dropped; the server has no acknowledgement for it and soon sends a whole one.
     const rebuilt = this.replica.receive(message.tick, message.baseline, message.updates, message.removed)
+    this.health.snapshot(now, rebuilt !== null, message.ack)
     if (!rebuilt) return
     this.store.push(message.tick, rebuilt.scene, rebuilt.latest)
     this.clock.observe(message.tick, now)
@@ -934,6 +982,7 @@ export class Game {
       skis: ((own.carry?.what ?? 0) & CARRY_SKIS) !== 0, skiStrain: own.vitals?.strain ?? 0, swimming: stance === STANCE_SWIM || stance === STANCE_DIVE,
       ghost: stance === STANCE_GHOST,
     }, tick)
+    this.health.corrected(this.predictor.lastCorrection, performance.now())
   }
 
   private tick() {
@@ -973,6 +1022,7 @@ export class Game {
     this.recent.push(frame)
     if (this.recent.length > INPUT_REDUNDANCY) this.recent.shift()
     this.transport.send(encodeInput(this.recent, this.replica.baseline))
+    this.health.sent(frame.seq, performance.now())
     this.moveFists(sample.buttons)
   }
 
@@ -1167,7 +1217,10 @@ export class Game {
     if (this.driverSnapshot) {
       const { ack, tick, vehicle, drive, feet } = this.driverSnapshot
       this.driverSnapshot = null
-      this.driver?.reconcile(ack, vehicle, drive, tick, feet)
+      if (this.driver) {
+        this.driver.reconcile(ack, vehicle, drive, tick, feet)
+        this.health.corrected(this.driver.lastCorrection, now)
+      }
     }
     // The waves run on the server's clock, as the sim the vehicles ride them in does.
     if (this.clock.synced) {
@@ -1180,6 +1233,7 @@ export class Game {
       setTreeWind(seaWind.blowing)
       this.grass?.blowing(seaWind.blowing)
       this.forestFloor?.blowing(seaWind.blowing)
+      this.gardens?.blowing(seaWind.blowing)
       this.crops?.blowing(seaWind.blowing)
       this.cropLid?.blowing(seaWind.blowing)
       setWaterTime(this.waveClock)
@@ -1232,6 +1286,7 @@ export class Game {
     this.surroundings.bendGrass(standing ? position : null, this.soldiers.nearby, cars)
     this.stones?.update(this.scene.camera.position.x, this.scene.camera.position.z)
     this.forestFloor?.update(this.scene.camera.position.x, this.scene.camera.position.z)
+    this.gardens?.update(this.scene.camera.position.x, this.scene.camera.position.z)
     const nearby = [...this.soldiers.nearby, ...this.riders.seated, ...this.liftRiders.seated]
     this.avatars.sweep((key) => this.surroundings.dry(key))
     this.zombieVoices.sweep()
@@ -1603,7 +1658,8 @@ export class Game {
       pending: predictor!.pendingCount,
       locked: this.input.locked,
       touch: this.input.coarse,
-      warning: this.warning,
+      warning: this.warning ?? this.rejoining,
+      link: this.health.state,
       // A ghost's keys are on its title.
       prompt: this.localId === null || player.ghost || player.forming ? null : prompt({
         position, ground: this.terrain?.heightAt(position[0]!, position[2]!) ?? 0, alive: player.alive, grounded: local.grounded, chute: local.chute, seat,
@@ -1983,6 +2039,8 @@ export class Game {
     this.grass?.setEnabled(look.grass && !winter)
     this.forestFloor?.setDensity(this.scene.quality.grass === 'full' ? FLOOR_FULL : FLOOR_LITE)
     this.forestFloor?.setPlants(look.grass && !winter)
+    this.gardens?.setReach(this.scene.quality.grass === 'full' ? GARDENS_FULL : GARDENS_LITE)
+    this.gardens?.setEnabled(!winter)
     // The fields are not a matter of taste or of quality: wheat hides people, so everyone has the same.
     // A winter world's are stubble through the snow, which hides no one.
     this.crops?.setGrowth(winter ? STUBBLE : WHEAT)
@@ -2039,6 +2097,8 @@ export class Game {
     void this.headset?.leave()
     clearTimeout(this.reconnectTimer)
     clearInterval(this.pingTimer)
+    window.removeEventListener('pagehide', this.onPageHide)
+    this.transport.bye(BYE_LEAVING)
     this.transport.close()
     this.voice.dispose()
     this.input.dispose()
@@ -2075,6 +2135,7 @@ export class Game {
     this.cropLid?.dispose()
     this.stones?.dispose()
     this.forestFloor?.dispose()
+    this.gardens?.dispose()
     this.trajectory.dispose()
     this.mortarArc.dispose()
     this.scene.dispose()
