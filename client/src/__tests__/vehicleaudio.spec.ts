@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { airCut, echoLevel, VehicleSounds } from '@/vehicleaudio'
+import { airCut, echoImpulse, echoLevel, VehicleSounds } from '@/vehicleaudio'
 import type { SoundInput } from '@/sim/engine'
 import { KIND_HELI, KIND_JEEP, KIND_PLANE, KIND_TANK, KIND_WALKER } from '@/net/codec'
 import { assumeWorklet } from '@/sound/worklet'
@@ -124,9 +124,28 @@ describe('VehicleSounds', () => {
     for (const source of ctx.log.sources) expect(source.startedAt).toBeGreaterThanOrEqual(500 / 343)
     expect(airCut(500)).toBeLessThan(2000)
     expect(airCut(5)).toBeGreaterThan(15000)
-    // Far off, more of it is echo than shot; close by, hardly any.
-    expect(echoLevel(500)).toBeGreaterThan(12 / 500)
-    expect(echoLevel(10)).toBeLessThan(0.1)
+    // Far off, more of it is echo than shot; close by, well under the shot.
+    expect(echoLevel(500)).toBeGreaterThan(2 * (12 / 500))
+    expect(echoLevel(10)).toBeLessThan(0.4)
+  })
+
+  it('echoes a shot as open ground does: silent at first, then separate slaps, at a known loudness', () => {
+    const rate = 48000
+    const channels = [0, 1].map(() => new Float32Array(Math.floor(rate * 2.2)))
+    const ctx = { sampleRate: rate, createBuffer: () => ({ getChannelData: (c: number) => channels[c]! }) }
+    echoImpulse(ctx as unknown as BaseAudioContext)
+    for (const data of channels) {
+      // Unit energy, so the send's gain is the echo's loudness against the shot.
+      let energy = 0
+      for (const v of data) energy += v * v
+      expect(energy).toBeCloseTo(1, 3)
+      // Nothing comes back while the sound is still on its way out: no ring of a room about the gun.
+      for (let i = 0; i < rate * 0.09; i++) expect(data[i]).toBe(0)
+      // Most of it is in the first slaps, not spread evenly through a dense tail.
+      let early = 0
+      for (let i = Math.floor(rate * 0.09); i < rate * 0.4; i++) early += data[i]! * data[i]!
+      expect(early).toBeGreaterThan(0.5)
+    }
   })
 
   it('carries blasts and guns far but still stops footsteps and crashes close by', () => {

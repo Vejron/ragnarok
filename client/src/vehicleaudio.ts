@@ -49,10 +49,25 @@ const BLAST_REACH = 1100
 const BOOM_REACH = 1600
 /** Slots a shot from beyond `HEARING` leaves free for nearer sounds. */
 const FAR_SPARE = 6
-/** The echo off the land: how long it rings, seconds, and how much of a loud shot goes to it close by and far off. */
+/**
+ * The echo off the land: how long it rings, seconds, and how loud it is against the shot close by and
+ * far off, as a ratio of their energies' square roots (the impulse holds unit energy in each ear).
+ */
 const ECHO_LENGTH = 2.2
-const ECHO_NEAR = 0.08
-const ECHO_FAR = 0.45
+const ECHO_NEAR = 0.3
+const ECHO_FAR = 0.9
+/**
+ * The reflections that come back from open ground: seconds after the shot, how strong against the first,
+ * and how dull, the low-pass Hz. Tree lines and houses near, a hillside and the far woods later.
+ */
+const ECHO_SLAPS: readonly { at: number; level: number; hz: number }[] = [
+  { at: 0.13, level: 1, hz: 2200 },
+  { at: 0.31, level: 0.6, hz: 1500 },
+  { at: 0.58, level: 0.45, hz: 950 },
+  { at: 1.02, level: 0.3, hz: 600 },
+]
+/** How loud the low roll after the slaps is, against the first slap. */
+const ECHO_ROLL = 0.22
 /** Seconds a voice takes to fade out before its nodes stop. */
 const FADE = 0.25
 /** What is left of a plane's engine with the blip switch in, and how often it fires through it, s. */
@@ -94,25 +109,54 @@ export function echoLevel(distance: number): number {
   return share * Math.pow(12 / Math.max(12, distance), 0.6)
 }
 
+/** The pole of a one-pole low-pass at `hz`, and the gain that keeps white noise through it as loud. */
+function onePole(hz: number, rate: number): { pole: number; gain: number } {
+  const pole = Math.exp((-2 * Math.PI * hz) / rate)
+  return { pole, gain: Math.sqrt((1 + pole) / (1 - pole)) }
+}
+
 /**
- * The echo's impulse: a slap off the nearest slope a fifth of a second on, another later, and a
- * rolling tail that darkens as it dies, different in each ear.
+ * The echo's impulse, as open ground gives it back: silence while the sound travels out, then a few
+ * separate dull slaps off tree lines, houses and hills, each later one duller, and under them a low
+ * roll that swells and dies. Each ear hears the slaps at slightly different times. Nothing comes back
+ * in the first tenth of a second and there is no dense ring, which is what made it sound like a room.
+ * Scaled to unit energy in each ear, so the send's gain is how loud the echo is against the shot.
  */
-function echoImpulse(ctx: BaseAudioContext): AudioBuffer {
-  const length = Math.floor(ctx.sampleRate * ECHO_LENGTH)
-  const buffer = ctx.createBuffer(2, length, ctx.sampleRate)
+export function echoImpulse(ctx: BaseAudioContext): AudioBuffer {
+  const rate = ctx.sampleRate
+  const length = Math.floor(rate * ECHO_LENGTH)
+  const buffer = ctx.createBuffer(2, length, rate)
   for (let channel = 0; channel < 2; channel++) {
     const data = buffer.getChannelData(channel)
-    let smooth = 0
-    for (let i = 0; i < length; i++) {
-      const t = i / ctx.sampleRate
-      // A one-pole low-pass that closes as the tail goes on: the far hills give back only the lows.
-      const pole = 0.55 + 0.4 * Math.min(1, t / ECHO_LENGTH)
-      smooth = smooth * pole + (Math.random() * 2 - 1) * (1 - pole)
-      const onset = t < 0.06 ? 0 : 1
-      const slaps = Math.exp(-(((t - 0.21 - channel * 0.03) / 0.025) ** 2)) * 1.6 + Math.exp(-(((t - 0.52 + channel * 0.05) / 0.04) ** 2)) * 0.9
-      data[i] = smooth * 3 * onset * (Math.exp(-t * 2.2) + slaps)
+    for (const slap of ECHO_SLAPS) {
+      const start = Math.floor((slap.at + (Math.random() - 0.5) * 0.04 * (1 + slap.at)) * rate)
+      const { pole, gain } = onePole(slap.hz, rate)
+      // Foliage and uneven ground smear a reflection: a quick rise and a fall of some tens of ms.
+      const fall = 0.018 + 0.03 * slap.at
+      let smooth = 0
+      for (let i = 0; i < Math.floor(fall * 5 * rate) && start + i < length; i++) {
+        const t = i / rate
+        smooth = smooth * pole + (Math.random() * 2 - 1) * (1 - pole)
+        const envelope = Math.min(1, t / 0.002) * Math.exp(-t / fall)
+        data[start + i] = data[start + i]! + slap.level * gain * smooth * envelope
+      }
     }
+    // The roll: sound arriving from everywhere farther off, darker as it goes on, in uneven swells.
+    const begin = 0.1
+    const swell = Math.random() * Math.PI * 2
+    let smooth = 0
+    for (let i = Math.floor(begin * rate); i < length; i++) {
+      const t = i / rate - begin
+      const { pole, gain } = onePole(520 / (1 + 1.8 * t), rate)
+      smooth = smooth * pole + (Math.random() * 2 - 1) * (1 - pole)
+      const envelope = (1 - Math.exp(-t / 0.15)) * Math.exp(-t * 2.4) * (0.65 + 0.35 * Math.sin(t * 9.5 + swell) * Math.sin(t * 3.7))
+      const fadeOut = Math.min(1, (ECHO_LENGTH - begin - t) / 0.2)
+      data[i] = data[i]! + ECHO_ROLL * gain * smooth * envelope * fadeOut
+    }
+    let energy = 0
+    for (let i = 0; i < length; i++) energy += data[i]! * data[i]!
+    const scale = energy > 0 ? 1 / Math.sqrt(energy) : 0
+    for (let i = 0; i < length; i++) data[i] = data[i]! * scale
   }
   return buffer
 }
