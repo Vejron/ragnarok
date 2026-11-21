@@ -20,6 +20,7 @@
 //! is kept as an offset from the model (`Shaping::mean`), which the ground samples add to their own
 //! mean of the model, so a 4 m ground and the 1 m detail slopes are shaped alike.
 
+use crate::bridge::HEADROOM_ROAD;
 use crate::overpass::Osm;
 use shared::world::Frame;
 use std::collections::HashMap;
@@ -95,9 +96,8 @@ pub struct Way {
 /// motorway's two carriageways. A longer tunnel goes through a hill and is left alone.
 const PASSAGE_LONGEST: f64 = 60.0;
 /// Clear height over an underpass's floor, under the deck of the road over it, metres: a footway's or
-/// cycleway's, and a road's.
+/// cycleway's. A road's is a bridge's over a road (`bridge::HEADROOM_ROAD`).
 const HEADROOM_PATH: f64 = 3.0;
-const HEADROOM_ROAD: f64 = 4.7;
 /// How far either side of where a road crosses an underpass its level is read, metres: past the dip
 /// the height model may have under it, as `assemble::cuttings` finds the deck.
 const PASSAGE_ROAD_REACH: f64 = 12.0;

@@ -1,5 +1,5 @@
 import init, { ClientSim } from './wasm/sim'
-import { DAMAGE_TURRET, TURRET_GONE, type InputFrame } from '@/net/codec'
+import { DAMAGE_TURRET, TURRET_GONE, type CarvedBuilding, type InputFrame } from '@/net/codec'
 import type { DriveState } from '@/entities/units'
 import type { TileRef } from '@/world'
 import { ROADSTER_AIR } from './consts'
@@ -123,6 +123,19 @@ export interface VehiclePose {
 export type Obstacle = Pick<VehiclePose, 'id' | 'x' | 'y' | 'z' | 'qx' | 'qy' | 'qz' | 'qw'> & { kind?: number; vx?: number; vz?: number; damage?: readonly number[] }
 
 /**
+ * A vehicle of the newest snapshot near the one the player drives, to be simulated beside it: its
+ * speed over the ground, its front wheels' share of their lock and its throttle (its `steer`
+ * component), and whether anyone is in its driver's seat.
+ */
+export interface Neighbour extends VehiclePose {
+  vx: number
+  vz: number
+  steer: number
+  throttle: number
+  driven: boolean
+}
+
+/**
  * The local soldier's world: the server's own physics (`crates/sim`, built to WASM by
  * `npm run build:wasm`), fed the tiles the client streams and the vehicles of the newest snapshot,
  * stepping the soldier exactly as the server does. It replaces the hand-written mirror of the
@@ -230,6 +243,25 @@ export class SimMotor {
   }
 
   /**
+   * Simulates the first `max` of `vehicles` that can be (a kind that stays on its wheels with nobody
+   * at its controls) beside the vehicle the player drives, from where the newest snapshot has them,
+   * and stops simulating every other: the predicted vehicle then shoves them as the server's does,
+   * where a stand-in would stop it dead. Returns the ones now simulated.
+   */
+  setNeighbours(vehicles: readonly Neighbour[], max: number): Set<number> {
+    return timed(() => {
+      const beside = new Set<number>()
+      for (const car of vehicles) {
+        if (beside.size >= max) break
+        const turret = car.damage[DAMAGE_TURRET] !== TURRET_GONE
+        if (this.sim.setNeighbour(car.id, car.kind, car.x, car.y, car.z, car.qx, car.qy, car.qz, car.qw, car.vx, car.vz, car.steer, car.throttle, car.driven, car.hp, Uint8Array.from(car.damage), turret)) beside.add(car.id)
+      }
+      for (const id of this.sim.neighbourIds()) if (!beside.has(id)) this.sim.removeNeighbour(id)
+      return beside
+    })
+  }
+
+  /**
    * How far a ray travels before it meets the world or a vehicle, and the surface normal there; null
    * when it reaches `max` clear. Used to draw where a grenade will go.
    */
@@ -305,11 +337,41 @@ export class SimMotor {
     this.sim.setTick(tick)
   }
 
-  /** One tick of simulated vehicle `id` under `controls`: the server's `drive_car` then `step_cars`. */
-  driveCar(id: number, controls: CarControls, dt: number) {
+  /**
+   * One tick of simulated vehicle `id` under `controls`: the server's `drive_car` then `step_cars`.
+   * Returns whether it broke through a wall it rammed, as the server's will: the hole is made here at
+   * once, and the vehicle goes on through it with part of its speed.
+   */
+  driveCar(id: number, controls: CarControls, dt: number): boolean {
     const aim = controls.aim ?? null
     const c = [controls.throttle, controls.steer, flag(controls.handbrake), controls.lift, flag(controls.powered), flag(aim !== null), aim?.[0] ?? 0, aim?.[1] ?? 0, flag(controls.boost), flag(controls.hop)]
-    timed(() => this.sim.driveCar(id, Float32Array.from(c), dt))
+    return timed(() => this.sim.driveCar(id, Float32Array.from(c), dt))
+  }
+
+  /** Sets simulated vehicle `id`'s velocity, m/s, leaving its spin alone. */
+  setCarVelocity(id: number, velocity: Readonly<Vec3>) {
+    this.sim.setCarVelocity(id, velocity[0], velocity[1], velocity[2])
+  }
+
+  /** The holes the driven vehicle has broken in buildings since this was last asked, as a `Carved` message would tell of them. */
+  takeRams(): CarvedBuilding[] {
+    const numbers = this.sim.takeRams()
+    const rams: CarvedBuilding[] = []
+    for (let at = 0; at + 8 <= numbers.length; ) {
+      const [col, row, index, x, y, z, blasted, fell] = numbers.subarray(at, at + 8) as unknown as [number, number, number, number, number, number, number, number]
+      const cells = [...numbers.subarray(at + 8, at + 8 + blasted + fell)]
+      rams.push({ col, row, index, point: [x, y, z], blasted: cells.slice(0, blasted), fell: cells.slice(blasted) })
+      at += 8 + blasted + fell
+    }
+    return rams
+  }
+
+  /** Closes the holes the driven vehicle was predicted to break that the server never confirmed. */
+  forgetRams() {
+    timed(() => {
+      this.sim.forgetRams()
+      this.sim.refresh()
+    })
   }
 
   /** Simulated vehicle `id`'s state, or null when it is not simulated here. */

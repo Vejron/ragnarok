@@ -130,6 +130,11 @@ export class WorldView {
   /** The pieces of fences and walls that are broken (`linePieceIndex`), by tile. Kept like `fellTrees`. */
   private readonly brokenLines = new Map<number, Set<number>>()
   private readonly fallingTrees = new FallingTrees()
+  /**
+   * The cells drawn as gone because the driven vehicle was predicted to break them (`rammed`) that
+   * the server has not yet said are gone, by tile and building.
+   */
+  private readonly unconfirmed = new Map<number, Map<number, Set<number>>>()
   /** Carved buildings, by tile, whose colliders are to be reshaped at the next `update`: a barrage does it once a frame, not once a hit. */
   private readonly reshape = new Map<number, Set<number>>()
   /** Chunks of cubes that changed since the last `update`, to redraw and to give to the physics. */
@@ -200,9 +205,11 @@ export class WorldView {
   /**
    * Gives the prediction's physics the new shapes of the buildings cut since the last frame that are
    * within `RESHAPE_NEAR` of `camera`. One further off waits until the viewer comes near: it costs
-   * milliseconds a time to remake, and nothing here touches it until then.
+   * milliseconds a time to remake, and nothing here touches it until then. `update` does it each
+   * frame; the game does it first when it is about to replay a driven vehicle's inputs, so that the
+   * replay does not run into a wall the server has already cut.
    */
-  private reshapeNear(camera: Vector3) {
+  reshapeNear(camera: Vector3) {
     for (const [key, indices] of this.reshape) {
       const loaded = this.loaded.get(key)
       if (!loaded) {
@@ -744,6 +751,8 @@ export class WorldView {
   carved(buildings: readonly CarvedBuilding[], live: boolean) {
     for (const b of buildings) {
       const key = tileKey(b.col, b.row)
+      const waiting = this.unconfirmed.get(key)?.get(b.index)
+      if (waiting) for (const cell of [...b.blasted, ...b.fell]) waiting.delete(cell)
       const first = this.damage.carve(key, b.index, b.blasted, b.fell, live ? b.point : null, live)
       this.glazing.holed(key, b.index, this.damage.carved(key).get(b.index) ?? new Set(), live)
       this.gateView.holed(key, b.index, this.damage.carved(key).get(b.index) ?? new Set())
@@ -755,6 +764,52 @@ export class WorldView {
       const loaded = this.loaded.get(key)
       if (group && loaded) rebuildBuildings(group, loaded.tile, loaded.salt, this.undrawnBuildings(key))
     }
+  }
+
+  /**
+   * The vehicle the player drives was predicted to break these holes in buildings (`CarvedBuilding`s
+   * of the prediction's making): they are drawn at once, the pieces flying from where it hit, as
+   * `carved` draws the server's. The prediction's physics has the holes already. The server's own
+   * `Carved` for the ram then finds its cells gone and throws nothing twice; cells it never
+   * confirms are put back by `forgetRams`.
+   */
+  rammed(holes: readonly CarvedBuilding[]) {
+    for (const b of holes) {
+      const key = tileKey(b.col, b.row)
+      const gone = this.damage.carved(key).get(b.index)
+      const fresh = [...b.blasted, ...b.fell].filter((cell) => !gone?.has(cell))
+      if (fresh.length === 0) continue
+      const tile = this.unconfirmed.get(key) ?? new Map<number, Set<number>>()
+      this.unconfirmed.set(key, tile)
+      const waiting = tile.get(b.index) ?? new Set<number>()
+      tile.set(b.index, waiting)
+      for (const cell of fresh) waiting.add(cell)
+      const first = this.damage.carve(key, b.index, b.blasted, b.fell, b.point, true)
+      this.glazing.holed(key, b.index, this.damage.carved(key).get(b.index) ?? new Set(), true)
+      this.gateView.holed(key, b.index, this.damage.carved(key).get(b.index) ?? new Set())
+      if (!first) continue
+      const group = this.groups.get(key)
+      const loaded = this.loaded.get(key)
+      if (group && loaded) rebuildBuildings(group, loaded.tile, loaded.salt, this.undrawnBuildings(key))
+    }
+  }
+
+  /**
+   * The server stepped well past the rams `rammed` drew without confirming these cells: the
+   * prediction was wrong about them, so they stand again, drawn and solid. A pane of glass that
+   * broke with them stays broken.
+   */
+  forgetRams() {
+    for (const [key, tile] of this.unconfirmed) {
+      for (const [index, cells] of tile) {
+        if (cells.size === 0) continue
+        this.damage.mend(key, index, [...cells])
+        const dirty = this.reshape.get(key) ?? new Set<number>()
+        dirty.add(index)
+        this.reshape.set(key, dirty)
+      }
+    }
+    this.unconfirmed.clear()
   }
 
   /** How many standing trees (not bushes or flags) are within `radius` metres of `(x, z)`, in the tiles drawn now. */
@@ -852,6 +907,7 @@ export class WorldView {
     this.glazing.reset()
     this.gateView.reset()
     this.reshape.clear()
+    this.unconfirmed.clear()
     this.dugTiles.clear()
     this.craters.length = 0
     this.marked.length = 0

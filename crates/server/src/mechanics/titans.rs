@@ -222,7 +222,6 @@ fn punch_soldiers(world: &mut World, vid: u32, fist: [f32; 3], velocity: [f32; 3
 /// `radius` of it, as hard as its `velocity`; `amount` is what a vehicle loses.
 fn strike(world: &mut World, vid: u32, point: [f32; 3], radius: f32, velocity: [f32; 3], amount: f32, pilot: Option<u32>) {
     let speed = vec3::length(velocity);
-    let weight = vehicle_def(KIND_TITAN).body.ram;
     for car in world.physics.cars_touching_ball(point, radius, vid) {
         if world.entities.dead(car) || world.physics.held_car(vid, 0) == Some(car) || world.physics.held_car(vid, 1) == Some(car) {
             continue;
@@ -237,13 +236,16 @@ fn strike(world: &mut World, vid: u32, point: [f32; 3], radius: f32, velocity: [
     for object in world.physics.objects_touching_ball(point, radius) {
         match object {
             Obj::Building(id) if world.is_bridge(id) => super::combat::punch_bridge(world, id, point, radius, speed),
-            Obj::Building(id) => super::combat::ram_building(world, id, point, speed, weight),
+            // A fist breaks a wall as a ram at its speed does; nothing drives on through the hole.
+            Obj::Building(id) => {
+                super::combat::ram_building(world, id, point, speed, KIND_TITAN);
+            }
             Obj::Tree(_) | Obj::Line(_) => {
                 super::combat::damage_object(world, object, (speed * TREE_DAMAGE_PER_SPEED) as u16, point);
             }
         }
     }
-    super::combat::ram_cubes(world, point, speed, weight);
+    super::combat::ram_cubes(world, point, speed, KIND_TITAN);
 }
 
 /// A foot of Titan `vid` comes down at `foot` (its underside).

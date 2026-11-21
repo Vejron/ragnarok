@@ -244,12 +244,51 @@ impl ClientSim {
         self.cars.insert(id, kind);
     }
 
-    /// Stops simulating vehicle `id`.
+    /// Stops simulating vehicle `id`. With no vehicle predicted here any more, its neighbours go too:
+    /// nothing would step them, and the next snapshot makes them solids again.
     #[wasm_bindgen(js_name = stopCar)]
     pub fn stop_car(&mut self, id: u32) {
         if self.cars.remove(&id).is_some() {
             self.physics.remove_car(id);
         }
+        if self.cars.is_empty() {
+            for neighbour in self.physics.neighbour_ids() {
+                self.physics.remove_neighbour(neighbour);
+            }
+        }
+    }
+
+    /// Simulates vehicle `id` of `kind` beside the player's own, from where a snapshot shows it, in
+    /// place of its stand-in (`Physics::set_neighbour`): the predicted vehicle then shoves it as the
+    /// server's does. It moves at `(vx, vz)` m/s over the ground with its front wheels at `steer` of
+    /// their lock (+ is right). With someone `driven` it is held to that steering and to `throttle`
+    /// (-1..=1, as its `steer` component says), and with nobody it holds its handbrake, as on the
+    /// server. `hp`, `damage` and `turret` are the wear the snapshot shows. Whether it was done:
+    /// not for a kind that cannot be (an aircraft, a boat, a towed gun), which stays a stand-in.
+    #[allow(clippy::too_many_arguments)]
+    #[wasm_bindgen(js_name = setNeighbour)]
+    pub fn set_neighbour(&mut self, id: u32, kind: u8, x: f32, y: f32, z: f32, qx: f32, qy: f32, qz: f32, qw: f32, vx: f32, vz: f32, steer: f32, throttle: f32, driven: bool, hp: u8, damage: &[u8], turret: bool) -> bool {
+        if self.cars.contains_key(&id) {
+            return false;
+        }
+        let controls = if driven { CarControls { throttle, steer, powered: true, ..CarControls::IDLE } } else { CarControls { handbrake: true, ..CarControls::IDLE } };
+        let mut wear = [0; shared::protocol::DAMAGE_SLOTS];
+        for (slot, &value) in wear.iter_mut().zip(damage) {
+            *slot = value;
+        }
+        self.physics.set_neighbour(id, kind, [x, y, z], [qx, qy, qz, qw], [vx, 0.0, vz], steer, controls, CarCondition::of(kind, hp, wear), turret)
+    }
+
+    /// Stops simulating vehicle `id` beside the player's own.
+    #[wasm_bindgen(js_name = removeNeighbour)]
+    pub fn remove_neighbour(&mut self, id: u32) {
+        self.physics.remove_neighbour(id);
+    }
+
+    /// The vehicles simulated beside the player's own, in id order.
+    #[wasm_bindgen(js_name = neighbourIds)]
+    pub fn neighbour_ids(&self) -> Vec<u32> {
+        self.physics.neighbour_ids()
     }
 
     /// Puts vehicle `id` in the state a snapshot reports: pose, motion (its `drive` component), its tank
@@ -285,15 +324,47 @@ impl ClientSim {
         controls_to(&CarControls::driven(kind, &input))
     }
 
-    /// One tick of vehicle `id` under `controls` (`CONTROLS_LEN` numbers): the server's `drive_car`
-    /// then `step_cars`.
+    /// One tick of vehicle `id` under `controls` (`CONTROLS_LEN` numbers), and of its neighbours under
+    /// theirs: the server's `drive_car` then `step_cars`, and the walls it rammed breaking as they
+    /// will there (`Physics::ram_buildings`). Returns whether it broke through one.
     #[wasm_bindgen(js_name = driveCar)]
-    pub fn drive_car(&mut self, id: u32, controls: &[f32], dt: f32) {
-        if !self.cars.contains_key(&id) {
-            return;
-        }
+    pub fn drive_car(&mut self, id: u32, controls: &[f32], dt: f32) -> bool {
+        let Some(&kind) = self.cars.get(&id) else { return false };
         self.physics.drive_car(id, controls_from(controls), dt);
+        self.physics.drive_neighbours(dt);
+        let before = self.physics.car_pose(id).map_or([0.0; 3], |pose| pose.velocity);
         self.physics.step_cars(dt);
+        self.physics.ram_buildings(id, kind, before)
+    }
+
+    /// Sets vehicle `id`'s velocity, m/s, leaving its spin alone: what a replay gives it at the tick
+    /// it was first predicted to break through a wall, whose hole it now meets already made.
+    #[wasm_bindgen(js_name = setCarVelocity)]
+    pub fn set_car_velocity(&mut self, id: u32, vx: f32, vy: f32, vz: f32) {
+        if self.cars.contains_key(&id) {
+            self.physics.set_car_velocity(id, [vx, vy, vz]);
+        }
+    }
+
+    /// The holes the predicted vehicle has broken in buildings since this was last asked, for drawing
+    /// at once (`Physics::take_rams`): for each, `[col, row, index, x, y, z, blasted, fell]` (where it
+    /// hit, metres, and how many cells of each sort follow), then those cells' numbers.
+    #[wasm_bindgen(js_name = takeRams)]
+    pub fn take_rams(&mut self) -> Vec<f64> {
+        let mut out = Vec::new();
+        for ram in self.physics.take_rams() {
+            let [x, y, z] = ram.point;
+            out.extend([ram.building.col.into(), ram.building.row.into(), ram.building.index.into(), x.into(), y.into(), z.into(), ram.blasted.len() as f64, ram.fell.len() as f64]);
+            out.extend(ram.blasted.iter().chain(&ram.fell).map(|&cell| f64::from(cell)));
+        }
+        out
+    }
+
+    /// Closes the holes the predicted vehicle broke that the server never confirmed
+    /// (`Physics::forget_rams`); takes effect at the next `refresh`.
+    #[wasm_bindgen(js_name = forgetRams)]
+    pub fn forget_rams(&mut self) {
+        self.physics.forget_rams();
     }
 
     /// Sets the server tick the next `driveCar` steps, which the waves on open water run on; each step

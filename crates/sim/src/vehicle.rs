@@ -425,6 +425,55 @@ fn ride_height(spec: &Spec) -> f32 {
     -spec.hard_point_y + spec.suspension_rest + spec.wheel_radius - sag
 }
 
+/// A hit on a wall has to take this much speed out of a vehicle (m/s, times its `Body::ram`) before
+/// it bites, and bites this many metres of radius per m/s beyond, up to the largest.
+const RAM_BITE_MIN_DV: f32 = 6.0;
+const RAM_BITE_PER_DV: f32 = 0.3;
+const RAM_BITE_MAX: f32 = 3.0;
+/// The smallest bite a ram takes, metres: under it the wall only chips.
+const RAM_BITE_MIN_RADIUS: f32 = 0.8;
+/// How far the hole a vehicle breaks through a wall reaches past the corners of its nose, metres.
+const BREACH_CLEAR: f32 = 0.3;
+/// The share of its speed a car loses breaking through a wall; a heavier vehicle loses that over its
+/// `Body::ram`, so a tank loses a sixth.
+const BREACH_LOSS: f32 = 0.5;
+
+/// A wall giving way to a vehicle that rammed it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Breach {
+    /// How far round where it hit the wall is taken out, metres.
+    pub radius: f32,
+    /// The share of the speed it came in with that the vehicle keeps, 0..1; `None` for a kind that
+    /// does not drive on through (it flies, floats or walks), which stops as on any wall.
+    pub keep: Option<f32>,
+}
+
+/// What a wall does when a vehicle of `kind` drives into it and loses `dv` m/s in one step: `None`
+/// when it holds (and only chips), else the hole broken in it. What drives on wheels or tracks breaks
+/// a hole wide enough for itself and goes on through it with part of its speed; the server breaks
+/// the wall by this, and the client predicts its own vehicle's rams by the same.
+pub fn breach(kind: u8, dv: f32) -> Option<Breach> {
+    let weight = shared::vehicles::vehicle_def(kind).body.ram;
+    let radius = ((dv * weight - RAM_BITE_MIN_DV) * RAM_BITE_PER_DV).min(RAM_BITE_MAX);
+    if radius < RAM_BITE_MIN_RADIUS {
+        return None;
+    }
+    let spec = spec(kind);
+    if spec.lift != Lift::Wheels {
+        return Some(Breach { radius, keep: None });
+    }
+    // Round the middle of its nose, the hole has to take in the nose's corners.
+    let fit = (spec.half_extents[0].hypot(spec.half_extents[1]) + BREACH_CLEAR).min(RAM_BITE_MAX);
+    Some(Breach { radius: radius.max(fit), keep: Some(1.0 - BREACH_LOSS / weight.max(1.0)) })
+}
+
+/// The velocity a vehicle that came into a wall at `before` and is left with `now` goes on with when
+/// the wall breaks and it keeps `keep` of its speed over the ground: never slower than the wall left it.
+pub fn breach_velocity(before: [f32; 3], now: [f32; 3], keep: f32) -> [f32; 3] {
+    let kept = [before[0] * keep, now[1], before[2] * keep];
+    if now[0].hypot(now[2]) < kept[0].hypot(kept[2]) { kept } else { now }
+}
+
 /// Whether a vehicle of `kind` is too heavy to be stopped by a tree (a tank, a Strv): it goes through
 /// the trunk, felling it.
 pub(crate) fn heavy(kind: u8) -> bool {

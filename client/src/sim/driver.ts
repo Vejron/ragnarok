@@ -1,7 +1,7 @@
 import { Quaternion, Vector3 } from '@ragnarok/engine'
 import { TICK_DT, ROADSTER_AIR } from './consts'
-import { controlsOf, type CarBodyState, type SimMotor, type VehiclePose } from './motor'
-import { KIND_HELI, type InputFrame } from '@/net/codec'
+import { controlsOf, type CarBodyState, type Neighbour, type SimMotor, type VehiclePose } from './motor'
+import { KIND_HELI, type CarvedBuilding, type InputFrame } from '@/net/codec'
 import type { DriveState } from '@/entities/units'
 
 /** A correction larger than this is a teleport (respawn, unflip), not a misprediction: snap. */
@@ -9,6 +9,14 @@ const SNAP_DISTANCE = 3
 /** How fast the visual error left by a correction decays, per second. */
 const ERROR_DECAY = 10
 const MAX_PENDING = 120
+/** A hole the vehicle was predicted to break in a wall is closed again when the server has stepped this many inputs past the ram without confirming it. */
+const RAM_PATIENCE = 60
+/** Vehicles within this of the driven one are simulated beside it, metres: further than two closing at full speed cover in a replay. */
+const NEIGHBOUR_REACH = 30
+/** One already simulated stays so out to this, metres, so that it does not flicker at the edge. */
+const NEIGHBOUR_KEEP = 40
+/** The most vehicles simulated beside the driven one: each is stepped in every replayed tick. */
+const NEIGHBOUR_MAX = 6
 
 /** A drawn vehicle: world pose and front wheel steering as a fraction of the lock. */
 export interface DrivenPose {
@@ -43,6 +51,20 @@ export class VehicleDriver {
   lastCorrection = 0
   /** How hard the newest input works the engine, -1..1: what its engine is heard to do at once (`Steer.throttle`). */
   private worked = 0
+  /**
+   * The rams that broke through a wall which the server has not yet answered: the input each
+   * happened on, and the velocity the vehicle went on with. A replay meets the hole already made,
+   * so it is given that velocity at that input instead of ramming again.
+   */
+  private rams: { seq: number; linvel: [number, number, number] }[] = []
+  /** The input of the newest ram whose hole waits for the server's word, or null. */
+  private breached: number | null = null
+  /** Told of each hole the predicted vehicle breaks in a building, at once: it is drawn ahead of the server's word. */
+  onBreach: (holes: readonly CarvedBuilding[]) => void = () => {}
+  /** Told when the holes the server never confirmed are closed again. */
+  onForget: () => void = () => {}
+  /** The vehicles simulated beside the predicted one since the last reconcile. */
+  private beside: ReadonlySet<number> = new Set()
 
   constructor(private readonly motor: SimMotor) {}
 
@@ -75,6 +97,8 @@ export class VehicleDriver {
 
   acknowledge(ack: number) {
     this.pending = this.pending.filter((input) => input.seq > ack)
+    this.rams = this.rams.filter((ram) => ram.seq > ack)
+    if (this.breached !== null && ack >= this.breached + RAM_PATIENCE) this.forget()
   }
 
   /** Applies one new input to the predicted vehicle, if there is one, and remembers it. */
@@ -88,17 +112,40 @@ export class VehicleDriver {
   private stepWith(input: InputFrame): CarBodyState | null {
     const controls = controlsOf(input, this.kind)
     this.worked = this.kind === KIND_HELI ? controls.lift : controls.throttle
-    this.motor.driveCar(this.id, controls, TICK_DT)
-    return this.motor.carState(this.id)
+    const broke = this.motor.driveCar(this.id, controls, TICK_DT)
+    const known = this.rams.find((ram) => ram.seq === input.seq)
+    // A replay drives through the hole this input first broke: it slows as it did then.
+    if (known && !broke) this.motor.setCarVelocity(this.id, known.linvel)
+    const state = this.motor.carState(this.id)
+    if (broke) this.onBreach(this.motor.takeRams())
+    if (broke && state) {
+      this.rams = this.rams.filter((ram) => ram.seq !== input.seq)
+      this.rams.push({ seq: input.seq, linvel: state.linvel })
+      this.breached = input.seq
+    }
+    return state
+  }
+
+  /**
+   * The vehicles of a snapshot to simulate beside `vehicle`, the one driven, nearest first: those of
+   * `others` within reach of it, and a little further for one that already is.
+   */
+  near(vehicle: VehiclePose, others: readonly Neighbour[]): Neighbour[] {
+    const away = (other: VehiclePose) => Math.hypot(other.x - vehicle.x, other.y - vehicle.y, other.z - vehicle.z)
+    return others
+      .filter((other) => other.id !== vehicle.id && away(other) < (this.beside.has(other.id) ? NEIGHBOUR_KEEP : NEIGHBOUR_REACH))
+      .sort((a, b) => away(a) - away(b))
   }
 
   /**
    * Rewinds to the server's state as of input `ack` and replays everything newer. `tick` is the
    * snapshot's: the server's next step, which the first replayed input is, so the waves on open water
    * are where the server has them. `feet` are a Titan's, which it stands on: without them the replay
-   * would walk it on from wherever this client's own copy of them had got to.
+   * would walk it on from wherever this client's own copy of them had got to. `neighbours` are the
+   * same snapshot's vehicles around it (`near`), rewound and replayed with it, so that what it rams
+   * gives way as it does on the server.
    */
-  reconcile(ack: number, vehicle: VehiclePose, drive: DriveState, tick?: number, feet?: Feet | null) {
+  reconcile(ack: number, vehicle: VehiclePose, drive: DriveState, tick?: number, feet?: Feet | null, neighbours: readonly Neighbour[] = []) {
     this.acknowledge(ack)
     if (this.id !== vehicle.id || this.kind !== vehicle.kind) {
       this.leave()
@@ -107,6 +154,7 @@ export class VehicleDriver {
       this.kind = vehicle.kind
     }
     const before = this.current
+    this.beside = this.motor.setNeighbours(neighbours, NEIGHBOUR_MAX)
     this.motor.setCarState(this.id, vehicle, drive)
     if (feet) this.motor.setCarFeet(this.id, feet.at, feet.step, feet.weight)
     if (tick !== undefined) this.motor.setTick(tick)
@@ -138,14 +186,24 @@ export class VehicleDriver {
     this.errorRotation.multiply(was.multiply(now.invert()))
   }
 
-  /** Stops predicting: the player left the driver's seat. The next snapshot makes the vehicle a solid again. */
+  /** Stops predicting: the player left the driver's seat. The next snapshot makes the vehicle, and those simulated beside it, solids again. */
   leave() {
     if (this.id !== 0) this.motor.stopCar(this.id)
+    this.beside = new Set()
+    this.rams = []
+    if (this.breached !== null) this.forget()
     this.previous = null
     this.current = null
     this.id = 0
     this.errorPosition.set(0, 0, 0)
     this.errorRotation.identity()
+  }
+
+  /** Gives up on the holes the server has not confirmed: they close in the physics, and whoever draws them is told. */
+  private forget() {
+    this.breached = null
+    this.motor.forgetRams()
+    this.onForget()
   }
 
   /** The pose to draw, between the last two ticks, plus the decaying correction. */

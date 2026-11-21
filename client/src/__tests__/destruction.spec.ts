@@ -499,6 +499,27 @@ describe('a building with cells blasted out of it', () => {
     expect(bodyOf(damage).geometry.vertexCount).toBeLessThan(whole)
   })
 
+  it('stands whole again where cells drawn as gone on a prediction are mended, and keeps the others out', () => {
+    const damage = new BuildingDamage()
+    damage.attach(key, twoHouses())
+    const hole = Array.from({ length: 4000 }, (_, i) => i)
+    damage.carve(key, 0, hole, [], [-1, 2, 0], true)
+    const e = effects()
+    damage.update(0, e, new Vector3(500, 0, 0))
+    const holed = bodyOf(damage).geometry.vertexCount
+    // The server bore out the first hundred cells only.
+    damage.mend(key, 0, hole.slice(100))
+    damage.update(0, e, new Vector3(500, 0, 0))
+    expect(damage.shown(key, 0).cells).toBe(100)
+    expect(bodyOf(damage).geometry.vertexCount).not.toBe(holed)
+    damage.mend(key, 0, hole)
+    damage.update(0, e, new Vector3(500, 0, 0))
+    e.dispose()
+    expect(damage.shown(key, 0).cells).toBe(0)
+    // The wall is back, though not as the few big faces it was: where the hole was is still marked.
+    expect(bodyOf(damage).geometry.vertexCount).toBeGreaterThan(holed)
+  })
+
   it('throws what was blasted out, and drops what was left hanging', () => {
     const damage = new BuildingDamage()
     damage.attach(key, twoHouses())

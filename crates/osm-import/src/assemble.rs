@@ -591,9 +591,11 @@ fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collecti
             per_tile(&manifest, half, side, &run, |key, points| tiles.entry(key).or_default().ski.push(SkiTrail { width: cm(SKI_TRAIL_WIDTH), points }));
         }
     }
-    // Bridges are solid geometry in the collision mesh, each piece in the tile it lies in.
+    // Bridges are solid geometry in the collision mesh, each piece in the tile it lies in. A deck
+    // rises to let a bus under where a drivable road on the ground passes under it.
+    let drivable: Vec<(&[P], f64)> = roads.iter().filter(|(_, _, kind)| matches!(*kind, ROAD_MAJOR | ROAD_MINOR)).map(|(points, width, _)| (points.as_slice(), *width)).collect();
     for (index, (points, width, kind, pylons, deck)) in bridges.iter().chain(&rail_bridges).enumerate() {
-        let mut pieces = bridge::build(points, *width, *kind, *pylons, deck, &ground, &water.levels, inner);
+        let mut pieces = bridge::build(points, *width, *kind, *pylons, deck, &drivable, &ground, &water.levels, inner);
         // No railing where another bridge's deck lies beside this one: the two carriageways of a
         // divided road, whose decks overlap, are one roadway. A deck reaches an edge beam past its road.
         let on_another = |p: P| bridges.iter().chain(&rail_bridges).enumerate().any(|(other, (line, across, _, pylons, _))| other != index && *pylons != Pylons::Carried && line.windows(2).any(|pair| distance_to_segment(p, pair[0], pair[1]) < across / 2.0 + bridge::EDGE_BEAM_WIDTH));
@@ -615,7 +617,7 @@ fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collecti
                 line.windows(2).any(|pair| {
                     let beside = own.is_some_and(|d| {
                         let e = unit_of(pair);
-                        (d[0] * e[0] + d[1] * e[1]).abs() > PARALLEL
+                        (d[0] * e[0] + d[1] * e[1]).abs() > bridge::PARALLEL
                     });
                     !beside && distance_to_segment(p, pair[0], pair[1]) < reach(*across)
                 })
@@ -1532,9 +1534,6 @@ fn under_power(at: P, corridors: &[Corridor]) -> bool {
 
 /// Half the width of the lane cleared through the forest under a ski lift, metres.
 const LIFT_LANE: f64 = 7.0;
-/// Another bridge whose line runs within this cosine of a bridge's own direction runs alongside it,
-/// not under it: its piers stand.
-const PARALLEL: f64 = 0.9;
 /// A pier stands this far clear of the edge of a road or a track under its bridge, metres.
 const PIER_CLEAR: f64 = 1.0;
 
@@ -2820,6 +2819,33 @@ mod tests {
     }
 
     #[test]
+    fn a_bus_fits_under_a_bridge_over_its_road() {
+        use shared::vehicles::bus::{BUS_BODY_CENTRE, BUS_BODY_HALF, BUS_RIDE_HEIGHT};
+        // Flat ground, a major road 10 m wide along z, and a bridge 50 m long over it along x, as a
+        // height model with no embankments has an interchange.
+        let road = (vec![[0.0, -90.0], [0.0, 90.0]], 10.0, ROAD_MAJOR);
+        let bridge = (vec![[-25.0, 0.0], [25.0, 0.0]], 8.0, ROAD_MINOR, Pylons::None, Deck::new());
+        let mut built = assemble(Frame::default(), 150.0, 100.0, None, Vec::new(), vec![road], &[Lanes::default()], vec![bridge], Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), &[], Ground::default(), Placed::default());
+        for tile in built.tiles.values_mut() {
+            crate::voxels::bake(tile);
+        }
+        // The lowest cube of the bridge over the road's width, as the server collides with it.
+        let mut lowest = f64::MAX;
+        for building in built.tiles.values().flat_map(|t| &t.buildings).filter(|b| b.kind == BUILDING_BRIDGE) {
+            let shell = shared::carve::Shell::from_cells(&building.cells).expect("a section has cells");
+            for id in shell.solid_cells() {
+                let [x, y, _] = shell.centre(id);
+                if f64::from(x).abs() <= 500.0 + f64::from(shared::carve::CELL) / 2.0 {
+                    lowest = lowest.min(f64::from(y - shared::carve::CELL / 2) / 100.0);
+                }
+            }
+        }
+        let roof = f64::from(BUS_RIDE_HEIGHT + BUS_BODY_CENTRE[1] + BUS_BODY_HALF[1]);
+        assert!(lowest < f64::MAX, "the bridge is built over the road");
+        assert!(lowest >= roof + 0.5, "the bridge's underside over the road is {lowest} m up, a bus's roof {roof} m");
+    }
+
+    #[test]
     fn bridge_sections_are_buildings_with_cells_and_a_look_and_no_windows() {
         use crate::water::{Grid, Surface};
         let map = synthetic_water(300.0);
@@ -3348,7 +3374,7 @@ mod tests {
         assert!(west < 16.0 - CUT_MARGIN + 2.0 && west > 0.0, "starts on the level before the trench: {west}");
         assert!(east > 24.0 + CUT_MARGIN - 2.0 && east < 40.0, "ends on the level past it: {east}");
         // Built as a bridge, its deck is level with the road either side.
-        let pieces = bridge::build(points, *width, *kind, Pylons::Flush, &[], &ground, &[], 150.0);
+        let pieces = bridge::build(points, *width, *kind, Pylons::Flush, &[], &[], &ground, &[], 150.0);
         assert!(!pieces.is_empty(), "a short span over a trench is still built");
         // Flush with the road: nothing stands a metre over the deck, as a railing would.
         let top = pieces.iter().flat_map(|piece| piece.tris.iter().flatten()).map(|v| v[1]).fold(f64::MIN, f64::max);
@@ -3399,7 +3425,7 @@ mod tests {
         assert_eq!(shared[0].0, vec![[0.0, 4.0], [60.0, 4.0], [120.0, 4.0]], "along the middle of the two");
         assert_eq!(shared[0].1, 18.0, "wide enough for both");
         let ground = Ground { origin: -15_000, cell: 500, side: 61, heights: vec![0; 61 * 61] };
-        assert!(bridge::build(&roads[0].0, 10.0, ROAD_MAJOR, Pylons::Carried, &[], &ground, &[], 150.0).is_empty(), "a carried road builds nothing");
+        assert!(bridge::build(&roads[0].0, 10.0, ROAD_MAJOR, Pylons::Carried, &[], &[], &ground, &[], 150.0).is_empty(), "a carried road builds nothing");
     }
     #[test]
     fn a_deck_over_a_cutting_that_a_bridge_now_covers_is_left_out() {

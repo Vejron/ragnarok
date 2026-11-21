@@ -338,43 +338,37 @@ fn take_bite(world: &mut World, id: shared::world::ObjId, point: [f32; 3], radiu
     world.carve(id, point, radius);
 }
 
-/// A vehicle drives into standing building `id` at `point`, `dv` m/s of speed taken out of it in
-/// one step: the piece of wall it hit breaks out, and a hard enough hit takes a bite as well.
-pub fn ram_building(world: &mut World, id: shared::world::ObjId, point: [f32; 3], dv: f32, weight: f32) {
+/// A vehicle of `kind` drives into standing building `id` at `point`, `dv` m/s of speed taken out of
+/// it in one step: the piece of wall it hit breaks out, and a hard enough hit breaks a hole
+/// (`sim::breach`). Returns the share of its speed the vehicle goes on through the hole with, for a
+/// kind that does and a wall that broke.
+pub fn ram_building(world: &mut World, id: shared::world::ObjId, point: [f32; 3], dv: f32, kind: u8) -> Option<f32> {
     // Nothing that drives breaks a bridge; a Titan's fist does (`punch_bridge`).
     if world.is_bridge(id) {
-        return;
+        return None;
     }
-    let dv = dv * weight;
-    chip_building(world, id, point, (dv * RAM_CHIP_PER_DV).min(255.0) as u8);
-    let radius = ((dv - RAM_BITE_MIN_DV) * RAM_BITE_PER_DV).min(RAM_BITE_MAX);
-    if radius >= CARVE_MIN_RADIUS {
-        take_bite(world, id, point, radius);
-    }
-    damage_object(world, Obj::Building(id), (dv * RAM_HP_PER_DV) as u16, point);
+    let weighed = dv * vehicle_def(kind).body.ram;
+    chip_building(world, id, point, (weighed * RAM_CHIP_PER_DV).min(255.0) as u8);
+    let breach = sim::breach(kind, dv);
+    let broke = breach.is_some_and(|breach| world.carve(id, point, breach.radius).is_some());
+    damage_object(world, Obj::Building(id), (weighed * RAM_HP_PER_DV) as u16, point);
+    breach.filter(|_| broke).and_then(|breach| breach.keep)
 }
 
 /// A vehicle drives into placed cubes at `point`, `dv` m/s of speed taken out of it in one step, as
 /// into a wall (`ram_building`): the cube it hit takes the knock, and a hard enough hit takes a bite.
-pub fn ram_cubes(world: &mut World, point: [f32; 3], dv: f32, weight: f32) {
-    let dv = dv * weight;
+pub fn ram_cubes(world: &mut World, point: [f32; 3], dv: f32, kind: u8) {
     // The contact is on the cube's face: its middle is half a cube in.
     if let Some(pos) = world.construct.nearest(point.map(to_cm), shared::carve::CELL) {
-        world.chip_cube(pos, (dv * RAM_CHIP_PER_DV).min(255.0) as u8);
+        world.chip_cube(pos, (dv * vehicle_def(kind).body.ram * RAM_CHIP_PER_DV).min(255.0) as u8);
     }
-    let radius = ((dv - RAM_BITE_MIN_DV) * RAM_BITE_PER_DV).min(RAM_BITE_MAX);
-    if radius >= CARVE_MIN_RADIUS {
-        world.blast_cubes(point, radius);
+    if let Some(breach) = sim::breach(kind, dv) {
+        world.blast_cubes(point, breach.radius);
     }
 }
 
 /// Cell damage per m/s a vehicle loses to a wall: a cell has 40, so a hit of 5 m/s breaks one out.
 const RAM_CHIP_PER_DV: f32 = 8.0;
-/// A hit has to take this much speed (m/s) out of the vehicle before it bites, and bites this many
-/// metres of radius per m/s beyond, up to the largest.
-const RAM_BITE_MIN_DV: f32 = 6.0;
-const RAM_BITE_PER_DV: f32 = 0.3;
-const RAM_BITE_MAX: f32 = 3.0;
 /// Building health taken per m/s.
 const RAM_HP_PER_DV: f32 = 12.0;
 

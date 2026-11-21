@@ -45,7 +45,8 @@ over it in this order:
    - The road's level over it is the lower of the highest ground along the road within 12 m either
      side of the crossing, which bridges whatever dip the model has under it.
    - The floor runs straight from portal to portal, but never higher than the headroom (3 m for a
-     path, 4.7 m for a road) and the deck's thickness (0.7 m) under the lowest road over it.
+     path, 4.7 m for a road, `bridge::HEADROOM_ROAD`, which a bridge over a road also leaves) and the
+     deck's thickness (0.7 m) under the lowest road over it.
    - The ways leading in at each portal come down to the floor at a 6 % grade, for up to 60 m.
    - The floor is the way's width and half a metre either side, with banks of 1 in 1 beside it.
      Nothing is dug more than 5 m below the model, and the ground is only ever lowered.

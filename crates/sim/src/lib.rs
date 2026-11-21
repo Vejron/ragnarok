@@ -28,8 +28,9 @@ pub mod waters;
 mod ragdoll;
 mod stream;
 mod vehicle;
+pub use stream::Ram;
 pub use ragdoll::{PARTS as RAGDOLL_PARTS, POSE_FLOATS as RAGDOLL_POSE_FLOATS, Ragdolls, SEGMENT_FLOATS as RAGDOLL_SEGMENT_FLOATS};
-pub use vehicle::{CarCondition, CarControls, CarImpact, CarMotion, CarPose, Hand, LIMB_GROUP, LimbsPose, Strike, half_extents};
+pub use vehicle::{Breach, CarCondition, CarControls, CarImpact, CarMotion, CarPose, Hand, LIMB_GROUP, LimbsPose, Strike, breach, breach_velocity, half_extents};
 
 /// A destructible piece of the static world: a building, a tree or a piece of a fence or wall
 /// (`shared::world::line_pieces`), by tile and index.
@@ -139,6 +140,13 @@ pub struct Physics {
     /// Vehicles as solid stand-ins at their snapshot pose (`set_obstacle`), by id: what the client's
     /// prediction walks into. Empty on the server, which simulates the vehicles themselves.
     obstacles: std::collections::BTreeMap<u32, stream::Obstacle>,
+    /// The vehicles near the one the client predicts that are simulated beside it rather than standing
+    /// as solids (`set_neighbour`), by id, with the kind of each and the controls it is held to. Empty on the
+    /// server.
+    neighbours: std::collections::BTreeMap<u32, (u8, CarControls)>,
+    /// The holes the predicted vehicle broke ramming buildings (`ram_buildings`) that the client has
+    /// not yet been handed to draw (`take_rams`). Empty on the server.
+    rams: Vec<stream::Ram>,
     /// Stony ground, which slows a soldier on foot (`walk_stones`).
     stones: cells::TileCells,
     /// Standing crops, which hide a soldier from the bots (`crop_at`). Empty in the client's prediction,
@@ -622,6 +630,8 @@ impl Physics {
             bound,
             tiles: HashMap::new(),
             obstacles: std::collections::BTreeMap::new(),
+            neighbours: std::collections::BTreeMap::new(),
+            rams: Vec::new(),
             stones: cells::TileCells::default(),
             crops: cells::TileCells::default(),
             waters: waters::Waters::default(),

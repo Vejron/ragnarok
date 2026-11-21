@@ -19,7 +19,7 @@ import { ITEM_DRIVER, ITEM_NONE, aimSpeedScale, effectiveSpread, fillsHands, ite
 import { backswingPhase, downswingPhase } from './render/golfclub'
 import { InputController } from './sim/input'
 import type { Character } from './render/character'
-import { SimMotor, type CharacterState, type VehiclePose } from './sim/motor'
+import { SimMotor, type CharacterState, type Neighbour, type VehiclePose } from './sim/motor'
 import { Terrain } from './sim/terrain'
 import { VehicleDriver, type DrivenPose, type Feet } from './sim/driver'
 import { Predictor } from './sim/predict'
@@ -485,7 +485,7 @@ export class Game {
   /** Predicts the vehicle the local player drives. */
   private driver: VehicleDriver | null = null
   /** The newest snapshot of the driven vehicle, waiting for the next frame to be reconciled with. */
-  private driverSnapshot: { ack: number; tick: number; vehicle: VehiclePose; drive: DriveState; feet: Feet | null } | null = null
+  private driverSnapshot: { ack: number; tick: number; vehicle: VehiclePose; drive: DriveState; feet: Feet | null; neighbours: Neighbour[] } | null = null
   /** Vehicle poses of the newest snapshot, which the predicted soldier's frame is fixed to while riding. */
   private readonly refPoses = new Map<number, VehiclePose>()
   private localId: number | null = null
@@ -689,6 +689,9 @@ export class Game {
     this.motor = this.view.motor = motor
     this.ragdolls = new Ragdolls(motor)
     this.driver = new VehicleDriver(motor)
+    // A wall the driven vehicle breaks through is seen to break as it hits, not a round trip later.
+    this.driver.onBreach = (holes) => this.view.rammed(holes)
+    this.driver.onForget = () => this.view.forgetRams()
     await Promise.all([this.crowd.load(), loadVehicleModels(), loadRoosterModel(), loadAnimalModels()])
     // The buildings arrive as tiles, around wherever the player is.
     this.tiles = new TileStreamer(world, {
@@ -957,19 +960,25 @@ export class Game {
     this.refPoses.clear()
     let drive: DriveState | undefined
     let limbs: Entity['titan']
+    // The vehicles with someone in the driver's seat, and what each vehicle's `steer` says.
+    const driven = new Set<number>()
+    const steers = new Map<number, NonNullable<Entity['steer']>>()
     for (const [id, wire] of rebuilt.scene) {
+      if (wire.seated?.seat === 0) driven.add(wire.seated.vehicle)
       if (!wire.orientation || !wire.place) continue
       const vehicle = inGameUnits(wire)
       this.refPoses.set(id, poseOf(id, vehicle))
+      if (vehicle.steer) steers.set(id, vehicle.steer)
       if (id === own?.seated?.vehicle) {
         drive = vehicle.drive
         limbs = vehicle.titan
       }
     }
-    this.motor?.setVehicles([...this.refPoses.values()].map((pose) => {
+    const moving = [...this.refPoses.values()].map((pose) => {
       const [vx, vz] = this.store.latestVelocity(pose.id) ?? [0, 0]
       return { ...pose, vx, vz }
-    }))
+    })
+    this.motor?.setVehicles(moving)
     // Where the local player sits, if they do: their own `seated`, once their vehicle is in view.
     const mount = (own?.seated && this.refPoses.get(own.seated.vehicle)) || null
     const wasSeated = this.seat !== null
@@ -985,7 +994,10 @@ export class Game {
       const feet: Feet | null = limbs
         ? { at: [[mount.x + limbs.flx, mount.y + limbs.fly, mount.z + limbs.flz], [mount.x + limbs.frx, mount.y + limbs.fry, mount.z + limbs.frz]], step: limbs.step, weight: limbs.weight }
         : null
-      this.driverSnapshot = { ack: message.ack, tick: message.tick, vehicle: mount, drive, feet }
+      // The vehicles around it are rewound and replayed with it, so that one it rams gives way.
+      const others = moving.map((pose) => ({ ...pose, steer: steers.get(pose.id)?.steer ?? 0, throttle: steers.get(pose.id)?.throttle ?? 0, driven: driven.has(pose.id) }))
+      const neighbours = this.driver?.near(mount, others) ?? []
+      this.driverSnapshot = { ack: message.ack, tick: message.tick, vehicle: mount, drive, feet, neighbours }
     } else {
       this.driverSnapshot = null
       this.driver?.leave()
@@ -1250,10 +1262,13 @@ export class Game {
     this.lastFrame = now
 
     if (this.driverSnapshot) {
-      const { ack, tick, vehicle, drive, feet } = this.driverSnapshot
+      const { ack, tick, vehicle, drive, feet, neighbours } = this.driverSnapshot
       this.driverSnapshot = null
       if (this.driver) {
-        this.driver.reconcile(ack, vehicle, drive, tick, feet)
+        // The walls cut since the last frame are cut in the physics first: the replay starts from
+        // where the server's vehicle is, which may be in the hole it has just made.
+        this.view.reshapeNear(this.cameraAt.set(this.scene.camera.position.x, this.scene.camera.position.y, this.scene.camera.position.z))
+        this.driver.reconcile(ack, vehicle, drive, tick, feet, neighbours)
         this.health.corrected(this.driver.lastCorrection, now)
       }
     }

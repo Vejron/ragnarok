@@ -1063,3 +1063,69 @@ fn a_car_grazing_a_guard_rail_slides_along_it_unhurt_and_a_square_hit_breaks_it(
     let (broke, after, lost) = graze_a_guard_rail(30.0, 1.5);
     assert!(broke && lost > 50 && after < 10.0, "square on: broke {broke}, {after} m/s, lost {lost} hp");
 }
+
+/// A 10 m house 6 m tall round `(60, 0)`, on flat ground with nothing else: its near wall faces -X at x = 55.
+fn game_with_a_house() -> (Game, shared::world::ObjId) {
+    use shared::world::{Building, CollisionMesh, ObjId};
+    let v = |x: f32, y: f32, z: f32| [(x * 100.0) as i32, (y * 100.0) as i32, (z * 100.0) as i32];
+    let vertices = vec![v(55.0, 0.0, -5.0), v(65.0, 0.0, -5.0), v(65.0, 0.0, 5.0), v(55.0, 0.0, 5.0), v(55.0, 6.0, -5.0), v(65.0, 6.0, -5.0), v(65.0, 6.0, 5.0), v(55.0, 6.0, 5.0)];
+    let triangles = vec![[0, 1, 5], [0, 5, 4], [1, 2, 6], [1, 6, 5], [2, 3, 7], [2, 7, 6], [3, 0, 4], [3, 4, 7], [4, 5, 6], [4, 6, 7], [0, 2, 1], [0, 3, 2]];
+    let house = Building { height: 600, footprint: vec![[5500, -500], [6500, -500], [6500, 500], [5500, 500]], base: 0, first: 0, walls: 8, roof: 2, ..Default::default() };
+    let id = ObjId { col: 1, row: 1, index: 0 };
+    let map = WorldFile {
+        version: WORLD_VERSION,
+        half_extent: 40_000,
+        spawns: vec![[30_000, 30_000]],
+        buildings: vec![house],
+        building_ids: vec![id],
+        building_triangles: vec![[0, 12]],
+        collision: CollisionMesh { vertices, triangles },
+        ..Default::default()
+    };
+    let mut game = Game::new(map, 0).unwrap();
+    game.world.clear_pickups();
+    (game, id)
+}
+
+/// Drives a vehicle of `kind` at the house's wall at `speed` m/s and steps until it has rammed it:
+/// the speed along +X it came in with and the speed it has the tick after, and whether the wall broke.
+fn ram_the_house(kind: u8, speed: f32) -> (f32, f32, bool) {
+    let (mut game, house) = game_with_a_house();
+    // Nobody is in it, so it holds its handbrake: it starts two metres short of the wall, to get there at speed.
+    let start = 55.0 - sim::half_extents(kind)[2] - 2.0;
+    let vid = add_vehicle(&mut game.world, kind, [start, 1.5, 0.0], -std::f32::consts::FRAC_PI_2);
+    for _ in 0..120 {
+        Vehicles.on_tick(&mut game.world, TICK_DT);
+    }
+    let facing = game.world.physics.car_pose(vid).unwrap();
+    assert!(facing.position[0] > start - 1.0 && facing.velocity[0].hypot(facing.velocity[2]) < 0.2, "it stands facing the house: {facing:?}");
+    game.world.physics.set_car_velocity(vid, [speed, 0.0, 0.0]);
+    let mut last = speed;
+    for _ in 0..90 {
+        Vehicles.on_tick(&mut game.world, TICK_DT);
+        game.world.flush_buildings();
+        let now = game.world.physics.car_pose(vid).unwrap().velocity[0];
+        if now < last - 2.0 || game.world.carves.contains_key(&house) {
+            let broke = game.world.carves.get(&house).is_some_and(|carving| carving.removed.iter().filter(|&&gone| gone).count() > 4);
+            return (last, now, broke);
+        }
+        last = now;
+    }
+    panic!("it never reached the wall");
+}
+
+#[test]
+fn a_jeep_breaks_through_a_house_wall_at_speed_keeping_half_of_it_and_a_slow_one_is_stopped() {
+    let (came_in, goes_on, broke) = ram_the_house(KIND_JEEP, 15.0);
+    assert!(broke, "the wall breaks");
+    assert!((goes_on - came_in * 0.5).abs() < 0.5, "came in at {came_in} m/s, goes on at {goes_on}");
+    let (came_in, goes_on, broke) = ram_the_house(KIND_JEEP, 6.0);
+    assert!(!broke && goes_on < 1.0, "at {came_in} m/s the wall holds and stops it: {goes_on} m/s");
+}
+
+#[test]
+fn a_tank_goes_through_a_house_wall_losing_little() {
+    let (came_in, goes_on, broke) = ram_the_house(KIND_TANK, 8.0);
+    assert!(broke, "the wall breaks");
+    assert!(goes_on > came_in * 0.8, "came in at {came_in} m/s, goes on at {goes_on}");
+}

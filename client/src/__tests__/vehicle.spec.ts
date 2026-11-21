@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { VehicleDriver } from '@/sim/driver'
-import { controlsOf, SimMotor, type CarControls, type VehiclePose } from '@/sim/motor'
+import { controlsOf, SimMotor, type CarControls, type Neighbour, type VehiclePose } from '@/sim/motor'
 import { heightIn, type TileGround } from '@/sim/terrain'
 import { f32 } from '@/sim/round'
 import { BUTTON_CROUCH, BUTTON_JUMP, BUTTON_RUN, LOITER_SPEED, TICK_DT, vehicleMaxHp } from '@/sim/consts'
-import { KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, type InputFrame } from '@/net/codec'
+import { type CarvedBuilding, KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, type InputFrame } from '@/net/codec'
 import type { DriveState } from '@/entities/units'
 import { manifestBytes, tileBytes } from './worlds'
 
@@ -399,6 +399,129 @@ describe('driving a predicted vehicle', () => {
     const roof = motor.castRay([state.vehicle.x, 10, state.vehicle.z], [0, -1, 0], 20)!
     expect(10 - roof.t).toBeGreaterThan(1)
     motor.dispose()
+  })
+
+  /** A vehicle of `kind` standing empty `ahead` metres in front of the one `serverState` gives, as a snapshot shows it. */
+  const parked = (from: VehiclePose, id: number, kind: number, ahead: number): Neighbour => ({ ...from, id, kind, z: from.z - ahead, hp: vehicleMaxHp(kind), vx: 0, vz: 0, steer: 0, throttle: 0, driven: false })
+  /** Full throttle, straight ahead. */
+  const ahead = (seq: number): InputFrame => ({ seq, strafe: 0, forward: 127, yaw: 0, pitch: 0, view: 0, slot: 0, collective: 0, buttons: 0 })
+
+  it('shoves a parked car simulated beside it, where a stand-in stops it dead', async () => {
+    const state = await serverState(KIND_JEEP, 0)
+    const other = parked(state.vehicle, 4, KIND_JEEP, 15)
+    /** Where the driven jeep and the parked one are along z after four seconds of full throttle. */
+    const ram = async (beside: boolean) => {
+      const motor = await field(200)
+      const driver = new VehicleDriver(motor)
+      motor.setVehicles([state.vehicle, other])
+      driver.reconcile(0, state.vehicle, state.drive, undefined, null, beside ? driver.near(state.vehicle, [other]) : [])
+      for (let seq = 1; seq <= 240; seq++) driver.apply(ahead(seq))
+      const ends = [motor.carState(3)!.position[2], motor.carState(4)?.position[2] ?? other.z]
+      driver.dispose()
+      motor.dispose()
+      return ends
+    }
+    const [stopped, stood] = await ram(false)
+    const [pushing, pushed] = await ram(true)
+    expect(stood).toBe(other.z)
+    expect(pushed).toBeLessThan(other.z - 0.5)
+    expect(pushing).toBeLessThan(stopped! - 0.5)
+  })
+
+  it('simulates only the vehicles near it that stay on their wheels, and lets them go when the player leaves', async () => {
+    const motor = await field(200)
+    const driver = new VehicleDriver(motor)
+    const state = await serverState(KIND_JEEP, 0)
+    const [close, heli, edge, far] = [parked(state.vehicle, 4, KIND_JEEP, 10), parked(state.vehicle, 5, KIND_HELI, 20), parked(state.vehicle, 6, KIND_JEEP, 35), parked(state.vehicle, 7, KIND_JEEP, 60)]
+    const others = [far, edge, heli, close]
+    // Nearest first, and not the driven one itself; a helicopter is offered but stays a stand-in.
+    expect(driver.near(state.vehicle, [...others, { ...close, ...state.vehicle }]).map((car) => car.id)).toEqual([4, 5])
+    driver.reconcile(0, state.vehicle, state.drive, undefined, null, driver.near(state.vehicle, others))
+    expect(motor.carState(4)).not.toBeNull()
+    expect(motor.carState(5)).toBeNull()
+    // One already simulated is kept a little further out than a new one is taken.
+    driver.reconcile(0, state.vehicle, state.drive, undefined, null, [close, edge])
+    expect(driver.near(state.vehicle, others).map((car) => car.id)).toEqual([4, 5, 6])
+    driver.reconcile(0, state.vehicle, state.drive, undefined, null, [close])
+    expect(motor.carState(6)).toBeNull()
+    driver.leave()
+    expect(motor.carState(4)).toBeNull()
+    motor.dispose()
+  })
+})
+
+describe('a predicted ram through a wall', () => {
+  /** A motor that only counts: its vehicle gains 1 m/s along x a tick, and breaks through a wall on the ticks in `breaks`, which halves its speed. */
+  function fake(breaks: Set<number>) {
+    const state = { tick: 0, vx: 0, forgotten: 0 }
+    const hole: CarvedBuilding = { col: 1, row: 2, index: 3, point: [0, 1, 0], blasted: [7], fell: [8] }
+    const motor = {
+      startCar() {},
+      stopCar() {},
+      setNeighbours: () => new Set<number>(),
+      setCarState() {
+        state.vx = 0
+      },
+      driveCar() {
+        state.tick += 1
+        state.vx += 1
+        if (!breaks.has(state.tick)) return false
+        state.vx /= 2
+        return true
+      },
+      setCarVelocity(_id: number, velocity: readonly number[]) {
+        state.vx = velocity[0]!
+      },
+      carState: () => ({ position: [0, 0, 0], rotation: [0, 0, 0, 1], linvel: [state.vx, 0, 0], angvel: [0, 0, 0], steer: 0, spin: 0, tank: null, firing: 0, steerFraction: 0 }),
+      takeRams: () => [hole],
+      forgetRams() {
+        state.forgotten += 1
+      },
+    }
+    return { state, motor: motor as unknown as SimMotor }
+  }
+  const vehicle: VehiclePose = { id: 3, kind: KIND_JEEP, x: 0, y: 0, z: 0, qx: 0, qy: 0, qz: 0, qw: 1, hp: 255, damage: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], air: null }
+  const drive: DriveState = { vx: 0, vy: 0, vz: 0, wx: 0, wy: 0, wz: 0, steer: 0, spin: 0 }
+  const input = (seq: number): InputFrame => ({ seq, strafe: 0, forward: 127, yaw: 0, pitch: 0, view: 0, slot: 0, collective: 0, buttons: 0 })
+
+  it('is slowed again at the same input by a replay that finds the hole already made', () => {
+    // The wall breaks on the fourth tick only: the replay's fourth input drives through the hole.
+    const { state, motor } = fake(new Set([5]))
+    const driver = new VehicleDriver(motor)
+    driver.reconcile(0, vehicle, drive)
+    state.tick = 1
+    for (let seq = 1; seq <= 6; seq++) driver.apply(input(seq))
+    // 1, 2, 3, then (3 + 1) / 2 = 2, then 3, 4.
+    expect(state.vx).toBe(4)
+    driver.reconcile(0, vehicle, drive)
+    expect(state.vx).toBe(4)
+    // Once the server has stepped the ram, its own state carries the slowing.
+    driver.reconcile(4, vehicle, drive)
+    expect(state.vx).toBe(2)
+  })
+
+  it('has its hole closed when the server steps well past it without a word, or the player leaves', () => {
+    const { state, motor } = fake(new Set([2]))
+    const driver = new VehicleDriver(motor)
+    // Whoever draws the world is handed the hole as it is broken, and told when it is given up.
+    const seen: string[] = []
+    driver.onBreach = (holes) => seen.push(`hole in ${holes[0]!.index}`)
+    driver.onForget = () => seen.push('forgotten')
+    driver.reconcile(0, vehicle, drive)
+    state.tick = 1
+    driver.apply(input(1))
+    expect(seen).toEqual(['hole in 3'])
+    driver.acknowledge(40)
+    expect(state.forgotten).toBe(0)
+    driver.acknowledge(61)
+    expect(state.forgotten).toBe(1)
+    expect(seen).toEqual(['hole in 3', 'forgotten'])
+    driver.acknowledge(200)
+    expect(state.forgotten).toBe(1)
+    state.tick = 1
+    driver.apply(input(201))
+    driver.leave()
+    expect(state.forgotten).toBe(2)
   })
 })
 

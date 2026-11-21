@@ -200,3 +200,199 @@ fn a_streamed_tile_given_dented_ground_collides_with_it() {
         assert!((world.ground.height_at(x + dx, z) - (80.0 - t)).abs() < 0.02, "at {dx}: ground {} collider {}", world.ground.height_at(x + dx, z), 80.0 - t);
     }
 }
+
+/// How wrong a driver's client is while it rams a parked jeep at full throttle, metres: the largest
+/// correction a snapshot brings, and the furthest its prediction is from where the server had the
+/// car at the same tick. The server's world runs both jeeps; the client's runs the driven one
+/// `LATENCY` ticks ahead of the snapshots it gets every other tick, replaying its inputs over each,
+/// with the parked jeep as a fixed stand-in or, with `beside`, simulated beside it.
+fn ram_corrections(beside: bool) -> (f32, f32) {
+    /// Ticks from an input being made to the snapshot that answers it being replayed: 100 ms.
+    const LATENCY: usize = 6;
+    const TICKS: usize = 300;
+    let forward = CarControls { throttle: 1.0, ..CarControls::IDLE };
+    let parked = CarControls { handbrake: true, ..CarControls::IDLE };
+    let state = |physics: &Physics, id: u32| (physics.car_pose(id).unwrap(), physics.car_motion(id).unwrap());
+
+    let mut server = Physics::new(&WorldFile { version: shared::world::WORLD_VERSION, half_extent: 20_000, ..Default::default() }).unwrap();
+    server.add_car(1, KIND_JEEP, [0.0, 1.0, 0.0], 0.0);
+    server.add_car(2, KIND_JEEP, [0.0, 1.0, -30.0], 0.0);
+    // The server's two jeeps after each tick.
+    let mut truth = Vec::new();
+    for _ in 0..TICKS {
+        server.drive_car(1, forward, TICK_DT);
+        server.drive_car(2, parked, TICK_DT);
+        server.step_cars(TICK_DT);
+        truth.push((state(&server, 1), state(&server, 2)));
+    }
+    let end = truth[TICKS - 1];
+    assert!(end.0.0.position[2] < -27.0 && end.1.0.position[2] < -31.0, "the server's jeep shoved the parked one: {:?} and {:?}", end.0.0.position, end.1.0.position);
+
+    let mut client = Physics::streamed(&Manifest { half_extent: 20_000, tile_size: 40_000, ..Default::default() });
+    client.add_car(1, KIND_JEEP, [0.0, 1.0, 0.0], 0.0);
+    let step = |client: &mut Physics| {
+        client.drive_car(1, forward, TICK_DT);
+        client.drive_neighbours(TICK_DT);
+        client.step_cars(TICK_DT);
+    };
+    let (mut largest, mut furthest) = (0.0f32, 0.0f32);
+    for tick in 0..TICKS {
+        if tick >= LATENCY && tick % 2 == 0 {
+            // The snapshot of `LATENCY` ticks ago arrives: rewind to it and replay what was done since.
+            let before = client.car_pose(1).unwrap().position;
+            let ((pose, motion), (other, other_motion)) = truth[tick - LATENCY];
+            // Of another's vehicle the client knows only its speed over the ground.
+            let velocity = [other_motion.linvel[0], 0.0, other_motion.linvel[2]];
+            if beside {
+                assert!(client.set_neighbour(2, KIND_JEEP, other.position, other.rotation, velocity, 0.0, parked, CarCondition::of(KIND_JEEP, 255, [0; shared::protocol::DAMAGE_SLOTS]), true));
+            } else {
+                client.set_obstacle(2, KIND_JEEP, other.position, other.rotation, velocity, true);
+                client.refresh();
+            }
+            client.set_car_state(1, pose.position, pose.rotation, motion, None);
+            for _ in 0..LATENCY {
+                step(&mut client);
+            }
+            largest = largest.max(vec3::distance(before, client.car_pose(1).unwrap().position));
+        }
+        step(&mut client);
+        furthest = furthest.max(vec3::distance(client.car_pose(1).unwrap().position, truth[tick].0.0.position));
+    }
+    (largest, furthest)
+}
+
+#[test]
+fn a_predicted_car_shoves_a_parked_one_as_the_server_does() {
+    // Against a stand-in nothing moves, the predicted jeep stops dead and waits for the server.
+    let (largest, furthest) = ram_corrections(false);
+    assert!(largest > 0.3 && furthest > 1.0, "a fixed stand-in: corrected by {largest} m, {furthest} m from the server");
+    let (largest, furthest) = ram_corrections(true);
+    assert!(largest < 0.15 && furthest < 0.4, "simulated beside it: corrected by {largest} m, {furthest} m from the server");
+}
+
+#[test]
+fn a_neighbour_takes_its_stand_ins_place_and_gives_it_back() {
+    let manifest = Manifest { half_extent: 5_000, tile_size: 10_000, ..Default::default() };
+    let mut physics = Physics::streamed(&manifest);
+    let upright = [0.0, 0.0, 0.0, 1.0];
+    let whole = |kind| CarCondition::of(kind, 255, [0; shared::protocol::DAMAGE_SLOTS]);
+    physics.set_obstacle(7, KIND_JEEP, [0.0, 1.0, 0.0], upright, [0.0; 3], true);
+    assert!(physics.set_neighbour(7, KIND_JEEP, [0.0, 1.0, 0.0], upright, [0.0; 3], 0.0, CarControls::IDLE, whole(KIND_JEEP), true));
+    assert!(physics.obstacle_ids().is_empty() && physics.neighbour_ids() == vec![7]);
+    // A snapshot's stand-ins leave a neighbour alone.
+    physics.set_obstacle(7, KIND_JEEP, [0.0, 1.0, 0.0], upright, [0.0; 3], true);
+    assert!(physics.obstacle_ids().is_empty());
+    // What flies is not simulated without its pilot, and neither is the player's own vehicle.
+    assert!(!physics.set_neighbour(8, shared::protocol::KIND_HELI, [20.0, 1.0, 0.0], upright, [0.0; 3], 0.0, CarControls::IDLE, whole(shared::protocol::KIND_HELI), true));
+    physics.add_car(9, KIND_JEEP, [-20.0, 1.0, 0.0], 0.0);
+    assert!(!physics.set_neighbour(9, KIND_JEEP, [-20.0, 1.0, 0.0], upright, [0.0; 3], 0.0, CarControls::IDLE, whole(KIND_JEEP), true));
+    physics.remove_neighbour(9);
+    assert!(physics.car_pose(9).is_some(), "the player's own vehicle is not a neighbour to remove");
+    physics.remove_neighbour(7);
+    assert!(physics.car_pose(7).is_none() && physics.neighbour_ids().is_empty());
+    physics.set_obstacle(7, KIND_JEEP, [0.0, 1.0, 0.0], upright, [0.0; 3], true);
+    assert_eq!(physics.obstacle_ids(), vec![7]);
+}
+
+#[test]
+fn a_hard_ram_breaks_a_hole_the_vehicle_fits_and_a_heavier_one_keeps_more_speed() {
+    use shared::protocol::KIND_HELI;
+    assert_eq!(crate::breach(KIND_JEEP, 8.0), None, "a jeep at under 30 km/h only chips the wall");
+    let jeep = crate::breach(KIND_JEEP, 10.0).unwrap();
+    let [half_width, half_height, _] = crate::half_extents(KIND_JEEP);
+    assert!(jeep.radius > half_width.hypot(half_height), "the hole takes in the corners of its nose: {jeep:?}");
+    assert_eq!(jeep.keep, Some(0.5));
+    let tank = crate::breach(KIND_TANK, 4.0).unwrap();
+    assert!(tank.keep.unwrap() > 0.8 && tank.radius > jeep.radius, "{tank:?}");
+    // What flies bites the wall and stops on it.
+    assert_eq!(crate::breach(KIND_HELI, 12.0).map(|breach| breach.keep), Some(None));
+    assert_eq!(crate::breach_velocity([0.0, -1.0, -12.0], [0.0, 0.2, -1.0], 0.5), [0.0, 0.2, -6.0]);
+    assert_eq!(crate::breach_velocity([0.0, 0.0, -12.0], [0.0, 0.0, -9.0], 0.5), [0.0, 0.0, -9.0], "never slower than the wall left it");
+}
+
+/// A wall of the committed city a jeep can drive straight at over open, nearly level ground: the
+/// building, a point 12 m out from the wall a metre over the ground, and the unit direction `[x, z]`
+/// from there to it.
+fn open_wall(physics: &Physics, world: &WorldFile) -> (shared::world::ObjId, [f32; 3], [f32; 2]) {
+    let ground = |x: f32, z: f32| physics.cast_ray_normal([x, 200.0, z], [0.0, -1.0, 0.0], 400.0).map(|(t, _)| 200.0 - t);
+    for (index, building) in world.buildings.iter().enumerate() {
+        if building.kind == shared::world::BUILDING_BRIDGE || building_shell(world, index).is_none() {
+            continue;
+        }
+        let xs = building.footprint.iter().map(|p| from_cm(p[0]));
+        let zs = building.footprint.iter().map(|p| from_cm(p[1]));
+        let (x0, x1) = (xs.clone().fold(f32::MAX, f32::min), xs.fold(f32::MIN, f32::max));
+        let (z0, z1) = (zs.clone().fold(f32::MAX, f32::min), zs.fold(f32::MIN, f32::max));
+        let (cx, cz) = ((x0 + x1) / 2.0, (z0 + z1) / 2.0);
+        for (at, dir) in [([x0 - 12.0, cz], [1.0, 0.0]), ([x1 + 12.0, cz], [-1.0, 0.0]), ([cx, z0 - 12.0], [0.0, 1.0]), ([cx, z1 + 12.0], [0.0, -1.0])] {
+            let Some(floor) = ground(at[0], at[1]) else { continue };
+            let from = [at[0], floor + 1.0, at[1]];
+            // The wall is the first thing ahead, a hull's width either side, and the ground hardly rises or falls up to it.
+            let side = [-dir[1], dir[0]];
+            let clear = [-1.2f32, 0.0, 1.2].iter().all(|&off| {
+                let origin = [from[0] + side[0] * off, from[1], from[2] + side[1] * off];
+                let ahead = physics.cast_ray_normal(origin, [dir[0], 0.0, dir[1]], 20.0).is_some_and(|(t, _)| (t - 12.0).abs() < 0.3);
+                let level = (0..12).all(|step| ground(origin[0] + dir[0] * step as f32, origin[2] + dir[1] * step as f32).is_some_and(|y| (y - floor).abs() < 0.25));
+                ahead && level
+            });
+            if clear {
+                return (world.building_ids[index], from, dir);
+            }
+        }
+    }
+    panic!("no wall of the city stands open on level ground");
+}
+
+#[test]
+fn a_predicted_jeep_breaks_through_a_wall_and_the_hole_closes_if_the_server_never_confirms_it() {
+    let (manifest, tiles) = fixture();
+    let world = WorldFile::assemble(&manifest, tiles.clone());
+    let mut physics = streamed(&manifest, &tiles);
+    let (id, from, dir) = open_wall(&physics, &world);
+    let wall = |physics: &Physics| physics.cast_ray_normal(from, [dir[0], 0.0, dir[1]], 30.0).map(|(t, _)| t);
+    physics.add_car(1, KIND_JEEP, [from[0], from[1] + 0.2, from[2]], (-dir[0]).atan2(-dir[1]));
+    let along = |physics: &Physics| {
+        let pose = physics.car_pose(1).unwrap();
+        ((pose.position[0] - from[0]) * dir[0] + (pose.position[2] - from[2]) * dir[1], pose.velocity[0] * dir[0] + pose.velocity[2] * dir[1])
+    };
+    let forward = CarControls { throttle: 1.0, ..CarControls::IDLE };
+    let step = |physics: &mut Physics| {
+        physics.drive_car(1, forward, TICK_DT);
+        let before = physics.car_pose(1).unwrap().velocity;
+        physics.step_cars(TICK_DT);
+        (before, physics.ram_buildings(1, KIND_JEEP, before))
+    };
+    for _ in 0..30 {
+        step(&mut physics);
+    }
+    physics.set_car_velocity(1, [dir[0] * 15.0, 0.0, dir[1] * 15.0]);
+    let mut broke = None;
+    for _ in 0..60 {
+        let (before, rammed) = step(&mut physics);
+        if rammed {
+            broke = Some(before[0] * dir[0] + before[2] * dir[1]);
+            break;
+        }
+    }
+    let came_in = broke.expect("it rammed the wall hard enough to break it");
+    // The hole is handed over once, for drawing: which building, where it was hit, and the cells gone.
+    let rams = physics.take_rams();
+    assert!(rams.len() == 1 && rams[0].building == id && rams[0].blasted.len() > 4, "{rams:?}");
+    assert!(vec3::distance(rams[0].point, [from[0] + dir[0] * 12.0, rams[0].point[1], from[2] + dir[1] * 12.0]) < 1.5, "it hit the wall 12 m off: {:?}", rams[0].point);
+    assert!(physics.take_rams().is_empty());
+    let (_, speed) = along(&physics);
+    assert!((speed - came_in * 0.5).abs() < 0.5, "it came in at {came_in} m/s and goes on at {speed}");
+    for _ in 0..30 {
+        step(&mut physics);
+    }
+    // A wall that held would have stopped its nose there, its middle two metres short; what stands
+    // in the rooms behind stops it in the end.
+    let (gone, _) = along(&physics);
+    assert!(gone > 12.5, "its middle is past the face of the wall 12 m off: {gone} m");
+    assert!(wall(&physics).is_none_or(|t| t > 12.5), "the wall is open where it went: {:?}", wall(&physics));
+    // The server's word on the building replaces the prediction, and is not forgotten with it.
+    physics.carve_building(id.col, id.row, id.index, &[]);
+    physics.forget_rams();
+    physics.step_cars(TICK_DT);
+    assert!(wall(&physics).is_some_and(|t| (t - 12.0).abs() < 0.3), "the server said nothing is cut: {:?}", wall(&physics));
+}

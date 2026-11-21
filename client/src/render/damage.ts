@@ -301,6 +301,27 @@ export class BuildingDamage {
     return wasWhole && state.removed.size > 0
   }
 
+  /**
+   * The cells `cells` of building `index` of tile `key` stand after all: they were drawn as gone on
+   * a prediction the server did not bear out (`WorldView.forgetRams`). The building is redrawn with
+   * them; the pieces already thrown lie where they fell.
+   */
+  mend(key: number, index: number, cells: readonly number[]) {
+    const state = this.hurt.get(key)?.get(index)
+    if (!state) return
+    const back = cells.filter((cell) => state.removed.delete(cell))
+    const drawn = this.drawn.get(key)?.get(index)
+    if (back.length === 0 || !drawn?.fracture) return
+    if (drawn.seen) {
+      if (drawn.look) drawn.stale = state
+      else this.redraw(drawn, state)
+      this.heap(drawn, state)
+    } else {
+      for (const brick of drawn.fracture.bricksNear(back)) drawn.dirty.add(brick)
+      this.redraw(drawn, state)
+    }
+  }
+
   /** The cells of each hurt building of tile `key` that are gone, by building index. */
   carved(key: number): Map<number, ReadonlySet<number>> {
     const out = new Map<number, ReadonlySet<number>>()

@@ -16,6 +16,18 @@ pub(crate) struct Obstacle {
     velocity: [f32; 3],
 }
 
+/// A hole the predicted vehicle broke in a building by ramming it, as a `Carved` message would tell
+/// of it: for the client to draw at once, ahead of the server's word.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Ram {
+    pub building: shared::world::ObjId,
+    /// Where the vehicle hit the wall, metres.
+    pub point: [f32; 3],
+    /// The cells broken out, and the cells left with nothing to hold them (`shared::carve::Cut`).
+    pub blasted: Vec<u32>,
+    pub fell: Vec<u32>,
+}
+
 /// A streamed tile: its colliders, and the tile alone as a world (what collides in it, under the
 /// server's ids), from which its buildings are cut into cells when blasts bite them.
 pub(crate) struct StreamedTile {
@@ -29,6 +41,10 @@ pub(crate) struct StreamedTile {
     /// The cells gone from each carved building, by its number in `world`, as `carve_building` was
     /// last told: a gate that is opened or shut reshapes what is left of its building.
     carved: std::collections::HashMap<usize, Vec<u32>>,
+    /// The cells the predicted vehicle broke out of each building ramming it (`ram_buildings`), by
+    /// the building's number in `world`: gone here ahead of the server's word, until `carve_building`
+    /// brings it or `forget_rams` gives up waiting.
+    rammed: std::collections::HashMap<usize, Vec<u32>>,
 }
 
 /// The manifest's world with nothing in it and no terrain: enough for the slab, the walls and one
@@ -94,7 +110,7 @@ impl Physics {
         for (collider, object) in object_colliders(&world)? {
             handles.push(self.insert_static(collider, object));
         }
-        self.tiles.insert((col, row), StreamedTile { handles, ground, world, shells: Default::default(), carved: Default::default() });
+        self.tiles.insert((col, row), StreamedTile { handles, ground, world, shells: Default::default(), carved: Default::default(), rammed: Default::default() });
         self.refresh();
         Ok(())
     }
@@ -138,6 +154,8 @@ impl Physics {
         let Some(tile) = self.tiles.get_mut(&(col, row)) else { return };
         let Some(at) = tile.world.building_ids.iter().position(|id| id.index == index) else { return };
         tile.carved.insert(at, removed.to_vec());
+        // The server's word on it replaces what a ram was predicted to break.
+        tile.rammed.remove(&at);
         let world = &tile.world;
         let Some((shell, floor)) = tile.shells.entry(at).or_insert_with(|| building_shell(world, at)).as_ref() else { return };
         let mut gone = shell.untouched();
@@ -148,6 +166,71 @@ impl Physics {
         }
         let shape = building_solid(world, at, Some((shell, &gone)), floor);
         self.replace_building(Obj::Building(shared::world::ObjId { col, row, index }), shape);
+    }
+
+    /// Breaks the walls vehicle `car` of `kind` rammed in the last step, as the server will when it
+    /// steps the same input (`sim::breach`, `ram_building` there): each building it lost enough speed
+    /// to gets a hole where it was hit, from the next step, and through a hole the vehicle goes on
+    /// with part of the velocity `before` it had coming in. Returns whether any wall broke. The holes
+    /// are a prediction: the server's `Carved` message replaces each (`carve_building`), and
+    /// `forget_rams` closes those it never confirms.
+    pub fn ram_buildings(&mut self, car: u32, kind: u8, before: [f32; 3]) -> bool {
+        let mut kept = None;
+        for impact in self.car_impacts() {
+            let (true, Some(Obj::Building(id))) = (impact.car == car, impact.object) else { continue };
+            let Some(breach) = crate::breach(kind, impact.dv) else { continue };
+            let Some(tile) = self.tiles.get_mut(&(id.col, id.row)) else { continue };
+            let Some(at) = tile.world.building_ids.iter().position(|known| known.index == id.index) else { continue };
+            // Nothing that drives breaks a bridge.
+            if tile.world.buildings.get(at).is_none_or(|building| building.kind == shared::world::BUILDING_BRIDGE) {
+                continue;
+            }
+            let world = &tile.world;
+            let Some((shell, floor)) = tile.shells.entry(at).or_insert_with(|| building_shell(world, at)).as_ref() else { continue };
+            let mut gone = shell.untouched();
+            for &cell in tile.carved.get(&at).into_iter().chain(tile.rammed.get(&at)).flatten() {
+                if let Some(flag) = gone.get_mut(cell as usize) {
+                    *flag = true;
+                }
+            }
+            let cut = shell.blast(&mut gone, impact.point.map(shared::quant::to_cm), shared::quant::to_cm(breach.radius));
+            if cut.is_empty() {
+                continue;
+            }
+            tile.rammed.entry(at).or_default().extend(cut.blasted.iter().chain(&cut.fell));
+            let shape = building_solid(world, at, Some((shell, &gone)), floor);
+            self.replace_building(Obj::Building(id), shape);
+            self.rams.push(Ram { building: id, point: impact.point, blasted: cut.blasted, fell: cut.fell });
+            kept = kept.or(Some(breach.keep));
+        }
+        if let (Some(Some(keep)), Some(now)) = (kept, self.car_pose(car)) {
+            self.set_car_velocity(car, crate::breach_velocity(before, now.velocity, keep));
+        }
+        kept.is_some()
+    }
+
+    /// The holes `ram_buildings` has broken since this was last asked, oldest first.
+    pub fn take_rams(&mut self) -> Vec<Ram> {
+        std::mem::take(&mut self.rams)
+    }
+
+    /// Closes the holes `ram_buildings` predicted that the server has not confirmed: each such
+    /// building is as the server last said (`carve_building`), or whole. Takes effect at the next
+    /// `refresh`.
+    pub fn forget_rams(&mut self) {
+        let waiting: Vec<(u16, u16, usize)> = self.tiles.iter().flat_map(|(&(col, row), tile)| tile.rammed.keys().map(move |&at| (col, row, at))).collect();
+        for (col, row, at) in waiting {
+            let Some(tile) = self.tiles.get_mut(&(col, row)) else { continue };
+            tile.rammed.remove(&at);
+            let Some(index) = tile.world.building_ids.get(at).map(|id| id.index) else { continue };
+            match tile.carved.get(&at).cloned() {
+                Some(removed) => self.carve_building(col, row, index, &removed),
+                None => {
+                    let shape = building_shape(&tile.world, at);
+                    self.replace_building(Obj::Building(shared::world::ObjId { col, row, index }), shape);
+                }
+            }
+        }
     }
 
     /// Shuts the gates `shut` of building `index` of streamed tile `(col, row)` (their numbers among
@@ -239,6 +322,63 @@ impl Physics {
     /// How fast vehicle `id` was going, m/s, as its stand-in was last placed.
     pub fn obstacle_velocity(&self, id: u32) -> Option<[f32; 3]> {
         self.obstacles.get(&id).map(|obstacle| obstacle.velocity)
+    }
+
+    /// Whether a vehicle of `kind` can be simulated beside the one the client predicts (`set_neighbour`):
+    /// one that stays on its wheels or tracks with nobody at its controls. An aircraft, a boat or a
+    /// walker would fall or drift without what its pilot does, and a towed gun hangs on a hitch that
+    /// is not here.
+    pub fn can_neighbour(kind: u8) -> bool {
+        spec(kind).lift == Lift::Wheels && !shared::vehicles::vehicle_def(kind).body.towed
+    }
+
+    /// Puts vehicle `id` of `kind` where a snapshot shows it as a vehicle of its own, in place of its
+    /// stand-in, so that the vehicle the client predicts shoves it as the server's does rather than
+    /// stopping dead on a solid nothing moves. It is moving at `velocity` m/s with its front wheels
+    /// at `steer` of their lock, worn as `condition` says, and is held to `controls` by every
+    /// `drive_neighbours` until it is set again. `turret` is whether a tank still has its turret.
+    /// Whether it was done: not for a kind that is not one that `can_neighbour`, nor for a vehicle already
+    /// simulated here in its own right.
+    #[allow(clippy::too_many_arguments)]
+    pub fn set_neighbour(&mut self, id: u32, kind: u8, position: [f32; 3], rotation: [f32; 4], velocity: [f32; 3], steer: f32, controls: CarControls, condition: CarCondition, turret: bool) -> bool {
+        if !Self::can_neighbour(kind) || (self.cars.contains_key(&id) && !self.neighbours.contains_key(&id)) {
+            return false;
+        }
+        if self.neighbours.get(&id).is_some_and(|&(known, _)| known != kind) {
+            self.remove_neighbour(id);
+        }
+        if !self.cars.contains_key(&id) {
+            self.remove_obstacle(id);
+            self.add_car(id, kind, position, 0.0);
+        }
+        self.neighbours.insert(id, (kind, controls));
+        // What a snapshot does not say of another's vehicle (its spin, a tank's turning) starts at rest.
+        let motion = CarMotion { linvel: velocity, angvel: [0.0; 3], steer: steer * spec(kind).steer_lock, spin: 0.0 };
+        self.set_car_state(id, position, rotation, motion, None);
+        self.set_car_condition(id, condition);
+        self.set_turret(id, turret);
+        true
+    }
+
+    /// Stops simulating vehicle `id` beside the predicted one. Its next `set_obstacle` makes it a solid again.
+    pub fn remove_neighbour(&mut self, id: u32) {
+        if self.neighbours.remove(&id).is_some() {
+            self.remove_car(id);
+        }
+    }
+
+    /// The vehicles simulated beside the predicted one, in id order.
+    pub fn neighbour_ids(&self) -> Vec<u32> {
+        self.neighbours.keys().copied().collect()
+    }
+
+    /// Applies each neighbour's controls for the next `step_cars`, as the server drives every vehicle
+    /// before it steps them.
+    pub fn drive_neighbours(&mut self, dt: f32) {
+        let neighbours: Vec<(u32, CarControls)> = self.neighbours.iter().map(|(&id, &(_, controls))| (id, controls)).collect();
+        for (id, controls) in neighbours {
+            self.drive_car(id, controls, dt);
+        }
     }
 }
 

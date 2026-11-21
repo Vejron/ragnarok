@@ -607,11 +607,17 @@ fn crash(world: &mut World, before: &BTreeMap<u32, CarPose>) {
         if world.entities.dead(impact.car) || is_drone(vehicle.kind) {
             continue;
         }
-        let weight = vehicle_def(vehicle.kind).body.ram;
+        let kind = vehicle.kind;
         match impact.object {
-            Some(Obj::Building(id)) => super::combat::ram_building(world, id, impact.point, impact.dv, weight),
+            Some(Obj::Building(id)) => {
+                // Through the hole it broke, it goes on with part of the speed it came in with.
+                let keep = super::combat::ram_building(world, id, impact.point, impact.dv, kind);
+                if let (Some(keep), Some(pose), Some(now)) = (keep, before.get(&impact.car), world.physics.car_pose(impact.car)) {
+                    world.physics.set_car_velocity(impact.car, sim::breach_velocity(pose.velocity, now.velocity, keep));
+                }
+            }
             // Placed cubes give way like a wall.
-            None if impact.construct => super::combat::ram_cubes(world, impact.point, impact.dv, weight),
+            None if impact.construct => super::combat::ram_cubes(world, impact.point, impact.dv, kind),
             _ => {}
         }
     }

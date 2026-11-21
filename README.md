@@ -47,7 +47,7 @@ The docs are in [docs/](docs/).
 - [VEHICLES-I.md](docs/VEHICLES-I.md): cars, seats, driving
 - [VEHICLES-II.md](docs/VEHICLES-II.md): the tank, its gunner seat and the shell, driver prediction and the helicopter; how tracks ride over humps, steps and side slopes
 - [HELICOPTER.md](docs/HELICOPTER.md): the helicopter's semi-realistic flight model: collective lever, torque cyclic, pedals to the look, rotor speed, ground effect, translational lift, vortex ring and autorotation
-- [VEHICLES-III.md](docs/VEHICLES-III.md): handling, tyre effects, crash damage and vehicle sound
+- [VEHICLES-III.md](docs/VEHICLES-III.md): handling, tyre effects, crash damage, breaking through a house wall at speed, and vehicle sound
 - [VEHICLES-IV.md](docs/VEHICLES-IV.md): the Fokker triplane
 - [VEHICLES-V.md](docs/VEHICLES-V.md): the field mortar
 - [VEHICLES-VI.md](docs/VEHICLES-VI.md): the Tesla Roadster
