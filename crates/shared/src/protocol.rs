@@ -21,6 +21,8 @@ pub const C_RTC: u8 = 2;
 pub const C_HANDS: u8 = 3;
 /// The page is closing its session (`Bye`).
 pub const C_BYE: u8 = 4;
+/// A tap on the delivery phone (`Phone`).
+pub const C_PHONE: u8 = 5;
 
 /// Server → client tags.
 pub const S_WELCOME: u8 = 0;
@@ -43,6 +45,8 @@ pub const S_ARMOR: u8 = 16;
 pub const S_MARKS: u8 = 17;
 pub const S_BACKPACK: u8 = 18;
 pub const S_GATES: u8 = 19;
+pub const S_JOBS: u8 = 20;
+pub const S_DELIVERED: u8 = 21;
 
 /// `Hit` roles: whose feedback it is.
 /// You hurt something.
@@ -379,6 +383,11 @@ messages! {
     #[derive(Copy, Default, Eq)]
     [C_HANDS] ClientHands { lx: i16, ly: i16, lz: i16, rx: i16, ry: i16, rz: i16, flags: u8 }
 
+    /// A tap on the delivery phone (DELIVERY.md): `action` is `PHONE_ACCEPT` to take job `job` off the
+    /// board, or `PHONE_CANCEL` to give it back before its parcel is fetched.
+    #[derive(Copy, Eq)]
+    [C_PHONE] Phone { action: u8, job: u32 }
+
     /// Sent once on a reliable stream. `world_hash` is the FNV hash of the `world.msgpack` the server
     /// runs, and `build` that of the client build it hands out (0 when it hands out none, in
     /// development): a page whose world or build differs must reload rather than play.
@@ -424,9 +433,10 @@ messages! {
     #[derive(Eq)]
     [S_KILL] Kill { killer: u32, victim: u32, weapon: u8, killer_kills: u16, victim_deaths: u16, style: u8, yaw: i16 as mrad, power: u8 as fifth }
 
-    /// `held` is the seconds they have carried the backpack (BACKPACK.md), 0 where there is none.
+    /// `held` is the seconds they have carried the backpack (BACKPACK.md), 0 where there is none, and
+    /// `cash` what they have earned delivering (DELIVERY.md).
     #[derive(Eq)]
-    [] Score { id: u32, kills: u16, deaths: u16, held: u16 }
+    [] Score { id: u32, kills: u16, deaths: u16, held: u16, cash: u32 }
 
     /// Sent on a reliable stream to a player who just joined.
     #[derive(Eq)]
@@ -558,6 +568,30 @@ messages! {
     /// when it lies on the ground, and `held` their seconds carrying it in all.
     #[derive(Copy, Eq)]
     [S_BACKPACK] Backpack { x: i32 as cm, z: i32 as cm, radius: u16 as cm, carrier: u32, held: u16 }
+
+    /// A job on the delivery board (DELIVERY.md): fetch a parcel at the shop's door `(shop_x, shop_z)`
+    /// and carry it to the house's door `(house_x, house_z)`, for `pay` in full within `par` seconds
+    /// of fetching it.
+    #[derive(Copy, Eq)]
+    [] JobOffer { id: u32, shop_x: i32 as cm, shop_z: i32 as cm, house_x: i32 as cm, house_z: i32 as cm, pay: u32, par: u16 }
+
+    /// A job of yours, or the parcel you carry, which may be someone else's job. `stage` is `JOB_*`;
+    /// `(x, z)` where to go now: the shop's door to fetch, the house's to hand in, or where your lost
+    /// parcel was dropped. `pay` is what handing it in would pay now, and `left` the seconds of its par
+    /// time still to go (negative once over it; the par time itself before it is fetched).
+    #[derive(Copy, Eq)]
+    [] JobState { id: u32, stage: u8, x: i32 as cm, z: i32 as cm, pay: u32, left: i16 }
+
+    /// Sent on a reliable stream to one player, in a world with deliveries: the board and their own
+    /// jobs, when either changes, once a second while they have one, and on joining.
+    #[derive(Eq)]
+    [S_JOBS] Jobs { offers: Vec<JobOffer>, mine: Vec<JobState> }
+
+    /// Sent on a reliable stream to everyone when a parcel is handed in: `by` delivered job `job`, which
+    /// was `courier`'s (someone else's when `by` took it from them), and was paid `pay`, which makes
+    /// `cash` in all.
+    #[derive(Copy, Eq)]
+    [S_DELIVERED] Delivered { by: u32, courier: u32, job: u32, pay: u32, cash: u32 }
 
     #[derive(Eq)]
     [S_ARMOR] Armor { role: u8, vehicle: u32, result: u8, hurt: u8, gone: u8, killed: u8, x: i32 as cm, y: i32 as cm, z: i32 as cm }

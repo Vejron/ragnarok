@@ -32,7 +32,7 @@ pub use crate::vehicles::titan::*;
 pub use crate::vehicles::walker::*;
 
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
-pub const PROTOCOL_VERSION: u8 = 91;
+pub const PROTOCOL_VERSION: u8 = 92;
 
 /// Why a page closes its session (`Bye`): the tab is closing or reloading.
 pub const BYE_LEAVING: u8 = 0;
@@ -121,6 +121,9 @@ pub const KIND_CB90: u8 = 34;
 /// The raft: a small inflatable river-rafting boat for two with a powerful outboard, light and shallow
 /// enough to run a rapid.
 pub const KIND_RAFT: u8 = 35;
+/// A delivery's parcel lying on the ground (DELIVERY.md), dropped by a courier who died. Replicated as
+/// a place and this kind.
+pub const KIND_PARCEL: u8 = 36;
 
 /// Fixed simulation rate, in ticks per second.
 pub const TICK_RATE: u32 = 60;
@@ -538,6 +541,41 @@ pub const CARRY_SKIS: u8 = 2;
 pub const CARRY_LAMP: u8 = 4;
 /// Poling hard: on skis on the ground, pushing with run held.
 pub const CARRY_POLING: u8 = 8;
+/// A delivery's parcel on the back (DELIVERY.md).
+pub const CARRY_PARCEL: u8 = 16;
+
+/// The delivery mode (DELIVERY.md): jobs on a phone to fetch a parcel at a shop's door and carry it to a
+/// house's. Whoever hands it in is paid `DELIVERY_BASE` plus `DELIVERY_PER_KM` for each kilometre from
+/// the shop to the house, in full within the job's par time (`DELIVERY_PAR_GRACE` seconds plus the
+/// distance at `DELIVERY_PAR_SPEED`), then less and less, down to `DELIVERY_FLOOR` of it once as long
+/// again has gone by.
+pub const DELIVERY_BASE: f32 = 20.0;
+pub const DELIVERY_PER_KM: f32 = 60.0;
+/// Seconds every job's par time starts with, for the walk to the street.
+pub const DELIVERY_PAR_GRACE: f32 = 60.0;
+/// The speed a job's par time allows for the way from shop to house, m/s: a brisk run.
+pub const DELIVERY_PAR_SPEED: f32 = 5.0;
+/// The share of a job's pay that is left however late it is handed in.
+pub const DELIVERY_FLOOR: f32 = 0.25;
+/// How far apart a job's shop and house may be, metres across the ground.
+pub const DELIVERY_MIN_DISTANCE: f32 = 150.0;
+pub const DELIVERY_MAX_DISTANCE: f32 = 1500.0;
+/// How near a door a soldier on foot must walk to fetch or hand in a parcel, or to a parcel lying on
+/// the ground to take it, metres across the ground and up or down.
+pub const DELIVERY_REACH: f32 = 3.0;
+pub const DELIVERY_REACH_Y: f32 = 2.5;
+/// Seconds a dropped parcel may lie untouched before it spoils and its job is over.
+pub const DELIVERY_SPOIL_SECONDS: f32 = 120.0;
+/// Jobs on the board at once, unless the scenario says otherwise.
+pub const DELIVERY_JOBS: u32 = 6;
+/// What a `Phone` message asks: to take a job off the board, or to give back one not yet fetched.
+pub const PHONE_ACCEPT: u8 = 0;
+pub const PHONE_CANCEL: u8 = 1;
+/// `JobState::stage`: on the way to the shop, carrying the parcel to the house, or your job's parcel
+/// lost (dropped where you died, or in someone else's hands).
+pub const JOB_FETCH: u8 = 0;
+pub const JOB_CARRY: u8 = 1;
+pub const JOB_LOST: u8 = 2;
 
 /// Pull of gravity on a skier's slope, m/s². Real, unlike the game's heavier `GRAVITY` for flight.
 pub const SKI_GRAVITY: f32 = 9.81;

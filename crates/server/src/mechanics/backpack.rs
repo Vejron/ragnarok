@@ -10,8 +10,8 @@
 //! `BACKPACK_NARROW` over `BACKPACK_NARROW_SECONDS` in one carrier's hands.
 
 use super::Mechanic;
+use super::carry::{drop_spot, within};
 use super::combat::position_of;
-use super::life::open_ground;
 use crate::entities::{Component, Health, Transform, With};
 use crate::game::{Died, Player, World};
 use shared::consts::*;
@@ -116,16 +116,6 @@ fn lay_home(world: &mut World) {
     lay(world, [x, floor, z]);
 }
 
-/// The floor under a soldier's body centred at `at`, which they could stand on: none off the world.
-fn floor_under(world: &World, at: [f32; 3]) -> Option<f32> {
-    if !world.map.is_inside((at[0] * 100.0) as i32, (at[2] * 100.0) as i32) {
-        return None;
-    }
-    let ground = world.map.ground.height_at(at[0], at[2]);
-    let floor = world.physics.cast_ray(at, [0.0, -1.0, 0.0], (at[1] - ground).max(0.0) + 1.0, 0).map_or(ground, |t| at[1] - t);
-    Some(floor.max(ground))
-}
-
 /// Takes the backpack off player `id`, if they have it, and lays it where they are: under their body
 /// on foot (on the floor of the room they died in, or the ground they fell to), on open ground beside
 /// a vehicle, or back home when there is nowhere to put it.
@@ -134,13 +124,7 @@ fn drop_from(world: &mut World, id: u32) {
         return;
     }
     world.entities.remove::<Carry>(id);
-    let player = world.entities.get::<Player>(id);
-    let on_foot = player.filter(|player| player.seat.is_none()).map(|player| player.character.position);
-    let spot = match (on_foot, position_of(world, id)) {
-        (Some(at), _) => floor_under(world, at).map(|floor| [at[0], floor, at[2]]),
-        (None, Some(at)) => open_ground(world, at[0], at[2]).map(|floor| [at[0], floor, at[2]]),
-        (None, None) => None,
-    };
+    let spot = drop_spot(world, id);
     match spot {
         Some(spot) => lay(world, spot),
         None => lay_home(world),
@@ -165,16 +149,7 @@ fn take(world: &mut World, id: u32, ground: u32) {
 
 /// The living soldier on foot within reach of the backpack lying at `at`, nearest first.
 fn reaching(world: &World, at: [f32; 3]) -> Option<u32> {
-    world
-        .entities
-        .all::<Player>()
-        .filter(|&(id, player)| player.seat.is_none() && world.entities.alive(id))
-        .map(|(id, player)| (id, player.character.position))
-        .filter(|(_, p)| (p[1] - at[1]).abs() <= BACKPACK_REACH_Y)
-        .map(|(id, p)| (id, (p[0] - at[0]).hypot(p[2] - at[2])))
-        .filter(|&(_, d)| d <= BACKPACK_REACH)
-        .min_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)))
-        .map(|(id, _)| id)
+    within(world, at, BACKPACK_REACH, BACKPACK_REACH_Y).first().copied()
 }
 
 impl Mechanic for Backpack {

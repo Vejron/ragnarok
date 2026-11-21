@@ -45,6 +45,10 @@ A worked, larger one is in `worlds/ersboda-alidhem/scenario.json` (Red Dawn): pa
 
 A world can also play the backpack mode: one Intinor Compact Backpack to fight over, whose carrier heals and runs twice as fast, and whose whereabouts everyone's minimap shows as a circle. Give the file a top-level `"backpack": { "lat": …, "lon": … }` for where it starts; it works with or without triggers. [BACKPACK.md](BACKPACK.md) has the rules.
 
+## 3¾. Deliveries
+
+A world can also play the delivery mode: a phone full of food orders to fetch at a shop's door and carry to a house's, paid to whoever hands them in. Give the file a top-level `"deliveries": {}`, or `{ "jobs": 10 }` for a bigger board; it works with or without anything else. [DELIVERY.md](DELIVERY.md) has the rules.
+
 ## 4. Try it
 
 1. Save the file and **restart the server**. It is read at start-up, and a mistake stops the server with the place named: an undefined name, an unknown field or action, an item that does not exist, a text over 200 characters, or a position outside the world. Fix what it says and start again.

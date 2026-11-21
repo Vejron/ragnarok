@@ -22,6 +22,7 @@ pub mod ground;
 pub mod ign;
 pub mod lanes;
 pub mod lidar;
+pub mod maptiles;
 pub mod minimap;
 pub mod ocad;
 pub mod osm;

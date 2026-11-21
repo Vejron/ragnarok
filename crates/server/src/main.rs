@@ -150,6 +150,8 @@ async fn cache_headers(req: &mut Request, depot: &mut Depot, res: &mut Response,
         // The world must be the one the server runs: always asked for, and a 304 when it is unchanged.
         || path.ends_with("/world.msgpack")
         || path == "/minimap.webp"
+        // How the map tiles lie, with the hash they are asked for by (`?h=`), which a new render changes.
+        || path == "/maptiles/index.json"
         || path.ends_with("/active.json")
     {
         "no-cache"
@@ -176,6 +178,11 @@ async fn main() -> Result<()> {
     if let Some(home) = game.scenario.as_ref().and_then(scenario::Scenario::backpack) {
         tracing::info!(?home, "backpack mode");
         game.world.backpack = Some(mechanics::BackpackState::new(home));
+    }
+    if let Some(jobs) = game.scenario.as_ref().and_then(scenario::Scenario::deliveries) {
+        let state = mechanics::DeliveryState::from_map(&game.world.map, jobs as usize).map_err(|error| anyhow::anyhow!("{}: {error}", scenario_path.display()))?;
+        tracing::info!(shops = state.shops.len(), houses = state.houses.len(), jobs, "delivery mode");
+        game.world.deliveries = Some(state);
     }
     add_test_bots(&mut game);
     add_test_tanks(&mut game);

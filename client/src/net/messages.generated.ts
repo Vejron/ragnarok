@@ -9,6 +9,7 @@ export const C_PING = 1
 export const C_RTC = 2
 export const C_HANDS = 3
 export const C_BYE = 4
+export const C_PHONE = 5
 export const S_WELCOME = 0
 export const S_SNAPSHOT = 1
 export const S_PONG = 2
@@ -29,6 +30,8 @@ export const S_ARMOR = 16
 export const S_MARKS = 17
 export const S_BACKPACK = 18
 export const S_GATES = 19
+export const S_JOBS = 20
+export const S_DELIVERED = 21
 
 export interface BulletSpawn {
   id: number
@@ -77,6 +80,11 @@ export interface ClientHands {
   ry: number
   rz: number
   flags: number
+}
+
+export interface Phone {
+  action: number
+  job: number
 }
 
 export interface Welcome {
@@ -149,6 +157,7 @@ export interface Score {
   kills: number
   deaths: number
   held: number
+  cash: number
 }
 
 export interface Scores {
@@ -297,6 +306,40 @@ export interface Backpack {
   held: number
 }
 
+export interface JobOffer {
+  id: number
+  shopX: number
+  shopZ: number
+  houseX: number
+  houseZ: number
+  pay: number
+  par: number
+}
+
+export interface JobState {
+  id: number
+  stage: number
+  x: number
+  z: number
+  pay: number
+  left: number
+}
+
+export interface Jobs {
+  type: 'jobs'
+  offers: JobOffer[]
+  mine: JobState[]
+}
+
+export interface Delivered {
+  type: 'delivered'
+  by: number
+  courier: number
+  job: number
+  pay: number
+  cash: number
+}
+
 export interface Armor {
   type: 'armor'
   role: number
@@ -330,7 +373,7 @@ export interface Rtc {
   json: string
 }
 
-export type ServerMessage = Welcome | Snapshot | Pong | Leave | Kill | Scores | Profiles | Notice | Destroyed | Damaged | Carved | Built | Gates | Cratered | Dug | Marks | Backpack | Armor | Hit | Rtc
+export type ServerMessage = Welcome | Snapshot | Pong | Leave | Kill | Scores | Profiles | Notice | Destroyed | Damaged | Carved | Built | Gates | Cratered | Dug | Marks | Backpack | Jobs | Delivered | Armor | Hit | Rtc
 
 function decodeBulletSpawn(r: unknown): BulletSpawn | undefined {
   if (!Array.isArray(r) || r.length !== 10) return undefined
@@ -376,13 +419,14 @@ function decodeShotEvent(r: unknown): ShotEvent | undefined {
 }
 
 function decodeScore(r: unknown): Score | undefined {
-  if (!Array.isArray(r) || r.length !== 4) return undefined
+  if (!Array.isArray(r) || r.length !== 5) return undefined
   const id = w.int(r[0])
   const kills = w.int(r[1])
   const deaths = w.int(r[2])
   const held = w.int(r[3])
-  if (id === undefined || kills === undefined || deaths === undefined || held === undefined) return undefined
-  return { id, kills, deaths, held }
+  const cash = w.int(r[4])
+  if (id === undefined || kills === undefined || deaths === undefined || held === undefined || cash === undefined) return undefined
+  return { id, kills, deaths, held, cash }
 }
 
 function decodeProfileEntry(r: unknown): ProfileEntry | undefined {
@@ -484,6 +528,31 @@ function decodeDugTile(r: unknown): DugTile | undefined {
   const runs = w.ints(r[2])
   if (col === undefined || row === undefined || runs === undefined) return undefined
   return { col, row, runs }
+}
+
+function decodeJobOffer(r: unknown): JobOffer | undefined {
+  if (!Array.isArray(r) || r.length !== 7) return undefined
+  const id = w.int(r[0])
+  const shopX = w.int(r[1])
+  const shopZ = w.int(r[2])
+  const houseX = w.int(r[3])
+  const houseZ = w.int(r[4])
+  const pay = w.int(r[5])
+  const par = w.int(r[6])
+  if (id === undefined || shopX === undefined || shopZ === undefined || houseX === undefined || houseZ === undefined || pay === undefined || par === undefined) return undefined
+  return { id, shopX: shopX / 100, shopZ: shopZ / 100, houseX: houseX / 100, houseZ: houseZ / 100, pay, par }
+}
+
+function decodeJobState(r: unknown): JobState | undefined {
+  if (!Array.isArray(r) || r.length !== 6) return undefined
+  const id = w.int(r[0])
+  const stage = w.int(r[1])
+  const x = w.int(r[2])
+  const z = w.int(r[3])
+  const pay = w.int(r[4])
+  const left = w.int(r[5])
+  if (id === undefined || stage === undefined || x === undefined || z === undefined || pay === undefined || left === undefined) return undefined
+  return { id, stage, x: x / 100, z: z / 100, pay, left }
 }
 
 function decodeWelcome(r: readonly unknown[]): Welcome | undefined {
@@ -636,6 +705,25 @@ function decodeBackpack(r: readonly unknown[]): Backpack | undefined {
   return { type: 'backpack', x: x / 100, z: z / 100, radius: radius / 100, carrier, held }
 }
 
+function decodeJobs(r: readonly unknown[]): Jobs | undefined {
+  if (r.length !== 3) return undefined
+  const offers = w.list(r[1], decodeJobOffer)
+  const mine = w.list(r[2], decodeJobState)
+  if (offers === undefined || mine === undefined) return undefined
+  return { type: 'jobs', offers, mine }
+}
+
+function decodeDelivered(r: readonly unknown[]): Delivered | undefined {
+  if (r.length !== 6) return undefined
+  const by = w.int(r[1])
+  const courier = w.int(r[2])
+  const job = w.int(r[3])
+  const pay = w.int(r[4])
+  const cash = w.int(r[5])
+  if (by === undefined || courier === undefined || job === undefined || pay === undefined || cash === undefined) return undefined
+  return { type: 'delivered', by, courier, job, pay, cash }
+}
+
 function decodeArmor(r: readonly unknown[]): Armor | undefined {
   if (r.length !== 10) return undefined
   const role = w.int(r[1])
@@ -712,6 +800,10 @@ export function decodeMessage(r: readonly unknown[]): ServerMessage | undefined 
       return decodeMarks(r)
     case S_BACKPACK:
       return decodeBackpack(r)
+    case S_JOBS:
+      return decodeJobs(r)
+    case S_DELIVERED:
+      return decodeDelivered(r)
     case S_ARMOR:
       return decodeArmor(r)
     case S_HIT:
@@ -732,5 +824,7 @@ export const writePing = (m: Ping): unknown[] => [C_PING, m.nonce]
 export const writeBye = (m: Bye): unknown[] => [C_BYE, m.reason]
 
 export const writeClientHands = (m: ClientHands): unknown[] => [C_HANDS, m.lx, m.ly, m.lz, m.rx, m.ry, m.rz, m.flags]
+
+export const writePhone = (m: Phone): unknown[] => [C_PHONE, m.action, m.job]
 
 export const writeRtc = (m: Omit<Rtc, 'type'>): unknown[] => [C_RTC, m.peer, m.kind, m.json]

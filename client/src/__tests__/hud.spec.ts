@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import { DIAL_START, DIAL_SWEEP, dialTicks, dialTop, fill, needleAngle } from '@/hud/speedo'
 import { hotbarRects, hotbarRectsCss, slotDetail } from '@/hud/gauges'
-import { PAPER_MAX, PAPER_METRES, PAPER_MIN, mapWindow, paperView, scaleLength, zoomPaper } from '@/hud/map'
+import { scaleLength } from '@/hud/map'
+import { MAX_PER_METRE, MIN_PER_METRE, zoomed } from '@/phone/mapapp'
 import { TextCache, hexOf, uiScale } from '@/hud/paint'
 import { hintAlpha, touchPrompt, wrap } from '@/hud/panels'
 import { HOTBAR_SLOTS } from '@/sim/items'
@@ -97,28 +98,12 @@ describe('HUD panels', () => {
 })
 
 describe('maps', () => {
-  it('takes a window of the image centred on a point, in image pixels', () => {
-    // A 1000 m world on a 2048 px image: 2.048 px a metre.
-    const w = mapWindow(0, 0, 100, 500, 2048)
-    expect(w.side).toBeCloseTo(204.8)
-    expect(w.sx).toBeCloseTo(1024 - 102.4)
-    expect(w.sy).toBeCloseTo(1024 - 102.4)
-  })
-
-  it('keeps the paper map on the world, centred on the reader away from its edges', () => {
-    expect(paperView(100, -200, 4000)).toEqual({ cx: 100, cz: -200, metres: PAPER_METRES })
-    // Near the east edge the sheet stops at it.
-    expect(paperView(3900, 0, 4000, 1200).cx).toBe(4000 - 600)
-    // A world smaller than a sheet is all on it.
-    expect(paperView(50, 50, 300, 1200)).toEqual({ cx: 0, cz: 0, metres: 600 })
-  })
-
-  it('zooms the paper map by the wheel, within its limits', () => {
-    expect(zoomPaper(500, 1)).toBeCloseTo(625)
-    expect(zoomPaper(500, -1)).toBeCloseTo(400)
-    expect(zoomPaper(500, 0)).toBe(500)
-    expect(zoomPaper(500, -20)).toBe(PAPER_MIN)
-    expect(zoomPaper(500, 20)).toBe(PAPER_MAX)
+  it('zooms the phone\'s map by the wheel, within its limits', () => {
+    expect(zoomed(1, 1)).toBeCloseTo(0.64)
+    expect(zoomed(1, -1)).toBeCloseTo(1.5625)
+    expect(zoomed(1, 0)).toBe(1)
+    expect(zoomed(1, 40)).toBe(MIN_PER_METRE)
+    expect(zoomed(1, -40)).toBe(MAX_PER_METRE)
   })
 
   it('picks a round scale bar', () => {

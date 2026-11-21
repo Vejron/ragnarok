@@ -19,6 +19,8 @@ pub enum Command {
     Rtc { from: u32, to: u32, kind: u8, json: String },
     /// Where a Titan's pilot wants its fists.
     Hands(u32, ClientHands),
+    /// A tap on a player's delivery phone (DELIVERY.md), sent on their signaling stream.
+    Phone(u32, shared::protocol::Phone),
 }
 
 #[derive(Clone, Debug)]
@@ -150,6 +152,8 @@ pub struct Tally {
     pub deaths: u16,
     /// Seconds carrying the backpack, in all (`mechanics::backpack`).
     pub held: u16,
+    /// What they have been paid for deliveries, in all (`mechanics::deliveries`).
+    pub cash: u32,
 }
 
 /// Every player for themselves.
@@ -766,6 +770,8 @@ pub struct World {
     pub construct_dirty: std::collections::BTreeSet<shared::construct::Pos>,
     /// The backpack, in a world whose scenario places one (`mechanics::backpack`).
     pub backpack: Option<crate::mechanics::BackpackState>,
+    /// The delivery board and its jobs, in a world whose scenario has deliveries (`mechanics::deliveries`).
+    pub deliveries: Option<crate::mechanics::DeliveryState>,
     /// What `Buses` asks of the room: drivers to add and to take away. Drained every tick.
     pub bus_calls: Vec<crate::mechanics::BusCall>,
 }

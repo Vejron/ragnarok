@@ -12,7 +12,7 @@ use crate::entities::With;
 use crate::mechanics::{position_of, remove_vehicle};
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
-use shared::consts::TICK_RATE;
+use shared::consts::{DELIVERY_JOBS, TICK_RATE};
 use shared::items::{HOTBAR_SLOTS, ITEM_COUNT, ITEM_NONE, def};
 use shared::protocol::ItemSlot;
 use shared::protocol::{NOTICE_LOST, NOTICE_OBJECTIVE, NOTICE_SAY, NOTICE_WON};
@@ -42,9 +42,24 @@ struct FileSpec {
     /// Where the backpack starts, in a world with the backpack mode (BACKPACK.md).
     #[serde(default)]
     backpack: Option<SpotSpec>,
+    /// The delivery mode's board (DELIVERY.md).
+    #[serde(default)]
+    deliveries: Option<DeliveriesSpec>,
     /// Zombies that rise in hordes at night (ZOMBIES.md).
     #[serde(default)]
     zombies: Option<ZombiesSpec>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DeliveriesSpec {
+    /// Jobs on the board at once.
+    #[serde(default = "delivery_jobs")]
+    jobs: u32,
+}
+
+fn delivery_jobs() -> u32 {
+    DELIVERY_JOBS
 }
 
 #[derive(Deserialize)]
@@ -284,6 +299,8 @@ pub struct Scenario {
     progress: Progress,
     /// Where the backpack starts, metres `[x, z]`, in a world with the backpack mode.
     backpack: Option<[f32; 2]>,
+    /// Jobs on the delivery board at once, in a world with the delivery mode.
+    deliveries: Option<u32>,
 }
 
 fn ticks(seconds: f32) -> u32 {
@@ -433,7 +450,7 @@ impl Scenario {
                 Ok(horde::Horde { areas, max: z.max, size: z.horde.max(1), every: ticks(z.every).max(1), day: z.day })
             })
             .transpose()?;
-        let mut scenario = Self { areas, zombies, squads, triggers, restart: ticks(file.restart), progress: Progress::default(), backpack };
+        let mut scenario = Self { areas, zombies, squads, triggers, restart: ticks(file.restart), progress: Progress::default(), backpack, deliveries: file.deliveries.map(|d| d.jobs.max(1)) };
         scenario.progress = scenario.fresh();
         Ok(scenario)
     }
@@ -446,6 +463,11 @@ impl Scenario {
     /// Where the backpack starts, metres `[x, z]`, if the world has one (BACKPACK.md).
     pub fn backpack(&self) -> Option<[f32; 2]> {
         self.backpack
+    }
+
+    /// How many jobs the delivery board holds, if the world has the delivery mode (DELIVERY.md).
+    pub fn deliveries(&self) -> Option<u32> {
+        self.deliveries
     }
 
     /// What everyone is meant to be doing now; empty when nothing.

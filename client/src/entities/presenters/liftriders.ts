@@ -1,6 +1,6 @@
 import { Quaternion, Vector3 } from '@ragnarok/engine'
 import { FLAG_DEAD, FLAG_HELD_MASK, FLAG_HELD_SHIFT } from '@/net/codec'
-import { CARRY_BACKPACK, CARRY_LAMP } from '@/sim/consts'
+import { CARRY_BACKPACK, CARRY_PARCEL, CARRY_LAMP } from '@/sim/consts'
 import type { LiftView } from '@/render/lifts'
 import type { Avatars } from '../avatars'
 import type { Frame, Presenter } from '../presenter'
@@ -40,6 +40,7 @@ export class LiftRiders implements Presenter<Frame> {
     avatar.swim = 0
     avatar.skis = false
     avatar.pack = (worn & CARRY_BACKPACK) !== 0
+    avatar.parcel = (worn & CARRY_PARCEL) !== 0
     avatar.lamp = (worn & CARRY_LAMP) !== 0
     avatar.held = (flags & FLAG_HELD_MASK) >> FLAG_HELD_SHIFT
     avatar.seat(this.head, this.turn, entity.heading?.yaw ?? 0, 0, frame.dt)

@@ -78,12 +78,12 @@ const buttons = computed(() => touchButtons(props.seat, { canSwitch: props.canSw
 /** The buttons under a finger, by pointer, so a lift (or the button going away) lets go of the right one. */
 const pressed = reactive(new Map<number, TouchButton>())
 /** The toggles' states, read off the input each frame: Z or a jump also changes them. */
-const toggled = reactive({ prone: false, holster: false, map: false })
+const toggled = reactive({ prone: false, holster: false, phone: false })
 let frame = 0
 const poll = () => {
   toggled.prone = props.input.prone
   toggled.holster = props.input.holstered
-  toggled.map = props.input.mapUp
+  toggled.phone = props.input.phone !== null
   frame = requestAnimationFrame(poll)
 }
 frame = requestAnimationFrame(poll)
@@ -147,7 +147,7 @@ function talk(on: boolean) {
       >{{ button.label }}</button>
     </div>
     <div class="top">
-      <button type="button" class="chip" :class="{ on: toggled.map }" @pointerdown.prevent="input.mapUp = !input.mapUp">MAP</button>
+      <button type="button" class="chip" :class="{ on: toggled.phone }" @pointerdown.prevent="input.phone ? input.putPhoneAway() : input.togglePhone('map')">PHONE</button>
       <button v-if="voice" type="button" class="chip" @pointerdown.prevent="talk(true)" @pointerup="talk(false)" @pointercancel="talk(false)">TALK</button>
     </div>
     <div class="rotate">Turn your device sideways to play</div>

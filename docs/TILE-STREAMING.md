@@ -207,6 +207,7 @@ BENCH=1 npx vitest run tiles.bench --silent=false
 | `client/src/render/world.ts` | `tileGroup`, `buildTile` (prepare and wrap at once, for tests), `rebuildBuildings` |
 | `client/src/sim/carve.ts` | `Shell`: a building's cells, through WASM |
 | `client/src/sim/motor.ts` | `SimMotor` / `ClientSim`: WASM #1 |
+| `client/src/hud/maptiles.ts` | `MapTiles`: the map's own tiles (a pyramid of pictures, not world tiles), fetched by what the minimap and the phone show ([WORLD.md](WORLD.md#map-tiles)) |
 
 ## Open
 

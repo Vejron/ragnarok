@@ -5,6 +5,7 @@ import type { ConnectionStatus } from './net/transport'
 import type { NoticeView } from './notices'
 import type { Blip } from './blips'
 import type { BackpackView } from './backpack'
+import type { DeliveryView } from './deliveries'
 import type { FeedEntry, Side } from './scoreboard'
 import type { VoiceStatus } from './voice'
 
@@ -153,4 +154,8 @@ export interface HudStats {
   blips: Blip[]
   /** In a world with the backpack: the circle it is somewhere inside, and who has it; else null. */
   backpack: BackpackView | null
+  /** In a world with deliveries: the board, the player's jobs, and where the job in hand sends them; else null. */
+  delivery: DeliveryView | null
+  /** The delivery phone is up, with the mouse free to tap it. */
+  phoneUp: boolean
 }

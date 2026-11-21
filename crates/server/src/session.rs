@@ -243,6 +243,14 @@ impl Transport {
                                 }
                                 rtc_window.1 += 1;
                                 if rtc_window.1 > MAX_RTC_PER_SECOND { continue; }
+                                if peek_tag(&frame) == Some(C_PHONE) {
+                                    let Some(phone) = decode::<Phone>(&frame) else { continue };
+                                    match self.commands.try_send(Command::Phone(id, phone)) {
+                                        Err(mpsc::error::TrySendError::Closed(_)) => break 'session "server stopping",
+                                        Ok(()) | Err(mpsc::error::TrySendError::Full(_)) => {}
+                                    }
+                                    continue;
+                                }
                                 let Some(Rtc { tag, peer: to, kind, json }) = decode(&frame) else { continue };
                                 if tag != C_RTC || kind > RTC_ICE || json.len() > RTC_MAX_PAYLOAD { continue; }
                                 match self.commands.try_send(Command::Rtc { from: id, to, kind, json }) {

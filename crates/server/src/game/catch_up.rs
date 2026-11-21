@@ -35,7 +35,7 @@ impl Game {
         let mut out = Vec::new();
         let profiles = world.entities.ids::<With<Player>>().into_iter().map(|id| profile_entry(world, id)).collect();
         out.push(encode(&Profiles { tag: S_PROFILES, players: profiles }));
-        let scores = world.entities.all::<Player>().map(|(id, player)| Score { id, kills: player.score.kills, deaths: player.score.deaths, held: player.score.held }).collect();
+        let scores = world.entities.all::<Player>().map(|(id, player)| Score { id, kills: player.score.kills, deaths: player.score.deaths, held: player.score.held, cash: player.score.cash }).collect();
         out.push(encode(&Scores { tag: S_SCORES, scores }));
         // Always sent, even empty: the client takes the first one after the welcome as the catch-up
         // (not news to animate), and snapshots on the datagram channel can overtake it.

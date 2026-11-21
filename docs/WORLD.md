@@ -38,7 +38,8 @@ Restart the server afterwards: it reads the whole world at start. The importer c
 | `--no-water` | Leave out lakes, rivers and streams (skips the water download). |
 | `--no-roofs` | Buildings stay boxes of their tagged height. The point cloud (the slowest and biggest download) is then only read for trees; add `--no-lidar-trees` to skip it completely. |
 | `--no-trees` | Skip the tree register. |
-| `--no-minimap` | Skip `minimap.webp`, the pre-rendered top-down map (2048 px, 4096 under a `minimap_image`; a lossy WebP written next to `world.msgpack`) that the client shows as minimap and map. |
+| `--no-minimap` | Skip the pre-rendered top-down map: `minimap.webp` (2048 px, 4096 under a `minimap_image`; a lossy WebP next to `world.msgpack`, the overview the settings page and the embeds show) and the [map tiles](#map-tiles) the game shows. |
+| `--maptiles world.msgpack` | Only redraw that world's map (`minimap.webp` and `maptiles/`) from its tiles as they are, and exit: a second or two. A world whose `area.json` lays a print over its map needs a whole import. |
 | `--no-lidar-trees` | Only the register's trees: no woods, no garden trees. |
 | `--min-tree-height m` | Shortest tree taken from the laser, default 3 m above the terrain. |
 | `--species dir` | Where the unpacked NMD2023 species layers are, default `temp-maps/nmd2023`. See [Tree species](#tree-species). |
@@ -198,6 +199,17 @@ and how many objects it has of each symbol.
   and water over it are painted, and not on a road, a track's ballast, a stream or deeper water, nor
   under a building. The client draws it and it hides soldiers from the bots: [CROPS.md](CROPS.md).
 - **Not imported yet:** walls, and bridges, which stay OSM's.
+
+## Map tiles
+
+The game's maps (the minimap, the phone's Map app, [PHONE.md](PHONE.md)) are drawn from tiles, the way a
+web map is: `maptiles/{z}/{x}_{y}.webp` next to `world.msgpack`, 512 px squares, lossy WebP at quality 80.
+- **The levels.** Level 0 is one square over the whole world. Each level below splits every square in four, down to one square per world tile (256 m): 2 pixels a metre, a dozen times sharper than `minimap.webp` on a big world.
+- **Drawing.** Every level is drawn from the world's shapes (`minimap::render_square`), not shrunk from the one below, so the roads stay crisp. Each square reads only the world tiles under it and their neighbours, and they are drawn in parallel.
+- **Squares left out.** A square with no world tile under it is left out, and the client draws plain paper there.
+- **The index.** `maptiles/index.json` gives the levels, the side of a level-0 square in metres, the world's north-west corner, and a hash of the whole render. The client asks for tiles by that hash (`?h=`), so the service worker can keep them for good and a new render is fetched afresh.
+- **Size.** `home` (12.8 km) is 895 tiles in 7 levels, 10 MB, drawn in 1.5 s. A player fetches only the tiles in view: a few on the phone and on the minimap, the coarser one standing in while a finer one loads (`client/src/hud/maptiles.ts`, up to 192 kept).
+- **Redrawing.** A whole import writes them. `osm-import --maptiles worlds/<name>/world.msgpack` redraws only the map of a world already built. `scripts/deploy.sh` ships them with the world.
 
 ## Which world, and when
 

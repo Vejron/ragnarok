@@ -1,6 +1,6 @@
 import type { Character } from '@/render/character'
 import { FLAG_CLAWING, FLAG_CROUCHING, FLAG_DEAD, FLAG_GROUNDED, FLAG_HELD_MASK, FLAG_HELD_SHIFT, KIND_SOLDIER, KIND_ZOMBIE } from '@/net/codec'
-import { CARRY_BACKPACK, CARRY_LAMP, CARRY_POLING, CARRY_SKIS, SLIDE_MIN_SPEED, STANCE_CHUTE, STANCE_DIVE, STANCE_DOWN, STANCE_PRONE, STANCE_RISE, STANCE_SURRENDER, STANCE_SWIM } from '@/sim/consts'
+import { CARRY_BACKPACK, CARRY_PARCEL, CARRY_LAMP, CARRY_POLING, CARRY_SKIS, SLIDE_MIN_SPEED, STANCE_CHUTE, STANCE_DIVE, STANCE_DOWN, STANCE_PRONE, STANCE_RISE, STANCE_SURRENDER, STANCE_SWIM } from '@/sim/consts'
 import type { Avatars } from '../avatars'
 import { ghostly } from './ghosts'
 import type { Frame, Presenter } from '../presenter'
@@ -87,6 +87,7 @@ export class Soldiers implements Presenter<Frame> {
     avatar.held = (flags & FLAG_HELD_MASK) >> FLAG_HELD_SHIFT
     const worn = entity.carry?.what ?? 0
     avatar.pack = (worn & CARRY_BACKPACK) !== 0
+    avatar.parcel = (worn & CARRY_PARCEL) !== 0
     avatar.skis = (worn & CARRY_SKIS) !== 0 && swim === 0
     avatar.lamp = (worn & CARRY_LAMP) !== 0 && !dead
     avatar.skiPoling = (worn & CARRY_POLING) !== 0

@@ -2,7 +2,8 @@ import type { HudLayer } from '@ragnarok/engine'
 import type { HudStats } from '@/hud'
 import { AimMarks } from './aim'
 import { Gauges } from './gauges'
-import { loadMap, miniSize, paintMap } from './map'
+import { miniSize, paintMap } from './map'
+import type { MapTiles } from './maptiles'
 import { CanvasSprite, Painter, uiScale } from './paint'
 import { Panels } from './panels'
 
@@ -24,23 +25,11 @@ export class InGameHud {
   private readonly gauges = new Gauges()
   private readonly panels = new Panels()
   private readonly mini = new CanvasSprite(MINI_PX, MINI_PX)
-  private map: HTMLImageElement | null = null
+  /** The world's map tiles, once the world is known. */
+  tiles: MapTiles | null = null
 
   constructor(layer: HudLayer) {
     this.painter = new Painter(layer)
-  }
-
-  /** Loads the world's map picture from the folder at `base`, once the world is known. */
-  loadMap(base: string) {
-    this.map = null
-    void loadMap(base).then((image) => {
-      this.map = image
-    })
-  }
-
-  /** The world's map picture, once loaded (null without one). */
-  get mapImage() {
-    return this.map
   }
 
   /** Lays the HUD for `s` onto the layer, for a view `width` × `height` CSS pixels at `scale`, larger on a large screen. */
@@ -55,8 +44,8 @@ export class InGameHud {
   }
 
   private minimap(p: Painter, s: HudStats, now: number) {
-    const image = this.map
-    if (!image) return
+    const tiles = this.tiles
+    if (!tiles?.ready) return
     const size = miniSize(p.width, p.height)
     const step = Math.floor(now / MINI_EVERY)
     this.mini.update(step, (g) => {
@@ -64,7 +53,7 @@ export class InGameHud {
       g.beginPath()
       g.roundRect(0, 0, MINI_PX, MINI_PX, 12)
       g.clip()
-      paintMap(g, image, s.halfExtent, s.x, s.z, MINI_METRES, MINI_PX, { x: s.x, z: s.z, yaw: s.yaw, blips: s.blips, circle: s.backpack, pulse: (now % PULSE_MS) / PULSE_MS })
+      paintMap(g, tiles, s.x, s.z, MINI_PX / MINI_METRES, MINI_PX, MINI_PX, { x: s.x, z: s.z, yaw: s.yaw, blips: s.blips, circle: s.backpack, target: s.delivery?.target, pulse: (now % PULSE_MS) / PULSE_MS })
       g.restore()
     }, (p.scale * size) / MINI_PX)
     const x = p.width - 12 - size - 2

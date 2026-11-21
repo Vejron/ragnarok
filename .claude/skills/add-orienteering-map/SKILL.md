@@ -50,16 +50,16 @@ In the log, check:
 
 - **No `no orienteering map:` or `no print of the map:` line.** Either means that part was skipped; the error says why.
 - **`median offset to them … m east, … m south`.** A metre or two is fine. More, and `ocad_shift: [east, south]` in `area.json` moves the map; build again.
-- **`[minimap: …]`** ran, and `minimap.webp` is next to the output. With a print it is 4096 px and a megabyte or two.
+- **`[minimap: …]`** ran, and `minimap.webp` and `maptiles/` are next to the output (`map: … tiles in … levels`). With a print `minimap.webp` is 4096 px and a megabyte or two, and every level of the map tiles carries the print at its own detail.
 
 Then look at `<scratch>/minimap.webp` with the Read tool. The map should sit where the roads and railway of the drawn map run into it. The outline is a convex hull, so unmapped corners inside it show as white forest; say so if they are large.
 
 ## 5. Put the world in place
 
-Either rebuild into the world itself (the same command with `--out worlds/<name>/world.msgpack`, or **Generate world** in the editor), or, when only the minimap changed, copy `<scratch>/minimap.webp` into `worlds/<name>/`. A local server needs a restart to pick up a rebuilt world.
+Either rebuild into the world itself (the same command with `--out worlds/<name>/world.msgpack`, or **Generate world** in the editor), or, when only the map changed, copy `<scratch>/minimap.webp` and `<scratch>/maptiles/` into `worlds/<name>/`. A local server needs a restart to pick up a rebuilt world.
 
 ## 6. Commit and deploy
 
 - Commit `area.json` (the generated files and `temp-maps/` are git-ignored).
-- Deploy that world as the live one, following AGENTS.md's "Deploying": `WORLD_DIR=worlds/<name> DOMAIN="$TARGET_DOMAIN" scripts/deploy.sh "$SSH_USER@$SSH_HOST"`. The deploy ships `minimap.webp`.
+- Deploy that world as the live one, following AGENTS.md's "Deploying": `WORLD_DIR=worlds/<name> DOMAIN="$TARGET_DOMAIN" scripts/deploy.sh "$SSH_USER@$SSH_HOST"`. The deploy ships `minimap.webp` and `maptiles/`.
 - Check it: `ssh "$SSH_USER@$SSH_HOST" 'docker ps --filter name=^ragnarok$; docker exec ragnarok ls -la /app/dist/ | grep minimap'`.

@@ -703,12 +703,13 @@ banners, the touch controls and invisible tap targets over the drawn hotbar.
   text; text is drawn once per string on a canvas and kept in a least-recently-used `TextCache`.
   Shapes quads cannot make (the hit marker, the body map, the minimap) are a `CanvasSprite`, redrawn
   only when what they show changes.
-- **The held map** (`render/heldmap.ts`, M) is not HUD but scene: a folded sheet in two gloved hands in
-  view space, made of meshes with `held = true`. Those are drawn at the end of the main pass ignoring the
-  scene's depth but writing their own, so a wall never cuts them, effects behind stay behind, and the ink
-  outlines the sheet rather than drawing the scene's edges over it. Its picture is `minimap.webp` round
-  the reader (`paperView`, 1.2 km, kept on the world) on a canvas texture, redrawn 8 times a second.
-  The view eases into first person at the eyes while it is up; firing or aiming puts it away.
+- **The held phone** (`render/heldphone.ts`, M and T, [PHONE.md](PHONE.md)) is not HUD but scene: a phone
+  in two gloved hands in view space, made of meshes with `held = true`. Those are drawn at the end of the
+  main pass ignoring the scene's depth but writing their own, so a wall never cuts them, effects behind
+  stay behind, and the ink outlines the phone rather than drawing the scene's edges over it. It is built
+  at life size and drawn 2.6 times as large and as far off, beyond the camera's near plane. Its screen is
+  a 540 × 1080 canvas texture the phone's apps draw on (`phone/`), redrawn when something changes or
+  8 times a second. The view eases into first person at the eyes while it is up.
 
 ## A headset's two eyes
 
@@ -732,7 +733,7 @@ The canvas's path does none of this and costs what it did.
 - **Something that must never be hidden** (a reticle, a marker): a mesh with `overlay = true` and a
   `blend: 'alpha'` material. It ignores depth and sorts by `renderOrder`.
 - **Something held in front of the eyes** (a first-person item): meshes with `held = true`, in a group
-  that follows the camera, as `HeldMapView` does.
+  that follows the camera, as `HeldPhoneView` does.
 - **A new HUD element:** a field in `HudStats` filled in `Game.report()`, drawn in one of the files in
   `client/src/hud/` with the `Painter`. Not a page element.
 - **A new look option:** add a field to `Look` and `defaultLook`, apply it in `Scene.setLook`, and add

@@ -2,7 +2,7 @@
 // change the Rust and run `npm run gen:consts`. Client-only constants live in consts.ts.
 
 /** Wire schema version. Bumped on any incompatible protocol or world-format change. */
-export const PROTOCOL_VERSION = 91
+export const PROTOCOL_VERSION = 92
 
 /** Why a page closes its session (`Bye`): the tab is closing or reloading. */
 export const BYE_LEAVING = 0
@@ -151,6 +151,12 @@ export const KIND_CB90 = 34
  * enough to run a rapid.
  */
 export const KIND_RAFT = 35
+
+/**
+ * A delivery's parcel lying on the ground (DELIVERY.md), dropped by a courier who died. Replicated as
+ * a place and this kind.
+ */
+export const KIND_PARCEL = 36
 
 /** Fixed simulation rate, in ticks per second. */
 export const TICK_RATE = 60
@@ -767,6 +773,57 @@ export const CARRY_LAMP = 4
 
 /** Poling hard: on skis on the ground, pushing with run held. */
 export const CARRY_POLING = 8
+
+/** A delivery's parcel on the back (DELIVERY.md). */
+export const CARRY_PARCEL = 16
+
+/**
+ * The delivery mode (DELIVERY.md): jobs on a phone to fetch a parcel at a shop's door and carry it to a
+ * house's. Whoever hands it in is paid `DELIVERY_BASE` plus `DELIVERY_PER_KM` for each kilometre from
+ * the shop to the house, in full within the job's par time (`DELIVERY_PAR_GRACE` seconds plus the
+ * distance at `DELIVERY_PAR_SPEED`), then less and less, down to `DELIVERY_FLOOR` of it once as long
+ * again has gone by.
+ */
+export const DELIVERY_BASE = 20.0
+export const DELIVERY_PER_KM = 60.0
+
+/** Seconds every job's par time starts with, for the walk to the street. */
+export const DELIVERY_PAR_GRACE = 60.0
+
+/** The speed a job's par time allows for the way from shop to house, m/s: a brisk run. */
+export const DELIVERY_PAR_SPEED = 5.0
+
+/** The share of a job's pay that is left however late it is handed in. */
+export const DELIVERY_FLOOR = 0.25
+
+/** How far apart a job's shop and house may be, metres across the ground. */
+export const DELIVERY_MIN_DISTANCE = 150.0
+export const DELIVERY_MAX_DISTANCE = 1500.0
+
+/**
+ * How near a door a soldier on foot must walk to fetch or hand in a parcel, or to a parcel lying on
+ * the ground to take it, metres across the ground and up or down.
+ */
+export const DELIVERY_REACH = 3.0
+export const DELIVERY_REACH_Y = 2.5
+
+/** Seconds a dropped parcel may lie untouched before it spoils and its job is over. */
+export const DELIVERY_SPOIL_SECONDS = 120.0
+
+/** Jobs on the board at once, unless the scenario says otherwise. */
+export const DELIVERY_JOBS = 6
+
+/** What a `Phone` message asks: to take a job off the board, or to give back one not yet fetched. */
+export const PHONE_ACCEPT = 0
+export const PHONE_CANCEL = 1
+
+/**
+ * `JobState::stage`: on the way to the shop, carrying the parcel to the house, or your job's parcel
+ * lost (dropped where you died, or in someone else's hands).
+ */
+export const JOB_FETCH = 0
+export const JOB_CARRY = 1
+export const JOB_LOST = 2
 
 /** Pull of gravity on a skier's slope, m/s². Real, unlike the game's heavier `GRAVITY` for flight. */
 export const SKI_GRAVITY = 9.81

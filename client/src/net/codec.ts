@@ -1,6 +1,6 @@
 import { decode, encode } from '@msgpack/msgpack'
 import { PROTOCOL_VERSION } from '@/sim/consts'
-import { decodeMessage, writeBye, writeClientHands, writeClientInput, writePing, writeRtc, type ClientHands, type InputFrame, type ServerMessage } from './messages.generated'
+import { decodeMessage, writeBye, writeClientHands, writeClientInput, writePhone, writePing, writeRtc, type ClientHands, type InputFrame, type ServerMessage } from './messages.generated'
 
 /**
  * Wire format: MessagePack arrays with a leading tag, fixed-point integers, no field names. The
@@ -9,7 +9,7 @@ import { decodeMessage, writeBye, writeClientHands, writeClientInput, writePing,
  */
 
 export type {
-  BulletSpawn, Built, CarvedBuilding, ClientHands, CraterEntry, DamagedBuilding, DestroyedObject, DugTile, GateState, HullMark, InputFrame, ProfileEntry, Score, ServerMessage, ShotEvent,
+  BulletSpawn, Built, CarvedBuilding, ClientHands, CraterEntry, DamagedBuilding, DestroyedObject, DugTile, GateState, HullMark, InputFrame, JobOffer, JobState, ProfileEntry, Score, ServerMessage, ShotEvent,
 } from './messages.generated'
 
 /** `Notice` kinds: what a world's scenario is telling everyone. */
@@ -26,7 +26,7 @@ export const OBJ_LINE = 2
 
 /** Entity kinds, generated from `consts.rs`. A vehicle kind's definition is `vehicleDef`. */
 export {
-  KIND_AMV, KIND_BACKPACK, KIND_BUS, KIND_CB90, KIND_DEER, KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MISSILE, KIND_MORTAR, KIND_PAK, KIND_PBV, KIND_PLANE, KIND_RAFT, KIND_ROADSTER, KIND_ROOSTER, KIND_SEAPLANE, KIND_SHIP, KIND_SHIP_GUN, KIND_SNOWMOBILE, KIND_SNOWRACER, KIND_SPORTS, KIND_SOLDIER, KIND_STAG, KIND_STRF, KIND_STRV, KIND_SUBMARINE, KIND_TANK, KIND_TECHNICAL, KIND_TITAN, KIND_TUPP, KIND_WALKER, KIND_ZOMBIE,
+  KIND_AMV, KIND_BACKPACK, KIND_BUS, KIND_CB90, KIND_DEER, KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MISSILE, KIND_MORTAR, KIND_PAK, KIND_PARCEL, KIND_PBV, KIND_PLANE, KIND_RAFT, KIND_ROADSTER, KIND_ROOSTER, KIND_SEAPLANE, KIND_SHIP, KIND_SHIP_GUN, KIND_SNOWMOBILE, KIND_SNOWRACER, KIND_SPORTS, KIND_SOLDIER, KIND_STAG, KIND_STRF, KIND_STRV, KIND_SUBMARINE, KIND_TANK, KIND_TECHNICAL, KIND_TITAN, KIND_TUPP, KIND_WALKER, KIND_ZOMBIE,
 } from '@/sim/consts'
 export { isDrone } from '@/sim/vehicles'
 
@@ -259,6 +259,11 @@ export const RTC_ICE = 2
 /** Voice signaling for player `peer`. Goes down the signaling stream, not as a datagram. */
 export function encodeRtc(peer: number, kind: number, json: string): Uint8Array {
   return encode(writeRtc({ peer, kind, json }))
+}
+
+/** A tap on the delivery phone (`PHONE_*`, DELIVERY.md). Goes down the signaling stream, not as a datagram. */
+export function encodePhone(action: number, job: number): Uint8Array {
+  return encode(writePhone({ action, job }))
 }
 
 /** Where a Titan's pilot wants its fists, centimetres in its hull frame. */

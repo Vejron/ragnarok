@@ -31,7 +31,7 @@ impl Game {
             let parts = wounds.unwrap_or_default().left();
             let c = &player.character;
             let poling = c.skis && c.grounded && c.down == 0 && !c.winded && !shared::items::fills_hands(player.held().item) && player.input.forward > 0 && player.input.buttons() & (BUTTON_RUN | BUTTON_CROUCH | BUTTON_ALT) == BUTTON_RUN;
-            let what = if poling { CARRY_POLING } else { 0 } | if crate::mechanics::carries(&self.world, id) { CARRY_BACKPACK } else { 0 } | if player.character.skis { CARRY_SKIS } else { 0 } | if player.lamp { CARRY_LAMP } else { 0 };
+            let what = if poling { CARRY_POLING } else { 0 } | if crate::mechanics::carries(&self.world, id) { CARRY_BACKPACK } else { 0 } | if crate::mechanics::carries_parcel(&self.world, id) { CARRY_PARCEL } else { 0 } | if player.character.skis { CARRY_SKIS } else { 0 } | if player.lamp { CARRY_LAMP } else { 0 };
             let carry = (what != 0).then_some(wire::Carry { what });
             let lifted = player.lift.map(|ride| wire::Lifted { lift: ride.lift, chair: ride.chair, seat: ride.seat });
             let held = player.held.map(|fist| wire::Held { vehicle: fist.titan, hand: fist.hand });
@@ -72,6 +72,10 @@ impl Game {
         scene.extend(crate::mechanics::backpack_lying(&self.world).into_iter().map(|(id, position)| {
             let [x, y, z] = position.map(to_cm);
             (id, Replicated { kind: Some(wire::Kind { kind: KIND_BACKPACK }), place: Some(wire::Place { x, y, z }), ..Default::default() })
+        }));
+        scene.extend(crate::mechanics::parcels_lying(&self.world).into_iter().map(|(id, position)| {
+            let [x, y, z] = position.map(to_cm);
+            (id, Replicated { kind: Some(wire::Kind { kind: KIND_PARCEL }), place: Some(wire::Place { x, y, z }), ..Default::default() })
         }));
         scene.sort_unstable_by_key(|(id, _)| *id);
         scene

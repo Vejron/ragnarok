@@ -12,6 +12,9 @@ const LOOK_HOLD_MS = 1500
 /** How quickly the camera swings behind a car, per second. */
 const FOLLOW_RATE = 2
 
+/** The phone's apps (PHONE.md). */
+export type PhoneApp = 'map' | 'jobs'
+
 export interface InputSample {
   strafe: number
   forward: number
@@ -58,16 +61,16 @@ export class InputController {
   private touchHeld = 0
   /** Lying down: Z toggles it, and jumping or crouching gets up. */
   private proneLatched = false
-  /** The paper map is held up to read: M toggles it; firing or aiming puts it away. */
-  mapUp = false
+  /**
+   * The phone held up in both hands (PHONE.md), and the app it shows: M brings it up on the map, T on
+   * the deliveries, the same key again puts it away and the other switches app. It frees the mouse to
+   * tap it with while the keys still move the soldier, so the game counts as `locked` and does not pause.
+   */
+  phone: PhoneApp | null = null
   /** A Titan's pilot looks out from its head, not from behind its shoulders: B swaps the two. */
   cockpit = false
-  /** Wheel notches turned with the map up, not yet taken (`takeMapWheel`): down zooms out. */
-  private mapWheel = 0
   /** F3 was pressed since last asked (`takeStatsToggle`): show or hide the HUD's network numbers. */
   private statsToggle = false
-  /** The click that put the map away fires nothing: its buttons are ignored until let go. */
-  private swallow = false
   /** When turning the phone turns the view (GYRO-AIM.md). Off until the player picks a mode. */
   gyroMode: GyroMode = 'off'
   /** The player's gyro sensitivity, a multiple of `GYRO_GAIN`. */
@@ -98,7 +101,12 @@ export class InputController {
             if (!granted) this.gyroMode = 'off'
           })
         }
-      } else void element.requestPointerLock?.()
+      // With the phone up, a click is the phone's (`phone/pointer.ts`): on it, a tap; off it, it puts it away.
+      } else if (!this.phone) void element.requestPointerLock?.()
+    }, options)
+    // Taking the pointer back by any way puts the phone away.
+    document.addEventListener('pointerlockchange', () => {
+      if (document.pointerLockElement === element) this.phone = null
     }, options)
     window.addEventListener('devicemotion', (event) => this.motion(event), options)
     // The trigger is the left mouse button, once the pointer is captured.
@@ -111,11 +119,10 @@ export class InputController {
       if (event.button === 0) this.firing = false
       if (event.button === 2) this.aiming = false
     }, options)
-    // The wheel cycles the hotbar, one slot per notch; with the map up it zooms the map.
+    // The wheel cycles the hotbar, one slot per notch; with the phone up the phone has it.
     document.addEventListener('wheel', (event) => {
       if (document.pointerLockElement !== element || event.deltaY === 0) return
-      if (this.mapUp) this.mapWheel += event.deltaY > 0 ? 1 : -1
-      else this.cycleSlot(event.deltaY > 0 ? 1 : -1)
+      this.cycleSlot(event.deltaY > 0 ? 1 : -1)
     }, { ...options, passive: true })
     // The right button must not open a menu.
     document.addEventListener('contextmenu', (event) => event.preventDefault(), options)
@@ -173,11 +180,11 @@ export class InputController {
 
   /** Aim is held, by the right mouse button or on screen. */
   get aimHeld() {
-    return !this.swallow && (this.aiming || (this.touchHeld & BUTTON_ALT) !== 0)
+    return !this.phone && (this.aiming || (this.touchHeld & BUTTON_ALT) !== 0)
   }
 
   get locked() {
-    return this.touching || document.pointerLockElement === this.element
+    return this.touching || this.phone !== null || document.pointerLockElement === this.element
   }
 
   /** A headset is on, which stands in for taking the pointer lock as a touch player's tap does; or it is off again. */
@@ -218,7 +225,7 @@ export class InputController {
 
   /** Whether the gyroscope steers the view right now, by the mode and what the player is doing. */
   get gyroActive() {
-    if (this.gyroMode === 'off' || !this.locked || this.mapUp) return false
+    if (this.gyroMode === 'off' || !this.locked || this.phone) return false
     return this.gyroMode === 'always' || this.aimHeld
   }
 
@@ -309,7 +316,10 @@ export class InputController {
       if (event.code === 'KeyL') this.latched |= BUTTON_LAMP
       if (event.code === 'KeyK') this.latched |= BUTTON_SKIS
       if (event.code === 'KeyX') this.holster()
-      if (event.code === 'KeyM') this.mapUp = !this.mapUp
+      if (event.code === 'KeyM') this.togglePhone('map')
+      if (event.code === 'KeyT') this.togglePhone('jobs')
+      // Esc frees the mouse itself; with the phone up, it puts the phone away too and pauses.
+      if (event.code === 'Escape') this.phone = null
       if (event.code === 'KeyB') this.cockpit = !this.cockpit
       if (event.code === 'F3') this.statsToggle = true
       if (event.code === 'KeyR') this.latched |= BUTTON_RELOAD
@@ -333,6 +343,37 @@ export class InputController {
     return (positive.some((c) => this.held.has(c)) ? 1 : 0) - (negative.some((c) => this.held.has(c)) ? 1 : 0)
   }
 
+  /**
+   * Brings the phone up on `app`, freeing the mouse to tap it; switches to `app` if it is up on
+   * another; puts it away and takes the mouse back if it is up on `app`. Only in play: not from the
+   * pause screen. A touch player has no pointer to free.
+   */
+  togglePhone(app: PhoneApp) {
+    if (this.phone === app) {
+      this.putPhoneAway()
+      return
+    }
+    if (this.phone) {
+      this.phone = app
+      return
+    }
+    if (!this.locked) return
+    this.phone = app
+    if (!this.coarse && document.pointerLockElement === this.element) document.exitPointerLock?.()
+  }
+
+  /** Puts the phone away and takes the mouse back, as clicking off it does. */
+  putPhoneAway() {
+    if (!this.phone) return
+    this.phone = null
+    if (!this.coarse) void this.element.requestPointerLock?.()
+  }
+
+  /** Puts the phone away without taking the mouse back: dying, or taking a seat that cannot read it. */
+  dropPhone() {
+    this.phone = null
+  }
+
   /** Whether F3 was pressed since last asked. */
   takeStatsToggle() {
     const toggled = this.statsToggle
@@ -340,17 +381,6 @@ export class InputController {
     return toggled
   }
 
-  /** The wheel notches turned over the map since last asked. */
-  takeMapWheel() {
-    const notches = this.mapWheel
-    this.mapWheel = 0
-    return notches
-  }
-
-  /** Puts the map away, as firing or aiming does. */
-  lowerMap() {
-    this.mapUp = false
-  }
 
   /** Reads the current intent and clears latched buttons. */
   sample(): InputSample {
@@ -360,16 +390,8 @@ export class InputController {
     if (this.held.has('Space')) buttons |= BUTTON_JUMP
     if (this.firing || this.held.has('KeyF')) buttons |= BUTTON_FIRE
     if (this.aiming) buttons |= BUTTON_ALT
-    // Firing or aiming with the map up puts it away, and that press does nothing else.
-    const trigger = buttons & (BUTTON_FIRE | BUTTON_ALT)
-    if (this.mapUp && trigger) {
-      this.mapUp = false
-      this.swallow = true
-    }
-    if (this.swallow) {
-      if (trigger) buttons &= ~(BUTTON_FIRE | BUTTON_ALT)
-      else this.swallow = false
-    }
+    // Both hands are on the phone.
+    if (this.phone) buttons &= ~(BUTTON_FIRE | BUTTON_ALT)
     if (this.held.has('KeyC') || this.held.has('ControlLeft')) buttons |= BUTTON_CROUCH
     if (this.proneLatched) buttons |= BUTTON_PRONE
     // W and S (or the stick pushed up or down) walk a mortar's range dial; nobody on foot or driving needs them for anything else here.

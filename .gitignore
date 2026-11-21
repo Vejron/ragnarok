@@ -17,6 +17,7 @@ client/public/world.msgpack
 client/public/tiles/
 client/public/minimap.png
 client/public/minimap.webp
+client/public/maptiles/
 # the small dev world (scripts/world-dev.sh)
 client/public/dev/
 
@@ -25,6 +26,7 @@ worlds/*/world.msgpack
 worlds/*/tiles/
 worlds/*/minimap.png
 worlds/*/minimap.webp
+worlds/*/maptiles/
 worlds/active.json
 .deploy/
 

@@ -34,7 +34,7 @@ onMounted(() => {
   game = new Game(container.value!, (next) => {
     // The page only needs a few updates a second.
     const now = performance.now()
-    if (now - lastStats < 200 && next.locked === stats.value?.locked && next.hands === stats.value?.hands) return
+    if (now - lastStats < 200 && next.locked === stats.value?.locked && next.hands === stats.value?.hands && next.phoneUp === stats.value?.phoneUp) return
     lastStats = now
     stats.value = next
   })
@@ -103,7 +103,7 @@ const KEYS: [string, string][] = [
   ['WASD', 'move'], ['Shift', 'run'], ['Space', 'jump'], ['C', 'crouch'], ['Z', 'lie down'],
   ['E', 'take, drive, ride, man a gun or work a gate'], ['1–5 / wheel', 'pick an item'], ['Click', 'fire'],
   ['Right mouse', 'aim (scope with the sniper or Carl Gustaf)'], ['R', 'reload'], ['X', 'holster'],
-  ['G', 'parachute'], ['K', 'skis (winter)'], ['L', 'headlamp'], ['V', 'talk'], ['M', 'read the map'], ['B', 'a Titan: from its head'], ['Space', 'a Titan: leap, hold to fly'],
+  ['G', 'parachute'], ['K', 'skis (winter)'], ['L', 'headlamp'], ['V', 'talk'], ['M', 'the phone: map'], ['T', 'the phone: deliveries'], ['B', 'a Titan: from its head'], ['Space', 'a Titan: leap, hold to fly'],
   ['Tab', 'scores'], ['F2', 'screenshot'], ['F3', 'network stats'], ['Esc', 'release the mouse'],
 ]
 </script>

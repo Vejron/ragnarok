@@ -42,6 +42,8 @@ The docs are in [docs/](docs/).
 - [DRONES.md](docs/DRONES.md): FPV and loitering drones
 - [GYRO-AIM.md](docs/GYRO-AIM.md): aiming on a phone by turning it
 - [BACKPACK.md](docs/BACKPACK.md): backpack mode
+- [DELIVERY.md](docs/DELIVERY.md): delivery mode, food orders on a phone
+- [PHONE.md](docs/PHONE.md): the phone in the soldier's hands, its map and delivery apps
 - [VEHICLES-I.md](docs/VEHICLES-I.md): cars, seats, driving
 - [VEHICLES-II.md](docs/VEHICLES-II.md): the tank, its gunner seat and the shell, driver prediction and the helicopter; how tracks ride over humps, steps and side slopes
 - [HELICOPTER.md](docs/HELICOPTER.md): the helicopter's semi-realistic flight model: collective lever, torque cyclic, pedals to the look, rotor speed, ground effect, translational lift, vortex ring and autorotation

@@ -1,6 +1,6 @@
 import type { Entity } from './entities/units'
 import type { HudStats } from './hud'
-import { CARRY_BACKPACK, CARRY_LAMP, CARRY_SKIS, GHOST_BLOCK_NONE, HEAD_HP, LIMB_HP, PLAYER_MAX_HP, RESPAWN_TICKS, STANCE_FORM, STANCE_GHOST, TICK_MS } from './sim/consts'
+import { CARRY_BACKPACK, CARRY_LAMP, CARRY_PARCEL, CARRY_SKIS, GHOST_BLOCK_NONE, HEAD_HP, LIMB_HP, PLAYER_MAX_HP, RESPAWN_TICKS, STANCE_FORM, STANCE_GHOST, TICK_MS } from './sim/consts'
 import { emptyHotbar, HOTBAR_SLOTS, ITEM_NONE, type ItemSlot } from './sim/items'
 import { bleedingOf, lostOf } from './sim/limbs'
 
@@ -24,6 +24,8 @@ export class LocalPlayer {
   parts: number[] = [HEAD_HP, LIMB_HP, LIMB_HP, LIMB_HP, LIMB_HP]
   /** They carry the backpack, as their own `carry` last said: they walk faster. */
   carrying = false
+  /** Carries a delivery's parcel (DELIVERY.md). */
+  parcel = false
   /** They wear skis, as their own `carry` last said. */
   onSkis = false
   /** Their headlamp is on, as their own `carry` last said. */
@@ -51,6 +53,7 @@ export class LocalPlayer {
     this.limbs = 0
     this.parts = [HEAD_HP, LIMB_HP, LIMB_HP, LIMB_HP, LIMB_HP]
     this.carrying = false
+    this.parcel = false
     this.onSkis = false
     this.lamp = false
     this.breath = 1
@@ -76,6 +79,7 @@ export class LocalPlayer {
     this.limbs = own.limbs?.lost ?? 0
     const worn = own.carry?.what ?? 0
     this.carrying = (worn & CARRY_BACKPACK) !== 0
+    this.parcel = (worn & CARRY_PARCEL) !== 0
     this.onSkis = (worn & CARRY_SKIS) !== 0
     this.lamp = (worn & CARRY_LAMP) !== 0
   }

@@ -2,7 +2,7 @@ import { Adaptation, Beams, Bloom, Color, Fog, Grade, Ink, LensFlare, Perspectiv
 import type { Eye } from '@/xr/headset'
 import type { WaterPlane } from '@/sim/waters'
 import { GunSightView } from './gunsight'
-import { HeldMapView } from './heldmap'
+import { HeldPhoneView } from './heldphone'
 import { ContactShadows } from './contact'
 import { setWaterLight, setWaterPlane, setWaterReflection } from './water'
 import { rebakeTreeImpostors, setTreeDetail } from './trees'
@@ -127,8 +127,8 @@ export class Scene {
   renderer: Renderer | null = null
   /** A tank gunner's reticle, drawn over the finished frame. */
   readonly gunsight = new GunSightView()
-  /** The paper map in the soldier's hands, in first person. */
-  readonly heldMap = new HeldMapView()
+  /** The phone in the soldier's hands, in first person (PHONE.md). */
+  readonly heldPhone = new HeldPhoneView()
   private readonly resizeObserver: ResizeObserver
   /** Blob shadows; the game fills them in each frame. */
   readonly contact: ContactShadows
@@ -175,7 +175,7 @@ export class Scene {
     this.setClock(0)
     this.scene.sun.shadow.enabled = true
     this.contact = new ContactShadows((x, z) => this.groundAt(x, z))
-    this.scene.add(this.contact.root, this.gunsight.root, this.heldMap.root)
+    this.scene.add(this.contact.root, this.gunsight.root, this.heldPhone.root)
 
     this.resizeObserver = new ResizeObserver(() => this.resize())
     this.resizeObserver.observe(container)
@@ -241,7 +241,7 @@ export class Scene {
     this.scene.fog!.far = preset.fogFar
     this.scene.sun.shadow.taps = preset.shadowTaps
     this.setCloudShadows()
-    this.heldMap.redrawMs = preset.heldMapMs
+    this.heldPhone.redrawMs = preset.heldPhoneMs
     if (this.renderer) this.renderer.detail = preset.treeDetail
     setTreeDetail(preset.treeDetail)
     this.setShadowReach(this.currentLook.far)
@@ -603,7 +603,7 @@ export class Scene {
     // The reticle is laid out in view space; it goes where the camera is, just before drawing.
     this.camera.updateWorld()
     this.gunsight.follow(this.camera)
-    this.heldMap.follow(this.camera)
+    this.heldPhone.follow(this.camera)
     if (!this.underwater) return paint()
     // Under water the fog is the water's own colour, lit as the ground is, and close, with no sky; the sky's comes back after.
     const { fog, background } = this.scene
@@ -635,7 +635,7 @@ export class Scene {
     this.disposed = true
     this.resizeObserver.disconnect()
     this.gunsight.dispose()
-    this.heldMap.dispose()
+    this.heldPhone.dispose()
     this.contact.dispose()
     this.renderer?.destroy()
     this.canvas.remove()

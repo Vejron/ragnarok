@@ -6,8 +6,10 @@ mod backpack;
 mod bots;
 mod breath;
 mod building;
+mod carry;
 mod buses;
 mod combat;
+mod deliveries;
 mod drones;
 mod gates;
 mod ghosts;
@@ -41,6 +43,8 @@ pub(crate) use combat::CARVE_REACH;
 pub(crate) use backpack::{carries, lying as backpack_lying};
 pub use armor::ArmorHit;
 pub use backpack::{Backpack, BackpackState};
+pub(crate) use deliveries::{act as phone, carries_parcel, lying as parcels_lying};
+pub use deliveries::{Deliveries, DeliveryState};
 pub use drones::Drones;
 pub use gates::Gates;
 pub use ghosts::{Ghost, Ghosts, shown as ghost_shown};
@@ -107,6 +111,8 @@ pub fn register_components(ecs: &mut bevy_ecs::world::World) {
     ecs.register_component::<limbs::Struck>();
     ecs.register_component::<backpack::Carry>();
     ecs.register_component::<backpack::Lying>();
+    ecs.register_component::<deliveries::Parcel>();
+    ecs.register_component::<deliveries::LyingParcel>();
     projectiles::register(ecs);
     golf::register(ecs);
 }
@@ -118,7 +124,7 @@ pub fn register_components(ecs: &mut bevy_ecs::world::World) {
 /// everything after reads as it reads anyone's, and `Buses` likewise for its drivers. `Life` brings the dead back before `Npcs` and `Wildlife` move them.
 /// `Ghosts` goes before `Movement`, so that a ghost that starts taking shape is not flown that tick.
 pub fn default_mechanics() -> Vec<Box<dyn Mechanic>> {
-    vec![Box::<Bots>::default(), Box::<Zombies>::default(), Box::<Buses>::default(), Box::new(Spawn), Box::<Titans>::default(), Box::<Lifts>::default(), Box::new(Pickups), Box::new(Submarines), Box::new(Drones), Box::new(Gates::seated()), Box::new(Vehicles), Box::<Gates>::default(), Box::new(Gunnery), Box::new(Ghosts), Box::new(Movement), Box::new(Breath), Box::<Mend>::default(), Box::new(Backpack), Box::new(Life), Box::new(Npcs), Box::<Wildlife>::default(), Box::new(Combat), Box::new(Golf), Box::new(Structure), Box::new(Scores)]
+    vec![Box::<Bots>::default(), Box::<Zombies>::default(), Box::<Buses>::default(), Box::new(Spawn), Box::<Titans>::default(), Box::<Lifts>::default(), Box::new(Pickups), Box::new(Submarines), Box::new(Drones), Box::new(Gates::seated()), Box::new(Vehicles), Box::<Gates>::default(), Box::new(Gunnery), Box::new(Ghosts), Box::new(Movement), Box::new(Breath), Box::<Mend>::default(), Box::new(Backpack), Box::new(Deliveries), Box::new(Life), Box::new(Npcs), Box::<Wildlife>::default(), Box::new(Combat), Box::new(Golf), Box::new(Structure), Box::new(Scores)]
 }
 
 /// What tests outside the mechanics reach in for: setting up a busy room without playing it.

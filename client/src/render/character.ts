@@ -7,6 +7,7 @@ import { type Limb, poseLimb, splitLimbs } from './gibs'
 import { colorFor } from '@/profile'
 import { LIMB_ALL, LIMB_ARM_L, LIMB_ARM_R, LIMB_LEG_L, LIMB_LEG_R, PART_HEAD } from '@/net/codec'
 import { buildBackpack } from './backpack'
+import { buildParcel } from './parcel'
 import { Headlamp } from './headlamp'
 import { POLE_REACH, SOLE_DROP, buildPole, buildSki } from './skigear'
 import { buildClub, swingLength, swingPhase } from './golfclub'
@@ -526,6 +527,9 @@ export class Character {
   /** The backpack on its back (BACKPACK.md), made the first time it carries it. */
   private backpack: Group | null = null
   private carrying = false
+  /** A delivery's parcel on its back (DELIVERY.md), made the first time it carries one. */
+  private bag: Group | null = null
+  private bagging = false
   /** The lamp on its head, made the first time it is lit. */
   private headlamp: Headlamp | null = null
   private lampOn = false
@@ -825,6 +829,11 @@ export class Character {
       // Between the shoulder blades, lower as it crouches; lying down, falling flat or dead it is hidden rather than posed.
       this.backpack.visible = this.carrying && !this.down && this.lie < 0.5 && this.fall < 0.5
       this.backpack.position.set(0, PACK_Y - PACK_CROUCH_DROP * this.crouch, -PACK_BACK)
+    }
+    if (this.bag) {
+      this.bag.visible = this.bagging && !this.down && this.lie < 0.5 && this.fall < 0.5
+      // Behind the backpack when it wears both.
+      this.bag.position.set(0, PACK_Y - PACK_CROUCH_DROP * this.crouch, -PACK_BACK - 0.08 - (this.carrying ? 0.18 : 0))
     }
     const alive = 1 - this.death
     const dry = 1 - this.wet
@@ -1838,6 +1847,15 @@ export class Character {
     if (on && !this.backpack) {
       this.backpack = buildBackpack()
       this.object.add(this.backpack)
+    }
+  }
+
+  /** Whether it carries a delivery's parcel on its back. */
+  set parcel(on: boolean) {
+    this.bagging = on
+    if (on && !this.bag) {
+      this.bag = buildParcel()
+      this.object.add(this.bag)
     }
   }
 

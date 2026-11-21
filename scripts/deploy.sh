@@ -40,12 +40,13 @@ echo "==> building client"
 (cd client && npm ci && npm run build)
 rm -rf client/dist/dev   # the dev world (scripts/world-dev.sh) is copied from public/; never ship it as a subdirectory
 if [[ "$WORLD_DIR" != client/public ]]; then
-  # Serve WORLD_DIR's world at the root instead: the client fetches /world.msgpack, /tiles/ and /minimap.webp.
+  # Serve WORLD_DIR's world at the root instead: the client fetches /world.msgpack, /tiles/, /maptiles/ and /minimap.webp.
   echo "==> using world from $WORLD_DIR"
-  rm -rf client/dist/tiles client/dist/world.msgpack client/dist/minimap.webp
+  rm -rf client/dist/tiles client/dist/maptiles client/dist/world.msgpack client/dist/minimap.webp
   cp -R "$WORLD_DIR/tiles" client/dist/tiles
   cp "$WORLD_DIR/world.msgpack" client/dist/world.msgpack
   if [[ -f "$WORLD_DIR/minimap.webp" ]]; then cp "$WORLD_DIR/minimap.webp" client/dist/minimap.webp; fi
+  if [[ -d "$WORLD_DIR/maptiles" ]]; then cp -R "$WORLD_DIR/maptiles" client/dist/maptiles; fi
 fi
 
 # Brotli copies of the client, the models and the world's tiles, which the server sends in their place

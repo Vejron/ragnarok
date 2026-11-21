@@ -99,9 +99,15 @@ const pwa = VitePWA({
         handler: 'CacheFirst',
         options: { cacheName: 'tiles', expiration: { maxEntries: 4000, purgeOnQuotaError: true } },
       },
+      // The map's tiles, asked for with their render's hash (`maptiles/index.json`), so likewise never stale.
+      {
+        urlPattern: /\/maptiles\/\d+\/\d+_\d+\.webp\?h=/,
+        handler: 'CacheFirst',
+        options: { cacheName: 'maptiles', expiration: { maxEntries: 2000, purgeOnQuotaError: true } },
+      },
       // Must match the server's world, so always asked for; the cache is for a flaky connection.
       {
-        urlPattern: /\/(world\.msgpack|minimap\.webp|worlds\/active\.json)$/,
+        urlPattern: /\/(world\.msgpack|minimap\.webp|maptiles\/index\.json|worlds\/active\.json)$/,
         handler: 'NetworkFirst',
         options: { cacheName: 'world', networkTimeoutSeconds: 5 },
       },

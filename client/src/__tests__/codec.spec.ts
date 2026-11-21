@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { encode } from '@msgpack/msgpack'
-import { decodeServer, NOTICE_OBJECTIVE, encodeBye, encodeInput, encodeHands, encodePing, HANDS_GRIP_RIGHT, HANDS_REACH_RIGHT, encodeRtc, RTC_ICE, FLAG_DEAD, FLAG_GROUNDED, toMrad, TURRET_STOWED, DEATH_ROADKILL, WEAPON_ROADKILL, WEAPON_SNIPER } from '@/net/codec'
+import { decodeServer, NOTICE_OBJECTIVE, encodeBye, encodeInput, encodeHands, encodePhone, encodePing, HANDS_GRIP_RIGHT, HANDS_REACH_RIGHT, encodeRtc, RTC_ICE, FLAG_DEAD, FLAG_GROUNDED, toMrad, TURRET_STOWED, DEATH_ROADKILL, WEAPON_ROADKILL, WEAPON_SNIPER } from '@/net/codec'
 import { Replica } from '@/net/replica'
 import type { Update } from '@/net/replicated'
-import { BUTTON_FIRE, BUTTON_JUMP, BUTTON_RUN, BYE_REJOINING, PROTOCOL_VERSION } from '@/sim/consts'
+import { BUTTON_FIRE, BUTTON_JUMP, BUTTON_RUN, BYE_REJOINING, JOB_CARRY, PHONE_CANCEL, PROTOCOL_VERSION } from '@/sim/consts'
 import fixture from './messages.fixture.json'
 
 // `messages.fixture.json` holds every message as the Rust tests encode it (`crates/shared/src/protocol/tests.rs`).
@@ -41,6 +41,12 @@ describe('codec', () => {
     expect(decodeServer(bytes('notice'))).toEqual({ type: 'notice', kind: NOTICE_OBJECTIVE, text: 'Go' })
     expect(decodeServer(bytes('gates'))).toEqual({ type: 'gates', live: true, gates: [{ col: 2, row: 3, index: 70_000, door: 300, open: true }, { col: 0, row: 1, index: 4, door: 0, open: false }] })
     expect(decodeServer(bytes('backpack'))).toEqual({ type: 'backpack', x: -123.45, z: 678.9, radius: 75, carrier: 9, held: 301 })
+    expect(decodeServer(bytes('jobs'))).toEqual({
+      type: 'jobs',
+      offers: [{ id: 3, shopX: -123.45, shopZ: 678.9, houseX: 1000, houseZ: -0.05, pay: 87, par: 340 }],
+      mine: [{ id: 2, stage: JOB_CARRY, x: 40, z: -700, pay: 51, left: -30 }],
+    })
+    expect(decodeServer(bytes('delivered'))).toEqual({ type: 'delivered', by: 4, courier: 9, job: 70000, pay: 87, cash: 1000 })
     expect(decodeServer(encode([12, 1]))).toBeNull()
     expect(decodeServer(encode([12, 1, 5]))).toBeNull()
   })
@@ -123,7 +129,7 @@ describe('codec', () => {
     })
     expect(decodeServer(bytes('scores'))).toEqual({
       type: 'scores',
-      scores: [{ id: 1, kills: 2, deaths: 3, held: 0 }, { id: 4, kills: 0, deaths: 900, held: 754 }],
+      scores: [{ id: 1, kills: 2, deaths: 3, held: 0, cash: 0 }, { id: 4, kills: 0, deaths: 900, held: 754, cash: 70_000 }],
     })
     expect(decodeServer(encode([4, 7, 3]))).toBeNull()
     expect(decodeServer(encode([5, [[1, 2]]]))).toBeNull()
@@ -134,6 +140,7 @@ describe('codec', () => {
     expect([...encodeBye(BYE_REJOINING)]).toEqual(fixture.bye)
     // A Titan's pilot's hands, already in centimetres.
     expect([...encodeHands({ lx: -1000, ly: -1500, lz: -300, rx: 850, ry: 600, rz: -2400, flags: HANDS_GRIP_RIGHT | HANDS_REACH_RIGHT })]).toEqual(fixture.hands)
+    expect([...encodePhone(PHONE_CANCEL, 70_000)]).toEqual(fixture.phone)
     expect(toMrad(Math.PI * 2 + 1)).toBe(1000)
     expect(Math.abs(toMrad(1e6))).toBeLessThanOrEqual(3142)
   })

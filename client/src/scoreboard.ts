@@ -14,6 +14,8 @@ export interface ScoreRow {
   deaths: number
   /** Seconds carrying the backpack (BACKPACK.md). */
   held: number
+  /** What they have earned delivering (DELIVERY.md). */
+  cash: number
   you: boolean
 }
 
@@ -24,6 +26,7 @@ export interface Side {
   kills: number
   deaths: number
   held: number
+  cash: number
   rows: ScoreRow[]
 }
 
@@ -36,10 +39,11 @@ export function sides(rows: readonly ScoreRow[], teamOf: (id: number) => number)
   for (const row of rows) {
     const team = teamOf(row.id)
     let side = byTeam.get(team)
-    if (!side) byTeam.set(team, (side = { team, kills: 0, deaths: 0, held: 0, rows: [] }))
+    if (!side) byTeam.set(team, (side = { team, kills: 0, deaths: 0, held: 0, cash: 0, rows: [] }))
     side.kills += row.kills
     side.deaths += row.deaths
     side.held += row.held
+    side.cash += row.cash
     side.rows.push(row)
   }
   const yours = (side: Side) => side.rows.some((row) => row.you)
@@ -55,7 +59,7 @@ export const FEED_LENGTH = 5
  * counted here.
  */
 export class Scoreboard {
-  private readonly totals = new Map<number, { kills: number; deaths: number; held: number }>()
+  private readonly totals = new Map<number, { kills: number; deaths: number; held: number; cash: number }>()
   private feed: { killer: number; victim: number; weapon: number; at: number }[] = []
 
   clear() {
@@ -64,14 +68,19 @@ export class Scoreboard {
   }
 
   /** `scores` message: everyone's totals, sent once to a player who has just joined. */
-  replace(scores: readonly { id: number; kills: number; deaths: number; held: number }[]) {
+  replace(scores: readonly { id: number; kills: number; deaths: number; held: number; cash: number }[]) {
     this.totals.clear()
-    for (const { id, kills, deaths, held } of scores) this.totals.set(id, { kills, deaths, held })
+    for (const { id, kills, deaths, held, cash } of scores) this.totals.set(id, { kills, deaths, held, cash })
   }
 
   /** `backpack` message: its carrier's seconds with it, in all. */
   held(id: number, seconds: number) {
     this.entry(id).held = seconds
+  }
+
+  /** `delivered` message: what the one who handed it in has earned, in all. */
+  cash(id: number, total: number) {
+    this.entry(id).cash = total
   }
 
   forget(id: number) {
@@ -80,6 +89,11 @@ export class Scoreboard {
 
   kills(id: number | null): number {
     return id === null ? 0 : (this.totals.get(id)?.kills ?? 0)
+  }
+
+  /** What player `id` has earned delivering, in all (DELIVERY.md). */
+  cashOf(id: number | null): number {
+    return id === null ? 0 : (this.totals.get(id)?.cash ?? 0)
   }
 
   deaths(id: number | null): number {
@@ -110,13 +124,13 @@ export class Scoreboard {
     if (localId !== null) ids.add(localId)
     for (const id of inView) ids.add(id)
     return [...ids]
-      .map((id) => ({ id, kills: this.kills(id), deaths: this.deaths(id), held: this.totals.get(id)?.held ?? 0, you: id === localId }))
+      .map((id) => ({ id, kills: this.kills(id), deaths: this.deaths(id), held: this.totals.get(id)?.held ?? 0, cash: this.totals.get(id)?.cash ?? 0, you: id === localId }))
       .sort((a, b) => b.kills - a.kills || a.deaths - b.deaths || a.id - b.id)
   }
 
   private entry(id: number) {
     let total = this.totals.get(id)
-    if (!total) this.totals.set(id, (total = { kills: 0, deaths: 0, held: 0 }))
+    if (!total) this.totals.set(id, (total = { kills: 0, deaths: 0, held: 0, cash: 0 }))
     return total
   }
 }

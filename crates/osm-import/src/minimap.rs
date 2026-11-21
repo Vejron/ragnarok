@@ -1,8 +1,9 @@
-//! Pre-renders the whole world as one top-down picture (`minimap.webp`, next to `world.msgpack`), so
-//! the client's minimap and map are a static image instead of something it draws every frame.
+//! Pre-renders the world as top-down pictures, so the client's maps are static images instead of
+//! something it draws every frame: the whole world as one (`minimap.webp`, next to `world.msgpack`), the
+//! overview the settings page and the embeds show, and any square of it at any scale (`render_square`),
+//! which the map tiles the game shows are made of (`maptiles.rs`).
 //!
-//! North is up: pixel x grows with world X (east), pixel y with world Z (south), so the image
-//! maps the playable square `[-half, half]` onto `[0, size)` in both axes.
+//! North is up: pixel x grows with world X (east), pixel y with world Z (south).
 
 use shared::world::{COVER_FARM, COVER_GARDEN, COVER_GOLF_BUNKER, COVER_GOLF_FAIRWAY, COVER_GOLF_GREEN, COVER_GOLF_TEE, COVER_INDUSTRIAL, COVER_MARSH, COVER_MARSH_DEEP, COVER_MARSH_FAINT, COVER_PARK, COVER_ROCK, COVER_SAND, COVER_THICKET_FIGHT, COVER_THICKET_SLOW, COVER_THICKET_WALK, COVER_URBAN, COVER_WATER, COVER_WOOD, Manifest, NO_WATER, RAIL_TRAM, ROAD_FAINT, ROAD_MAJOR, ROAD_PAVED_PATH, ROAD_MINOR, ROAD_TRACK, THEME_WINTER, Tile, BUILDING_BRIDGE};
 use std::collections::BTreeMap;
@@ -35,6 +36,10 @@ const BUS_LINE_COLOR: Rgb = [0xd0, 0x30, 0x30];
 const BUS_STOP_COLOR: Rgb = [0x90, 0x10, 0x10];
 const BUS_LINE_WIDTH: f64 = 2.0;
 const BUS_STOP_DOT: f64 = 6.0;
+/// How wide a bus line and a stop's dot are drawn on the ground, metres, where that is more than their
+/// pixels.
+const BUS_LINE_METRES: f64 = 3.0;
+const BUS_STOP_METRES: f64 = 7.0;
 /// How much of a winter map is snow laid over the summer's colours.
 const SNOW_COVER: f64 = 0.7;
 
@@ -70,7 +75,7 @@ pub struct Overlay {
     /// Pixels to leave out.
     pub blank: Vec<bool>,
     /// The image position of a point in the world's frame.
-    pub at: Box<dyn Fn(f64, f64) -> [f64; 2]>,
+    pub at: Box<dyn Fn(f64, f64) -> [f64; 2] + Send + Sync>,
 }
 
 impl Overlay {
@@ -96,7 +101,7 @@ impl Overlay {
         let size = canvas.size;
         for row in 0..size {
             for column in 0..size {
-                let [x, z] = [(column as f64 + 0.5) / canvas.scale - canvas.half, (row as f64 + 0.5) / canvas.scale - canvas.half];
+                let [x, z] = [(column as f64 + 0.5) / canvas.scale + canvas.origin[0], (row as f64 + 0.5) / canvas.scale + canvas.origin[1]];
                 if let Some(color) = self.sample((self.at)(x, z)) {
                     canvas.pixels[(row * size + column) * 3..][..3].copy_from_slice(&color);
                 }
@@ -111,27 +116,33 @@ pub struct Canvas {
     pub pixels: Vec<u8>,
     /// World metres to pixels.
     scale: f64,
-    /// Half the playable square, metres.
-    half: f64,
+    /// The world point at the picture's top left corner, metres `[x, z]`.
+    origin: [f64; 2],
 }
 
 impl Canvas {
-    fn new(half: f64, size: usize) -> Self {
+    /// A blank picture `size` pixels across of the square `metres` across from `origin` (its north-west corner).
+    fn new(origin: [f64; 2], metres: f64, size: usize) -> Self {
         let mut pixels = vec![0u8; size * size * 3];
         for chunk in pixels.chunks_exact_mut(3) {
             chunk.copy_from_slice(&LAND);
         }
-        Canvas { size, pixels, scale: size as f64 / (2.0 * half), half }
+        Canvas { size, pixels, scale: size as f64 / metres, origin }
+    }
+
+    /// The picture as a lossy WebP at `quality` (0..100).
+    pub fn webp_at(&self, quality: f32) -> Vec<u8> {
+        webp::Encoder::from_rgb(&self.pixels, self.size as u32, self.size as u32).encode(quality).to_vec()
     }
 
     /// The picture as a lossy WebP.
     pub fn webp(&self) -> Vec<u8> {
-        webp::Encoder::from_rgb(&self.pixels, self.size as u32, self.size as u32).encode(QUALITY).to_vec()
+        self.webp_at(QUALITY)
     }
 
     /// World centimetres to pixel coordinates.
     fn px(&self, p: [i32; 2]) -> [f64; 2] {
-        [(f64::from(p[0]) / 100.0 + self.half) * self.scale, (f64::from(p[1]) / 100.0 + self.half) * self.scale]
+        [(f64::from(p[0]) / 100.0 - self.origin[0]) * self.scale, (f64::from(p[1]) / 100.0 - self.origin[1]) * self.scale]
     }
 
     /// Fills the rings with the even-odd rule.
@@ -189,8 +200,21 @@ impl Canvas {
 
 /// Renders the world, `PRINT_SIZE` across under a print and `SIZE` otherwise.
 pub fn render(manifest: &Manifest, tiles: &BTreeMap<(u16, u16), Tile>, overlay: Option<&Overlay>) -> Canvas {
+    let half = f64::from(manifest.half_extent) / 100.0;
+    render_square(manifest, tiles, overlay, [-half, -half], 2.0 * half, if overlay.is_some() { PRINT_SIZE } else { SIZE })
+}
+
+/// Renders the square `metres` across whose north-west corner is `origin` (metres `[x, z]`), `size`
+/// pixels across. Only the world's tiles under it, and those next to them (whose roads and streams may
+/// reach over), are drawn.
+pub fn render_square(manifest: &Manifest, all: &BTreeMap<(u16, u16), Tile>, overlay: Option<&Overlay>, origin: [f64; 2], metres: f64, size: usize) -> Canvas {
     let half_cm = manifest.half_extent;
-    let mut canvas = Canvas::new(f64::from(half_cm) / 100.0, if overlay.is_some() { PRINT_SIZE } else { SIZE });
+    let half = f64::from(half_cm) / 100.0;
+    let side = f64::from(manifest.tile_size) / 100.0;
+    let span = |from: f64| (((from + half) / side).floor() - 1.0, ((from + metres + half) / side).ceil() + 1.0);
+    let ((c0, c1), (r0, r1)) = (span(origin[0]), span(origin[1]));
+    let tiles: BTreeMap<(u16, u16), &Tile> = all.iter().filter(|&(&(col, row), _)| (c0..=c1).contains(&f64::from(col)) && (r0..=r1).contains(&f64::from(row))).map(|(&key, tile)| (key, tile)).collect();
+    let mut canvas = Canvas::new(origin, metres, size);
     let ring = |canvas: &Canvas, points: &[[i32; 2]]| points.iter().map(|&p| canvas.px(p)).collect::<Vec<_>>();
 
     for tile in tiles.values() {
@@ -204,7 +228,7 @@ pub fn render(manifest: &Manifest, tiles: &BTreeMap<(u16, u16), Tile>, overlay: 
     let samples = manifest.tile_samples() as usize;
     if samples > 0 {
         let cell = f64::from(manifest.ground_cell);
-        for (&(col, row), tile) in tiles {
+        for (&(col, row), tile) in &tiles {
             if tile.water.len() != samples * samples || tile.ground.len() != tile.water.len() {
                 continue;
             }
@@ -269,12 +293,13 @@ pub fn render(manifest: &Manifest, tiles: &BTreeMap<(u16, u16), Tile>, overlay: 
     }
 
     // The bus lines over everything, each with a dot at every stop.
+    let (line_width, dot) = ((BUS_LINE_METRES * canvas.scale).max(BUS_LINE_WIDTH), (BUS_STOP_METRES * canvas.scale).max(BUS_STOP_DOT));
     for line in &manifest.bus_lines {
-        canvas.stroke(&ring(&canvas, &line.points), BUS_LINE_WIDTH, BUS_LINE_COLOR);
+        canvas.stroke(&ring(&canvas, &line.points), line_width, BUS_LINE_COLOR);
         for &stop in &line.stops {
             let ([x, z], _) = line.at(stop as f32 / 100.0);
             let [px, pz] = canvas.px([(x * 100.0) as i32, (z * 100.0) as i32]);
-            let r = BUS_STOP_DOT / 2.0;
+            let r = dot / 2.0;
             canvas.fill(&[vec![[px - r, pz - r], [px + r, pz - r], [px + r, pz + r], [px - r, pz + r]]], BUS_STOP_COLOR);
         }
     }

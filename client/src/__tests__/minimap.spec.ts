@@ -50,4 +50,12 @@ describe('minimap', () => {
     expect(insideWorld(101, 0, world)).toBe(false)
     expect(insideWorld(50, -50, { ...world, inside: null })).toBe(true)
   })
+
+  it('puts a delivery waypoint (a circle of no size) on the map, or a pip on its edge when off it', () => {
+    const on = circleOnSmall(150, -90, 0, 0, 0, 600, 180)
+    expect(on.pip).toBeNull()
+    expect([on.left, on.top]).toEqual([135, 63])
+    const off = circleOnSmall(0, 900, 0, 0, 0, 600, 180)
+    expect(off.pip).toEqual({ left: 90, top: 180 - PIP_INSET })
+  })
 })

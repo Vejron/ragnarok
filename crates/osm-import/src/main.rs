@@ -10,7 +10,8 @@
 //!     LM_USER=… LM_PASS=… cargo run -p osm-import              # elevation fetched from Lantmäteriet
 //!     cargo run -p osm-import -- --cell 0                      # flat ground, no elevation
 //!     cargo run -p osm-import -- --no-water                    # skip lakes, rivers and streams
-//!     cargo run -p osm-import -- --no-minimap                  # skip the pre-rendered map image
+//!     cargo run -p osm-import -- --no-minimap                  # skip the pre-rendered map and its tiles
+//!     cargo run -p osm-import -- --maptiles worlds/home/world.msgpack  # only redraw a world's map tiles
 //!     cargo run -p osm-import -- --no-trees                    # skip Umeå's tree register
 //!     cargo run -p osm-import -- --refresh                     # download everything again
 //!     cargo run -p osm-import -- --clear-cache                 # delete .cache/osm-import
@@ -19,7 +20,7 @@
 //! Credentials, data sources and the cache are described in `WORLD.md`.
 
 use osm_import::region::{Place, Region};
-use osm_import::{assemble, bushes, cache, canopy, condition, dem, detail, grid, ground, ign, lidar, minimap, osm, overpass, paint, pbf, progress, roof, species, trees, water};
+use osm_import::{assemble, bushes, cache, canopy, condition, dem, detail, grid, ground, ign, lidar, maptiles, minimap, osm, overpass, paint, pbf, progress, roof, species, trees, water};
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use std::path::PathBuf;
@@ -75,9 +76,14 @@ struct Args {
     /// streams into it or grading it to roads and rails (`condition.rs`).
     #[arg(long)]
     raw_ground: bool,
-    /// Do not render `minimap.webp`, the top-down map the client shows, next to the world.
+    /// Do not render the top-down map next to the world: `minimap.webp` and the `maptiles/` the game shows.
     #[arg(long)]
     no_minimap: bool,
+    /// Only redraw the map of the world at this `world.msgpack` (`minimap.webp` and `maptiles/`, from
+    /// its tiles as they are), and exit. A world whose area lays a print of an orienteering map over
+    /// its map needs a whole import.
+    #[arg(long)]
+    maptiles: Option<PathBuf>,
     /// Leave out the trees from Umeå's open data.
     #[arg(long)]
     no_trees: bool,
@@ -491,6 +497,30 @@ fn area_options(path: &std::path::Path) -> Result<AreaOptions> {
     serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))
 }
 
+/// Redraws the map of the world at `path` from its tiles: `minimap.webp` and the map tiles beside it.
+fn redraw_map(path: &std::path::Path) -> Result<()> {
+    use shared::world::{Manifest, Tile, WORLD_VERSION};
+    let bytes = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
+    let manifest = Manifest::decode(&bytes).with_context(|| format!("decoding {}", path.display()))?;
+    anyhow::ensure!(manifest.version == WORLD_VERSION, "{} is world version {}, expected {WORLD_VERSION}: import it again", path.display(), manifest.version);
+    let dir = path.parent().map(PathBuf::from).unwrap_or_default();
+    if let Ok(options) = area_options(&dir.join("area.json")) {
+        anyhow::ensure!(options.minimap_image.is_none(), "this world lays a print over its map; import it again to redraw it");
+    }
+    let mut tiles = std::collections::BTreeMap::new();
+    for entry in &manifest.tiles {
+        let file = dir.join(entry.path());
+        let tile = Tile::decode(&std::fs::read(&file).with_context(|| format!("reading {}", file.display()))?).with_context(|| format!("decoding {}", file.display()))?;
+        tiles.insert((entry.col, entry.row), tile);
+    }
+    let started = std::time::Instant::now();
+    std::fs::write(dir.join("minimap.webp"), minimap::render(&manifest, &tiles, None).webp()).context("writing minimap.webp")?;
+    let (index, files) = maptiles::render(&manifest, &tiles, None);
+    let written = maptiles::write(&dir, &index, &files).context("writing the map tiles")?;
+    eprintln!("map: {} tiles in {} levels ({} KiB) in {:.1} s", files.len(), index.levels, written / 1024, started.elapsed().as_secs_f64());
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let mut args = Args::parse();
     let options = match &args.area {
@@ -503,6 +533,9 @@ fn main() -> Result<()> {
         Some("winter") => true,
         Some(theme) => bail!("unknown theme {theme:?}"),
     };
+    if let Some(path) = &args.maptiles {
+        return redraw_map(path);
+    }
     if args.clear_cache {
         let freed = cache::clear(&args.cache)?;
         eprintln!("cleared {} ({} MiB)", args.cache.display(), freed / (1024 * 1024));
@@ -718,7 +751,7 @@ fn main() -> Result<()> {
     eprintln!("roofs: {} flat, {} shed, {} gable, {} hip", roofs[0], roofs[1], roofs[2], roofs[3]);
     let (spawns, tile_count) = (built.manifest.spawns.len(), built.tiles.len());
     progress::stage("minimap");
-    let map = if args.no_minimap { None } else { Some(minimap::render(&built.manifest, &built.tiles, print.as_ref()).webp()) };
+    let map = if args.no_minimap { None } else { Some((minimap::render(&built.manifest, &built.tiles, print.as_ref()).webp(), maptiles::render(&built.manifest, &built.tiles, print.as_ref()))) };
     let (manifest, tiles) = built.into_files();
     progress::stage("write");
 
@@ -734,8 +767,10 @@ fn main() -> Result<()> {
         tile_bytes += bytes.len();
         std::fs::write(dir.join(path), bytes).with_context(|| format!("writing {path}"))?;
     }
-    if let Some(map) = &map {
+    if let Some((map, (index, map_tiles))) = &map {
         std::fs::write(dir.join("minimap.webp"), map).context("writing minimap.webp")?;
+        let bytes = maptiles::write(&dir, index, map_tiles).context("writing the map tiles")?;
+        eprintln!("map: {} tiles in {} levels ({} KiB)", map_tiles.len(), index.levels, bytes / 1024);
     }
     std::fs::write(&args.out, &manifest).with_context(|| format!("writing {}", args.out.display()))?;
     let course_path = dir.join(shared::golf::COURSE_FILE);

@@ -44,12 +44,19 @@ const SPIN = 1.2
 /** Drawn larger than worn: it is the prize. */
 const SCALE = 1.6
 
-/** The backpack lying on the ground, with a pulsing ring under it. */
+/**
+ * The backpack lying on the ground, with a pulsing ring under it; or, given another `build`, ring
+ * colour and scale, any prize that lies about the same way (a delivery's parcel, `render/parcel.ts`).
+ */
 export class LyingBackpacks {
   readonly root = new Group()
   private readonly placed = new Map<number, { group: Group; ring: Mesh }>()
   private readonly ring = ringGeometry(0.55, 0.75, 28)
-  private readonly ringMaterial = new Material({ color: STRIPE, lit: false, blend: 'alpha', opacity: 0.6, side: 'double' })
+  private readonly ringMaterial: Material
+
+  constructor(private readonly build: () => Group = buildBackpack, ring = STRIPE, private readonly scale = SCALE) {
+    this.ringMaterial = new Material({ color: ring, lit: false, blend: 'alpha', opacity: 0.6, side: 'double' })
+  }
 
   /** Makes the drawn set exactly `lying`: where each lies, its feet. */
   set(lying: readonly { id: number; x: number; y: number; z: number }[], seconds: number) {
@@ -59,8 +66,8 @@ export class LyingBackpacks {
       let p = this.placed.get(id)
       if (!p) {
         const group = new Group()
-        const model = buildBackpack()
-        model.scale.setScalar(SCALE)
+        const model = this.build()
+        model.scale.setScalar(this.scale)
         group.add(model)
         const ring = new Mesh(this.ring, this.ringMaterial)
         ring.rotation.x = -Math.PI / 2

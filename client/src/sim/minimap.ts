@@ -44,20 +44,23 @@ export const PIP_INSET = 9
  * map's edge a pip points the way to it (else null).
  */
 export function circleOnSmall(cx: number, cz: number, radius: number, x: number, z: number, metres: number, view: number) {
-  const scale = view / metres
-  const left = view / 2 + (cx - x) * scale
-  const top = view / 2 + (cz - z) * scale
-  const r = radius * scale
-  // The nearest point of the map's square to the circle's middle: if that is outside the circle, none of it shows.
-  const nearX = Math.min(view, Math.max(0, left))
-  const nearY = Math.min(view, Math.max(0, top))
+  return circleOnMap(cx, cz, radius, x, z, view / metres, view, view)
+}
+
+/** `circleOnSmall` on a map `width` × `height` px at `perMetre` pixels a metre, centred on `(x, z)`. */
+export function circleOnMap(cx: number, cz: number, radius: number, x: number, z: number, perMetre: number, width: number, height: number) {
+  const left = width / 2 + (cx - x) * perMetre
+  const top = height / 2 + (cz - z) * perMetre
+  const r = radius * perMetre
+  // The nearest point of the map's rectangle to the circle's middle: if that is outside the circle, none of it shows.
+  const nearX = Math.min(width, Math.max(0, left))
+  const nearY = Math.min(height, Math.max(0, top))
   const seen = Math.hypot(nearX - left, nearY - top) <= r
   let pip: { left: number; top: number } | null = null
   if (!seen) {
-    const [dx, dy] = [left - view / 2, top - view / 2]
-    const reach = view / 2 - PIP_INSET
-    const stretch = reach / Math.max(Math.abs(dx), Math.abs(dy))
-    pip = { left: view / 2 + dx * stretch, top: view / 2 + dy * stretch }
+    const [dx, dy] = [left - width / 2, top - height / 2]
+    const stretch = Math.min((width / 2 - PIP_INSET) / Math.abs(dx), (height / 2 - PIP_INSET) / Math.abs(dy))
+    pip = { left: width / 2 + dx * stretch, top: height / 2 + dy * stretch }
   }
   return { left, top, r, pip }
 }

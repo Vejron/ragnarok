@@ -78,7 +78,7 @@ import { ChaseCam } from './render/chase'
 import { PerfReadout } from './render/perf'
 import { Screenshots, type TiledBuilding } from './screenshot'
 import { LookWorker } from './render/lookworker'
-import { encodeHands, encodeRtc, KIND_AMV, KIND_CB90, KIND_MISSILE, KIND_PBV, KIND_STRF, KIND_STRV, KIND_SUBMARINE, KIND_TANK, LIMB_ALL, LIMB_ARMS, LIMB_LEGS, THRUST_LOW_ROTOR, TURRET_ALT, TURRET_EMPTY } from './net/codec'
+import { encodeHands, encodePhone, encodeRtc, KIND_AMV, KIND_CB90, KIND_MISSILE, KIND_PBV, KIND_STRF, KIND_STRV, KIND_SUBMARINE, KIND_TANK, LIMB_ALL, LIMB_ARMS, LIMB_LEGS, THRUST_LOW_ROTOR, TURRET_ALT, TURRET_EMPTY } from './net/codec'
 import { TankMusic } from './music'
 import { VoiceChat } from './voice'
 import { PlaneModel } from './render/plane'
@@ -115,6 +115,8 @@ import { Projectiles } from './entities/presenters/projectiles'
 import { Pickups as LyingItems } from './entities/presenters/pickups'
 import { Backpacks } from './entities/presenters/backpacks'
 import { LyingBackpacks } from './render/backpack'
+import { lyingParcels } from './render/parcel'
+import { Parcels } from './entities/presenters/parcels'
 import { Soldiers } from './entities/presenters/people'
 import { Riders, seatFrame } from './entities/presenters/riders'
 import { LiftRiders } from './entities/presenters/liftriders'
@@ -135,13 +137,16 @@ import { frozen, loadManifest, NO_WATER, THEME_WINTER, WORLD_BASE, worldHash, ty
 import { updateNow } from './pwa'
 import { HudLayer } from '@ragnarok/engine'
 import { InGameHud } from './hud/index'
-import { PAPER_METRES, zoomPaper } from './hud/map'
+import { MapTiles } from './hud/maptiles'
+import { PhoneScreen } from './phone/screen'
+import { PhonePointer } from './phone/pointer'
 import { WorldView } from './worldview'
 import type { GolfMeterView, HudStats } from './hud'
 import { Notices } from './notices'
 import { Scoreboard, sides } from './scoreboard'
 import { Blips, type Blip } from './blips'
 import { BackpackTracker } from './backpack'
+import { DeliveryTracker } from './deliveries'
 import { Bodies } from './bodies'
 import { Bricklayer } from './bricklayer'
 import { LocalPlayer } from './localplayer'
@@ -253,7 +258,7 @@ interface Moment {
   lookPitch: number
   /** How far a chase camera stands behind what they ride. */
   distance: number
-  /** How far the paper map is up in front of the eyes, 0..1: the view goes first person with it. */
+  /** How far the phone is up in front of the eyes, 0..1: the view goes first person with it. */
   reading: number
 }
 
@@ -372,6 +377,8 @@ export class Game {
   private readonly callouts = new Callouts()
   /** The backpack's circle and carrier (BACKPACK.md). */
   private readonly backpack = new BackpackTracker()
+  /** The delivery board and the player's own jobs (DELIVERY.md). */
+  private readonly deliveries = new DeliveryTracker()
   private readonly chase = new ChaseCam()
   /** Follows a driven golf ball away. */
   private readonly ballCam = new BallCam()
@@ -380,6 +387,8 @@ export class Game {
   private readonly lying = new LyingItems(this.pickupModels)
   /** The backpack lying on the ground, as drawn (BACKPACK.md). */
   private readonly backpackModels = new LyingBackpacks()
+  /** Delivery parcels lying on the ground, as drawn (DELIVERY.md). */
+  private readonly parcelModels = lyingParcels()
   /** The arc a grenade in hand would take, drawn while one is held. */
   private readonly trajectory = new TrajectoryView()
   private readonly mortarArc = new MortarArc()
@@ -421,8 +430,18 @@ export class Game {
   /** The HUD, drawn by the renderer over each frame. */
   private readonly hudLayer = new HudLayer()
   private readonly hud = new InGameHud(this.hudLayer)
-  /** How much ground the paper map shows across, metres; the wheel zooms it while it is up. */
-  private paperSpan = PAPER_METRES
+  /** The world's map tiles, which the minimap and the phone's map draw from (PHONE.md). */
+  private readonly mapTiles = new MapTiles()
+  /** What the held phone shows, and what a tap on it does (PHONE.md). */
+  private readonly phoneScreen = new PhoneScreen({
+    phone: (action, job) => this.phone(action, job),
+    open: (app) => {
+      if (this.input.phone) this.input.phone = app
+    },
+  })
+  private phonePointer: PhonePointer | null = null
+  /** The app the phone showed last, so a lowered phone keeps showing it as it goes down. */
+  private phoneApp: 'map' | 'jobs' = 'map'
   /** What the server tells the local player of themself. */
   private readonly player = new LocalPlayer()
   /** Limbs coming off and soldiers thrown down, as drawn. */
@@ -515,6 +534,8 @@ export class Game {
     })
     this.adaptive.floor = this.scene.quality.minScale
     this.input = new InputController(this.scene.canvas)
+    this.phonePointer = new PhonePointer(this.scene.canvas, this.input, () => this.scene.heldPhone.corners, this.phoneScreen)
+    this.mapTiles.onTile = () => (this.phoneScreen.dirty = true)
     this.applyControls(loadControls())
     this.cameras = new Cameras(this.scene, this.input, (origin, direction, max) => this.motor?.castRay(origin, direction, max) ?? null)
     this.view = new WorldView(this.scene.scene, this.debris)
@@ -533,7 +554,7 @@ export class Game {
     this.scene.scene.add(this.crowd.root)
     this.scene.scene.add(this.effects.root, this.view.damage.root, this.view.cubes.root, this.damageNumbers.root)
     this.scene.scene.add(this.rocketModels.root, this.trails.root)
-    this.scene.scene.add(this.pickupModels.root, this.backpackModels.root)
+    this.scene.scene.add(this.pickupModels.root, this.backpackModels.root, this.parcelModels.root)
     this.scene.scene.add(this.trajectory.root, this.mortarArc.root)
     this.scene.scene.add(this.waves.root, ...this.jetSpray.roots, this.smoke.root, this.glow.root, this.blood.root, this.stains.root, this.scorches.root, this.skids.root)
     this.smoke.groundAt = (x, z) => this.scene.groundAt(x, z)
@@ -597,6 +618,7 @@ export class Game {
     }))
     this.flying.add(this.lying)
     this.flying.add(new Backpacks(this.backpackModels))
+    this.flying.add(new Parcels(this.parcelModels))
     const blobFoot = (x: number, y: number, z: number) => this.surroundings.blobFoot(x, y, z)
     this.soldiers = this.people.add(new Soldiers({ avatars: this.avatars, blobFoot, rewave: (x, z, tick) => this.rewave(x, z, tick), current: (x, z) => this.waters?.flowAt(x, z) ?? [0, 0], wade: (id, x, y, z, speed, dt) => this.surroundings.wade(id, x, y, z, speed, dt), skiRun: (id, x, z, vx, vz, grounded, dt) => this.skiTracks?.run(id, x, z, vx, vz, grounded, dt), headlamp: (avatar) => this.shine(avatar), footfall: (x, y, z, weight) => this.sounds.step([x, y - STANDING_Y, z], this.surroundings.stepGround(x, y, z), weight), zombie: (id, x, y, z, clawing, dt) => this.zombieVoices.hear(id, x, y, z, clawing, dt) }))
     this.riders = this.people.add(new Riders(this.avatars, this.vehicles))
@@ -620,7 +642,8 @@ export class Game {
     await this.scene.init()
     const { world, hash } = await loadManifest()
     // Only now is the world's place known (in dev, the one the editor activated).
-    this.hud.loadMap(WORLD_BASE)
+    this.hud.tiles = this.mapTiles
+    void this.mapTiles.init(WORLD_BASE)
     this.worldHash = hash
     this.world = world
     if (world.theme === THEME_WINTER) this.startWinter(frozen(world))
@@ -764,6 +787,7 @@ export class Game {
     this.board.clear()
     this.notices.clear()
     this.backpack.clear()
+    this.deliveries.clear()
     forgetAllPlayers()
     this.hits.clear()
     this.driverSnapshot = null
@@ -892,6 +916,17 @@ export class Game {
       case 'backpack': {
         if (message.carrier !== 0) this.board.held(message.carrier, message.held)
         const news = this.backpack.receive(message, this.localId, nameFor)
+        if (news) this.notices.receive(NOTICE_SAY, news, now)
+        break
+      }
+      case 'jobs': {
+        const news = this.deliveries.receive(message.offers, message.mine)
+        if (news) this.notices.receive(NOTICE_SAY, news, now)
+        break
+      }
+      case 'delivered': {
+        this.board.cash(message.by, message.cash)
+        const news = this.deliveries.delivered(message, this.localId, nameFor)
         if (news) this.notices.receive(NOTICE_SAY, news, now)
         break
       }
@@ -1295,7 +1330,7 @@ export class Game {
     this.scene.contact.end()
     this.surroundings.mirrorWater(dt)
     const stats = this.report(moment)
-    this.holdMap(stats, moment)
+    this.holdPhone(stats, moment)
     this.drawHud(stats, now)
     this.perf.beforeRender()
     this.scene.render()
@@ -1304,13 +1339,18 @@ export class Game {
     this.onStats(stats)
   }
 
-  /** Raises or lowers the paper map and redraws what it shows. */
-  private holdMap(stats: HudStats, { now, dt, velocity, lookYaw, lookPitch }: Moment) {
-    const marks = { x: stats.x, z: stats.z, yaw: stats.yaw, blips: stats.blips, circle: stats.backpack, pulse: (now % 1600) / 1600 }
-    if (this.localId !== null) this.scene.heldMap.dress(colorFor(this.localId))
-    this.paperSpan = zoomPaper(this.paperSpan, this.input.takeMapWheel())
+  /** Raises or lowers the phone and redraws its screen when something changed, or every so often. */
+  private holdPhone(stats: HudStats, { now, dt, velocity, lookYaw, lookPitch }: Moment) {
+    const marks = { x: stats.x, z: stats.z, yaw: stats.yaw, blips: stats.blips, circle: stats.backpack, target: stats.delivery?.target, pulse: (now % 1600) / 1600 }
+    if (this.localId !== null) this.scene.heldPhone.dress(colorFor(this.localId))
     if (this.input.takeStatsToggle()) this.setLook({ ...this.scene.look, netStats: !this.scene.look.netStats })
-    this.scene.heldMap.update(this.input.mapUp, dt, now, Math.hypot(velocity[0], velocity[1]), lookYaw, lookPitch, this.scene.groundLight, this.player.lamp && this.player.alive, this.hud.mapImage, stats.halfExtent, marks, this.paperSpan)
+    const app = this.input.phone
+    const switched = app !== null && app !== this.phoneApp
+    if (app) this.phoneApp = app
+    const urgent = switched || this.phoneScreen.dirty || this.phoneScreen.dragging
+    const clock = new Date().toTimeString().slice(0, 5)
+    this.scene.heldPhone.update(app !== null, dt, now, Math.hypot(velocity[0], velocity[1]), lookYaw, lookPitch, urgent, (g) =>
+      this.phoneScreen.draw(g, { app: this.phoneApp, tiles: this.mapTiles, marks, delivery: stats.delivery, clock }))
   }
 
   /** Lays the HUD for `stats` onto the renderer's HUD layer, for the frame about to be drawn. */
@@ -1392,8 +1432,9 @@ export class Game {
     const sitting = (mount !== undefined && seatFrame(mount, seat!.kind, seat!.index, this.seatAt, this.seatTurn, this.vehicles.placed.get(seat!.vehicle)?.turret?.yaw))
       || (chairSeat !== null && chairSeat !== undefined && this.liftView!.rider(lifted!.lift, lifted!.chair, lifted!.seat, this.liftTick(now), this.seatAt, this.seatTurn))
     const item = itemDef(this.held().item)
-    // The map is read on foot or from a passenger's seat, alive; anywhere else it is put away.
-    if (this.input.mapUp && !(able && (!seated || view?.role === 'passenger'))) this.input.lowerMap()
+    // The phone is used on foot or from a passenger's seat, alive (or alone, offline); anywhere else it is put away.
+    const living = able || (this.localId === null && this.transport.status !== 'CONNECTED')
+    if (this.input.phone && !(living && (!seated || view?.role === 'passenger'))) this.input.dropPhone()
     // Aim held with a scoped gun in hand, alive and free to use it: look down the scope. With any other gun: half zoom over the shoulder.
     const scoped = handy && this.input.aimHeld && item?.scope === true
     const aiming = !scoped && handy && this.input.aimHeld && item?.kind === 'gun'
@@ -1414,7 +1455,7 @@ export class Game {
       lookYaw: this.input.yaw + this.sway[0],
       lookPitch: this.input.pitch + this.sway[1],
       distance: ride ? rideView(ride.kind).distance : 0,
-      reading: this.scene.heldMap.raised,
+      reading: this.scene.heldPhone.raised,
       // Aim held at a gun with a sight (a tank's, a Strv S's, a Pak's): look down it, which shows where the barrel really points.
       sighted: this.player.alive && this.input.aimHeld && ride !== undefined && view?.sight === true,
     }
@@ -1436,6 +1477,7 @@ export class Game {
     me.held = local.swimming && !seated ? ITEM_NONE : this.player.slot(this.input.heldSlot).item
     me.swim = !local.swimming || seated || !this.player.alive ? 0 : this.submerged(local) ? 2 : 1
     me.pack = this.player.carrying
+    me.parcel = this.player.parcel
     me.skis = local.skis && !local.swimming
     me.skiAim = local.skis && this.input.aimHeld
     me.skiPoling = this.polingHard && !fillsHands(me.held) && !this.crouching && !this.input.aimHeld && !local.winded && local.grounded
@@ -1643,7 +1685,7 @@ export class Game {
     const held = itemDef(this.held().item)
     const gun = held?.kind === 'gun' ? held : undefined
     // Seated, the ray cannot leave out the vehicle round the soldier.
-    const reading = this.scene.heldMap.raised > 0.3
+    const reading = this.scene.heldPhone.raised > 0.3
     const blocked = handy && gun && !seated && !scoped && !reading ? this.blockedMark(gun, position, lookYaw, lookPitch) : null
     const fx = seat ? this.vehicles.fx(seat.vehicle) : undefined
     const def = ride ? vehicleDef(ride.kind) : null
@@ -1732,8 +1774,15 @@ export class Game {
       halfExtent: this.world?.halfExtent ?? 0,
       blips: [...this.blips.view(now, this.localId, ride?.x ?? position[0]!, ride?.z ?? position[2]!, this.alliesInView(), MAP_SIDES), ...this.golfBlip()],
       backpack: this.backpack.view(this.localId),
+      delivery: this.deliveries.view(this.board.cashOf(this.localId)),
+      phoneUp: this.input.phone !== null,
       netStats: this.scene.look.netStats,
     }
+  }
+
+  /** A tap on the delivery phone (`PHONE_*`, DELIVERY.md): sent reliably, as it must not be lost. */
+  phone(action: number, job: number) {
+    this.transport.sendReliable(encodePhone(action, job))
   }
 
   /** How well ship `vehicle`'s sail draws in the wind now, 0..1, as drawn: her heading against it. */
@@ -2102,6 +2151,8 @@ export class Game {
     this.transport.close()
     this.voice.dispose()
     this.input.dispose()
+    this.phonePointer?.dispose()
+    this.mapTiles.clear()
     this.driver?.dispose()
     this.motor?.dispose()
     this.tiles?.dispose()

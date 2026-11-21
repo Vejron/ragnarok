@@ -539,7 +539,7 @@ impl Source {
         let region = place.region;
         let frame = place.frame;
         let [dx, dz] = self.shift;
-        let at: Box<dyn Fn(f64, f64) -> [f64; 2]>;
+        let at: Box<dyn Fn(f64, f64) -> [f64; 2] + Send + Sync>;
         let ground: Box<dyn Fn(usize, usize) -> P>;
         if let Some(world) = GeoRef::beside(path)? {
             // The map was moved by `shift`, so a point on the ground shows what the file has `shift` back.

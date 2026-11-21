@@ -121,6 +121,7 @@ impl Game {
                 construct: Default::default(),
                 construct_dirty: Default::default(),
                 backpack: None,
+                deliveries: None,
                 bus_calls: Vec::new(),
                 map,
                 entities: Default::default(),
@@ -182,6 +183,7 @@ impl Game {
                     player.fists_age = 0;
                 }
             }
+            Command::Phone(id, phone) => crate::mechanics::phone(&mut self.world, id, phone),
             Command::Input(id, baseline, frames) => {
                 if let Some(mut player) = self.world.entities.get_mut::<Player>(id) {
                     player.inputs.push(&frames);
@@ -411,6 +413,7 @@ impl Game {
         self.broadcast_built();
         self.broadcast_gates();
         self.broadcast_backpack();
+        self.send_deliveries();
         for text in std::mem::take(&mut self.world.fresh.said) {
             self.notice(NOTICE_SAY, &text);
         }
@@ -492,6 +495,21 @@ impl Game {
     fn broadcast_backpack(&mut self) {
         let Some(circle) = self.world.backpack.as_mut().and_then(|state| state.fresh.take()) else { return };
         self.broadcast(encode(&circle));
+    }
+
+    /// Tells everyone who delivered what, then each player whose phone changed what it shows now: in
+    /// that order, so a job gone from a phone is known to have been delivered, not to have spoiled.
+    fn send_deliveries(&mut self) {
+        let Some(state) = self.world.deliveries.as_mut() else { return };
+        let (phones, delivered) = (std::mem::take(&mut state.phones), std::mem::take(&mut state.delivered));
+        for message in delivered {
+            self.broadcast(encode(&message));
+        }
+        for (to, jobs) in phones {
+            if let Some(outbox) = self.outboxes.get(&to) {
+                send_reliable(outbox, to, &Bytes::from(encode(&jobs)), &mut self.stalled);
+            }
+        }
     }
 
     /// Tells everyone about the buildings hurt this tick, as one message.

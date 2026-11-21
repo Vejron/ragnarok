@@ -1,9 +1,10 @@
 import type { HudStats } from '@/hud'
 import { BACKPACK_NAME, type BackpackView } from '@/backpack'
+import { clockOf, houseName, money, shopName, type DeliveryView } from '@/deliveries'
 import { WEAPON_AP, WEAPON_AUTOCANNON, WEAPON_ROTARY, WEAPON_BALL, WEAPON_BOMB, WEAPON_DROWN, WEAPON_EGG, WEAPON_GRENADE, WEAPON_REVOLVER, WEAPON_ROCKET, WEAPON_SHELL, WEAPON_WRECK } from '@/net/codec'
 import { colorFor, isBot, isZombie, nameFor } from '@/profile'
 import { seatHint } from '@/seathints'
-import { GHOST_BLOCK_ENEMY, GHOST_BLOCK_GROUND, GHOST_BLOCK_SOON, GHOST_KEEPOUT } from '@/sim/consts'
+import { GHOST_BLOCK_ENEMY, GHOST_BLOCK_GROUND, GHOST_BLOCK_SOON, GHOST_KEEPOUT, JOB_CARRY, JOB_FETCH } from '@/sim/consts'
 import { miniBottom, miniSize } from './map'
 import { GREEN_CSS, INK_CSS as INK, MARGIN, RED, TEAL, TEXT, type Painter, type TextStyle } from './paint'
 
@@ -26,6 +27,19 @@ const clock = (seconds: number) => `${Math.floor(seconds / 60)}:${String(seconds
 /** The line under the objective in a world with the backpack: who has it. */
 export const backpackLine = (b: BackpackView) =>
   b.yours ? `You carry the ${BACKPACK_NAME}: you heal, and run twice as fast on foot` : b.carrier === null ? `The ${BACKPACK_NAME} is up for grabs: find it in the orange circle` : `${nameFor(b.carrier)} has the ${BACKPACK_NAME}`
+/** The courier's bag's colour (`render/parcel.ts`), for the line of the job in hand. */
+const BAG = 0x14a38f
+
+/** The line under the objective while the player has a delivery job: where to go, how far, and for what. */
+export function deliveryLine(d: DeliveryView, x: number, z: number): string | null {
+  const job = d.job
+  if (!job) return null
+  const far = `${Math.round(Math.hypot(job.x - x, job.z - z))} m`
+  if (job.stage === JOB_FETCH) return `Pick up the order at ${shopName(job.id)} · ${far}`
+  if (job.stage === JOB_CARRY) return `Deliver to ${houseName(job.id)} · ${far} · ${money(job.pay)} · ${clockOf(job.left)}`
+  return `Your order for ${houseName(job.id)} is lost: get it back · ${far}`
+}
+
 /** The short form of `backpackLine`, once the news is a few seconds old. */
 const backpackShort = (b: BackpackView) => (b.yours ? `You carry the ${BACKPACK_NAME}` : b.carrier === null ? `${BACKPACK_NAME}: up for grabs` : `${nameFor(b.carrier)} has the ${BACKPACK_NAME}`)
 /** A prompt with its key renamed for the touch buttons ("E: take" → "USE: take"). */
@@ -173,6 +187,8 @@ export class Panels {
       const fresh = now - this.backpackSince < FRESH_MS
       put(fresh ? carried : backpackShort(s.backpack), { size: fresh ? 16 : TEXT.sm, weight: 700, color: yours ? '#fff' : INK }, yours ? ORANGE : 0xffffff, yours ? 1 : 0.85, ORANGE)
     }
+    const delivery = s.delivery && deliveryLine(s.delivery, s.x, s.z)
+    if (delivery) put(delivery, { size: TEXT.sm, weight: 700, color: '#fff' }, BAG, 0.95, null)
     for (const text of s.notices.messages) put(text, { size: 14, weight: 700, color: INK }, 0xffffff, 0.85, null)
   }
 }
@@ -275,7 +291,13 @@ function board(p: Painter, s: HudStats) {
   const head: TextStyle = { size: TEXT.sm, weight: 700, color: 'rgba(29, 43, 54, 0.7)' }
   const sideStyle: TextStyle = { size: TEXT.sm, weight: 700, color: INK }
   const cell = (you: boolean): TextStyle => ({ size: 16, weight: you ? 800 : 700, color: you ? GREEN_CSS : INK })
-  const columns = s.backpack ? ['Kills', 'Deaths', 'Backpack'] : ['Kills', 'Deaths']
+  type Tally = { kills: number; deaths: number; held: number; cash: number }
+  const columns: { name: string; value: (t: Tally) => string }[] = [
+    { name: 'Kills', value: (t) => String(t.kills) },
+    { name: 'Deaths', value: (t) => String(t.deaths) },
+    ...(s.backpack ? [{ name: 'Backpack', value: (t: Tally) => clock(t.held) }] : []),
+    ...(s.delivery ? [{ name: 'Cash', value: (t: Tally) => money(t.cash) }] : []),
+  ]
   const nameOf = (id: number, you: boolean) => (you ? `${nameFor(id)} (you)` : nameFor(id))
   let nameWidth = p.measure('Player', head)
   for (const side of s.board) for (const row of side.rows) nameWidth = Math.max(nameWidth, 18 + p.measure(nameOf(row.id, row.you), cell(row.you)) + (isBot(row.id) ? p.measure('BOT', TAG) + 16 : 0))
@@ -296,15 +318,14 @@ function board(p: Painter, s: HudStats) {
   const right = (k: number) => x + width - 16 - (columns.length - 1 - k) * colWidth
   y += 10
   p.label('Player', x + 16, y + rowH / 2, head)
-  columns.forEach((column, k) => p.label(column, right(k), y + rowH / 2, head, 'right'))
+  columns.forEach((column, k) => p.label(column.name, right(k), y + rowH / 2, head, 'right'))
   y += rowH
   for (const side of s.board) {
     if (y + rowH > bottom + 0.5) break
     if (s.board.length > 1) {
       y += 6
       p.label(sideName(side.team), x + 16, y + rowH / 2, sideStyle)
-      const values = [String(side.kills), String(side.deaths), clock(side.held)]
-      columns.forEach((_, k) => p.label(values[k]!, right(k), y + rowH / 2, sideStyle, 'right'))
+      columns.forEach((column, k) => p.label(column.value(side), right(k), y + rowH / 2, sideStyle, 'right'))
       p.rect(x + 16, y + rowH - 1, width - 32, 1, 0x1d2b36, 0.15)
       y += rowH
     }
@@ -314,8 +335,7 @@ function board(p: Painter, s: HudStats) {
       const pieces: Piece[] = [{ dot: colorFor(row.id) }, { text: nameOf(row.id, row.you), style }]
       if (isBot(row.id)) pieces.push({ tag: 'BOT' })
       drawPieces(p, pieces, x + 16, y + rowH / 2)
-      const values = [String(row.kills), String(row.deaths), clock(row.held)]
-      columns.forEach((_, k) => p.label(values[k]!, right(k), y + rowH / 2, style, 'right'))
+      columns.forEach((column, k) => p.label(column.value(row), right(k), y + rowH / 2, style, 'right'))
       y += rowH
       drawn++
     }
