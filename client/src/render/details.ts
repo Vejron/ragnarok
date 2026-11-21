@@ -10,14 +10,19 @@ import { FRAME_RGB, type LookRange, type Opening } from './windows'
  * runs in the tile worker too.
  */
 
-/** A chimney: how far it stands over the ridge and reaches under it, and half its length along the ridge and half its width across, metres. */
+/** A chimney: how far it stands over the roof under it and reaches into the roof under its lowest corner, and half its length along the ridge and half its width across, metres. */
 const CHIMNEY_UP = 0.9
 const CHIMNEY_DOWN = 0.6
 const CHIMNEY_HALF: readonly [number, number] = [0.4, 0.3]
-/** How far under the ridge the roof it stands on is judged, metres: inside the top cell. */
+/** How far under the roof the cell it stands on is judged, metres: inside the top cell. */
 const CHIMNEY_ROOTED = 0.15
 /** Where along the ridge it stands, from one end. */
 const CHIMNEY_ALONG = 0.35
+/** How much roof it keeps around it, metres, so it never stands out past the wall under an eave. */
+const CHIMNEY_CLEAR = 0.15
+/** The steps it is moved down the roof in, and the furthest, metres, when its ridge is the roof's edge (a shed roof's high eave). */
+const CHIMNEY_STEP = 0.1
+const CHIMNEY_SLIDE = 3.0
 /** A roof flatter than this from its lowest corner to its highest, metres, has no ridge to put one on. */
 const PITCHED = 1.0
 /** A porch: its width, how far it stands out from the wall, how far over the door's top it meets the wall, how far it slopes down to its front, and its posts' thickness, metres. */
@@ -57,6 +62,23 @@ function box(out: DetailQuad[], centre: readonly [number, number], u: readonly [
   out.push({ corners: [at(-halfAlong, -halfAcross, y1), at(halfAlong, -halfAcross, y1), at(halfAlong, halfAcross, y1), at(-halfAlong, halfAcross, y1)], normal: [0, 1, 0], paint, anchor })
 }
 
+/** The height of the roof triangles `roof` (flat x, y, z corners, three to a triangle) over the ground point (`x`, `z`), the highest where they overlap, or null where there is no roof. */
+function roofAt(roof: readonly P[], x: number, z: number): number | null {
+  let best: number | null = null
+  for (let i = 0; i + 2 < roof.length; i += 3) {
+    const [a, b, c] = [roof[i]!, roof[i + 1]!, roof[i + 2]!]
+    const det = (b[2] - c[2]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[2] - c[2])
+    if (Math.abs(det) < 1e-9) continue
+    const l0 = ((b[2] - c[2]) * (x - c[0]) + (c[0] - b[0]) * (z - c[2])) / det
+    const l1 = ((c[2] - a[2]) * (x - c[0]) + (a[0] - c[0]) * (z - c[2])) / det
+    const l2 = 1 - l0 - l1
+    if (l0 < -1e-6 || l1 < -1e-6 || l2 < -1e-6) continue
+    const y = l0 * a[1] + l1 * b[1] + l2 * c[1]
+    if (best === null || y > best) best = y
+  }
+  return best
+}
+
 /** The chimney, porch and canopy of building `range` of `look`, whose openings are `openings`. */
 export function detailsOf(look: CollisionMesh, range: LookRange, openings: readonly Opening[]): DetailQuad[] {
   const out: DetailQuad[] = []
@@ -89,9 +111,36 @@ export function detailsOf(look: CollisionMesh, range: LookRange, openings: reado
     if (from[0] > to[0] || (from[0] === to[0] && from[2] > to[2])) [from, to] = [to, from]
     const u: readonly [number, number] = longest > 0.5 ? [(to[0] - from[0]) / longest, (to[2] - from[2]) / longest] : [1, 0]
     const along = longest > 2 * CHIMNEY_HALF[0] + 1 ? CHIMNEY_ALONG * longest : longest / 2
-    const centre = [from[0] + u[0] * along, from[2] + u[1] * along] as const
-    // It stands on the roof just under the ridge.
-    box(out, centre, u, CHIMNEY_HALF[0], CHIMNEY_HALF[1], high - CHIMNEY_DOWN, high + CHIMNEY_UP, 'chimney', [centre[0], high - CHIMNEY_ROOTED, centre[1]])
+    const v = [-u[1], u[0]] as const
+    // The roof under each corner of its foot (with a little roof kept around it), or null where one is off the roof.
+    const [ha, hb] = [CHIMNEY_HALF[0] + CHIMNEY_CLEAR, CHIMNEY_HALF[1] + CHIMNEY_CLEAR]
+    const under = (c: readonly [number, number]): number[] | null => {
+      const ys: number[] = []
+      for (const [a, b] of [[0, 0], [-ha, -hb], [ha, -hb], [ha, hb], [-ha, hb]] as const) {
+        const y = roofAt(corners, c[0] + u[0] * a + v[0] * b, c[1] + u[1] * a + v[1] * b)
+        if (y === null) return null
+        ys.push(y)
+      }
+      return ys
+    }
+    // On the ridge; where the ridge is the roof's edge (a shed roof's), down the roof until it stands wholly on it.
+    const ridge = [from[0] + u[0] * along, from[2] + u[1] * along] as const
+    let placed: { centre: readonly [number, number]; ys: number[] } | null = null
+    for (let slide = 0; !placed && slide <= CHIMNEY_SLIDE + 1e-6; slide += CHIMNEY_STEP) {
+      for (const side of slide === 0 ? [0] : [1, -1]) {
+        const centre = [ridge[0] + v[0] * slide * side, ridge[1] + v[1] * slide * side] as const
+        const ys = under(centre)
+        if (ys) {
+          placed = { centre, ys }
+          break
+        }
+      }
+    }
+    if (placed) {
+      const { centre, ys } = placed
+      // It rises over the roof's highest point under it, and reaches into the roof under its lowest corner.
+      box(out, centre, u, CHIMNEY_HALF[0], CHIMNEY_HALF[1], Math.min(...ys) - CHIMNEY_DOWN, Math.max(...ys) + CHIMNEY_UP, 'chimney', [centre[0], ys[0]! - CHIMNEY_ROOTED, centre[1]])
+    }
   }
   // Over the front door.
   const door = openings.find((o) => o.door)

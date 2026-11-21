@@ -19,6 +19,20 @@ function gabled(): CollisionMesh {
 
 const RANGE = { first: 0, walls: 8, roof: 4 }
 
+/** A shed-roofed house 10 × 7 m along x, its low wall 3 m high at z = 0 and its high wall 5 m at z = 7: 8 wall triangles, then 2 of roof. */
+function shed(): CollisionMesh {
+  const quad = (a: number[], b: number[], c: number[], d: number[]) => [a, b, c, a, c, d]
+  const walls = [
+    ...quad([0, 0, 0], [10, 0, 0], [10, 3, 0], [0, 3, 0]),
+    ...quad([10, 0, 0], [10, 0, 7], [10, 5, 7], [10, 3, 0]),
+    ...quad([10, 0, 7], [0, 0, 7], [0, 5, 7], [10, 5, 7]),
+    ...quad([0, 0, 7], [0, 0, 0], [0, 3, 0], [0, 5, 7]),
+  ]
+  const roof = quad([0, 3, 0], [10, 3, 0], [10, 5, 7], [0, 5, 7])
+  const corners = [...walls, ...roof]
+  return { vertices: Float32Array.from(corners.flat()), triangles: Uint32Array.from(corners.map((_, i) => i)) }
+}
+
 describe('the small parts of a house', () => {
   it('stands a chimney on the ridge of a house, and none on a barn', () => {
     const look = gabled()
@@ -34,6 +48,23 @@ describe('the small parts of a house', () => {
     }
     const barn = { ...RANGE, kind: BUILDING_BARN }
     expect(detailsOf(look, barn, openingsOf(look, barn))).toEqual([])
+  })
+
+  it('stands a shed roof\'s chimney wholly on the roof, inside its high wall, rooted in the roof', () => {
+    const look = shed()
+    const range = { first: 0, walls: 8, roof: 2, kind: BUILDING_PLAIN }
+    const chimney = detailsOf(look, range, openingsOf(look, range)).filter((q) => q.paint === 'chimney')
+    expect(chimney.length).toBe(5)
+    const points = chimney.flatMap((q) => q.corners)
+    // Inside the walls, near the high one.
+    for (const p of points) expect(p[2]).toBeLessThan(7 - 1e-6)
+    expect(Math.max(...points.map((p) => p[2]))).toBeGreaterThan(6)
+    // Its foot is under the roof everywhere, so none of it shows beneath.
+    const roof = (z: number) => 3 + (2 * z) / 7
+    const bottom = Math.min(...points.map((p) => p[1]))
+    for (const p of points) expect(bottom).toBeLessThan(roof(p[2]))
+    // And it rises over the high wall's top.
+    expect(Math.max(...points.map((p) => p[1]))).toBeGreaterThan(5.5)
   })
 
   it('builds a porch on posts over an old house\'s door, a canopy over a villa\'s and nothing over a plain one\'s', () => {
