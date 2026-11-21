@@ -51,11 +51,20 @@ export function inMarshPool(x: number, z: number, wet: number): boolean {
  * under it; then one texel of blur, so the shader's edges fade.
  */
 export function wetnessPixels(tile: Pick<TileData, 'cover'>, x0: number, z0: number, size: number, n: number): Uint8Array | null {
-  if (!tile.cover.some((cover) => marshWetness(cover.kind) > 0)) return null
+  return coverMask(tile, x0, z0, size, n, marshWetness)
+}
+
+/**
+ * How much of `amount(kind)` (0 to 1) each texel of an `n`-texel square map over a tile has, 0 to 255,
+ * or null on a tile with none. Covers are painted in their order, as the terrain is, so a later cover
+ * replaces what is under it; then one texel of blur, so the shader's edges fade.
+ */
+export function coverMask(tile: Pick<TileData, 'cover'>, x0: number, z0: number, size: number, n: number, amount: (kind: number) => number): Uint8Array | null {
+  if (!tile.cover.some((cover) => amount(cover.kind) > 0)) return null
   const texel = size / n
   const raw = new Uint8Array(n * n)
   for (const { kind, rings } of tile.cover) {
-    const wet = Math.round(marshWetness(kind) * 255)
+    const wet = Math.round(amount(kind) * 255)
     scanRings(rings, x0, z0, n, texel, (row, from, to) => raw.fill(wet, row * n + from, row * n + to + 1))
   }
   const out = new Uint8Array(n * n)

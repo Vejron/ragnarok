@@ -3,7 +3,7 @@ import tables from './sim/tables.generated.json'
 
 /** Mirrors `crates/shared/src/world.rs`. Coordinates are metres: +X east, +Z south, +Y up. */
 
-export const WORLD_VERSION = 36
+export const WORLD_VERSION = 37
 
 /** `Manifest::theme`, mirrors `crates/shared/src/world.rs`. */
 export const THEME_WINTER = 1
@@ -115,6 +115,8 @@ export const COVER_GOLF_FAIRWAY = 14
 export const COVER_GOLF_GREEN = 15
 export const COVER_GOLF_TEE = 16
 export const COVER_GOLF_BUNKER = 17
+/** The gardens of a residential area: mown lawn, with gravel round the houses. */
+export const COVER_GARDEN = 18
 
 export const TREE_BIRCH = 0
 export const TREE_PINE = 1

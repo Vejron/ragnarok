@@ -107,16 +107,17 @@ The style is flat, bright and few-banded, not physically based.
 - **Building surfaces.** Walls and roofs carry a pattern drawn in the shader (`MAT_WALLS`, `engine/src/materials/walls.wgsl.ts`), picked per building in `buildingSurfaces` (buildingmesh.ts) and passed as each vertex's custom x: upright boards for falu red and dark wood, lap boards for ochre, white and beige, brick for dark red, mottled render for greys; France's painted walls (`paint::WALLS` in the importer) get cut stone for limestone and sandstone, render for plaster and ochre and brick for its brick. Roof tiles for red and slate roofs, standing-seam sheet for the rest, felt for flat ones. Laid out in world space along each face, so no uvs; every line is antialiased and evens out into its average tone as it nears a pixel, so it does not shimmer far off. Kept on a hurt building's standing walls (`lookFracture`), not on hole edges, chips, windows or falling pieces (those move, and a world-space pattern would slide over them). The roof's pattern carries on over the top of its overhang (`eaves.ts`), which lies in the same plane; the fascia and soffit are plain. Tiles and slate are courses with a deep shadow under each course's edge and a lit lip on the one below, every tile's lower edge a little higher or lower than its neighbours' so the courses run unevenly; the timber roof colour is wooden shingles, shorter and narrower courses of the same. No measurable GPU cost.
 - **Fixed palettes.** Building colours (natural house paint: falu red, ochre, white, render greys, dark wood), roof colours, cover colours (`cover.ts`) and player outfits
   (`character.ts` `PALETTE`) are fixed lists, picked by index so they are stable between reloads.
-- **Baked terrain tone.** `shade.ts` computes a brightness multiplier per terrain vertex: hillshade
-  from a lower light than the sun, darker on steep ground and in hollows, brighter on rises, plus a
-  faint low-frequency wobble. It is stored as vertex colours, so it costs nothing at runtime and
-  hills read as hills even when the sun is high. Terrain normals are smoothed across tile seams by
-  sampling the neighbouring tile (`HeightSource`); when a neighbour arrives the colours and normals are
-  re-sent in place (`restitchTerrain`).
-- **Painted ground cover.** `cover.ts` rasterises each tile's land-cover polygons (wood, park,
-  farm, sand, urban, industrial) into a per-tile canvas texture at 4 texels per metre. Water is not
-  painted: see below. A tile's fine relief is an object-space normal map (`bakeNormalMap`), lighting
-  only.
+- **Baked terrain tone.** `shade.ts` computes a brightness multiplier for the terrain: hillshade
+  from a lower light than the sun, darker on steep ground and in hollows, brighter on rises. It is
+  kept in the alpha of the tile's relief map (`reliefPixels`) and multiplied over the ground's colour
+  in the shader (`normalMapTone`), so hills read as hills even when the sun is high. The hollows look
+  into the neighbouring tiles (`HeightSource`); when a neighbour arrives the texels along the seam are
+  worked out again (`restitchTerrain`).
+- **Painted ground cover.** `paintCover` (`terrainmesh.ts`) rasterises each tile's land-cover polygons
+  into a per-tile canvas texture at 4 texels per metre, each in the colour of that ground and varied
+  by painted layers; bare rock gets its joints and grain from the shader near the eye
+  ([GROUND.md](GROUND.md)). Water is not painted: see below. A tile's fine relief is an object-space
+  normal map (`reliefPixels`), lighting only.
 - **Water** (`water.ts`) is translucent geometry, not paint. Lakes and rivers are carved into the
   ground by the importer and drawn as a surface at the water level: every ground sample is a vertex,
   only cells touching water are triangulated, and a per-vertex depth (`water − ground`) is

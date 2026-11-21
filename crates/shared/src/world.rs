@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::terrain::Ground;
 
-pub const WORLD_VERSION: u8 = 36;
+pub const WORLD_VERSION: u8 = 37;
 
 /// `Manifest::theme`: the world as it always was.
 pub const THEME_PLAIN: u8 = 0;
@@ -1121,6 +1121,7 @@ pub const COVER_WOOD: u8 = 1;
 pub const COVER_PARK: u8 = 2;
 pub const COVER_FARM: u8 = 3;
 pub const COVER_SAND: u8 = 4;
+/// Paved ground round shops, schools and garages.
 pub const COVER_URBAN: u8 = 5;
 pub const COVER_INDUSTRIAL: u8 = 6;
 /// Forest with undergrowth, from an orienteering map's greens: the higher, the denser.
@@ -1130,7 +1131,7 @@ pub const COVER_THICKET_FIGHT: u8 = 9;
 /// Marsh, by how wet: the plain kind is ordinary marsh, deep marsh cannot be crossed and has open
 /// pools, faint marsh is damp ground.
 pub const COVER_MARSH: u8 = 10;
-/// Bare rock along an orienteering map's cliffs.
+/// Bare rock: OSM's `natural=bare_rock`, and an orienteering map's rock and the ground along its cliffs.
 pub const COVER_ROCK: u8 = 11;
 pub const COVER_MARSH_DEEP: u8 = 12;
 pub const COVER_MARSH_FAINT: u8 = 13;
@@ -1140,6 +1141,8 @@ pub const COVER_GOLF_FAIRWAY: u8 = 14;
 pub const COVER_GOLF_GREEN: u8 = 15;
 pub const COVER_GOLF_TEE: u8 = 16;
 pub const COVER_GOLF_BUNKER: u8 = 17;
+/// The gardens of a residential area (`landuse=residential`): mown lawn, with gravel round the houses.
+pub const COVER_GARDEN: u8 = 18;
 
 /// Whether cover `kind` is one of a golf course's playing surfaces, kept clear of trees and rocks.
 pub fn is_golf_cover(kind: u8) -> bool {

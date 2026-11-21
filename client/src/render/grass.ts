@@ -1,5 +1,5 @@
 import { Color, Geometry, Group, Mesh, ShaderMaterial } from '@ragnarok/engine'
-import { COVER_PARK, COVER_WOOD, CROP_NONE, STONES_DENSITY, type TileData, type TileRef } from '@/world'
+import { COVER_GARDEN, COVER_PARK, COVER_WOOD, CROP_NONE, STONES_DENSITY, type TileData, type TileRef } from '@/world'
 import { CROP_HEIGHT } from '@/sim/consts.generated'
 import { WIND_HEADING } from '@/sim/wind'
 import { SURFACE_CELL } from '@/sim/surface'
@@ -8,7 +8,7 @@ import { COVER_COLORS, GRASS_COLOR } from './cover'
 import { GROUND_LIGHT_WGSL } from './groundlight'
 import { isRock } from './rocks'
 import { normalAt } from './shade'
-import { grassMask, type GrassMask } from './grassmask'
+import { GARDEN_SHADE, grassMask, type GrassMask } from './grassmask'
 import { inMarshPool, marshField, marshPoolLevel } from './marshnoise'
 
 export { grassMask, type GrassMask }
@@ -80,9 +80,12 @@ export function tierFor(density: GrassDensity, distance: number) {
 
 /**
  * Grass colour per cell of a mask: 0 for no grass, else an index into `PALETTE`. The last three are a
- * marsh's sedge (`MARSH_SHADES`), damp to bog, yellowing and browning the wetter it is.
+ * marsh's sedge (`MARSH_SHADES`), damp to bog, yellowing and browning the wetter it is, and after them a
+ * garden's lawn (`GARDEN_SHADE`).
  */
-const PALETTE = [0, GRASS_COLOR, COVER_COLORS[COVER_PARK]!, COVER_COLORS[COVER_WOOD]!, 0x9fae62, 0x9a9f55, 0x8e8a4c].map((hex) => Color.hex(hex))
+const PALETTE = [0, GRASS_COLOR, COVER_COLORS[COVER_PARK]!, COVER_COLORS[COVER_WOOD]!, 0x9fae62, 0x9a9f55, 0x8e8a4c, COVER_COLORS[COVER_GARDEN]!].map((hex) => Color.hex(hex))
+/** A mown lawn's blades against a meadow's. */
+const LAWN_HEIGHT = 0.3
 /** How wet the ground of each `PALETTE` entry is: as `surfaceWetness` has the marsh's grades. */
 const PALETTE_WET = [0, 0, 0, 0, 0.35, 0.65, 1]
 /** Cottongrass's seed heads. */
@@ -218,6 +221,8 @@ export const MEADOW: Growth = {
   plant(x, z, shade, height, tone, chance) {
     const wet = PALETTE_WET[shade] ?? 0
     if (wet > 0) return sedge(x, z, wet, chance, height, (tone - 0.85) / 0.3)
+    // A lawn is mown: short, and even all over.
+    if (shade === GARDEN_SHADE) return { height: height * LAWN_HEIGHT, head: false, tuft: false }
     const patch = patchAt(x, z)
     // A few stray tufts grow between the patches.
     if (chance > patch * 0.96 + 0.04) return null

@@ -1,5 +1,6 @@
 import { COMMON_WGSL } from './common.wgsl'
 import { MARSH_WGSL } from './marsh.wgsl'
+import { ROCK_WGSL } from './rock.wgsl'
 import { STONES_WGSL } from './stones.wgsl'
 import { SUN_SHADOW_WGSL } from './sunshadow.wgsl'
 import { vertexWgsl } from './vertex.wgsl'
@@ -41,6 +42,7 @@ ${MARSH_WGSL}
 ${STONES_WGSL}
 ${WORN_WGSL}
 ${ASPHALT_WGSL}
+${ROCK_WGSL}
 ${WALLS_WGSL}
 ${WET_WGSL}
 
@@ -134,6 +136,13 @@ ${edges ? `    if (!asphalt.keep) {
     // A crater's earth is thrown over the stones too.
     rgb = mix(stones.rgb, rgb, marks.earth);
     stones.tilt *= 1.0 - marks.earth;
+  }
+  // Bare rock (rock.wgsl): the stones' map has in alpha how much of the ground is rock.
+  if ((flags & MAT_ROCK) != 0u && stonesTexel.a > 0.004) {
+    let above = stonesTexel.b * 4.0 - 1.0;
+    let rock = rockLook(rgb, in.world.xz, stonesTexel.a * (1.0 - marks.earth), pixel, above);
+    rgb = rock.rgb;
+    stones.tilt += rock.tilt;
   }
   // The shore: the stones' map has in blue how far over the water near it the ground is (-1 to 3 m,
   // the client's \`SHORE_ABOVE\`). Up to about 0.3 m it is wet, darker and with a sheen, its edge

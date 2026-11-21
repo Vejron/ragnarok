@@ -14,7 +14,7 @@ import { prepareTile, type PreparedTile } from './tileprep'
 import { buildTrees } from './trees'
 import { buildLines } from './lines'
 import { buildGraves } from './graves'
-import { stonesTexture } from './stones'
+import { hasRock, stonesTexture } from './stones'
 import { shoreOf, type Shore } from './shore'
 import { TERRAIN_RAMP } from './groundlight'
 
@@ -105,8 +105,8 @@ function buildTerrain(tile: Pick<TileData, 'cover' | 'detail' | 'stones'>, groun
   const size = cell * (side - 1)
   const wet = terrain.wet === undefined ? wetnessPixels(tile, x0, z0, size, terrain.relief.width) : terrain.wet
   const normalMap = reliefTexture(wet ? packMarsh(terrain.relief, wet) : terrain.relief)
-  const stones = stonesTexture(tile.stones, shore, ground)
-  const mesh = new Mesh(new Geometry({ ...terrain.buffers, uploadOnce: true }), toonMaterial({ ...(map ? { map } : { color: GRASS_COLOR }), normalMap, normalMapTone: true, ramp: TERRAIN_RAMP, craters: true, snow: winter, marsh: wet !== null, stones }))
+  const stones = stonesTexture(tile, shore, ground)
+  const mesh = new Mesh(new Geometry({ ...terrain.buffers, uploadOnce: true }), toonMaterial({ ...(map ? { map } : { color: GRASS_COLOR }), normalMap, normalMapTone: true, ramp: TERRAIN_RAMP, craters: true, snow: winter, marsh: wet !== null, stones, rock: hasRock(tile) }))
   mesh.userData.ownsMaterial = true
   mesh.userData.ground = ground
   mesh.userData.detail = tile.detail

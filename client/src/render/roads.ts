@@ -276,7 +276,7 @@ export class Layer {
   vertex(x: number, z: number, lift = this.lift, across = 0, half = 0, along = 0, lateral = 0) {
     const normal = this.shade.normal(x, z)
     const y = this.shade.height(x, z)
-    const tone = toneOf(normal, y, this.shade.mean(x, z), x, z)
+    const tone = toneOf(normal, y, this.shade.mean(x, z))
     this.positions.push(x, y + lift, z)
     this.normals.push(normal[0], normal[1], normal[2])
     this.colors.push(tone, tone, tone)

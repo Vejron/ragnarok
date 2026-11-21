@@ -6,7 +6,7 @@ import { drapedMeshes, drapedTransferables, type Draped } from './groundmesh'
 import { grassMask, type GrassMask } from './grassmask'
 import { wetnessPixels } from './marshnoise'
 import type { HeightSource } from './shade'
-import { reliefPixels, terrainBuffers, TERRAIN_LOD_ERRORS, type Pixels, type TerrainBuffers } from './terrainmesh'
+import { reliefPixels, terrainBuffers, TERRAIN_LOD_ERRORS, type CoverSource, type Pixels, type TerrainBuffers } from './terrainmesh'
 
 /*
  * Everything a streamed-in tile is turned into before it is attached, as plain arrays: its terrain,
@@ -62,7 +62,7 @@ export interface PreparedTile {
 }
 
 /** Paints a tile's cover, seen from above, into a bitmap, or null when there is no canvas. */
-export type CoverPainter = (tile: Pick<TileData, 'cover'> & Partial<Pick<TileData, 'crops'>>, ground: TileGround) => ImageBitmap | null
+export type CoverPainter = (tile: CoverSource, ground: TileGround) => ImageBitmap | null
 
 /**
  * Turns a tile into arrays. `around` is the ground past its edge, so its relief and its roads near

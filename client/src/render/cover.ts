@@ -1,6 +1,5 @@
 import { Texture } from '@ragnarok/engine'
-import type { TileData } from '@/world'
-import { coverPixels, paintCover, type Pixels } from './terrainmesh'
+import { coverPixels, paintCover, type CoverSource, type Pixels } from './terrainmesh'
 
 export { COVER_COLORS, GRASS_COLOR } from './terrainmesh'
 
@@ -9,7 +8,7 @@ export { COVER_COLORS, GRASS_COLOR } from './terrainmesh'
  * no canvas (tests), in which case the terrain stays plain grass. The tile worker paints the
  * same on an `OffscreenCanvas` instead (`tile.worker.ts`).
  */
-export function bakeTerrainTexture(tile: Pick<TileData, 'cover'> & Partial<Pick<TileData, 'crops'>>, x0: number, z0: number, size: number): Texture | null {
+export function bakeTerrainTexture(tile: CoverSource, x0: number, z0: number, size: number): Texture | null {
   if (typeof document === 'undefined') return null
   const pixels = coverPixels(size)
   const canvas = document.createElement('canvas')

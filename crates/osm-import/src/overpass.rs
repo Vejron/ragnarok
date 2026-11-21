@@ -51,7 +51,7 @@ pub const DEFAULT_ENDPOINTS: [&str; 6] = [
 ];
 
 /// The tags that make a way or relation ground cover, as an Overpass filter list (`osm::is_cover`).
-const COVER_FILTERS: &str = r#"[landuse];[natural~"^(wood|scrub|grassland|heath|wetland|sand|beach)$"];[leisure~"^(park|garden|pitch|playground|golf_course|recreation_ground)$"];[amenity=grave_yard]"#;
+const COVER_FILTERS: &str = r#"[landuse];[natural~"^(wood|scrub|grassland|heath|wetland|sand|beach|bare_rock)$"];[leisure~"^(park|garden|pitch|playground|golf_course|recreation_ground)$"];[amenity=grave_yard]"#;
 
 /// Water bodies, as ways and relations (`osm::is_water_body`).
 const WATER_FILTERS: [&str; 3] = [r#"["natural"="water"]"#, r#"["waterway"="riverbank"]"#, r#"["landuse"="reservoir"]"#];

@@ -86,6 +86,7 @@ const MAT_WORN = 512u;
 const MAT_WALLS = 1024u;
 const MAT_ASPHALT = 2048u;
 const MAT_GROUND = 4096u;
+const MAT_ROCK = 8192u;
 const SNOW_COLOR = vec3f(0.93, 0.95, 0.98);
 const SNOW_ROCK = vec3f(0.3, 0.31, 0.33);
 const OBJ_RECEIVE_SHADOW = 1u;

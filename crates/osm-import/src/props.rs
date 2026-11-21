@@ -7,7 +7,7 @@
 //! every tree. Rocks are solid; a bush never is (`assemble` keeps it passable).
 
 use crate::assemble::point_in_polygon;
-use shared::world::{COVER_PARK, COVER_SAND, COVER_WATER, COVER_WOOD, TREE_BUSH, TREE_ROCK_BOULDER, TREE_ROCK_SLAB};
+use shared::world::{COVER_PARK, COVER_ROCK, COVER_SAND, COVER_WATER, COVER_WOOD, TREE_BUSH, TREE_ROCK_BOULDER, TREE_ROCK_SLAB};
 
 type P = [f64; 2];
 /// `(position, TREE_*, height, crown radius, solid)`, as `assemble` takes its trees.
@@ -47,11 +47,15 @@ pub(crate) fn bounds(rings: &[Vec<P>]) -> Option<[f64; 4]> {
     found.then_some(b)
 }
 
-/// Rocks and bushes inside the wood, park and sand covers, never in water, within `±inner` metres.
+/// Rocks and bushes inside the wood, park and sand covers, never in water and no bush on bare rock,
+/// within `±inner` metres.
 pub fn scatter(covers: &[(u8, Vec<Vec<P>>)], inner: f64) -> Vec<Placed> {
     let water: Vec<([f64; 4], &Vec<Vec<P>>)> =
         covers.iter().filter(|(kind, _)| *kind == COVER_WATER).filter_map(|(_, rings)| Some((bounds(rings)?, rings))).collect();
     let in_water = |at: P| water.iter().any(|(b, rings)| at[0] >= b[0] && at[0] <= b[2] && at[1] >= b[1] && at[1] <= b[3] && inside(rings, at));
+    let rock: Vec<([f64; 4], &Vec<Vec<P>>)> =
+        covers.iter().filter(|(kind, _)| *kind == COVER_ROCK).filter_map(|(_, rings)| Some((bounds(rings)?, rings))).collect();
+    let on_rock = |at: P| rock.iter().any(|(b, rings)| at[0] >= b[0] && at[0] <= b[2] && at[1] >= b[1] && at[1] <= b[3] && inside(rings, at));
     let mut placed = Vec::new();
     for (index, (kind, rings)) in covers.iter().enumerate() {
         // Sand is bare: rocks, no shrubs. Parks are tended: shrubs, few rocks.
@@ -68,7 +72,7 @@ pub fn scatter(covers: &[(u8, Vec<Vec<P>>)], inner: f64) -> Vec<Placed> {
             for attempt in 0..attempts as u64 {
                 let seed = mix((index as u64) << 24 ^ salt << 56 ^ attempt);
                 let at = [b[0] + unit(seed) * (b[2] - b[0]), b[1] + unit(mix(seed)) * (b[3] - b[1])];
-                if at[0].abs() > inner || at[1].abs() > inner || !inside(rings, at) || in_water(at) {
+                if at[0].abs() > inner || at[1].abs() > inner || !inside(rings, at) || in_water(at) || (!is_rock && on_rock(at)) {
                     continue;
                 }
                 let (u, v) = (unit(mix(seed ^ 0xA5A5)), unit(mix(seed ^ 0x5A5A)));

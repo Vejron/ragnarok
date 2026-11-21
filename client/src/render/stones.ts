@@ -1,6 +1,7 @@
 import { Group, InstancedMesh, ShaderMaterial, Texture, mat4, type Geometry } from '@ragnarok/engine'
-import { STONES_ANGULAR, STONES_DENSITY, type TileData, type TileRef } from '@/world'
+import { COVER_ROCK, STONES_ANGULAR, STONES_DENSITY, type TileData, type TileRef } from '@/world'
 import type { TileGround } from '@/sim/terrain'
+import { coverMask } from './marshnoise'
 import { carveRock, rockWgsl, type Carving } from './rocks'
 import { shoreLevelAt, shoreOf, WET_HEIGHT, type Shore } from './shore'
 
@@ -21,17 +22,25 @@ import { shoreLevelAt, shoreOf, WET_HEIGHT, type Shore } from './shore'
  */
 export const SHORE_ABOVE: readonly [number, number] = [-1, 3]
 
+/** Texels along the stones texture of a tile with bare rock and neither stones nor a shore. */
+const ROCK_TEXELS = 128
+
+/** Whether a tile has bare rock for the terrain's shader to draw (`stonesTexture`'s alpha). */
+export const hasRock = (tile: Pick<TileData, 'cover'>): boolean => tile.cover.some((cover) => cover.kind === COVER_ROCK)
+
 /**
- * The tile's stony ground and shore as a texture for the terrain's shader: how stony in red, a boulder
- * field's blocks in green, and in blue how far above the water near it the ground is (over
- * `SHORE_ABOVE`, all of it where it is higher or there is none), for the wet band along the shore.
- * Null when the tile has neither.
+ * The tile's stony ground, shore and bare rock as a texture for the terrain's shader: how stony in red,
+ * a boulder field's blocks in green, in blue how far above the water near it the ground is (over
+ * `SHORE_ABOVE`, all of it where it is higher or there is none), for the wet band along the shore, and
+ * in alpha how much of the ground is bare rock (`COVER_ROCK`). Null when the tile has none of them.
  */
-export function stonesTexture(stones: Uint8Array | undefined, shore: Shore | null, ground: TileGround): Texture | null {
-  if (!stones && !shore) return null
-  const n = stones ? Math.round(Math.sqrt(stones.length)) : (shore?.n ?? 128)
+export function stonesTexture(tile: Pick<TileData, 'stones' | 'cover'>, shore: Shore | null, ground: TileGround): Texture | null {
+  const { stones } = tile
+  const n = stones ? Math.round(Math.sqrt(stones.length)) : (shore?.n ?? ROCK_TEXELS)
   const { x0, z0, cell, side, heights } = ground
   const size = cell * (side - 1)
+  const rock = coverMask(tile, x0, z0, size, n, (kind) => (kind === COVER_ROCK ? 1 : 0))
+  if (!stones && !shore && !rock) return null
   const data = new Uint8Array(n * n * 4)
   for (let j = 0; j < n; j++) {
     for (let i = 0; i < n; i++) {
@@ -52,7 +61,7 @@ export function stonesTexture(stones: Uint8Array | undefined, shore: Shore | nul
         if (!Number.isNaN(level)) above = Math.min(1, Math.max(0, (ground - level - SHORE_ABOVE[0]) / (SHORE_ABOVE[1] - SHORE_ABOVE[0])))
       }
       data[k * 4 + 2] = Math.round(above * 255)
-      data[k * 4 + 3] = 255
+      data[k * 4 + 3] = rock?.[k] ?? 0
     }
   }
   return new Texture({ data, width: n, height: n }, { srgb: false, wrap: 'clamp' })

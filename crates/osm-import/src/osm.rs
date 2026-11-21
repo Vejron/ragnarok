@@ -149,7 +149,7 @@ pub fn is_graveyard<T: Lookup + ?Sized>(tags: &T) -> bool {
 /// Ground cover: `landuse=*`, some `natural` and some `leisure`, and a churchyard. The main query's `COVER_FILTERS`.
 fn is_cover<T: Lookup + ?Sized>(tags: &T) -> bool {
     tag(tags, "landuse").is_some()
-        || matches!(tag(tags, "natural"), Some("wood" | "scrub" | "grassland" | "heath" | "wetland" | "sand" | "beach"))
+        || matches!(tag(tags, "natural"), Some("wood" | "scrub" | "grassland" | "heath" | "wetland" | "sand" | "beach" | "bare_rock"))
         || matches!(tag(tags, "leisure"), Some("park" | "garden" | "pitch" | "playground" | "golf_course" | "recreation_ground"))
         || tag(tags, "amenity") == Some("grave_yard")
 }

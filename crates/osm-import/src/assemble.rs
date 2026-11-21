@@ -2354,6 +2354,7 @@ fn cover_kind(tags: &std::collections::HashMap<String, String>) -> Option<u8> {
                 _ => COVER_MARSH,
             }),
             "sand" | "beach" => Some(COVER_SAND),
+            "bare_rock" => Some(COVER_ROCK),
             _ => None,
         };
     }
@@ -2368,7 +2369,9 @@ fn cover_kind(tags: &std::collections::HashMap<String, String>) -> Option<u8> {
         "forest" => Some(COVER_WOOD),
         "meadow" | "grass" | "village_green" | "recreation_ground" | "cemetery" | "allotments" | "greenfield" | "flowerbed" => Some(COVER_PARK),
         "farmland" | "farmyard" | "orchard" | "vineyard" | "plant_nursery" => Some(COVER_FARM),
-        "residential" | "commercial" | "retail" | "garages" | "education" | "institutional" => Some(COVER_URBAN),
+        // Houses stand in gardens; the paved ground is round shops, schools and garages.
+        "residential" => Some(COVER_GARDEN),
+        "commercial" | "retail" | "garages" | "education" | "institutional" => Some(COVER_URBAN),
         "industrial" | "railway" | "quarry" | "construction" | "brownfield" | "landfill" | "depot" => Some(COVER_INDUSTRIAL),
         _ => None,
     }
@@ -2383,7 +2386,7 @@ fn is_field(tags: &std::collections::HashMap<String, String>) -> bool {
 /// Draw order: ground uses first, then green, water and marsh on top. The client paints in list order.
 fn cover_rank(kind: u8) -> u8 {
     match kind {
-        COVER_URBAN | COVER_INDUSTRIAL | COVER_FARM => 0,
+        COVER_URBAN | COVER_GARDEN | COVER_INDUSTRIAL | COVER_FARM => 0,
         COVER_WOOD | COVER_PARK | COVER_SAND | COVER_THICKET_SLOW | COVER_THICKET_WALK | COVER_THICKET_FIGHT => 1,
         // A course over the park it lies in: its fairways, and on them its tees, greens and bunkers.
         COVER_GOLF_FAIRWAY => 3,
@@ -2677,6 +2680,9 @@ mod tests {
         assert_eq!(cover_kind(&tags(&[("landuse", "military")])), None);
         assert_eq!(cover_kind(&tags(&[("landuse", "cemetery")])), Some(COVER_PARK));
         assert_eq!(cover_kind(&tags(&[("amenity", "grave_yard")])), Some(COVER_PARK));
+        assert_eq!(cover_kind(&tags(&[("natural", "bare_rock")])), Some(COVER_ROCK));
+        assert_eq!(cover_kind(&tags(&[("landuse", "residential")])), Some(COVER_GARDEN), "houses stand in gardens, not on paving");
+        assert_eq!(cover_kind(&tags(&[("landuse", "retail")])), Some(COVER_URBAN));
         assert_eq!(cover_kind(&tags(&[("natural", "wetland")])), Some(COVER_MARSH));
         assert_eq!(cover_kind(&tags(&[("natural", "wetland"), ("wetland", "bog")])), Some(COVER_MARSH_DEEP));
         assert_eq!(cover_kind(&tags(&[("natural", "wetland"), ("wetland", "wet_meadow")])), Some(COVER_MARSH_FAINT));

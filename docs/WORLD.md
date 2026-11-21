@@ -390,7 +390,9 @@ whichever source served it. The read comes from a local extract when one covers 
 else from Overpass. Heights
 come from the `height` tag, else `building:levels` × 3 + 1, else a guess of 6–12 m. `natural=wetland` is
 marsh, by its `wetland` tag: `bog`, `swamp` and `fen` are `COVER_MARSH_DEEP`, `wet_meadow` is
-`COVER_MARSH_FAINT` and the rest `COVER_MARSH` (docs/ORIENTEERING.md has how the client draws them). A
+`COVER_MARSH_FAINT` and the rest `COVER_MARSH` (docs/ORIENTEERING.md has how the client draws them).
+`natural=bare_rock` is `COVER_ROCK`, and `landuse=residential` is `COVER_GARDEN`, lawn with gravel round
+its houses, where commercial, retail and school grounds are the paved `COVER_URBAN` (docs/GROUND.md). A
 major or minor road is asphalt whatever its `surface` tag says: there is no gravel road kind, since a
 beige road read as a path, not a road. A `highway=track` whose `surface` is paved (`asphalt`, `paved`, `concrete`) is a
 3.5 m asphalt road (`ROAD_MINOR`); any other track is a worn path. A footway, path, cycleway or pedestrian

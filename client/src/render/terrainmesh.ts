@@ -2,6 +2,7 @@ import type { TileGround } from '@/sim/terrain'
 import {
   CROP_NONE,
   COVER_FARM,
+  COVER_GARDEN,
   COVER_INDUSTRIAL,
   COVER_MARSH,
   COVER_MARSH_DEEP,
@@ -30,28 +31,197 @@ import { CAVITY_RADIUS, heightSampler, ringMean, toneOf, type HeightSource } fro
  * (`tile.worker.ts`) or, without one, on the main thread. Nothing here touches the engine or the DOM, so it runs in a worker.
  */
 
-export const GRASS_COLOR = 0x8fd16a
+/**
+ * The colours of the ground, sRGB: what the ground is under the blades, seen from standing height, and
+ * not the colour a map gives it. Open ground nothing covers is meadow. The painted layers
+ * (`COVER_LAYERS`) vary each about these.
+ */
+export const GRASS_COLOR = 0x799f55
 
 export const COVER_COLORS: Record<number, number> = {
   [COVER_WATER]: 0x5cc0f0,
-  [COVER_WOOD]: 0x5fae5a,
-  [COVER_PARK]: 0xa8e07a,
-  [COVER_FARM]: 0xe3e79a,
-  [COVER_SAND]: 0xf3e3a6,
-  [COVER_URBAN]: 0xd9d3c7,
-  [COVER_INDUSTRIAL]: 0xc6c6d0,
-  [COVER_THICKET_SLOW]: 0x529f50,
-  [COVER_THICKET_WALK]: 0x459046,
-  [COVER_THICKET_FIGHT]: 0x37803c,
-  [COVER_MARSH]: 0x6f9a7c,
-  [COVER_MARSH_DEEP]: 0x5f8a6c,
-  [COVER_MARSH_FAINT]: 0x86ad80,
-  [COVER_ROCK]: 0x7d776f,
+  // A forest's floor: needles, moss and bilberry, in the shade.
+  [COVER_WOOD]: 0x56733c,
+  [COVER_PARK]: 0x85a95c,
+  [COVER_FARM]: 0xc9c98a,
+  [COVER_SAND]: 0xd8cfae,
+  // Paving round shops and schools.
+  [COVER_URBAN]: 0xb9b5ab,
+  // A garden's lawn: mown, a little yellower than a meadow.
+  [COVER_GARDEN]: 0x80a856,
+  // Gravel and packed earth.
+  [COVER_INDUSTRIAL]: 0xa39d92,
+  [COVER_THICKET_SLOW]: 0x4f7040,
+  [COVER_THICKET_WALK]: 0x466639,
+  [COVER_THICKET_FIGHT]: 0x3b5a32,
+  [COVER_MARSH]: 0x6f8f6a,
+  [COVER_MARSH_DEEP]: 0x5f7f5e,
+  [COVER_MARSH_FAINT]: 0x83a36c,
+  // Grey granite and gneiss, the sea's and the ice's smooth slabs.
+  [COVER_ROCK]: 0xb6b5b2,
   // Mown short, so a shade richer than the park round them, the green the richest.
   [COVER_GOLF_FAIRWAY]: 0x86d063,
   [COVER_GOLF_TEE]: 0x7ccb5c,
   [COVER_GOLF_GREEN]: 0x62c457,
   [COVER_GOLF_BUNKER]: 0xf2e2b2,
+}
+
+/** The gravel round a house in a garden (`APRON_WIDTH`), sRGB. */
+export const GRAVEL_COLOR = 0xaaa192
+
+/** How far out from a house's walls its gravel reaches in a garden, metres. */
+export const APRON_WIDTH = 2
+
+/**
+ * One layer of the variation painted over a cover's flat colour: a noise that repeats every `period`
+ * metres, with features `period / cells` metres across. Without a `tint` it lightens and darkens the
+ * ground by up to `strength` (0 to 1); with one it lays patches of that colour (sRGB) over `share`
+ * of the ground, `strength` opaque.
+ */
+interface CoverLayer {
+  period: number
+  cells: number
+  strength: number
+  tint?: number
+  share?: number
+}
+
+/** Meadow, and the open ground nothing covers: drifts of richer and drier grass. */
+const MEADOW_LAYERS: readonly CoverLayer[] = [
+  { period: 256, cells: 12, strength: 0.3 },
+  { period: 64, cells: 20, strength: 0.16 },
+  { period: 128, cells: 14, strength: 0.3, tint: 0x9aa85a, share: 0.3 },
+]
+
+/** What is painted over each cover's colour, in order. A cover not here is left flat. */
+const COVER_LAYERS: Record<number, readonly CoverLayer[]> = {
+  [COVER_PARK]: MEADOW_LAYERS,
+  // Moss in its greens, and the brown of needles and bare earth under the densest trees.
+  [COVER_WOOD]: [
+    { period: 128, cells: 18, strength: 0.3 },
+    { period: 96, cells: 22, strength: 0.4, tint: 0x6b6a3e, share: 0.3 },
+    { period: 64, cells: 26, strength: 0.35, tint: 0x5f8a3c, share: 0.25 },
+  ],
+  [COVER_THICKET_SLOW]: [{ period: 128, cells: 18, strength: 0.28 }],
+  [COVER_THICKET_WALK]: [{ period: 128, cells: 18, strength: 0.28 }],
+  [COVER_THICKET_FIGHT]: [{ period: 128, cells: 18, strength: 0.28 }],
+  // A lawn: mown even, with dry and worn patches.
+  [COVER_GARDEN]: [
+    { period: 128, cells: 14, strength: 0.14 },
+    { period: 64, cells: 22, strength: 0.3, tint: 0xa9b060, share: 0.22 },
+  ],
+  // Slabs a few metres across in paler and darker stone, pale grey-green and dark lichen on them, and
+  // now and then the pink of a granite.
+  [COVER_ROCK]: [
+    { period: 96, cells: 28, strength: 0.16 },
+    { period: 128, cells: 12, strength: 0.28, tint: 0xbfa9a0, share: 0.2 },
+    { period: 64, cells: 36, strength: 0.5, tint: 0xcbcfc2, share: 0.2 },
+    { period: 64, cells: 44, strength: 0.45, tint: 0x77777a, share: 0.12 },
+  ],
+  [COVER_SAND]: [{ period: 128, cells: 16, strength: 0.14 }],
+  [COVER_FARM]: [{ period: 256, cells: 10, strength: 0.14 }],
+  [COVER_URBAN]: [{ period: 64, cells: 24, strength: 0.1 }],
+  [COVER_INDUSTRIAL]: [
+    { period: 64, cells: 24, strength: 0.18 },
+    { period: 128, cells: 14, strength: 0.3, tint: 0x8a8272, share: 0.25 },
+  ],
+  [COVER_MARSH]: [{ period: 128, cells: 20, strength: 0.2 }],
+  [COVER_MARSH_DEEP]: [{ period: 128, cells: 20, strength: 0.2 }],
+  [COVER_MARSH_FAINT]: [{ period: 128, cells: 20, strength: 0.2 }],
+}
+
+/** Texels along a layer's noise tile. */
+const LAYER_PIXELS = 256
+
+/** A hash of a lattice point to [0, 1), the same in every worker so tiles painted apart agree. */
+function layerHash(i: number, j: number, salt: number): number {
+  let h = (Math.imul(i, 0x9e3779b1) ^ Math.imul(j, 0x85ebca77) ^ Math.imul(salt, 0xc2b2ae3d)) >>> 0
+  h = Math.imul(h ^ (h >>> 15), 0x2c1b3c6d)
+  h = Math.imul(h ^ (h >>> 12), 0x297a2d39)
+  return ((h ^ (h >>> 15)) >>> 8) / 16777216
+}
+
+/**
+ * A noise, 0 to 1, at each texel of a square tile that repeats at its edges: `cells` lattice cells
+ * across, and a second octave of twice as many at half the weight.
+ */
+export function layerNoise(cells: number, salt: number, pixels = LAYER_PIXELS): Float32Array {
+  const out = new Float32Array(pixels * pixels)
+  const octave = (n: number, x: number, z: number, seed: number) => {
+    const i = Math.floor(x), j = Math.floor(z)
+    const u = x - i, v = z - j
+    const su = u * u * (3 - 2 * u), sv = v * v * (3 - 2 * v)
+    const at = (di: number, dj: number) => layerHash((i + di) % n, (j + dj) % n, seed)
+    const top = at(0, 0) + (at(1, 0) - at(0, 0)) * su
+    return top + (at(0, 1) + (at(1, 1) - at(0, 1)) * su - top) * sv
+  }
+  for (let row = 0; row < pixels; row++) {
+    for (let column = 0; column < pixels; column++) {
+      const x = (column / pixels) * cells, z = (row / pixels) * cells
+      out[row * pixels + column] = (octave(cells, x, z, salt) * 2 + octave(cells * 2, x * 2, z * 2, salt + 101)) / 3
+    }
+  }
+  return out
+}
+
+type Painter = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D
+
+/** Each layer's noise tile as a canvas, made once and kept: they are the same for every tile. */
+const layerTiles = new Map<CoverLayer, CanvasImageSource | null>()
+
+/**
+ * A layer's tile to fill with: grey about the middle for a layer that lightens and darkens (laid with
+ * `overlay`, which leaves the ground as it is under mid-grey), or its tint, opaque over its share of
+ * the ground and clear over the rest. Null where there is no canvas to make it on.
+ */
+function layerTile(layer: CoverLayer, salt: number): CanvasImageSource | null {
+  const made = layerTiles.get(layer)
+  if (made !== undefined) return made
+  const canvas = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(LAYER_PIXELS, LAYER_PIXELS) : typeof document !== 'undefined' ? Object.assign(document.createElement('canvas'), { width: LAYER_PIXELS, height: LAYER_PIXELS }) : null
+  const ctx = canvas?.getContext('2d') as Painter | null | undefined
+  if (!canvas || !ctx) {
+    layerTiles.set(layer, null)
+    return null
+  }
+  const noise = layerNoise(layer.cells, salt)
+  const image = ctx.createImageData(LAYER_PIXELS, LAYER_PIXELS)
+  // The noise of two octaves keeps to the middle: this much of it is under each level, near enough.
+  const level = 0.5 + (0.5 - (layer.share ?? 0)) * 0.5
+  for (let k = 0; k < noise.length; k++) {
+    const value = noise[k]!
+    if (layer.tint === undefined) {
+      const grey = Math.round(Math.min(1, Math.max(0, 0.5 + (value - 0.5) * 2.2)) * 255)
+      image.data.set([grey, grey, grey, 255], k * 4)
+    } else {
+      const cover = Math.min(1, Math.max(0, (value - level) / 0.08))
+      image.data.set([layer.tint >> 16, (layer.tint >> 8) & 255, layer.tint & 255, Math.round(cover * 255)], k * 4)
+    }
+  }
+  ctx.putImageData(image, 0, 0)
+  layerTiles.set(layer, canvas)
+  return canvas
+}
+
+/**
+ * Paints a cover's layers over what the current path of `ctx` holds (`outline` lays it), each
+ * anchored to the world, so a patch carries on across the edge of a tile into the next one's painting.
+ */
+function paintLayers(ctx: Painter, layers: readonly CoverLayer[], kind: number, x0: number, z0: number, scale: number, outline: () => void) {
+  layers.forEach((layer, index) => {
+    const tile = layerTile(layer, kind * 16 + index)
+    const pattern = tile && ctx.createPattern(tile, 'repeat')
+    if (!pattern) return
+    const zoom = (layer.period * scale) / LAYER_PIXELS
+    const wrap = (at: number) => -(((at % layer.period) + layer.period) % layer.period) * scale
+    pattern.setTransform({ a: zoom, b: 0, c: 0, d: zoom, e: wrap(x0), f: wrap(z0) })
+    ctx.save()
+    ctx.globalCompositeOperation = layer.tint === undefined ? 'overlay' : 'source-over'
+    ctx.globalAlpha = layer.strength
+    ctx.fillStyle = pattern
+    outline()
+    ctx.fill('evenodd')
+    ctx.restore()
+  })
 }
 
 /**
@@ -450,7 +620,7 @@ export function reliefPixels(ground: TileGround, around?: HeightSource, detail?:
       normal[0] = -sx * inv
       normal[1] = inv
       normal[2] = -sz * inv
-      const tone = toneOf(normal, h, meanAt(i, j), x, z)
+      const tone = toneOf(normal, h, meanAt(i, j))
       const p = (j * n + i) * 4
       data[p] = Math.round(normal[0] * 127.5 + 127.5)
       data[p + 1] = Math.round(normal[1] * 127.5 + 127.5)
@@ -468,23 +638,30 @@ export function coverPixels(size: number): number {
 
 const css = (color: number) => `#${color.toString(16).padStart(6, '0')}`
 
+/** What of a tile its cover is painted from: the cover, the crops on it, and the houses a garden has gravel round. */
+export type CoverSource = Pick<TileData, 'cover'> & Partial<Pick<TileData, 'crops'>> & { buildings?: readonly { footprint: readonly (readonly [number, number])[] }[] }
+
 /**
  * Paints a tile's ground cover, seen from above, into `ctx`, `pixels` square. Canvas `(0, 0)` is
  * the tile's `(x0, z0)` corner, which is UV `(0, 0)` with `flipY` off.
  */
 export function paintCover(
-  ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
-  tile: Pick<TileData, 'cover'> & Partial<Pick<TileData, 'crops'>>,
+  ctx: Painter,
+  tile: CoverSource,
   x0: number,
   z0: number,
   size: number,
   pixels: number,
 ) {
   const scale = pixels / size
-  const at = ([x, z]: [number, number]) => [(x - x0) * scale, (z - z0) * scale] as const
+  const at = ([x, z]: readonly [number, number]) => [(x - x0) * scale, (z - z0) * scale] as const
 
   ctx.fillStyle = css(GRASS_COLOR)
   ctx.fillRect(0, 0, pixels, pixels)
+  paintLayers(ctx, MEADOW_LAYERS, -1, x0, z0, scale, () => {
+    ctx.beginPath()
+    ctx.rect(0, 0, pixels, pixels)
+  })
 
   // Where crops stand, and a cell further every way: a field's ground is straw to the edge it was
   // drawn with, not to the steps its cells make, so the farmland is painted again in straw inside this.
@@ -515,6 +692,24 @@ export function paintCover(
     ctx.fillStyle = css(COVER_COLORS[kind] ?? GRASS_COLOR)
     outline()
     ctx.fill('evenodd')
+    const layers = COVER_LAYERS[kind]
+    if (layers) paintLayers(ctx, layers, kind, x0, z0, scale, outline)
+    if (kind === COVER_GARDEN && tile.buildings?.length) {
+      // Gravel round each house, as far as the garden goes: a line along its walls, half of it under the house.
+      ctx.save()
+      outline()
+      ctx.clip('evenodd')
+      ctx.strokeStyle = css(GRAVEL_COLOR)
+      ctx.lineWidth = APRON_WIDTH * 2 * scale
+      ctx.lineJoin = 'round'
+      ctx.beginPath()
+      for (const { footprint } of tile.buildings) {
+        footprint.forEach((p, i) => (i === 0 ? ctx.moveTo(...at(p)) : ctx.lineTo(...at(p))))
+        ctx.closePath()
+      }
+      ctx.stroke()
+      ctx.restore()
+    }
     if (kind !== COVER_FARM || !sown) continue
     // Straw under the crops (not in winter: the stubble stands in snow). The covers painted after
     // this one, the woods and water over the field, still go over it.

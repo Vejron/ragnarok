@@ -1,11 +1,15 @@
-import { BUILDING_BRIDGE, COVER_GOLF_BUNKER, COVER_GOLF_FAIRWAY, COVER_GOLF_GREEN, COVER_GOLF_TEE, COVER_INDUSTRIAL, COVER_PARK, COVER_ROCK, COVER_THICKET_FIGHT, COVER_THICKET_SLOW, COVER_THICKET_WALK, COVER_URBAN, COVER_WOOD, type Building, type Point2, type TileData } from '@/world'
+import { BUILDING_BRIDGE, COVER_GARDEN, COVER_GOLF_BUNKER, COVER_GOLF_FAIRWAY, COVER_GOLF_GREEN, COVER_GOLF_TEE, COVER_INDUSTRIAL, COVER_PARK, COVER_ROCK, COVER_THICKET_FIGHT, COVER_THICKET_SLOW, COVER_THICKET_WALK, COVER_URBAN, COVER_WOOD, type Building, type Point2, type TileData } from '@/world'
 import { rasterSurface, SURFACE_CELL, SURFACE_GRASS, SURFACE_MUD, SURFACE_MUD_DEEP, SURFACE_MUD_FAINT } from '@/sim/surface'
 import type { TileGround } from '@/sim/terrain'
+import { APRON_WIDTH } from './terrainmesh'
 
 /*
  * Where a tile's grass grows, as a grid: worked out with the rest of the tile (`tileprep.ts`), off
  * the main thread, and read by `Grass` (`grass.ts`). Nothing here touches the scene.
  */
+
+/** The `PALETTE` entry of a garden's lawn, which `grass.ts` grows short. */
+export const GARDEN_SHADE = 7
 
 /** The `PALETTE` entry (`grass.ts`) for each cover's grass; 0 for none. A golf course's mown surfaces have no tall blades. */
 const COVER_SHADE: Record<number, number> = {
@@ -16,6 +20,7 @@ const COVER_SHADE: Record<number, number> = {
   [COVER_THICKET_FIGHT]: 3,
   [COVER_ROCK]: 0,
   [COVER_URBAN]: 0,
+  [COVER_GARDEN]: GARDEN_SHADE,
   [COVER_INDUSTRIAL]: 0,
   [COVER_GOLF_FAIRWAY]: 0,
   [COVER_GOLF_TEE]: 0,
@@ -55,10 +60,28 @@ function fillRings(rings: readonly Point2[][], x0: number, z0: number, side: num
   }
 }
 
+/** Calls `paint(index)` for every cell of the grid whose centre is within `half` metres of the segment from `a` to `b`. */
+function nearSegment([ax, az]: Point2, [bx, bz]: Point2, half: number, x0: number, z0: number, side: number, paint: (index: number) => void) {
+  const dx = bx - ax, dz = bz - az
+  const length2 = dx * dx + dz * dz
+  const c0 = Math.max(0, Math.floor((Math.min(ax, bx) - half - x0) / SURFACE_CELL))
+  const c1 = Math.min(side - 1, Math.floor((Math.max(ax, bx) + half - x0) / SURFACE_CELL))
+  const r0 = Math.max(0, Math.floor((Math.min(az, bz) - half - z0) / SURFACE_CELL))
+  const r1 = Math.min(side - 1, Math.floor((Math.max(az, bz) + half - z0) / SURFACE_CELL))
+  for (let row = r0; row <= r1; row++) {
+    for (let column = c0; column <= c1; column++) {
+      const px = x0 + (column + 0.5) * SURFACE_CELL - ax
+      const pz = z0 + (row + 0.5) * SURFACE_CELL - az
+      const t = length2 > 0 ? Math.min(1, Math.max(0, (px * dx + pz * dz) / length2)) : 0
+      if ((px - t * dx) ** 2 + (pz - t * dz) ** 2 <= half * half) paint(row * side + column)
+    }
+  }
+}
+
 /**
  * Where grass grows on a tile: ground the terrain paints green (plain grass, parks and woods), and
- * sedge in a marsh, that is not a road, track, water or sand, and not under a building. Built-up land is left bare: the
- * terrain paints it grey, and its yards are full of houses. `surface` is the tile's `rasterSurface`,
+ * sedge in a marsh, that is not a road, track, water or sand, and not under a building. Paved land is left bare, and a
+ * garden is lawn up to the gravel round its houses. `surface` is the tile's `rasterSurface`,
  * when it has been worked out already.
  */
 export function grassMask(tile: Pick<TileData, 'cover' | 'roads' | 'water' | 'streams'> & Partial<Pick<TileData, 'rails'>> & { buildings: readonly (Pick<Building, 'footprint'> & { kind?: number })[] }, x0: number, z0: number, size: number, ground: TileGround | null = null, surface = rasterSurface(tile, x0, z0, size, ground)): GrassMask {
@@ -74,28 +97,21 @@ export function grassMask(tile: Pick<TileData, 'cover' | 'roads' | 'water' | 'st
     if (under !== SURFACE_GRASS) cells[i] = MARSH_SHADES[under] ?? 0
   }
   // No grass inside a house; a bridge's deck is up over the ground, which keeps its grass.
-  for (const building of tile.buildings) if (building.kind !== BUILDING_BRIDGE) fillRings([building.footprint], x0, z0, side, (row, column) => (cells[row * side + column] = 0))
+  for (const building of tile.buildings) {
+    if (building.kind === BUILDING_BRIDGE) continue
+    // Nor on the gravel round a house in a garden (`APRON_WIDTH`).
+    const ring = building.footprint
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      nearSegment(ring[j]!, ring[i]!, APRON_WIDTH, x0, z0, side, (at) => {
+        if (cells[at] === GARDEN_SHADE) cells[at] = 0
+      })
+    }
+    fillRings([ring], x0, z0, side, (row, column) => (cells[row * side + column] = 0))
+  }
   // Streams are drawn as ribbons on the ground: keep the blades out of the water.
   for (const stream of tile.streams) {
     const half = stream.width / 2 + SURFACE_CELL / 2
-    for (let i = 1; i < stream.points.length; i++) {
-      const [ax, az] = stream.points[i - 1]!
-      const [bx, bz] = stream.points[i]!
-      const dx = bx - ax, dz = bz - az
-      const length2 = dx * dx + dz * dz
-      const c0 = Math.max(0, Math.floor((Math.min(ax, bx) - half - x0) / SURFACE_CELL))
-      const c1 = Math.min(side - 1, Math.floor((Math.max(ax, bx) + half - x0) / SURFACE_CELL))
-      const r0 = Math.max(0, Math.floor((Math.min(az, bz) - half - z0) / SURFACE_CELL))
-      const r1 = Math.min(side - 1, Math.floor((Math.max(az, bz) + half - z0) / SURFACE_CELL))
-      for (let row = r0; row <= r1; row++) {
-        for (let column = c0; column <= c1; column++) {
-          const px = x0 + (column + 0.5) * SURFACE_CELL - ax
-          const pz = z0 + (row + 0.5) * SURFACE_CELL - az
-          const t = length2 > 0 ? Math.min(1, Math.max(0, (px * dx + pz * dz) / length2)) : 0
-          if ((px - t * dx) ** 2 + (pz - t * dz) ** 2 <= half * half) cells[row * side + column] = 0
-        }
-      }
-    }
+    for (let i = 1; i < stream.points.length; i++) nearSegment(stream.points[i - 1]!, stream.points[i]!, half, x0, z0, side, (at) => (cells[at] = 0))
   }
   return { x0, z0, side, cells }
 }

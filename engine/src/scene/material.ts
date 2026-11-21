@@ -45,6 +45,11 @@ export interface MaterialParams {
    */
   stones?: Texture | null
   /**
+   * Bare rock: the `stones` map's alpha is how much of the ground is rock, and the shader draws its
+   * joints and grain near the eye (`rock.wgsl`). Needs `stones`.
+   */
+  rock?: boolean
+  /**
    * A worn path's ribbon: the geometry's custom x runs -1 to 1 across it and y is how ragged its edges
    * are (0 to 1). The edges break up into the ground beside it and the dirt is mottled, in the shader.
    */
@@ -98,6 +103,7 @@ export class Material {
   snow: boolean
   marsh: boolean
   stones: Texture | null
+  rock: boolean
   worn: boolean
   asphalt: boolean
   ground: boolean
@@ -130,6 +136,7 @@ export class Material {
     this.snow = params.snow ?? false
     this.marsh = params.marsh ?? false
     this.stones = params.stones ?? null
+    this.rock = params.rock ?? false
     this.worn = params.worn ?? false
     this.asphalt = params.asphalt ?? false
     this.ground = params.ground ?? false
@@ -166,6 +173,7 @@ export class Material {
       snow: this.snow,
       marsh: this.marsh,
       stones: this.stones,
+      rock: this.rock,
       worn: this.worn,
       asphalt: this.asphalt,
       ground: this.ground,
