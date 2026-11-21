@@ -166,7 +166,9 @@ The style is flat, bright and few-banded, not physically based.
   the gaps, and strands of twigs hang under each clump. Its trunk bows gently to one side
   (`BIRCH_BOW`); about 2,350 triangles. A near tree's trunks and branches are `barkTube`s, each ring's
   first point twice so its `uv.x` runs 0 to 1 round the tube. A pine makes both its flat crowns
-  leafy, 7 clumps each (about 2,000 triangles), a layered umbrella on its tall trunk. A **spruce**
+  leafy, 7 clumps each (about 2,000 triangles), a layered umbrella on its tall trunk. A **bush** is
+  one leafy mound about as tall as it is wide, 9 big clumps with no trunk or branches (about 1,140
+  triangles), so it matches the trees it grows under. A **spruce**
   (`spruceShape`, about 530 triangles) is six tiers of branches inside its cones' outline, each a
   drooping skirt whose hem is cut into 14 branch tips (out and down) and notches (in and up), sagging
   between hem and apex, with a dark underside; each tier is turned and its tips varied, and its normals

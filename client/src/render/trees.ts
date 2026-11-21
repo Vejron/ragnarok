@@ -73,9 +73,9 @@ const PROTOTYPES: Record<number, Part[]> = {
     { shape: 'trunk', color: TRUNK_BARK, y0: 0, y1: 0.35, rx: 0.045 },
     { shape: 'ellipsoid', color: 0x9bbf7a, y0: 0.58, rx: 1, ry: 0.45 },
   ],
+  // One wide, low mound on the ground; near, its leafy crown gives it the lumps of a shrub.
   [TREE_BUSH]: [
-    { shape: 'ellipsoid', color: 0x3f8f45, y0: 0.4, rx: 1, ry: 0.45 },
-    { shape: 'ellipsoid', color: 0x4fa352, y0: 0.62, rx: 0.65, ry: 0.35, x: 0.15, z: -0.1 },
+    { shape: 'ellipsoid', color: 0x3f8f45, y0: 0.45, rx: 1, ry: 0.5 },
   ],
   // Over a crown of 0.3 m: a thin white pole, a red pennant at its top, and the dark cup it stands in.
   [TREE_FLAG]: [
@@ -234,6 +234,9 @@ const LEAFY: Partial<Record<number, { aspect: number; every?: boolean; style?: P
   // A pine's two flat crowns both turn leafy, a layered umbrella of clumps on its tall trunk.
   // Pines are many in a forest, so each of the two takes fewer clumps.
   [TREE_PINE]: { aspect: 6.4, every: true, style: { most: 7 } },
+  // A bush is about as tall as it is wide: a dense mound of big clumps with no trunk or branches.
+  // Bushes are many under the trees, so each takes about as few clumps as a pine's crown.
+  [TREE_BUSH]: { aspect: 1, style: { clump: 0.6, most: 9, tufts: 10, limbs: 0 } },
 }
 
 /** A spruce's usual height over its crown radius, for its tiers (`spruceTiers`). */

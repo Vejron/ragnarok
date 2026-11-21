@@ -2,7 +2,8 @@
 
 The ground's colours were a map's: one flat, bright colour for each kind of cover. They are now what the
 ground is, seen from standing height, and each varies as real ground does. Bare rock, which was never
-imported, is granite slab. A residential area is gardens, not paving.
+imported, is granite slab. A residential area is gardens, not paving. The edges of natural ground curve,
+wander and fray, where OpenStreetMap drew them straight.
 
 ## What is imported
 
@@ -65,7 +66,45 @@ full of rock, and nothing in views without rock (the flag is only set on tiles t
 noise is worked out in the shader, two value noises and two hashes a pixel, and a third noise within
 a few metres; a first version with ten noises cost 0.46 ms. The painted layers add nothing to a frame.
 
+## Natural edges
+
+OpenStreetMap traces a wood or a heath as it does a car park: straight sides and sharp corners. Ground
+left to itself has edges that curve and wander, and fray where one cover gives way to another. Three
+things make them so, each at its own scale.
+
+- **Bent outlines, over metres** (`crates/osm-import/src/edges.rs`). The outline of every cover tagged
+  as ground left to itself (`edges::is_wild`: wood, scrub, heath, grassland, sand, beach, bare rock,
+  wetland, meadow, forest, nature reserve) is rounded and bent by the noise the shores are
+  (`shoreline::roughen`, see [SHORES.md](SHORES.md)). A wood that runs down to a lake moves with its
+  shore. The bending fades out near anything man-made (`Hard::strength`): it is nothing within 1 m of
+  a road's or track's surface, a wall or the outline of a field, a garden, paving or a golf course,
+  and full 9 m away. So a wood stays straight along the road through it and the field it borders. A
+  corner is rounded only where every outline through it runs on to the same neighbours, so a wood and
+  the heath beside it, which share their edge, round and bend it alike. Points along a side the
+  bending does not reach are left out, so a tile carries no more of them than it did.
+- **Bare rock spreads onto rough ground.** Each point of a rock outline moves out from the rock, in
+  steps of 0.5 m up to 4 m, while the ground there is steeper than 25° or a knoll 20 cm above the
+  ground 2.5 m round it. The steps are averaged along the outline. Rock only grows: it is painted over
+  the wood or heath beside it, so no gap opens.
+- **Frayed lines, under a metre** (`client/src/render/fray.ts`). As a tile's ground is baked, each texel
+  within 1.45 m of a line where one natural cover meets another (or the plain grass) may take the
+  cover of a texel that far off, by a noise of where it is, of wavelengths 4, 1.5 and 0.5 m. A garden,
+  a field, paving or golf never frays or spreads. The painted colours (`paintCover`), the rock and
+  marsh masks the shader reads (`coverMask`) and where grass grows (`grassMask`) take the same moves,
+  each at its own resolution, so the rock's joints and the blades stop where the painted edge does.
+  The fraying fades out within 1.5 m of a tile's edge, since a tile has only its own covers.
+- **Growth at a wood's edge** (`props::edge_scatter`). Every 3 m along a wood's outline, 7 times in 10,
+  a shrub or (one in four) a young birch 2.5 to 5 m tall stands up to 2 m inside the wood or 4 m out of
+  it. Nothing grows where the edge runs along something man-made. A young birch needs 4 m from the trees
+  already standing, a shrub 1.5 m, so where the laser found trees at the edge, those are its growth. As
+  with the other props, none is made in France or inside an orienteering map.
+
+Fraying a tile is one pass over the texels near such lines. On a tile with 40 overlapping natural
+covers, at 1024 texels a side, it takes 34 ms in the tile worker. The scanline the masks share now
+files each side under the rows it crosses, which took the cover raster from 177 ms to 2 ms there.
+
 ## Not done
 
-The edge between two covers is still the polygon's straight line. Scree and shingle are not imported:
-they would be better as stony ground (`Tile::stones`) than as slab.
+Scree and shingle are not imported: they would be better as stony ground (`Tile::stones`) than as
+slab. The forest's edge is still OpenStreetMap's, bent: where the laser has the trees, their crowns
+would draw it more truly.

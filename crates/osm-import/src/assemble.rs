@@ -942,6 +942,8 @@ pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::B
     let mut lines: Vec<(u8, Vec<P>)> = Vec::new();
     let mut rail_bridges = Vec::new();
     let mut covers = Vec::new();
+    // Whether each of `covers` is ground left to itself, whose edges are bent (`edges::naturalise`).
+    let mut wild: Vec<bool> = Vec::new();
     // The graveyards, each its rings: tombstones are stood in them once the tiles are built (`graves::lay`).
     let mut yards: Vec<Vec<Vec<P>>> = Vec::new();
     // The fields, each its rings: wheat is grown in them once the tiles are built (`lay_crops`).
@@ -958,6 +960,7 @@ pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::B
                 fields.push(rings.clone());
             }
             covers.push((kind, rings));
+            wild.push(crate::edges::is_wild(tags));
         }
     }
     let is_building = |way: &crate::overpass::Way| way.tags.get("building").is_some_and(|value| value != "no" && value != "roof");
@@ -1073,6 +1076,7 @@ pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::B
                     fields.push(vec![points[..points.len() - 1].to_vec()]);
                 }
                 covers.push((kind, vec![points[..points.len() - 1].to_vec()]));
+                wild.push(crate::edges::is_wild(&way.tags));
             }
         }
         // Not part of the chain above: a fence often runs round a closed landuse way of its own.
@@ -1150,6 +1154,22 @@ pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::B
         // A flag in every cup.
         trees.extend(golf.holes.iter().map(|hole| ([f64::from(hole.cup[0]), f64::from(hole.cup[1])], TREE_FLAG, FLAG_HEIGHT, 0.3, false)));
     }
+    // The edges of woods, heath, rock and marsh curve and wander, but not along a road, a house, a
+    // field or a garden, nor a golf course's surfaces.
+    let mut hard = crate::edges::Hard::new();
+    for (points, width, _) in &roads {
+        hard.line(points, *width);
+    }
+    for (points, gauge, _) in &rails {
+        hard.line(points, ballast(*gauge));
+    }
+    for (ring, ..) in &buildings {
+        hard.ring(ring);
+    }
+    for ring in covers.iter().zip(&wild).filter(|(_, wild)| !**wild).flat_map(|((_, rings), _)| rings).chain(course.iter().flat_map(|(_, rings)| rings)) {
+        hard.ring(ring);
+    }
+    crate::edges::naturalise(&mut covers, &wild, &hard, &ground);
     crate::progress::stage("tiles");
     let ski = ski.iter().map(|way| way.iter().map(|p| frame.project(p.lat, p.lon)).collect()).collect();
     let mut mapped = Vec::new();
@@ -1222,6 +1242,15 @@ pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::B
     rail_bridges.extend(flush);
     // The stones follow a graveyard's paths and stand off every road: the roads as they are drawn, not cut at the tiles.
     let ways: Vec<(Vec<P>, f64)> = if yards.is_empty() { Vec::new() } else { roads.iter().map(|(points, width, _)| (points.clone(), *width)).collect() };
+    // Shrubs and young birch thicken the woods' edges, as the props are made up: not in France, and
+    // not inside an orienteering map, which draws its own.
+    if !matches!(frame, Frame::Lambert93 { .. }) {
+        let standing: Vec<P> = trees.iter().filter(|(_, kind, ..)| crate::thin::is_tree(*kind)).map(|(at, ..)| *at).collect();
+        let grown = crate::props::edge_scatter(&covers, |p| hard.strength(p), &standing, half - EDGE_MARGIN);
+        let before = trees.len();
+        trees.extend(grown.into_iter().filter(|(at, ..)| mapped.len() < 3 || !point_in_polygon(*at, &mapped)));
+        eprintln!("trees: {} shrubs and young trees along the woods' edges", trees.len() - before);
+    }
     let mut built = assemble(frame, half, tile_size, mask, buildings, roads, &paints, bridges, rails, rail_bridges, ski, covers, trees, &mapped, ground, water);
     if let Some(ground) = &kept {
         lay_lifts(&mut built, &lifts, half, ground);

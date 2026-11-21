@@ -23,6 +23,7 @@ import {
   DETAIL_SLOPE_SCALE,
   type TileData,
 } from '@/world'
+import { applyMoves, frayMoves } from './fray'
 import { winter } from './season'
 import { CAVITY_RADIUS, heightSampler, ringMean, toneOf, type HeightSource } from './shade'
 
@@ -719,5 +720,14 @@ export function paintCover(
     outline()
     ctx.fill('evenodd')
     ctx.restore()
+  }
+
+  // The line where natural ground meets natural ground is frayed (`fray.ts`): each texel near it may
+  // take the colour of one a little way off.
+  const moves = frayMoves(tile, x0, z0, size, pixels)
+  if (moves.length > 0 && 'getImageData' in ctx) {
+    const image = ctx.getImageData(0, 0, pixels, pixels)
+    applyMoves(image.data, 4, moves)
+    ctx.putImageData(image, 0, 0)
   }
 }

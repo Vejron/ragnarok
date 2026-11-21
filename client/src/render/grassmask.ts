@@ -1,6 +1,7 @@
 import { BUILDING_BRIDGE, COVER_GARDEN, COVER_GOLF_BUNKER, COVER_GOLF_FAIRWAY, COVER_GOLF_GREEN, COVER_GOLF_TEE, COVER_INDUSTRIAL, COVER_PARK, COVER_ROCK, COVER_THICKET_FIGHT, COVER_THICKET_SLOW, COVER_THICKET_WALK, COVER_URBAN, COVER_WOOD, type Building, type Point2, type TileData } from '@/world'
 import { rasterSurface, SURFACE_CELL, SURFACE_GRASS, SURFACE_MUD, SURFACE_MUD_DEEP, SURFACE_MUD_FAINT } from '@/sim/surface'
 import type { TileGround } from '@/sim/terrain'
+import { applyMoves, frayMoves } from './fray'
 import { APRON_WIDTH } from './terrainmesh'
 
 /*
@@ -92,6 +93,8 @@ export function grassMask(tile: Pick<TileData, 'cover' | 'roads' | 'water' | 'st
     if (shade === undefined) continue
     fillRings(cover.rings, x0, z0, side, (row, column) => (cells[row * side + column] = shade))
   }
+  // Frayed where natural ground meets natural ground, as the painted ground is.
+  applyMoves(cells, 1, frayMoves(tile, x0, z0, side * SURFACE_CELL, side))
   for (let i = 0; i < cells.length; i++) {
     const under = surface.cells[i]!
     if (under !== SURFACE_GRASS) cells[i] = MARSH_SHADES[under] ?? 0

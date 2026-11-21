@@ -2,18 +2,20 @@
 //! long straight sides meeting at sharp corners, as it was traced, where a real shore curves and
 //! wanders. Before the water is laid out (`water.rs`) every outline is given a point every
 //! `SPACING` metres, its corners are rounded (`ROUND`) and it is bent by a smooth noise a few
-//! metres across (`WANDER`).
+//! metres across (`WANDER`). The edges of natural ground cover are bent by the same noise
+//! (`roughen`, from `edges.rs`), so a wood that runs down to a lake meets its shore.
 //!
-//! Water bodies share edges: a lake and the river that drains it, the pieces of one riverbank, an
-//! island and the lake round it. Each shared edge must come out the same from both polygons, or a
-//! dry sliver or a seam opens between them. So the noise moves a point by where it is, never by
-//! which way its outline runs, and a corner shared with another outline is never rounded.
+//! Outlines share edges: a lake and the river that drains it, the pieces of one riverbank, an
+//! island and the lake round it, a wood and the heath beside it. Each shared edge must come out the
+//! same from both polygons, or a sliver or a seam opens between them. So the noise moves a point by
+//! where it is, never by which way its outline runs, and a corner is rounded only where every
+//! outline through it runs on to the same neighbours; where outlines part, it is kept.
 
 use std::collections::HashMap;
 
 type P = [f64; 2];
 
-/// The longest a side of an outline is left, metres: shorter than the noise's finest wave.
+/// The longest a side of a shore is left, metres: shorter than the noise's finest wave.
 const SPACING: f64 = 1.0;
 
 /// The most a corner is cut back along each of its sides, metres...
@@ -33,102 +35,156 @@ const WANDER: [(f64, f64); 4] = [(64.0, 3.0), (24.0, 1.4), (9.0, 0.55), (3.5, 0.
 /// and of open lines (`lines`, such as coastlines: a line whose ends meet is a ring, and the ends
 /// of one that does not stay put, since the sea is closed along the world's edge from them).
 pub fn smooth(rings: &mut [&mut Vec<P>], lines: &mut [&mut Vec<P>]) {
-    // The corners more than one outline goes through: where water bodies meet.
-    let mut uses: HashMap<(u64, u64), u32> = HashMap::new();
-    let key = |p: P| (p[0].to_bits(), p[1].to_bits());
-    for outline in rings.iter().map(|r| &***r).chain(lines.iter().map(|l| &***l)) {
-        let closed = outline.len() > 1 && outline.first() == outline.last();
-        let points = if closed { &outline[..outline.len() - 1] } else { outline };
-        for &p in points {
-            *uses.entry(key(p)).or_default() += 1;
-        }
+    roughen(rings, lines, SPACING, &|_| 1.0, false);
+}
+
+/// Smooths outlines as `smooth` does, a point every `spacing` metres, with the rounding and the
+/// noise scaled at each place by `strength` (0 to 1, a function of position only, so outlines that
+/// share an edge still agree on it). Where it is 0 a corner stays sharp and a side straight, and
+/// with `sparse` the points added along such a side are left out again, since they lie on it.
+pub fn roughen(rings: &mut [&mut Vec<P>], lines: &mut [&mut Vec<P>], spacing: f64, strength: &impl Fn(P) -> f64, sparse: bool) {
+    // Each outline as its points, each with whether it is kept where it is, and whether it is closed.
+    let mut outlines: Vec<(Vec<(P, bool)>, bool)> = Vec::with_capacity(rings.len() + lines.len());
+    for ring in rings.iter() {
+        outlines.push((ring.iter().map(|&p| (p, false)).collect(), true));
     }
-    let shared = |p: P| uses.get(&key(p)).is_some_and(|&n| n > 1);
+    for line in lines.iter() {
+        let closed = line.len() > 3 && line.first() == line.last();
+        let points = if closed { &line[..line.len() - 1] } else { &line[..] };
+        let last = points.len().saturating_sub(1);
+        outlines.push((points.iter().enumerate().map(|(k, &p)| (p, !closed && (k == 0 || k == last))).collect(), closed));
+    }
+    round(&mut outlines, strength);
+    let smoothed: Vec<Vec<P>> = outlines
+        .iter()
+        .map(|(points, closed)| {
+            let points: Vec<P> = points.iter().map(|&(p, _)| p).collect();
+            if points.len() < if *closed { 3 } else { 2 } {
+                return points;
+            }
+            wander(&densify(&points, *closed, spacing), *closed, strength, sparse)
+        })
+        .collect();
+    let mut smoothed = smoothed.into_iter();
     for ring in rings.iter_mut() {
+        let next = smoothed.next().unwrap_or_default();
         if ring.len() >= 3 {
-            **ring = wander(&densify(&round(ring, true, &shared), true), true);
+            **ring = next;
         }
     }
     for line in lines.iter_mut() {
+        let next = smoothed.next().unwrap_or_default();
         let closed = line.len() > 3 && line.first() == line.last();
-        if closed {
-            line.pop();
-        } else if line.len() < 2 {
+        if !closed && line.len() < 2 {
             continue;
         }
-        let mut smoothed = wander(&densify(&round(line, closed, &shared), closed), closed);
+        **line = next;
         if closed {
-            smoothed.push(smoothed[0]);
+            line.push(line[0]);
         }
-        **line = smoothed;
     }
 }
 
-/// `outline` with its corners cut (as Chaikin's), `ROUND_PASSES` times. A corner other outlines go
-/// through, and the ends of an open line, are kept where they are.
-fn round(outline: &[P], closed: bool, shared: &impl Fn(P) -> bool) -> Vec<P> {
-    // Each point and whether it is kept as it is.
-    let mut points: Vec<(P, bool)> = outline.iter().enumerate().map(|(k, &p)| (p, shared(p) || !closed && (k == 0 || k + 1 == outline.len()))).collect();
+/// The key a point is known by among all the outlines: its coordinates' bits.
+type Key = (u64, u64);
+
+/// The key a point is known by among all the outlines.
+fn key(p: P) -> Key {
+    (p[0].to_bits(), p[1].to_bits())
+}
+
+/// Cuts the outlines' corners (as Chaikin's), `ROUND_PASSES` times. A corner is kept where it is
+/// when it is pinned (the ends of an open line), where `strength` is nothing, or where the outlines
+/// through it do not all run on to the same two neighbours: where a lake meets a river, or a wood
+/// both a heath and a field. Along an edge two outlines share, both cut each corner alike.
+fn round(outlines: &mut [(Vec<(P, bool)>, bool)], strength: &impl Fn(P) -> f64) {
     for _ in 0..ROUND_PASSES {
-        let n = points.len();
-        let mut next = Vec::with_capacity(2 * n);
-        for k in 0..n {
-            let (p, pinned) = points[k];
-            if pinned {
-                next.push((p, true));
+        // Each point's neighbours, as every outline through it has them; `None` once two disagree.
+        let mut neighbours: HashMap<Key, Option<[Key; 2]>> = HashMap::new();
+        for (points, closed) in outlines.iter() {
+            let n = points.len();
+            for k in 0..n {
+                let (before, after) = match (*closed, k) {
+                    (true, _) => (points[(k + n - 1) % n].0, points[(k + 1) % n].0),
+                    (false, 0) => (points[0].0, points[(1).min(n - 1)].0),
+                    (false, _) if k + 1 == n => (points[k - 1].0, points[k].0),
+                    (false, _) => (points[k - 1].0, points[k + 1].0),
+                };
+                let mut pair = [key(before), key(after)];
+                pair.sort_unstable();
+                neighbours.entry(key(points[k].0)).and_modify(|seen| if *seen != Some(pair) { *seen = None }).or_insert(Some(pair));
+            }
+        }
+        for (points, closed) in outlines.iter_mut() {
+            let n = points.len();
+            if n < 3 {
                 continue;
             }
-            let (before, after) = match (closed, k) {
-                (true, _) => (points[(k + n - 1) % n].0, points[(k + 1) % n].0),
-                (false, _) => (points[k - 1].0, points[k + 1].0),
-            };
-            // A point a side's share of the way back towards each neighbour, the corner between left out.
-            let towards = |q: P| {
-                let length = (q[0] - p[0]).hypot(q[1] - p[1]);
-                let t = if length > 0.0 { (ROUND / length).min(ROUND_SHARE) } else { 0.0 };
-                [p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t]
-            };
-            next.push((towards(before), false));
-            next.push((towards(after), false));
+            let mut next = Vec::with_capacity(2 * n);
+            for k in 0..n {
+                let (p, pinned) = points[k];
+                let reach = strength(p).clamp(0.0, 1.0);
+                if pinned || reach <= 0.0 || neighbours.get(&key(p)).is_none_or(Option::is_none) {
+                    next.push((p, pinned));
+                    continue;
+                }
+                let (before, after) = match (*closed, k) {
+                    (true, _) => (points[(k + n - 1) % n].0, points[(k + 1) % n].0),
+                    (false, _) => (points[k - 1].0, points[k + 1].0),
+                };
+                // A point a side's share of the way back towards each neighbour, the corner between left out.
+                let towards = |q: P| {
+                    let length = (q[0] - p[0]).hypot(q[1] - p[1]);
+                    let t = if length > 0.0 { (ROUND * reach / length).min(ROUND_SHARE) } else { 0.0 };
+                    [p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t]
+                };
+                next.push((towards(before), false));
+                next.push((towards(after), false));
+            }
+            *points = next;
         }
-        points = next;
     }
-    points.into_iter().map(|(p, _)| p).collect()
 }
 
-/// `outline` with points added so that no side is longer than `SPACING`, evenly along each side
-/// (so a side two outlines share is split at the same places from either end).
-fn densify(outline: &[P], closed: bool) -> Vec<P> {
+/// `outline` with points added so that no side is longer than `spacing`, evenly along each side
+/// (so a side two outlines share is split at the same places from either end), each point with
+/// whether it was added.
+fn densify(outline: &[P], closed: bool, spacing: f64) -> Vec<(P, bool)> {
     let n = outline.len();
     let sides = if closed { n } else { n - 1 };
     let mut out = Vec::with_capacity(n);
     for k in 0..sides {
         let (a, b) = (outline[k], outline[(k + 1) % n]);
-        let pieces = ((b[0] - a[0]).hypot(b[1] - a[1]) / SPACING).ceil().max(1.0) as usize;
+        let pieces = ((b[0] - a[0]).hypot(b[1] - a[1]) / spacing).ceil().max(1.0) as usize;
         for i in 0..pieces {
             let t = i as f64 / pieces as f64;
-            out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]);
+            out.push(([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t], i > 0));
         }
     }
     if !closed {
-        out.push(outline[n - 1]);
+        out.push((outline[n - 1], false));
     }
     out
 }
 
-/// `outline` with every point moved by the noise at its place (`offset`); the ends of an open
-/// line stay put.
-fn wander(outline: &[P], closed: bool) -> Vec<P> {
+/// `outline` with every point moved by the noise at its place (`offset`), scaled by `strength`;
+/// the ends of an open line stay put. With `sparse`, an added point the noise does not move is
+/// left out.
+fn wander(outline: &[(P, bool)], closed: bool, strength: &impl Fn(P) -> f64, sparse: bool) -> Vec<P> {
     let last = outline.len() - 1;
     outline
         .iter()
         .enumerate()
-        .map(|(k, &p)| {
+        .filter_map(|(k, &(p, added))| {
             if !closed && (k == 0 || k == last) {
-                return p;
+                return Some(p);
+            }
+            let reach = strength(p).clamp(0.0, 1.0);
+            if reach <= 0.0 {
+                return (!sparse || !added).then_some(p);
             }
             let d = offset(p);
-            [p[0] + d[0], p[1] + d[1]]
+            Some([p[0] + d[0] * reach, p[1] + d[1] * reach])
         })
         .collect()
 }

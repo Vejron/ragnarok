@@ -1,5 +1,6 @@
 import { coverSurface, surfaceWetness } from '@/sim/surface'
 import type { Point2, TileData } from '@/world'
+import { applyMoves, frayMoves, scanRings } from './fray'
 import type { Pixels } from './terrainmesh'
 
 /*
@@ -57,7 +58,7 @@ export function wetnessPixels(tile: Pick<TileData, 'cover'>, x0: number, z0: num
 /**
  * How much of `amount(kind)` (0 to 1) each texel of an `n`-texel square map over a tile has, 0 to 255,
  * or null on a tile with none. Covers are painted in their order, as the terrain is, so a later cover
- * replaces what is under it; then one texel of blur, so the shader's edges fade.
+ * replaces what is under it, and frayed (`frayMoves`); then one texel of blur, so the shader's edges fade.
  */
 export function coverMask(tile: Pick<TileData, 'cover'>, x0: number, z0: number, size: number, n: number, amount: (kind: number) => number): Uint8Array | null {
   if (!tile.cover.some((cover) => amount(cover.kind) > 0)) return null
@@ -67,6 +68,8 @@ export function coverMask(tile: Pick<TileData, 'cover'>, x0: number, z0: number,
     const wet = Math.round(amount(kind) * 255)
     scanRings(rings, x0, z0, n, texel, (row, from, to) => raw.fill(wet, row * n + from, row * n + to + 1))
   }
+  // Frayed where natural ground meets natural ground, as the painted ground is.
+  applyMoves(raw, 1, frayMoves(tile, x0, z0, size, n))
   const out = new Uint8Array(n * n)
   for (let j = 0; j < n; j++) {
     for (let i = 0; i < n; i++) {
@@ -85,27 +88,6 @@ export function coverMask(tile: Pick<TileData, 'cover'>, x0: number, z0: number,
     }
   }
   return out
-}
-
-/** Calls `span(row, from, to)` for each run of texels, centres inside `rings` (even-odd), in a row of an `n`-texel grid. */
-function scanRings(rings: readonly Point2[][], x0: number, z0: number, n: number, texel: number, span: (row: number, from: number, to: number) => void) {
-  for (let row = 0; row < n; row++) {
-    const z = z0 + (row + 0.5) * texel
-    const crossings: number[] = []
-    for (const ring of rings) {
-      for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-        const [ax, az] = ring[i]!
-        const [bx, bz] = ring[j]!
-        if (az > z !== bz > z) crossings.push(ax + ((z - az) / (bz - az)) * (bx - ax))
-      }
-    }
-    crossings.sort((a, b) => a - b)
-    for (let k = 0; k + 1 < crossings.length; k += 2) {
-      const from = Math.max(0, Math.ceil((crossings[k]! - x0) / texel - 0.5))
-      const to = Math.min(n - 1, Math.floor((crossings[k + 1]! - x0) / texel - 0.5))
-      if (from <= to) span(row, from, to)
-    }
-  }
 }
 
 /**

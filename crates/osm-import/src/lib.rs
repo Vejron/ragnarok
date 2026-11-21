@@ -15,6 +15,7 @@ pub mod dem;
 pub mod field;
 pub mod footprints;
 pub mod detail;
+pub mod edges;
 pub mod grid;
 pub mod graves;
 pub mod ground;

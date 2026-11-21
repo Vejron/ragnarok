@@ -17,13 +17,16 @@ water is laid out, every lake, river polygon and coastline is made to look like 
 
 Water bodies share edges: a lake and the river that drains it, the pieces of one riverbank, an
 island and the lake round it. So the noise moves a point by where it is, the same for every
-outline through it, never along its own outline's normal. A corner that another outline also goes
-through is never rounded, and a side is split at the same places from either end. A shared edge
+outline through it, never along its own outline's normal. A corner is rounded only where every
+outline through it runs on to the same two neighbours; where two outlines part, as where a lake meets
+its river, it is kept. A side is split at the same places from either end. A shared edge
 therefore comes out the same from both polygons, with no dry sliver or seam between them. A
 coastline's ends stay where they are, since the sea is closed along the world's edge from them.
 
 The noise is a hash of the place, so every import gives the same shore. Everything else follows
-the smoothed outline: the bed, the bank, the minimap, and the trees kept out of the water.
+the smoothed outline: the bed, the bank, the minimap, and the trees kept out of the water. The
+outlines of woods, heath and rock are bent by the same noise (`roughen`), faded out near what is
+man-made, so a wood at the water meets the shore ([GROUND.md](GROUND.md), "Natural edges").
 
 ## A shoreline on the outline (`crates/osm-import/src/water.rs`)
 
