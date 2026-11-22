@@ -637,6 +637,8 @@ fn main() -> Result<()> {
         let (osm, second) = network::join(osm, place.frame);
         eprintln!("paths: {beside} footways and cycleways along a street, and the stumps that led to them, left out");
         eprintln!("roads: {} joints between ways of one road closed", first + second);
+        let (osm, jointed) = network::join_tracks(osm, place.frame);
+        eprintln!("railways: {jointed} joints between ways of one track closed");
         let (landforms, cliffs) = ocad.as_ref().map_or((&[][..], &[][..]), |ocad| (ocad.landforms.as_slice(), ocad.cliffs.as_slice()));
         let features = if args.raw_ground { condition::Features::default() } else { condition::Features::from_osm(&osm, place.frame, &map.streams) };
         let (ground, datum, dem, placed, shaping) = terrain(&args, &place, mask, &map, &features, landforms, cliffs)?;

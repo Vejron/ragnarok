@@ -1,5 +1,6 @@
 import { BALLAST_EXTRA, COVER_FARM, COVER_GOLF_BUNKER, COVER_INDUSTRIAL, COVER_MARSH, COVER_MARSH_DEEP, COVER_MARSH_FAINT, COVER_ROCK, COVER_SAND, COVER_WATER, NO_WATER, RAIL_TRAIN, ROAD_MAJOR, ROAD_MINOR, ROAD_PAVED_PATH, type Point2, type TileData, type TileRef } from '@/world'
 import type { TileGround } from './terrain'
+import { heightIn } from './terrain'
 
 /**
  * What the ground is made of, for the dust, smoke and marks a tyre leaves. Nothing simulates it:
@@ -54,6 +55,9 @@ export interface TileSurface {
   side: number
   cells: Uint8Array
 }
+
+/** A deck less than this over the ground is the ground's surface, metres: grass would grow up through it. */
+const DECK_ON_GROUND = 0.7
 
 /**
  * Rasterises `tile`'s ground cover, tracks, roads and water into a grid of surfaces. Covers are
@@ -113,7 +117,20 @@ export function rasterSurface(tile: Pick<TileData, 'cover' | 'roads' | 'water'> 
     }
   }
   // A tram's rails are set in the street, which the roads paint.
-  for (const rail of tile.rails ?? []) if (rail.kind === RAIL_TRAIN) stroke(rail.points, (rail.gauge + BALLAST_EXTRA) / 2, SURFACE_DIRT)
+  for (const rail of tile.rails ?? []) {
+    if (rail.kind !== RAIL_TRAIN) continue
+    const half = (rail.gauge + BALLAST_EXTRA) / 2
+    if (!rail.deck) {
+      stroke(rail.points, half, SURFACE_DIRT)
+      continue
+    }
+    // A deck's track leaves the road or the river under it as it is, but where the deck lies on the
+    // ground it is the ground's surface, so no grass grows up through it.
+    if (!ground) continue
+    const { tops } = rail.deck
+    const low = rail.points.map(([x, z], i) => tops[i]! - heightIn(ground, x, z) < DECK_ON_GROUND)
+    for (let i = 1; i < low.length; i++) if (low[i - 1] && low[i]) stroke([rail.points[i - 1]!, rail.points[i]!], half, SURFACE_DIRT)
+  }
   for (const road of tile.roads) stroke(road.points, road.width / 2, road.kind === ROAD_MAJOR || road.kind === ROAD_MINOR || road.kind === ROAD_PAVED_PATH ? SURFACE_ASPHALT : SURFACE_DIRT)
 
   if (ground && tile.water.length === ground.heights.length) {

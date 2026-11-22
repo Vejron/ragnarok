@@ -16,12 +16,17 @@ The importer bakes where crops stand, so the client and the server agree on it.
   byte a cell, `CROP_NONE` or `CROP_WHEAT`. A tile without crops has an empty grid. `WORLD_VERSION` is 29.
 - `lay_crops` (`crates/osm-import/src/assemble.rs`) sows a cell when its centre is in a field and the
   tile's cover there is still farmland once the woods, parks, marshes and water over it are painted.
-  It leaves out roads, a track's ballast, streams, water deeper than 15 cm and building footprints.
+  It leaves out roads, railways and streams with their verges, water deeper than 15 cm and building
+  footprints.
+- A field stops about 2 m short of every road, path, railway and stream (`CROPS_VERGE`, from the edge
+  of a road's or stream's own width, or of a track's ballast): 1 to 3 m, as the cells fall. A verge is
+  cleared in whichever tile it lies, not only in the line's, and so is a building's footprint.
+  Without a verge the lid (below) closes over a path: it fills in a gap narrower than two cells.
 - A field is `landuse=farmland`, drawn as a closed way or as a relation, or an orienteering map's
   cultivated land (ISOM 412). A farmyard, orchard, vineyard or nursery is drawn as farmland is and
   stays bare (`is_field`).
 - The synthetic city has one field in place of its third park, so `fixtures/world` has wheat.
-- `home` has 214 ha of wheat and `vindeln` 111 ha. The importer logs it (`crops: … ha of wheat`).
+- `home` has 362.5 ha of wheat and `vindeln` 110 ha. The importer logs it (`crops: … ha of wheat`).
 
 ## Drawing it
 

@@ -200,7 +200,7 @@ Most of a road's pixels are far off, uncracked and unpainted. So:
 
 ## Limits
 
-- **No paint or rail on bridge decks.** The road on a deck is the roof of the `BUILDING_BRIDGE` mesh,
+- **No paint or guard rail on bridge decks.** The road on a deck is the roof of the `BUILDING_BRIDGE` mesh,
   drawn by the walls' shader, which has no frame along the road, so its patches lie square to the
   world.
 - **No guard rails along the edges** of embankments, and no wire-rope (cable) barriers. The rail is
@@ -216,6 +216,10 @@ painted alone. `network::join` (run before and after `sidepaths::prune`) joins t
 to end at a point no other road touches and are the same road there: the same kind, lanes and paint,
 both on the ground or both a bridge or tunnel, driven the same way. Widths within 1.5 m (`EVEN`) are
 evened out to the longer piece's. `worlds/home` closes 775 joints.
+
+A signed `maxheight` ends a road only where it runs under a railway's bridge, which leaves just that
+much room over it (WORLD.md, "Bridges"); anywhere else a limit is no reason to cut one. Tracks are
+joined the same by `network::join_tracks` (WORLD.md, "Railways").
 
 On the client (`render/roads.ts`):
 

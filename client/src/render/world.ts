@@ -53,6 +53,18 @@ function ribbonMeshes(ribbons: readonly Ribbon[], ground: Texture | null): Mesh[
   })
 }
 
+/**
+ * The track on a tile's bridge decks (`deckRibbons`) as meshes, drawn as the ground's rails are. They
+ * are no ribbons of the ground's: they stay when a crater has those laid again (`replaceRibbons`).
+ */
+export function deckTrackMeshes(ribbons: readonly Ribbon[]): Mesh[] {
+  return ribbonMeshes(ribbons, null).map((mesh) => {
+    mesh.userData.ribbon = false
+    mesh.userData.deckTrack = true
+    return mesh
+  })
+}
+
 /** The cover map a tile's terrain is drawn with, if it has one. */
 function groundMap(group: Group): Texture | null {
   return terrainMesh(group)?.material.map ?? null

@@ -3,7 +3,7 @@ import tables from './sim/tables.generated.json'
 
 /** Mirrors `crates/shared/src/world.rs`. Coordinates are metres: +X east, +Z south, +Y up. */
 
-export const WORLD_VERSION = 38
+export const WORLD_VERSION = 39
 
 /** `Manifest::theme`, mirrors `crates/shared/src/world.rs`. */
 export const THEME_WINTER = 1
@@ -303,12 +303,14 @@ export const BUILDING_VILLA = 10
 export const BUILDING_FIRE_STATION = 11
 /** A section of a bridge: drawn from its own concrete, carved by blasts, no windows and no inside. Its roof is the roadway. */
 export const BUILDING_BRIDGE = 12
-/** The colour of a bridge's concrete, `0xRRGGBB`: its sides, piers and railings, and a railway's deck. Mirrors `BRIDGE_CONCRETE`. */
+/** The colour of a bridge's concrete, `0xRRGGBB`: its sides, piers and railings. Mirrors `BRIDGE_CONCRETE`. */
 export const BRIDGE_CONCRETE = 0xb8b6ae
 /** The colour of a bridge's deck under a paved road or path, `0xRRGGBB`: drawn as asphalt. Mirrors `DECK_ASPHALT`. */
 export const DECK_ASPHALT = 0x6e6e70
 /** The colour of a bridge's deck under a footpath or a track, `0xRRGGBB`: drawn as planks. Mirrors `DECK_PLANKS`. */
 export const DECK_PLANKS = 0x8a7356
+/** The colour of a bridge's deck under a railway, `0xRRGGBB`: drawn as ballast. Mirrors `DECK_BALLAST`. */
+export const DECK_BALLAST = 0x8a8478
 
 export interface Road {
   width: number
@@ -347,6 +349,16 @@ export interface Rail {
   gauge: number
   kind: number
   points: Point2[]
+  /** The deck that carries it, or null where it lies on the ground. */
+  deck: RailDeck | null
+}
+
+/** What a stretch of track on a bridge lies on. Mirrors `RailDeck`. */
+export interface RailDeck {
+  /** The bridge's section it lies on, by its place in the same tile's `buildings`. */
+  building: number
+  /** Height of the deck's top under each of the track's points, metres. */
+  tops: number[]
 }
 
 /**
@@ -700,7 +712,7 @@ export function decodeTile(bytes: Uint8Array): TileData {
     [number, number[][]][],
     [number, number, number][],
     Uint8Array,
-    [number, number, number[][]][],
+    [number, number, number[][], [number, number[]] | null][],
     [number, number[][]][],
     [number, number[][], number[], boolean][],
     Uint8Array,
@@ -755,7 +767,7 @@ export function decodeTile(bytes: Uint8Array): TileData {
     bridges: bridges.map(([first, steel]) => ({ first, steel })),
     // A copy of its own: a view would keep the whole file alive, and be cloned whole to the worker.
     detail: detail.length > 0 ? new Int8Array(detail.slice().buffer) : undefined,
-    rails: rails.map(([gauge, kind, points]) => ({ gauge: metres(gauge), kind, points: points.map(point) })),
+    rails: rails.map(([gauge, kind, points, deck]) => ({ gauge: metres(gauge), kind, points: points.map(point), deck: deck ? { building: deck[0], tops: deck[1].map(metres) } : null })),
     ski: ski.map(([width, points]) => ({ width: metres(width), points: points.map(point) })),
     lines: lines.map(([kind, points, base, end]) => ({ kind, points: points.map(point), base: base.map(metres), end })),
     graves: graves.map(([x, z, base, yaw, kind]) => ({ x: metres(x), z: metres(z), base: metres(base), yaw: yaw / 1000, kind })),

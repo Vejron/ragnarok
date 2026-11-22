@@ -108,8 +108,12 @@ describe('world files', () => {
 
   it('decodes tracks', () => {
     expect(decodeTile(tileWith({})).rails).toEqual([])
-    const tile = decodeTile(tileWith({ 15: [[144, RAIL_TRAIN, [[0, 0], [1000, -250]]]] }))
-    expect(tile.rails).toEqual([{ gauge: 1.44, kind: RAIL_TRAIN, points: [[0, 0], [10, -2.5]] }])
+    const tile = decodeTile(tileWith({ 15: [[144, RAIL_TRAIN, [[0, 0], [1000, -250]], null], [144, RAIL_TRAIN, [[1000, -250], [2000, -250]], [3, [620, 655]]]] }))
+    expect(tile.rails).toEqual([
+      { gauge: 1.44, kind: RAIL_TRAIN, points: [[0, 0], [10, -2.5]], deck: null },
+      // On a bridge: the section in the same tile, and the deck's height at each point.
+      { gauge: 1.44, kind: RAIL_TRAIN, points: [[10, -2.5], [20, -2.5]], deck: { building: 3, tops: [6.2, 6.55] } },
+    ])
   })
 
   it('decodes a field\'s crops, and has none on a tile without', () => {

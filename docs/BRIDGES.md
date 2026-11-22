@@ -31,9 +31,14 @@ Each section is a building of kind `BUILDING_BRIDGE` in the tile of its middle:
 - Its `base` is the lowest ground or river bed under it, which is where its rubble lands.
 - Its `paint` is `BRIDGE_CONCRETE` for its walls, and for its roof the road it carries
   (`bridge::deck_paint`): `DECK_ASPHALT` for a paved road or path, `DECK_PLANKS` for a footpath or a
-  track, `BRIDGE_CONCRETE` for a railway. The client draws the roof with the matching pattern
+  track, `DECK_BALLAST` for a railway. The client draws the roof with the matching pattern
   (`buildingSurfaces`: `Surface.Asphalt` is the ground road's `asphaltLook` without its crumbling
-  edge, `Surface.Planks` boards 20 cm wide), and its cells keep it once the section is carved.
+  edge, `Surface.Planks` boards 20 cm wide, `Surface.Ballast` faint stones in the colour of a track's
+  bed, snowed on in winter), and its cells keep it once the section is carved.
+- A railway's sleepers and rails are not part of the section, and nothing collides with them. They
+  are the tile's track (`Rail::deck`, WORLD.md "Railways"), which names the section it lies on. Each
+  sleeper's length of it is drawn while the deck's top cell stands under its middle and under both
+  rails (`render/decktrack.ts`, `deckStands`), so a hole takes its track along and none hangs across it.
 - Its thin parts (rails, posts, the tops of the edge beams: any face with the face opposite it less
   than `THIN`, 35 cm, behind it, `lookfracture.ts`) are drawn plain when the section is hurt. They
   get none of a hole's soot, ragged corners, edge depth or dim inside, which are sized for a wall

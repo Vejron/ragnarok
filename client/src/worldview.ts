@@ -14,6 +14,7 @@ import { winter } from './render/season'
 import { buildWater, disposeWater } from './render/water'
 import { Glazing } from './render/glazing'
 import { GateView } from './render/gates'
+import { DeckTracks } from './render/decktrack'
 import { Debris } from './render/debris'
 import { shellOf } from './sim/carve'
 import { CHUNK, Construct, cellAt, chunkKey, chunkOf, cubeCentre, posKey, type Cube, type Pos } from './sim/construct'
@@ -169,6 +170,8 @@ export class WorldView {
 
   /** Which window panes are broken, and the breaking of them. */
   readonly glazing: Glazing
+  /** The track on the railway bridges, which goes where their decks are blown out. */
+  private readonly deckTracks = new DeckTracks()
   /** The gates of barns, halls and garages: which stand open, and their leaves. */
   readonly gateView = new GateView()
 
@@ -648,6 +651,7 @@ export class WorldView {
     this.damage.attach(key, tile, salt)
     this.glazing.attach(key, tile, group, this.damage.carved(key))
     this.gateView.attach(key, tile, group, this.damage.carved(key))
+    this.deckTracks.attach(key, tile, group, this.damage.carved(key))
     // The physics takes every gate as shut until it is told which are open.
     for (const index of this.gateView.opened(key)) this.motor?.setGates(ref.col, ref.row, index, this.gateView.shut(key, index))
     if (this.damage.carved(key).size > 0) this.reshapeBuildings(key)
@@ -663,6 +667,7 @@ export class WorldView {
       this.loaded.delete(key)
       this.damage.detach(key)
       this.glazing.detach(key)
+      this.deckTracks.detach(key)
       this.gateView.detach(key)
       disposeTile(group)
       if (water) disposeWater(water)
@@ -756,6 +761,7 @@ export class WorldView {
       const first = this.damage.carve(key, b.index, b.blasted, b.fell, live ? b.point : null, live)
       this.glazing.holed(key, b.index, this.damage.carved(key).get(b.index) ?? new Set(), live)
       this.gateView.holed(key, b.index, this.damage.carved(key).get(b.index) ?? new Set())
+      this.deckTracks.holed(key, b.index, this.damage.carved(key).get(b.index) ?? new Set())
       const dirty = this.reshape.get(key) ?? new Set<number>()
       dirty.add(b.index)
       this.reshape.set(key, dirty)
@@ -787,6 +793,7 @@ export class WorldView {
       const first = this.damage.carve(key, b.index, b.blasted, b.fell, b.point, true)
       this.glazing.holed(key, b.index, this.damage.carved(key).get(b.index) ?? new Set(), true)
       this.gateView.holed(key, b.index, this.damage.carved(key).get(b.index) ?? new Set())
+      this.deckTracks.holed(key, b.index, this.damage.carved(key).get(b.index) ?? new Set())
       if (!first) continue
       const group = this.groups.get(key)
       const loaded = this.loaded.get(key)
@@ -804,6 +811,7 @@ export class WorldView {
       for (const [index, cells] of tile) {
         if (cells.size === 0) continue
         this.damage.mend(key, index, [...cells])
+        this.deckTracks.holed(key, index, this.damage.carved(key).get(index) ?? new Set())
         const dirty = this.reshape.get(key) ?? new Set<number>()
         dirty.add(index)
         this.reshape.set(key, dirty)
@@ -928,6 +936,7 @@ export class WorldView {
     this.damage.dispose()
     this.glazing.dispose()
     this.gateView.dispose()
+    this.deckTracks.dispose()
     this.cubes.dispose()
     this.builder?.dispose()
   }

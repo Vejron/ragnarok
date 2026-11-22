@@ -5,7 +5,7 @@ import { lookSlice } from '@/render/lookworker'
 import { openingsOf } from '@/render/windows'
 import { rubbleSoup } from '@/render/shards'
 import { buildingSurfaces, Surface } from '@/render/buildingmesh'
-import { BRIDGE_CONCRETE, BUILDING_BRIDGE, DECK_ASPHALT, DECK_PLANKS, ROOF_FLAT, ROOF_GABLE } from '@/world'
+import { BRIDGE_CONCRETE, BUILDING_BRIDGE, DECK_ASPHALT, DECK_BALLAST, DECK_PLANKS, ROOF_FLAT, ROOF_GABLE } from '@/world'
 import { lookChunk } from '@/render/lookfracture'
 import type { CollisionMesh } from '@/world'
 
@@ -256,11 +256,11 @@ describe('lookFracture', () => {
     expect(buildingSurfaces(tile([0xc0785a, 0xa4acb4]), 0, 0)).toEqual({ wall: Surface.Brick, roof: Surface.Sheet })
   })
 
-  it('draws a bridge as plain concrete with its road on the deck: asphalt, planks, or bare for a railway', () => {
+  it('draws a bridge as plain concrete with what it carries on the deck: asphalt, planks, or ballast for a railway', () => {
     const bridge = (deck: number) => ({ buildings: [{ kind: BUILDING_BRIDGE, roofKind: ROOF_FLAT, paint: [BRIDGE_CONCRETE, deck] } as never] })
     expect(buildingSurfaces(bridge(DECK_ASPHALT), 0, 0)).toEqual({ wall: Surface.Plain, roof: Surface.Asphalt })
     expect(buildingSurfaces(bridge(DECK_PLANKS), 0, 0)).toEqual({ wall: Surface.Plain, roof: Surface.Planks })
-    expect(buildingSurfaces(bridge(BRIDGE_CONCRETE), 0, 0)).toEqual({ wall: Surface.Plain, roof: Surface.Plain })
+    expect(buildingSurfaces(bridge(DECK_BALLAST), 0, 0)).toEqual({ wall: Surface.Plain, roof: Surface.Ballast })
   })
 
   it('shows broken rafters in a roof\'s hole, splinters at a wooden wall\'s, and cracks across a brick one that stay on it', () => {

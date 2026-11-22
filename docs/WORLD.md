@@ -202,8 +202,9 @@ and how many objects it has of each symbol.
 - **Crops** go in the tiles' `crops` layer, after `stones`: a 2 m grid of what is grown in each cell
   (`CROP_NONE`, `CROP_WHEAT`), left empty when a tile has none. Wheat stands on `landuse=farmland` and
   an orienteering map's cultivated land where the cover is still farmland once the woods, parks, marsh
-  and water over it are painted, and not on a road, a track's ballast, a stream or deeper water, nor
-  under a building. The client draws it and it hides soldiers from the bots: [CROPS.md](CROPS.md).
+  and water over it are painted, and not on a road, a track's ballast or a stream or the 2 m or so
+  beside them, nor in deeper water or under a building. The client draws it and it hides soldiers from
+  the bots: [CROPS.md](CROPS.md).
 - **Not imported yet:** walls, and bridges, which stay OSM's.
 
 ## Map tiles
@@ -432,8 +433,19 @@ gauge), else 1435 mm (1000 mm narrow gauge). A train track is drawn as a ballast
 than the gauge (`BALLAST_EXTRA`, in the importer and `client/src/world.ts`) under the roads, with
 sleepers and raised rails over them; a tram is rails alone, flush with the street. Nothing collides
 with a track. Its ballast is gravel to the tyres (`sim/surface.ts`), it keeps trees off like a road,
-it is a dark line on the minimap, and it never offers spawns. A railway with `bridge=*` gets a deck
-built like a minor road bridge, but no road on it, and the rails are not drawn on the deck.
+it is a dark line on the minimap, and it never offers spawns.
+
+A track's ways are joined end to end as a road's are (`network::join_tracks`): the same gauge and kind,
+both a bridge or both on the ground. Only tracks count where they meet, so a level crossing does not end
+a track and a switch does. Railways cross over and under as roads do, through the same passes run on a
+list of their own ("Bridges", below), so a track never shares a deck with a road, follows one or hides one.
+
+On a deck a track is a `Rail` with a `deck` (`RailDeck`): the section it lies on, by its place in the same
+tile's `buildings`, and the deck's height at each of its points. It is kept in the section's tile rather
+than cut at the tile borders. Its ballast is the deck's top (`DECK_BALLAST`); the client lays the sleepers
+and rails on it (`render/decktrack.ts`) and takes them away, a sleeper's length at a time, where the deck
+under them is blown out. Where a track comes off the ground it eases onto the deck over 6 m
+(`railway::ease`).
 
 ### Paths along a street (`sidepaths.rs`)
 OSM maps a street's pavements and cycle track as ways of their own beside it, with a short way across
@@ -497,7 +509,7 @@ a drop beside the deck, a railing runs along each edge: a concrete edge beam 0.5
 (`RAILING_HEIGHT`, `MID_RAIL_HEIGHT`). The deck is an edge beam wider each side than its road, so
 the roadway between the beams keeps the road's width. The roadway is drawn as the road it carries
 (`deck_paint`): asphalt for a paved road or path (`DECK_ASPHALT`), timber planks for a footpath or
-a track (`DECK_PLANKS`), bare concrete for a railway. OSM does not say which bridges are cable-stayed, so pylons with stay cables
+a track (`DECK_PLANKS`), ballast for a railway (`DECK_BALLAST`). OSM does not say which bridges are cable-stayed, so pylons with stay cables
 come from `LANDMARKS` in `bridge.rs` (a position and radius per bridge): Lundabron has a tower at
 each end, Kolbäcksbron one in the middle. Spans under 12 m are left to the terrain, unless the
 ground under them dips more than a metre.
@@ -525,6 +537,22 @@ was found):
   tunnel under a road is first dug out to leave headroom under that deck, with ramps down to it
   (TERRAIN-SHAPING.md, "Underpasses"), and a guard rail or fence across the road stands on the deck
   (BARRIERS.md).
+- **Railways get the same** (`railway.rs`), by themselves:
+  - A railway's bridge is joined and reaches the top of its bank along tracks, and its ramps follow the
+    track on from its end, even from part of the way along a way (`railway::lead`).
+  - It and its ramps run at 2.5 % at most (`MAX_GRADE_RAIL`), and its deck is level across however low
+    it is, as a track's bed is.
+  - A track over a dip narrower than 40 m and more than 1.5 m deep gets a flush deck
+    (`track_cuttings`), with cross sections a metre apart and no pier: the passage under it is a few
+    metres wide.
+  - Tracks within 2 m of each other's beds share one deck however many they are (`railway::decks`,
+    `SHARED_GAP`), and a cutting's deck that meets a bridge becomes part of the bridge.
+- **A deck clears what it crosses.** Any deck that crosses a train's track rises to leave 6 m under it
+  (`HEADROOM_RAIL`). A track over a road leaves the 4.7 m a road bridge does, or the road's `maxheight`
+  where that is lower, down to 3.6 m (`headroom_under`): Östra Kyrkogatan's 3.6 m lets the track
+  over it stay nearly level, where 4.7 m would be a hump of more than a metre. A road and a track
+  never join, so one that ends under the other's deck passes under, and neither rises where they share
+  a point: a level crossing.
 - **No pier stands on a road** or a track that goes under the bridge.
 - **A ramp comes down to the deck's lip** over the ground (0.12 m), not to within 0.4 m of it.
 
@@ -866,6 +894,7 @@ under the deck, and nobody spawns on it. A road that crosses under a bridge is n
 `WORLD_VERSION` 34 added the colour of the world's rivers to the manifest (`Manifest::river_tint`), and a river's `Tile::water` is now shaped by its current: not level across, and standing in waves in a rapid (RIVER-SURFACE.md).
 `WORLD_VERSION` 35 added whether the lakes and the sea take that colour too (`Manifest::tint_all`).
 `WORLD_VERSION` 36 added how a river's current stirs its surface after `Tile.foam` (`Tile::stir`, `Tile::lane`, RIVER-SURFACE.md).
+`WORLD_VERSION` 39 added the deck under each piece of track (`Rail::deck`: the bridge's section and the deck's height at each point, "Railways" above).
 
 Both sides check `WORLD_VERSION` and read only the current layout: there is no reading of older
 worlds. When the layout changes, bump it in `crates/shared/src/world.rs` **and**

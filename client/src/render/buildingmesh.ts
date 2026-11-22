@@ -1,6 +1,7 @@
 import { Color } from '@ragnarok/engine'
 import type { Sphere } from '@ragnarok/engine'
-import { BUILDING_BARN, BUILDING_BRIDGE, BUILDING_CABIN, BUILDING_CHURCH, BUILDING_FARMHOUSE, BUILDING_FIRE_STATION, BUILDING_FLATS, BUILDING_HALL, BUILDING_PLAIN, BUILDING_VILLA, BUILDING_OUTBUILDING, BUILDING_PUBLIC, BUILDING_SHOP, DECK_ASPHALT, DECK_PLANKS, ROOF_FLAT, type Bridge, type Building, type TileData } from '@/world'
+import { BUILDING_BARN, BUILDING_BRIDGE, BUILDING_CABIN, BUILDING_CHURCH, BUILDING_FARMHOUSE, BUILDING_FIRE_STATION, BUILDING_FLATS, BUILDING_HALL, BUILDING_PLAIN, BUILDING_VILLA, BUILDING_OUTBUILDING, BUILDING_PUBLIC, BUILDING_SHOP, DECK_ASPHALT, DECK_BALLAST, DECK_PLANKS, ROOF_FLAT, type Bridge, type Building, type TileData } from '@/world'
+import { winter } from './season'
 import { shellOf } from '@/sim/carve'
 import { drawnOpenings, facing, openingQuads, openingTriangles, openingsFor, type Opening } from './windows'
 import { eaveQuads, eaveTriangles, eavesFor, type EaveStrip } from './eaves'
@@ -136,7 +137,11 @@ function houseOf(tile: Pick<BuildingTile, 'buildings'>, index: number): number |
  */
 export function buildingColors(tile: Pick<BuildingTile, 'buildings'>, index: number, salt: number): { wall: number; roof: number } {
   const building = tile.buildings[index]!
-  if (building?.paint) return { wall: building.paint[0], roof: building.paint[1] }
+  if (building?.paint) {
+    const [wall, roof] = building.paint
+    // A railway's deck is snowed on as its track's bed on the ground is.
+    return { wall, roof: winter && roof === DECK_BALLAST && building.kind === BUILDING_BRIDGE ? WINTER_BALLAST_COLOR : roof }
+  }
   if (building?.kind === BUILDING_CHURCH) return CHURCH_COLORS
   const kind = KIND_COLORS[building?.kind ?? 0]
   const palette = building?.roofKind === ROOF_FLAT ? FLAT_ROOF_COLORS : kind?.sheet ? SHEET_ROOF_COLORS : ROOF_COLORS
@@ -153,7 +158,10 @@ export function buildingColors(tile: Pick<BuildingTile, 'buildings'>, index: num
 }
 
 /** Patterns drawn on a building's faces by the shader (walls.wgsl.ts in the engine), as a vertex's custom x. */
-export const Surface = { Plain: 0, Upright: 1, Lap: 2, Brick: 3, Render: 4, Tiles: 5, Sheet: 6, Felt: 7, Ashlar: 8, Shingles: 9, Asphalt: 10, Planks: 11 } as const
+/** A railway's ballast under snow, as `rails.ts` draws it on the ground. */
+const WINTER_BALLAST_COLOR = 0xdfe3e8
+
+export const Surface = { Plain: 0, Upright: 1, Lap: 2, Brick: 3, Render: 4, Tiles: 5, Sheet: 6, Felt: 7, Ashlar: 8, Shingles: 9, Asphalt: 10, Planks: 11, Ballast: 12 } as const
 export type Surface = (typeof Surface)[keyof typeof Surface]
 
 /**
@@ -181,12 +189,15 @@ const SHINGLED = new Set([0x8d6e63])
  * The patterns on building `index`'s walls and roof: from the palette colour it was given (Sweden's
  * here, or France's as the importer painted it), else render, or brick if it is a dark red; a flat roof
  * is felt, the timber one wooden shingles, a red or slate one tiles and any other sheet metal. A
- * bridge is plain concrete with the road it carries on its deck (`DECK_ASPHALT`, `DECK_PLANKS`).
+ * bridge is plain concrete with what it carries on its deck (`DECK_ASPHALT`, `DECK_PLANKS`, `DECK_BALLAST`).
  */
 export function buildingSurfaces(tile: Pick<BuildingTile, 'buildings'>, index: number, salt: number): { wall: Surface; roof: Surface } {
   const { wall, roof } = buildingColors(tile, index, salt)
-  // A bridge is plain concrete with the road it carries on its deck: asphalt, planks, or for a railway bare concrete.
-  if (tile.buildings[index]?.kind === BUILDING_BRIDGE) return { wall: Surface.Plain, roof: roof === DECK_ASPHALT ? Surface.Asphalt : roof === DECK_PLANKS ? Surface.Planks : Surface.Plain }
+  // A bridge is plain concrete with what it carries on its deck: asphalt, planks, or for a railway ballast.
+  if (tile.buildings[index]?.kind === BUILDING_BRIDGE) {
+    const deck = roof === DECK_ASPHALT ? Surface.Asphalt : roof === DECK_PLANKS ? Surface.Planks : roof === DECK_BALLAST || roof === WINTER_BALLAST_COLOR ? Surface.Ballast : Surface.Plain
+    return { wall: Surface.Plain, roof: deck }
+  }
   const channels = (hex: number) => [(hex >> 16) & 255, (hex >> 8) & 255, hex & 255] as const
   const [wr, wg, wb] = channels(wall)
   const wallSurface = WALL_SURFACES.get(wall) ?? (wr > wg * 1.6 && wr + wg + wb < 400 ? Surface.Brick : Surface.Render)

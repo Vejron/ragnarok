@@ -8,7 +8,7 @@
 //! ground.
 
 use shared::terrain::Ground;
-use shared::world::{BRIDGE_CONCRETE, DECK_ASPHALT, DECK_PLANKS, NO_WATER, ROAD_FAINT, ROAD_MAJOR, ROAD_MINOR, ROAD_PATH, ROAD_PAVED_PATH, ROAD_TRACK};
+use shared::world::{BRIDGE_CONCRETE, DECK_ASPHALT, DECK_BALLAST, DECK_PLANKS, NO_WATER, ROAD_FAINT, ROAD_MAJOR, ROAD_MINOR, ROAD_PATH, ROAD_PAVED_PATH, ROAD_TRACK};
 
 type P = [f64; 2];
 type V3 = [f64; 3];
@@ -22,6 +22,12 @@ const SHORT_DIP: f64 = 1.0;
 /// Steepest slope of a deck, rise over run, and of the ramp that brings a deck still above ground at
 /// its end down to the ground.
 pub(crate) const MAX_GRADE: f64 = 0.06;
+/// The same for a railway's deck, which a train has to climb.
+pub(crate) const MAX_GRADE_RAIL: f64 = 0.025;
+/// Distance between the cross sections of a railway's deck over a cutting, metres. Closer than
+/// `STEP`: the passage under it is a few metres wide, and its underside must not slope down into it
+/// from the solid ends.
+const STEP_CUTTING_RAIL: f64 = 1.0;
 /// The longest such ramp, metres.
 const MAX_RAMP: f64 = 150.0;
 /// How deep a deck's slab is, from its roadway to its underside, metres.
@@ -58,6 +64,14 @@ const RAILING_INSET: f64 = 0.15;
 /// rounded down to the 0.72 m cells it is built of (`carve::CELL`). An underpass is dug to the same
 /// (`condition`).
 pub(crate) const HEADROOM_ROAD: f64 = 4.7;
+/// Clear height over a track that passes under a deck, from the ground to the deck's underside,
+/// metres: a train's, with room for the contact wire over it.
+pub(crate) const HEADROOM_RAIL: f64 = 6.0;
+/// The least a track leaves over a road under it however low the road's `maxheight` is, metres:
+/// a bus still gets under.
+pub(crate) const HEADROOM_LOWEST: f64 = 3.6;
+/// How far from a crossing of two lines a point they share may be for it to be that crossing, metres.
+const SAME_CROSSING: f64 = 1.0;
 /// How far past the edge of a road under a deck the headroom is kept, metres.
 const UNDER_MARGIN: f64 = 1.0;
 /// A ramp that has come down to within this of a road it crosses meets that road at grade, metres:
@@ -99,14 +113,48 @@ pub enum Pylons {
 pub const LANDMARKS: [(f64, f64, f64, Pylons); 2] = [(63.8263, 20.2204, 150.0, Pylons::Ends), (63.8013, 20.2994, 150.0, Pylons::Middle)];
 
 /// The kind a railway's deck is built with, in place of a `ROAD_*`: a minor road's clearance over
-/// water, and bare concrete on top (`deck_paint`), as the track is not drawn on it.
+/// water, a train's grade (`MAX_GRADE_RAIL`), and ballast on top (`deck_paint`) with the track laid
+/// on it (`railway::lay`).
 pub const TRACK: u8 = u8::MAX;
 
+/// The steepest a deck of `kind` (`ROAD_*`, or `TRACK`) and its ramps run.
+fn max_grade(kind: u8) -> f64 {
+    if kind == TRACK { MAX_GRADE_RAIL } else { MAX_GRADE }
+}
+
+/// The clear height a track leaves over a road with the signed height limit `limit`, metres: a
+/// bridge's over a road, or less where the road is signed lower, down to `HEADROOM_LOWEST`.
+pub(crate) fn headroom_under(limit: Option<f64>) -> f64 {
+    limit.map_or(HEADROOM_ROAD, |limit| limit.clamp(HEADROOM_LOWEST, HEADROOM_ROAD))
+}
+
+/// A road or a track on the ground that may pass under a deck, which rises to clear it.
+#[derive(Clone, Copy)]
+pub struct Crossed<'a> {
+    pub line: &'a [P],
+    /// Metres: a road's, or a track's ballast.
+    pub width: f64,
+    /// Clear height wanted over it, metres.
+    pub headroom: f64,
+    pub track: bool,
+    /// Where it is crossed on the level, at points it shares with the way over it: no deck or ramp
+    /// rises over it there.
+    pub level: &'a [P],
+}
+
+impl<'a> Crossed<'a> {
+    /// A road, with a bridge's headroom over it.
+    pub fn road(line: &'a [P], width: f64) -> Self {
+        Crossed { line, width, headroom: HEADROOM_ROAD, track: false, level: &[] }
+    }
+}
+
 /// The colour of the top of a deck that carries a road of `kind` (`ROAD_*`, or `TRACK`): asphalt
-/// for a paved road or path, timber planks for a footpath or a track, else bare concrete. The
-/// client picks the surface's pattern from it (`buildingSurfaces`).
+/// for a paved road or path, timber planks for a footpath or a track, ballast for a railway, else
+/// bare concrete. The client picks the surface's pattern from it (`buildingSurfaces`).
 pub fn deck_paint(kind: u8) -> u32 {
     match kind {
+        TRACK => DECK_BALLAST,
         ROAD_MAJOR | ROAD_MINOR | ROAD_PAVED_PATH => DECK_ASPHALT,
         ROAD_PATH | ROAD_TRACK | ROAD_FAINT => DECK_PLANKS,
         _ => BRIDGE_CONCRETE,
@@ -307,27 +355,30 @@ fn crossing(a: P, b: P, c: P, d: P) -> Option<(f64, f64)> {
     ((0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&u)).then_some((t, u))
 }
 
-/// A road passing under a deck: where it crosses, metres along the deck's nodes, how far either side
-/// of that the deck stands over it, metres, and the lowest the deck's top may be there to keep
-/// `HEADROOM_ROAD` under its slab.
+/// A road or a track passing under a deck: where it crosses, metres along the deck's nodes, how far
+/// either side of that the deck stands over it, metres, how high its surface is, and the lowest the
+/// deck's top may be there to keep its headroom under the slab.
 struct Under {
     middle: f64,
     reach: f64,
+    surface: f64,
     top: f64,
 }
 
-/// Where the roads `under` (centre lines and widths, metres) pass under the line of `nodes`. A road that runs alongside the deck (the bridge's own road going on along the ground) does
+/// Where the roads and tracks `under` pass under the line of `nodes`, a deck of `kind`. A road that runs alongside the deck (the bridge's own road going on along the ground) does
 /// not pass under, nor does one that ends at an end of the deck (a road joining the bridge there).
 /// One that ends anywhere else under the deck does: OpenStreetMap often cuts a road in two where a
 /// bridge crosses it. Under a ramp (`nodes` past `deck`, the arcs of the deck's own ends) a road
-/// that ends there joins the road the ramp lies over. `hw` is half the deck's width, edge beams included.
-fn roads_under(nodes: &[Node], hw: f64, deck: (f64, f64), under: &[(&[P], f64)], ground: &Ground) -> Vec<Under> {
+/// that ends there joins the road the ramp lies over. A track never joins a road's bridge, nor a road a
+/// railway's, so one that ends under the other's deck always passes under, and neither is in the
+/// way where they cross on the level (`Crossed::level`). `hw` is half the deck's width, edge beams included.
+fn roads_under(nodes: &[Node], kind: u8, hw: f64, deck: (f64, f64), under: &[Crossed], ground: &Ground) -> Vec<Under> {
     let mut found = Vec::new();
     let height = |p: P| f64::from(ground.height_at(p[0] as f32, p[1] as f32));
     // Only the roads that come near the nodes at all.
     let grow = hw + UNDER_MARGIN;
     let (lo, hi) = nodes.iter().fold(([f64::MAX; 2], [f64::MIN; 2]), |(lo, hi), n| ([lo[0].min(n.p[0] - grow), lo[1].min(n.p[1] - grow)], [hi[0].max(n.p[0] + grow), hi[1].max(n.p[1] + grow)]));
-    for &(line, across) in under {
+    for &Crossed { line, width: across, headroom, track, level } in under {
         let total: f64 = line.windows(2).map(|pair| (pair[1][0] - pair[0][0]).hypot(pair[1][1] - pair[0][1])).sum();
         let mut run = 0.0;
         for pair in line.windows(2) {
@@ -347,8 +398,10 @@ fn roads_under(nodes: &[Node], hw: f64, deck: (f64, f64), under: &[(&[P], f64)],
                 let at = run + u * length;
                 let middle = nodes[i].arc + t * (nodes[i + 1].arc - nodes[i].arc);
                 let near = hw + across / 2.0 + UNDER_MARGIN;
-                let joins = (at < near || total - at < near) && (middle < deck.0 + near || middle > deck.1 - near);
-                if cos > PARALLEL || joins {
+                let joins = track == (kind == TRACK) && (at < near || total - at < near) && (middle < deck.0 + near || middle > deck.1 - near);
+                let crossing = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+                let on_the_level = level.iter().any(|&p| (p[0] - crossing[0]).hypot(p[1] - crossing[1]) < SAME_CROSSING);
+                if cos > PARALLEL || joins || on_the_level {
                     continue;
                 }
                 let sin = (1.0 - cos * cos).sqrt();
@@ -356,11 +409,11 @@ fn roads_under(nodes: &[Node], hw: f64, deck: (f64, f64), under: &[(&[P], f64)],
                 let strip = hw / sin + UNDER_MARGIN;
                 let steps = (2.0 * strip).ceil() as usize;
                 let surface = (0..=steps).map(|k| height(point_along(line, at - strip + 2.0 * strip * k as f64 / steps as f64))).fold(f64::MIN, f64::max);
-                let top = surface + HEADROOM_ROAD + THICKNESS;
+                let top = surface + headroom + THICKNESS;
                 // The stretch of deck over the road's width, and a cross section past it either side,
                 // so the deck between two sections is not sloping down over the road.
                 let reach = (across / 2.0 + UNDER_MARGIN) / sin + hw * cos / sin + STEP;
-                found.push(Under { middle, reach, top });
+                found.push(Under { middle, reach, surface, top });
             }
             run += length;
         }
@@ -391,13 +444,13 @@ fn fill_sags(y: &mut [f64]) {
     }
 }
 
-/// Raises `y` so that no node is more than `MAX_GRADE` below a neighbour, in both directions.
-fn limit_grade(y: &mut [f64], arcs: &[f64]) {
+/// Raises `y` so that no node falls more steeply than `grade` from a neighbour, in both directions.
+fn limit_grade(y: &mut [f64], arcs: &[f64], grade: f64) {
     for i in 1..y.len() {
-        y[i] = y[i].max(y[i - 1] - MAX_GRADE * (arcs[i] - arcs[i - 1]));
+        y[i] = y[i].max(y[i - 1] - grade * (arcs[i] - arcs[i - 1]));
     }
     for i in (0..y.len().saturating_sub(1)).rev() {
-        y[i] = y[i].max(y[i + 1] - MAX_GRADE * (arcs[i + 1] - arcs[i]));
+        y[i] = y[i].max(y[i + 1] - grade * (arcs[i + 1] - arcs[i]));
     }
 }
 
@@ -410,9 +463,9 @@ const MEASURE_SHARE: f64 = 0.5;
 
 /// The deck's height at each node as measured: the median of the returns near it, and gaps between
 /// measured nodes filled linearly. Before the first and after the last measured node (the way
-/// carries on over an embankment the laser calls ground) the deck descends at `MAX_GRADE`, never
+/// carries on over an embankment the laser calls ground) the deck descends at `grade`, never
 /// below the ground. `None` when too few nodes are measured.
-fn measured_profile(nodes: &[Node], returns: &[[f64; 3]]) -> Option<Vec<f64>> {
+fn measured_profile(nodes: &[Node], returns: &[[f64; 3]], grade: f64) -> Option<Vec<f64>> {
     if returns.is_empty() {
         return None;
     }
@@ -440,7 +493,7 @@ fn measured_profile(nodes: &[Node], returns: &[[f64; 3]]) -> Option<Vec<f64>> {
         }
     }
     let (first, last) = (*known.first()?, *known.last()?);
-    let towards = |edge: usize, i: usize| (found[edge].unwrap_or(0.0) - MAX_GRADE * (nodes[i].arc - nodes[edge].arc).abs()).max(nodes[i].g + LIFT);
+    let towards = |edge: usize, i: usize| (found[edge].unwrap_or(0.0) - grade * (nodes[i].arc - nodes[edge].arc).abs()).max(nodes[i].g + LIFT);
     Some((0..nodes.len()).map(|i| if i < first { towards(first, i) } else if i > last { towards(last, i) } else { found[i].unwrap_or(nodes[i].g + LIFT) }).collect())
 }
 
@@ -491,7 +544,8 @@ pub(crate) fn flush_top(points: &[P], width: f64, ground: &Ground, p: P) -> Opti
 
 /// Lays the deck along `nodes`, `hw` wide each side of them: a slab, solid down to the ground where
 /// it is close to it, and with `railings` an edge beam and a railing where there is a drop beside it.
-fn lay_deck(mesh: &mut Mesh, nodes: &[Node], hw: f64, railings: bool, ground: &Ground) {
+/// Low down a road's deck (`leans`) follows the ground across; a railway's is level, as its bed is.
+fn lay_deck(mesh: &mut Mesh, nodes: &[Node], hw: f64, railings: bool, leans: bool, ground: &Ground) {
     let tangent = |i: usize| {
         let (a, b) = (nodes[i.saturating_sub(1)].p, nodes[(i + 1).min(nodes.len() - 1)].p);
         let (dx, dz) = (b[0] - a[0], b[1] - a[1]);
@@ -515,6 +569,9 @@ fn lay_deck(mesh: &mut Mesh, nodes: &[Node], hw: f64, railings: bool, ground: &G
         let top = |sign: f64| {
             if n.y - n.g >= FOLLOWS {
                 return n.y;
+            }
+            if !leans {
+                return if landed { n.g + LANDING } else { n.y };
             }
             let lean = (f64::from(ground.height_at((n.p[0] + sign * s[0]) as f32, (n.p[1] + sign * s[2]) as f32)) - n.g).clamp(-FOLLOWS, FOLLOWS);
             if landed { n.g + lean + LANDING } else { n.y + lean }
@@ -581,6 +638,29 @@ pub fn top_at(pieces: &[Piece], hw: f64, p: P) -> Option<f64> {
 /// path far out over the ground.
 pub(crate) const PATH_GRADE: f64 = 0.25;
 
+/// The height of the top of the deck among the triangles `roof` at `p` exactly, metres, the highest
+/// where they overlap, or `None` where `p` is on none of them. `top_at` is a piece's middle height,
+/// which is near enough to tell decks apart and too coarse to lay a track on.
+pub fn roadway_at(roof: &[[V3; 3]], p: P) -> Option<f64> {
+    // A hair of slack, so a point on the edge between two triangles is on one of them.
+    const EDGE: f64 = -1e-7;
+    let mut top: Option<f64> = None;
+    for &[a, b, c] in roof {
+        let denominator = (b[2] - c[2]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[2] - c[2]);
+        if denominator.abs() < 1e-12 {
+            continue;
+        }
+        let u = ((b[2] - c[2]) * (p[0] - c[0]) + (c[0] - b[0]) * (p[1] - c[2])) / denominator;
+        let v = ((c[2] - a[2]) * (p[0] - c[0]) + (a[0] - c[0]) * (p[1] - c[2])) / denominator;
+        let w = 1.0 - u - v;
+        if u >= EDGE && v >= EDGE && w >= EDGE {
+            let y = u * a[1] + v * b[1] + w * c[1];
+            top = Some(top.map_or(y, |known| known.max(y)));
+        }
+    }
+    top
+}
+
 /// The middle line of the deck and ramps among `pieces`, in order along the bridge.
 pub fn line_of(pieces: &[Piece]) -> Vec<P> {
     pieces.iter().filter(|piece| piece.deck).map(|piece| piece.at).collect()
@@ -609,7 +689,7 @@ pub fn slip(line: &[P], width: f64, from: f64, grade: f64, ground: &Ground, leve
     }
     let mut mesh = Mesh { pieces: Vec::new(), arc: 0.0 };
     if nodes.len() >= 2 {
-        lay_deck(&mut mesh, &nodes, width / 2.0 + EDGE_BEAM_WIDTH, true, ground);
+        lay_deck(&mut mesh, &nodes, width / 2.0 + EDGE_BEAM_WIDTH, true, true, ground);
     }
     mesh.pieces
 }
@@ -621,6 +701,7 @@ pub fn slip(line: &[P], width: f64, from: f64, grade: f64, ground: &Ground, leve
 /// `limit` is how far from the origin the deck may reach.
 #[allow(clippy::too_many_arguments)]
 pub fn build(points: &[P], width: f64, kind: u8, pylons: Pylons, measured: &[[f64; 3]], under: &[(&[P], f64)], ground: &Ground, levels: &[i32], limit: f64) -> Vec<Piece> {
+    let under = &under.iter().map(|&(line, width)| Crossed::road(line, width)).collect::<Vec<_>>();
     build_along(points, [&[], &[]], [None, None], &|_| None, width, kind, pylons, measured, under, ground, levels, limit).0
 }
 
@@ -653,8 +734,10 @@ pub type Built = (Vec<Piece>, Vec<P>, Vec<(Vec<P>, f64)>);
 /// height at a point `rides` gives, for as long as it lies on it: the two leave each other slowly,
 /// side by side, and must be one surface until they have parted.
 #[allow(clippy::too_many_arguments)]
-pub fn build_along(points: &[P], onward: [&[(Vec<P>, f64)]; 2], joined: [Option<f64>; 2], rides: &dyn Fn(P) -> Option<f64>, width: f64, kind: u8, pylons: Pylons, measured: &[[f64; 3]], under: &[(&[P], f64)], ground: &Ground, levels: &[i32], limit: f64) -> Built {
-    let samples = resample(points, STEP);
+pub fn build_along(points: &[P], onward: [&[(Vec<P>, f64)]; 2], joined: [Option<f64>; 2], rides: &dyn Fn(P) -> Option<f64>, width: f64, kind: u8, pylons: Pylons, measured: &[[f64; 3]], under: &[Crossed], ground: &Ground, levels: &[i32], limit: f64) -> Built {
+    let track_over_cutting = kind == TRACK && pylons == Pylons::Flush;
+    let grade = max_grade(kind);
+    let samples = resample(points, if track_over_cutting { STEP_CUTTING_RAIL } else { STEP });
     if samples.len() < 2 || pylons == Pylons::Carried {
         return (Vec::new(), Vec::new(), Vec::new());
     }
@@ -732,7 +815,7 @@ pub fn build_along(points: &[P], onward: [&[(Vec<P>, f64)]; 2], joined: [Option<
     let arcs: Vec<f64> = all.iter().map(|n| n.arc).collect();
     let (a0, a1) = (arcs[deck.start], arcs[deck.end - 1]);
     // A deck over a cutting stays flush with its road: what goes under it is dug down instead.
-    let crossings = if pylons == Pylons::Flush { Vec::new() } else { roads_under(&all, hw, (a0, a1), under, ground) };
+    let crossings = if pylons == Pylons::Flush { Vec::new() } else { roads_under(&all, kind, hw, (a0, a1), under, ground) };
     let end_height = |n: &Node| n.level.unwrap_or(n.g);
     let (h0, h1) = (joined[0].map_or(end_height(&all[deck.start]), |top| top - LIFT), joined[1].map_or(end_height(&all[deck.end - 1]), |top| top - LIFT));
     // The heights the deck is held to where it rides on the bridge it leaves: from a joined end in, as
@@ -753,8 +836,8 @@ pub fn build_along(points: &[P], onward: [&[(Vec<P>, f64)]; 2], joined: [Option<
             ridden[i] = Some(top);
         }
     }
-    let measured = measured_profile(&all[deck.clone()], measured);
-    // The deck's profile, its ramps descending from its ends at `MAX_GRADE`, held up over the roads
+    let measured = measured_profile(&all[deck.clone()], measured, grade);
+    // The deck's profile, its ramps descending from its ends at its `grade`, held up over the roads
     // under it that `lifting` picks out.
     let profile = |lifting: &[bool]| -> Vec<f64> {
         let over = need_over(&arcs, &crossings.iter().zip(lifting).filter(|(_, lift)| **lift).map(|(u, _)| u).collect::<Vec<_>>());
@@ -762,7 +845,7 @@ pub fn build_along(points: &[P], onward: [&[(Vec<P>, f64)]; 2], joined: [Option<
         // bridge's end does not lift its deck. A road under the ramp does.
         let required: Vec<f64> = (0..all.len()).map(|i| if deck.contains(&i) { all[i].level.map_or(all[i].g + LIFT, |level| level + lift).max(over[i]).max(ridden[i].unwrap_or(f64::MIN)) } else { over[i] }).collect();
         let mut y: Vec<f64> = (0..all.len()).map(|i| if deck.contains(&i) { (h0 + (h1 - h0) * (arcs[i] - a0) / arc + LIFT).max(required[i]) } else { required[i] }).collect();
-        limit_grade(&mut y, &arcs);
+        limit_grade(&mut y, &arcs, grade);
         // The deck, and a ramp held up over a road, from the first thing that holds it up to the last.
         let held: Vec<usize> = (0..all.len()).filter(|&i| deck.contains(&i) || over[i].is_finite()).collect();
         let span = held.first().copied().unwrap_or(deck.start)..=held.last().copied().unwrap_or(deck.end - 1);
@@ -783,7 +866,7 @@ pub fn build_along(points: &[P], onward: [&[(Vec<P>, f64)]; 2], joined: [Option<
         } else {
             fill_sags(&mut y[span]);
         }
-        limit_grade(&mut y, &arcs);
+        limit_grade(&mut y, &arcs, grade);
         for (i, y) in y.iter_mut().enumerate().filter(|(i, _)| !deck.contains(i)) {
             *y = y.max(all[i].g + LIFT);
         }
@@ -821,7 +904,7 @@ pub fn build_along(points: &[P], onward: [&[(Vec<P>, f64)]; 2], joined: [Option<
             let t = ((arc - arcs[k - 1]) / (arcs[k] - arcs[k - 1]).max(1e-9)).clamp(0.0, 1.0);
             y[k - 1] + (y[k] - y[k - 1]) * t
         };
-        let more: Vec<usize> = (0..crossings.len()).filter(|&k| !lifting[k] && (from..=to).contains(&crossings[k].middle) && at(crossings[k].middle) > crossings[k].top - HEADROOM_ROAD - THICKNESS + AT_GRADE).collect();
+        let more: Vec<usize> = (0..crossings.len()).filter(|&k| !lifting[k] && (from..=to).contains(&crossings[k].middle) && at(crossings[k].middle) > crossings[k].surface + AT_GRADE).collect();
         if more.is_empty() {
             break;
         }
@@ -873,12 +956,12 @@ pub fn build_along(points: &[P], onward: [&[(Vec<P>, f64)]; 2], joined: [Option<
     let side = |t: V3| [-t[2], 0.0, t[0]];
     let mut mesh = Mesh { pieces: Vec::new(), arc: 0.0 };
     let last = nodes.len() - 1;
-    lay_deck(&mut mesh, &nodes, hw, pylons != Pylons::Flush, ground);
+    lay_deck(&mut mesh, &nodes, hw, pylons != Pylons::Flush, kind != TRACK, ground);
     // The carriageways' ramps, with no railing of one standing on the other or across a narrow slot
     // between the two.
     for (k, (strand, half)) in strands.iter().enumerate() {
         let before = mesh.pieces.len();
-        lay_deck(&mut mesh, strand, *half, true, ground);
+        lay_deck(&mut mesh, strand, *half, true, kind != TRACK, ground);
         let others: Vec<(&[Node], f64)> = strands.iter().enumerate().filter(|&(other, _)| other != k).map(|(_, (nodes, half))| (nodes.as_slice(), *half)).collect();
         let on_another = |p: P| others.iter().any(|(nodes, half)| nodes.windows(2).any(|pair| crate::assemble::distance_to_segment(p, pair[0].p, pair[1].p) < *half + STRAND_GAP));
         let laid = mesh.pieces.split_off(before);
@@ -886,7 +969,9 @@ pub fn build_along(points: &[P], onward: [&[(Vec<P>, f64)]; 2], joined: [Option<
     }
     // Piers under the high stretches.
     let mut since = PIER_SPACING;
-    for i in 1..last {
+    // A railway's deck over a cutting spans it: a pier would stand in the passage.
+    let piered = if track_over_cutting { 1..1 } else { 1..last };
+    for i in piered {
         since += nodes[i].arc - nodes[i - 1].arc;
         let n = &nodes[i];
         if since >= PIER_SPACING && n.y - n.g > SOLID_BELOW + THICKNESS {
@@ -1035,7 +1120,7 @@ mod tests {
             returns.extend([[x, -1.0, 9.0], [x, 0.0, 9.1], [x, 1.0, 8.9]]);
         }
         let nodes: Vec<Node> = resample(&points, STEP).iter().map(|&p| Node { p, y: 0.0, g: 0.0, level: None, arc: p[0] }).collect();
-        let y = measured_profile(&nodes, &returns).unwrap();
+        let y = measured_profile(&nodes, &returns, MAX_GRADE).unwrap();
         let at = |x: f64| y[(x / STEP).round() as usize];
         assert!((at(60.0) - 9.0).abs() < 0.11);
         // 6 % down from the edge of what was measured, then the ground.
@@ -1193,7 +1278,7 @@ mod tests {
         assert_eq!(deck_paint(ROAD_PAVED_PATH), DECK_ASPHALT);
         assert_eq!(deck_paint(ROAD_PATH), DECK_PLANKS);
         assert_eq!(deck_paint(ROAD_TRACK), DECK_PLANKS);
-        assert_eq!(deck_paint(TRACK), BRIDGE_CONCRETE);
+        assert_eq!(deck_paint(TRACK), DECK_BALLAST);
     }
 
     /// The lowest underside of the deck over the strip `inside` picks out, metres.
@@ -1269,7 +1354,7 @@ mod tests {
         let under: &[P] = &[[0.0, -80.0], [0.0, 80.0]];
         let (dx, dz) = (30f64.to_radians().cos(), 30f64.to_radians().sin());
         let on = [(vec![[20.0, 0.0], [20.0 + 200.0 * dx, 200.0 * dz]], 8.0)];
-        let (pieces, ..) = build_along(&[[-20.0, 0.0], [20.0, 0.0]], [&[], &on], [None, None], &|_| None, 8.0, ROAD_MAJOR, Pylons::None, &[], &[(under, 10.0)], &ground, &[], 1000.0);
+        let (pieces, ..) = build_along(&[[-20.0, 0.0], [20.0, 0.0]], [&[], &on], [None, None], &|_| None, 8.0, ROAD_MAJOR, Pylons::None, &[], &[Crossed::road(under, 10.0)], &ground, &[], 1000.0);
         // Every bit of ramp east of the bridge lies on the road, within its width of the road's line.
         let off = pieces.iter().filter(|p| p.deck && p.at[0] > 21.0).map(|p| ((p.at[0] - 20.0) * dz - p.at[1] * dx).abs()).fold(0.0, f64::max);
         assert!(off < 0.5, "the ramp strays {off} m from the road");
@@ -1286,7 +1371,7 @@ mod tests {
         let ground = Ground::default();
         let under: &[P] = &[[0.0, -80.0], [0.0, 80.0]];
         let roads = [(vec![[20.0, -4.5], [60.0, -8.0], [200.0, -8.0]], 8.0), (vec![[20.0, 4.5], [60.0, 14.0], [160.0, 90.0]], 8.0)];
-        let (pieces, line, _) = build_along(&[[-20.0, 0.0], [20.0, 0.0]], [&[], &roads], [None, None], &|_| None, 17.0, ROAD_MAJOR, Pylons::None, &[], &[(under, 10.0)], &ground, &[], 1000.0);
+        let (pieces, line, _) = build_along(&[[-20.0, 0.0], [20.0, 0.0]], [&[], &roads], [None, None], &|_| None, 17.0, ROAD_MAJOR, Pylons::None, &[], &[Crossed::road(under, 10.0)], &ground, &[], 1000.0);
         let off = |p: P, road: &[P]| road.windows(2).map(|w| crate::assemble::distance_to_segment(p, w[0], w[1])).fold(f64::MAX, f64::min);
         // Past the deck every piece of roadway is on one carriageway or the other, and both are covered
         // as far as the ramps go.
@@ -1339,6 +1424,53 @@ mod tests {
             let over = v[1] - height(v[0], v[2]);
             assert!(over > 0.05 && over < FOLLOWS, "a low section is {over} m over the ground at z = {}", v[2]);
         }
+    }
+
+    /// A bridge of `kind` along x over `under` on flat ground at 0.
+    fn over(half: f64, kind: u8, under: &[Crossed]) -> Vec<Piece> {
+        build_along(&[[-half, 0.0], [half, 0.0]], [&[], &[]], [None, None], &|_| None, 8.0, kind, Pylons::None, &[], under, &Ground::default(), &[], 1000.0).0
+    }
+
+    #[test]
+    fn a_road_deck_rises_to_let_a_train_under_but_not_at_a_level_crossing() {
+        let line: &[P] = &[[0.0, -80.0], [0.0, 80.0]];
+        let track = Crossed { line, width: 3.6, headroom: HEADROOM_RAIL, track: true, level: &[] };
+        let under = underside_over(&over(20.0, ROAD_MINOR, &[track]), |v| v[0].abs() <= 1.8);
+        assert!(under >= HEADROOM_RAIL - 1e-6, "the deck's underside over the track is {under} m up");
+        let crossing: &[P] = &[[0.0, 0.0]];
+        let pieces = over(20.0, ROAD_MINOR, &[Crossed { level: crossing, ..track }]);
+        let top = pieces.iter().filter(|p| p.deck).flat_map(|p| p.tris.iter().flatten()).map(|v| v[1]).fold(f64::MIN, f64::max);
+        assert!(top < LIFT + 0.01, "a level crossing is lifted {top} m");
+    }
+
+    #[test]
+    fn a_road_that_ends_under_a_short_railway_bridge_passes_under_it_at_its_signed_height() {
+        // As Ostra Kyrkogatan's way ends under its bridge, 15 m long, whose ends are within the road's reach.
+        let line: &[P] = &[[0.0, -60.0], [0.0, 0.0]];
+        let road = Crossed { headroom: headroom_under(Some(3.6)), ..Crossed::road(line, 7.0) };
+        let pieces = over(7.5, TRACK, &[road]);
+        let under = underside_over(&pieces, |v| v[0].abs() <= 3.5);
+        assert!(under >= 3.6 - 1e-6, "the underside over the road is {under} m up");
+        assert!(under < HEADROOM_ROAD, "the signed height is all it needs, not {under} m");
+        // It comes down no more steeply than a train climbs.
+        let far = pieces.iter().flat_map(|p| p.tris.iter().flatten()).map(|v| v[0].abs()).fold(0.0, f64::max);
+        assert!(far > (3.6 + THICKNESS - 0.5) / MAX_GRADE_RAIL, "its ramps reach only {far} m out");
+        assert_eq!([headroom_under(None), headroom_under(Some(2.4)), headroom_under(Some(5.5))], [HEADROOM_ROAD, HEADROOM_LOWEST, HEADROOM_ROAD]);
+    }
+
+    #[test]
+    fn a_railway_deck_over_a_narrow_passage_has_no_pier_in_it_and_keeps_its_headroom() {
+        // A passage 3.5 m wide and 3.7 m deep, its walls 1:1, across the track.
+        let side = 81u32;
+        let heights = (0..side * side).map(|at| ((((f64::from(at % side) - 40.0).abs() - 1.75).max(0.0) - 3.7).min(0.0) * 100.0) as i32).collect();
+        let ground = Ground { origin: -4_000, cell: 100, side, heights };
+        let pieces = build(&[[-12.0, 0.0], [12.0, 0.0]], 4.0, TRACK, Pylons::Flush, &[], &[], &ground, &[], 1000.0);
+        assert!(pieces.iter().all(|p| !p.pier), "a pier in the passage");
+        let under = underside_over(&pieces, |v| v[0].abs() <= 1.0);
+        assert!(under + 3.7 >= 3.0 - 0.02, "{} m clear in the passage", under + 3.7);
+        let roof: Vec<[V3; 3]> = pieces.iter().filter(|p| p.deck).flat_map(|p| p.tris.iter().copied()).filter(|&t| faces_up(t)).collect();
+        assert!(roadway_at(&roof, [0.3, 0.2]).is_some_and(|top| top.abs() < 0.2), "the track over it is level");
+        assert!(roadway_at(&roof, [0.0, 9.0]).is_none(), "beside the deck");
     }
 
     #[test]

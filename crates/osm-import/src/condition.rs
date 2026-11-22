@@ -12,8 +12,8 @@
 //!   carriageway is held level across, with a slight camber, and the ground beside it may differ from
 //!   it only as much as a bank of `BANK` allows, so cuts and embankments come out as clean banks.
 //!   A road over a stream fills the stream's channel back in, as over a culvert.
-//! - **Underpasses.** A path or road in a short tunnel under a road is dug down to leave headroom
-//!   under the road's deck, and the ways leading in ramp down to it.
+//! - **Underpasses.** A path or road in a short tunnel under a road or a railway is dug down to
+//!   leave headroom under the deck over it, and the ways leading in ramp down to it.
 //!
 //! Every shaper moves the ground towards a level, less the further it is from the feature, and beyond
 //! the feature's reach the model is left as it is. The result
@@ -95,6 +95,9 @@ pub struct Way {
 /// The longest stretch of tunnel taken as an underpass and dug out, metres: enough to pass under a
 /// motorway's two carriageways. A longer tunnel goes through a hill and is left alone.
 const PASSAGE_LONGEST: f64 = 60.0;
+/// The same for a tunnel under railway tracks, metres: one under a station's yard runs on under its
+/// platforms and sidings.
+const PASSAGE_LONGEST_RAIL: f64 = 100.0;
 /// Clear height over an underpass's floor, under the deck of the road over it, metres: a footway's or
 /// cycleway's. A road's is a bridge's over a road (`bridge::HEADROOM_ROAD`).
 const HEADROOM_PATH: f64 = 3.0;
@@ -113,10 +116,17 @@ const PASSAGE_MARGIN: f64 = 0.5;
 /// The most an underpass is dug below the model, metres.
 const PASSAGE_MAX_CUT: f64 = 5.0;
 
-/// A footway, cycleway or road taken under a road in a short tunnel (an underpass, `tunnel=yes` or a
-/// negative `layer`). The height model usually has it far too shallow, or not at all: the road's
-/// embankment was the laser's ground. So its floor is dug down to leave headroom under the road's
-/// deck (`assemble::cuttings` builds it over the cutting), and the ways leading in come down to it.
+/// How much wider an underpass under tracks is dug, each side, metres: the ground is sampled every
+/// 2 m and averaged round each sample, which narrows so short a trench to less than the way in it.
+const PASSAGE_WIDER_RAIL: f64 = 1.25;
+/// How much deeper, metres: the track may slope a little between where its level is read and the
+/// middle of the deck, and the ways leading in start to climb under the deck's edges.
+const PASSAGE_SPARE_RAIL: f64 = 0.35;
+/// A footway, cycleway or road taken under a road or a railway in a short tunnel (an underpass,
+/// `tunnel=yes` or a negative `layer`). The height model usually has it far too shallow, or not at
+/// all: the embankment over it was the laser's ground. So its floor is dug down to leave headroom
+/// under the deck (`assemble::cuttings` builds it over the cutting), and the ways leading in come
+/// down to it.
 #[derive(Clone, Debug)]
 pub struct Passage {
     /// The way through the tunnel, from one portal to the other.
@@ -128,8 +138,11 @@ pub struct Passage {
     pub width: f64,
     /// Clear height wanted over its floor, metres.
     pub headroom: f64,
-    /// The centre lines of the roads over it.
+    /// The centre lines of the roads and tracks over it.
     pub over: Vec<Vec<P>>,
+    /// Whether tracks are among them. Its levels are then read before any underpass is dug: a yard's
+    /// tracks cross two side by side, and the second would be read off the first's trench.
+    pub railway: bool,
 }
 
 /// What the ground is shaped to, in local metres.
@@ -147,8 +160,8 @@ pub struct Features {
 
 impl Features {
     /// The buildings, roads and rails of `osm` (projected by `frame`) and `streams`, already local.
-    /// Bridges and tunnels are not on the ground and are left out, except short tunnels under a road,
-    /// which are dug out as underpasses.
+    /// Bridges and tunnels are not on the ground and are left out, except short tunnels under a road
+    /// or a railway, which are dug out as underpasses.
     pub fn from_osm(osm: &Osm, frame: Frame, streams: &[Vec<P>]) -> Self {
         let line = |way: &crate::overpass::Way| -> Vec<P> { way.geometry.iter().map(|g| frame.project(g.lat, g.lon)).collect() };
         let mut features = Features { streams: streams.to_vec(), ..Default::default() };
@@ -156,6 +169,7 @@ impl Features {
         let mut tunnels: Vec<(Vec<P>, f64, u8)> = Vec::new();
         let mut open: Vec<Vec<P>> = Vec::new();
         let mut roads: Vec<Vec<P>> = Vec::new();
+        let mut tracks: Vec<Vec<P>> = Vec::new();
         for way in &osm.ways {
             let tag = |key: &str| way.tags.get(key).map(String::as_str);
             if tag("building").is_some_and(|value| value != "no" && value != "roof") {
@@ -187,12 +201,16 @@ impl Features {
                 let grade = if matches!(kind, shared::world::ROAD_PATH | shared::world::ROAD_PAVED_PATH) { GRADE_PATH } else { GRADE_ROAD };
                 features.ways.push(Way { points: line(way), width, grade });
             }
-            if let Some((gauge, _)) = crate::assemble::rail_style(way) {
+            if let Some((gauge, kind)) = crate::assemble::rail_style(way) {
                 features.ways.push(Way { points: line(way), width: crate::assemble::ballast(gauge), grade: GRADE_RAIL });
+                // A tram's track is in its street, which is over the passage itself.
+                if kind == shared::world::RAIL_TRAIN {
+                    tracks.push(line(way));
+                }
             }
         }
         features.ways.sort_by(|a, b| a.width.total_cmp(&b.width));
-        features.passages = passages(tunnels, &open, &roads);
+        features.passages = passages(tunnels, &open, &roads, &tracks);
         features
     }
 }
@@ -211,9 +229,10 @@ fn crosses(a: P, b: P, c: P, d: P) -> bool {
 }
 
 /// The underpasses among the ways in tunnels (`(line, width, ROAD_*)`): the ones that join end to end
-/// into a stretch no longer than `PASSAGE_LONGEST` that a road on the ground or a bridge crosses over.
-/// `open` are the ways on the ground, from which the ways leading in are taken.
-fn passages(mut tunnels: Vec<(Vec<P>, f64, u8)>, open: &[Vec<P>], roads: &[Vec<P>]) -> Vec<Passage> {
+/// into a stretch no longer than `PASSAGE_LONGEST` that a road on the ground or a bridge crosses
+/// over, or no longer than `PASSAGE_LONGEST_RAIL` that one of the `tracks` on the ground does. `open`
+/// are the ways on the ground, from which the ways leading in are taken.
+fn passages(mut tunnels: Vec<(Vec<P>, f64, u8)>, open: &[Vec<P>], roads: &[Vec<P>], tracks: &[Vec<P>]) -> Vec<Passage> {
     // OpenStreetMap often cuts a tunnel where its layer or surface changes: join the pieces.
     let mut joined: Vec<(Vec<P>, f64, u8)> = Vec::new();
     while let Some((mut points, width, kind)) = tunnels.pop() {
@@ -236,11 +255,16 @@ fn passages(mut tunnels: Vec<(Vec<P>, f64, u8)>, open: &[Vec<P>], roads: &[Vec<P
     }
     let mut found = Vec::new();
     for (under, width, kind) in joined {
-        if arcs(&under).last().copied().unwrap_or(0.0) > PASSAGE_LONGEST {
+        let length = arcs(&under).last().copied().unwrap_or(0.0);
+        if length > PASSAGE_LONGEST_RAIL {
             continue;
         }
-        let over: Vec<Vec<P>> = roads.iter().filter(|road| road.windows(2).any(|r| under.windows(2).any(|u| crosses(u[0], u[1], r[0], r[1])))).cloned().collect();
-        if over.is_empty() {
+        let crossing = |lines: &[Vec<P>]| -> Vec<Vec<P>> { lines.iter().filter(|line| line.windows(2).any(|r| under.windows(2).any(|u| crosses(u[0], u[1], r[0], r[1])))).cloned().collect() };
+        let (mut over, railway) = (crossing(roads), crossing(tracks));
+        let railway_over = !railway.is_empty();
+        let longest = if railway_over { PASSAGE_LONGEST_RAIL } else { PASSAGE_LONGEST };
+        over.extend(railway);
+        if over.is_empty() || length > longest {
             continue;
         }
         let mut approaches = Vec::new();
@@ -256,8 +280,9 @@ fn passages(mut tunnels: Vec<(Vec<P>, f64, u8)>, open: &[Vec<P>], roads: &[Vec<P
                 approaches.push((at_end, clip(&outward, PASSAGE_APPROACH)));
             }
         }
+        let (wider, spare) = if railway_over { (PASSAGE_WIDER_RAIL, PASSAGE_SPARE_RAIL) } else { (0.0, 0.0) };
         let headroom = if matches!(kind, shared::world::ROAD_MAJOR | shared::world::ROAD_MINOR) { HEADROOM_ROAD } else { HEADROOM_PATH };
-        found.push(Passage { under, approaches, width, headroom, over });
+        found.push(Passage { under, approaches, width: width + 2.0 * wider, headroom: headroom + spare, over, railway: railway_over });
     }
     found
 }
@@ -278,6 +303,13 @@ fn clip(points: &[P], length: f64) -> Vec<P> {
         out.push(b);
     }
     out
+}
+
+/// What an underpass is dug to: the highest its floor may be for its headroom under what is over it,
+/// and the ground at its two portals, metres.
+struct Levels {
+    ceiling: f64,
+    portals: [f64; 2],
 }
 
 /// One block of the raster: the model and the shaped ground, NaN where the model has no data.
@@ -426,8 +458,12 @@ impl Shaping {
         for way in &features.ways {
             shaping.grade(way, &model);
         }
-        for passage in &features.passages {
-            shaping.passage(passage, &model);
+        let ahead: Vec<Option<Levels>> = features.passages.iter().map(|passage| if passage.railway { shaping.levels(passage, &model) } else { None }).collect();
+        for (passage, ahead) in features.passages.iter().zip(ahead) {
+            let levels = if passage.railway { ahead } else { shaping.levels(passage, &model) };
+            if let Some(levels) = levels {
+                shaping.passage(passage, levels, &model);
+            }
         }
         shaping.blocks.retain(|_, block| block.model.iter().zip(&block.shaped).any(|(m, s)| m != s && m.is_finite()));
         shaping
@@ -600,14 +636,15 @@ impl Shaping {
         }
     }
 
-    /// Digs out an underpass: its floor runs straight from portal to portal, but never higher than its
-    /// headroom and the deck's thickness under the lowest road over it, and the ways leading in come
-    /// down to it at `PASSAGE_RAMP`. Banks of `PASSAGE_BANK` rise either side. It only ever lowers the
-    /// ground, so where the model has the underpass deep enough already, nothing changes.
-    fn passage(&mut self, passage: &Passage, model: &impl Fn(f64, f64) -> Option<f64>) {
+    /// The levels an underpass is dug to (`Levels`), from the ground as shaped so far, or `None`
+    /// where the model has no ground to read one from.
+    fn levels(&mut self, passage: &Passage, model: &impl Fn(f64, f64) -> Option<f64>) -> Option<Levels> {
         // The roadway over it: where each road crosses, the lower of the highest ground along the road
         // either side, so a dip the model has under the road is bridged.
         let mut ceiling = f64::INFINITY;
+        // A crossover that ends over a railway's passage has only the trench to read at that end: the
+        // level is the tracks' that run on past it both ways, if any does.
+        let mut short = f64::INFINITY;
         for road in &passage.over {
             let (samples, s) = resample(road, CELL);
             let heights: Vec<f64> = samples.iter().map(|&p| self.height(cell_at(p), model).unwrap_or(f64::NAN)).collect();
@@ -621,15 +658,27 @@ impl Shaping {
             let highest = |from: f64, to: f64| s.iter().zip(&heights).filter(|(at, h)| (from..=to).contains(*at) && h.is_finite()).map(|(_, &h)| h).fold(f64::NAN, f64::max);
             let level = highest(crossing - PASSAGE_ROAD_REACH, crossing).min(highest(crossing, crossing + PASSAGE_ROAD_REACH));
             if level.is_finite() {
-                ceiling = ceiling.min(level - crate::bridge::THICKNESS - passage.headroom);
+                let ends_over_it = crossing < PASSAGE_ROAD_REACH || s[s.len() - 1] - crossing < PASSAGE_ROAD_REACH;
+                let lowest = if passage.railway && ends_over_it { &mut short } else { &mut ceiling };
+                *lowest = lowest.min(level - crate::bridge::THICKNESS - passage.headroom);
             }
         }
         if !ceiling.is_finite() {
-            return;
+            ceiling = short;
         }
-        let (samples, s) = resample(&passage.under, CELL);
-        let length = *s.last().unwrap();
-        let (Some(first), Some(last)) = (self.height(cell_at(samples[0]), model), self.height(cell_at(samples[samples.len() - 1]), model)) else { return };
+        if !ceiling.is_finite() {
+            return None;
+        }
+        let (first, last) = (passage.under[0], passage.under[passage.under.len() - 1]);
+        Some(Levels { ceiling, portals: [self.height(cell_at(first), model)?, self.height(cell_at(last), model)?] })
+    }
+
+    /// Digs out an underpass: its floor runs straight from portal to portal, but never higher than its
+    /// headroom and the deck's thickness under the lowest road or track over it, and the ways leading in come
+    /// down to it at `PASSAGE_RAMP`. Banks of `PASSAGE_BANK` rise either side. It only ever lowers the
+    /// ground, so where the model has the underpass deep enough already, nothing changes.
+    fn passage(&mut self, passage: &Passage, Levels { ceiling, portals: [first, last] }: Levels, model: &impl Fn(f64, f64) -> Option<f64>) {
+        let length = *arcs(&passage.under).last().unwrap();
         let floor = |along: f64| (first + (last - first) * along / length.max(1e-9)).min(ceiling);
         let half = passage.width / 2.0 + PASSAGE_MARGIN;
         let reach = half + PASSAGE_MAX_CUT / PASSAGE_BANK;
@@ -790,7 +839,7 @@ mod tests {
         let road = Way { points: vec![[-60.0, 0.0], [60.0, 0.0]], width: 10.0, grade: GRADE_ROAD };
         let tunnel = (vec![[0.0, -6.0], [0.0, 0.0], [0.0, 6.0]], 2.5, shared::world::ROAD_PAVED_PATH);
         let open = vec![vec![[0.0, -6.0], [0.0, -80.0]], vec![[0.0, 80.0], [0.0, 6.0]], road.points.clone()];
-        let found = passages(vec![tunnel], &open, std::slice::from_ref(&road.points));
+        let found = passages(vec![tunnel], &open, std::slice::from_ref(&road.points), &[]);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].approaches.len(), 2, "a way leads in at each portal");
         let shaping = Shaping::new(&Features { ways: vec![road], passages: found, ..Default::default() }, model);
@@ -817,13 +866,45 @@ mod tests {
         let road = vec![[-30.0, 0.0], [30.0, 0.0]];
         // In two pieces, one drawn against the other.
         let pieces = vec![(vec![[0.0, -6.0], [0.0, 1.0]], 2.5, shared::world::ROAD_PATH), (vec![[0.0, 8.0], [0.0, 1.0]], 2.5, shared::world::ROAD_PATH)];
-        let found = passages(pieces, &[], std::slice::from_ref(&road));
+        let found = passages(pieces, &[], std::slice::from_ref(&road), &[]);
         assert_eq!(found.len(), 1);
         assert!((arcs(&found[0].under).last().unwrap() - 14.0).abs() < 1e-9, "{:?}", found[0].under);
         // Through a hill, under the road and on.
-        assert!(passages(vec![(vec![[0.0, -40.0], [0.0, 40.0]], 7.0, shared::world::ROAD_MINOR)], &[], std::slice::from_ref(&road)).is_empty());
+        assert!(passages(vec![(vec![[0.0, -40.0], [0.0, 40.0]], 7.0, shared::world::ROAD_MINOR)], &[], std::slice::from_ref(&road), &[]).is_empty());
         // A short tunnel beside the road, under nothing.
-        assert!(passages(vec![(vec![[0.0, 5.0], [0.0, 15.0]], 2.5, shared::world::ROAD_PATH)], &[], std::slice::from_ref(&road)).is_empty());
+        assert!(passages(vec![(vec![[0.0, 5.0], [0.0, 15.0]], 2.5, shared::world::ROAD_PATH)], &[], std::slice::from_ref(&road), &[]).is_empty());
+    }
+
+    #[test]
+    fn a_path_under_a_railway_is_dug_out_and_one_76_m_long_under_a_yard_too_but_not_under_a_road() {
+        let model = |_: f64, _: f64| Some(10.0);
+        let yard: Vec<Vec<P>> = [-9.0, -4.5, 0.0, 4.5, 9.0].iter().map(|&z| vec![[-80.0, z], [80.0, z]]).collect();
+        for half in [6.0, 38.0] {
+            let tunnel = vec![(vec![[0.0, -half], [0.0, half]], 3.0, shared::world::ROAD_PAVED_PATH)];
+            let found = passages(tunnel, &[], &[], &yard);
+            assert_eq!(found.len(), 1, "a tunnel {} m long under the tracks", half * 2.0);
+            let ways = yard.iter().map(|track| Way { points: track.clone(), width: 3.6, grade: GRADE_RAIL }).collect();
+            let shaping = Shaping::new(&Features { ways, passages: found, ..Default::default() }, model);
+            let dug = 10.0 - at(&shaping, model, 0.0, 0.0);
+            assert!(dug >= crate::bridge::THICKNESS + HEADROOM_PATH, "the floor is {dug} m under the tracks");
+        }
+        // A crossover that ends in the trench the model already has does not set the level.
+        let mut switched = yard.clone();
+        switched.push(vec![[-2.0, 2.0], [30.0, 4.0]]);
+        let trench = |x: f64, _: f64| Some(if x.abs() < 3.0 { 7.0 } else { 10.0 });
+        let found = passages(vec![(vec![[0.0, -38.0], [0.0, 38.0]], 3.0, shared::world::ROAD_PAVED_PATH)], &[], &[], &switched);
+        let shaping = Shaping::new(&Features { passages: found, ..Default::default() }, trench);
+        let floor = at(&shaping, trench, 0.0, 0.0);
+        assert!((floor - (10.0 - crate::bridge::THICKNESS - HEADROOM_PATH - PASSAGE_SPARE_RAIL)).abs() < 1e-3, "the crossover set the floor at {floor} m");
+        // Two side by side are dug as deep as one, the second not read off the first's trench.
+        let pair = [0.0, 8.0].map(|x| (vec![[x, -38.0], [x, 38.0]], 3.0, shared::world::ROAD_PAVED_PATH)).to_vec();
+        let shaping = Shaping::new(&Features { passages: passages(pair, &[], &[], &yard), ..Default::default() }, model);
+        for x in [0.0, 8.0] {
+            let dug = 10.0 - at(&shaping, model, x, 0.0);
+            assert!((dug - crate::bridge::THICKNESS - HEADROOM_PATH - PASSAGE_SPARE_RAIL).abs() < 1e-3, "one of the pair is dug {dug} m");
+        }
+        let tunnel = vec![(vec![[0.0, -38.0], [0.0, 38.0]], 3.0, shared::world::ROAD_PAVED_PATH)];
+        assert!(passages(tunnel, &[], &yard, &[]).is_empty(), "as long a tunnel under roads alone");
     }
 
     #[test]

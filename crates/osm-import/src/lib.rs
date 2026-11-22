@@ -36,6 +36,7 @@ pub mod osm_water;
 pub mod overpass;
 pub mod progress;
 pub mod props;
+pub mod railway;
 pub mod region;
 pub mod riverflow;
 pub mod roof;

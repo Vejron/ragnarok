@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::terrain::Ground;
 
-pub const WORLD_VERSION: u8 = 38;
+pub const WORLD_VERSION: u8 = 39;
 
 /// `Manifest::theme`: the world as it always was.
 pub const THEME_PLAIN: u8 = 0;
@@ -334,7 +334,8 @@ pub struct Tile {
     /// simulates it. Empty when the tile has no relief finer than its ground or none was baked.
     #[serde(with = "samples8")]
     pub detail: Vec<i8>,
-    /// Railway tracks, clipped to the tile. Drawn on the ground; nothing simulates them.
+    /// Railway tracks. On the ground they are clipped to the tile; on a deck they are in the tile of
+    /// the bridge's section under them (`Rail::deck`). Only drawn; nothing simulates them.
     pub rails: Vec<Rail>,
     /// Groomed ski tracks, clipped to the tile. Skis run faster on them (`ski::SkiMap`).
     pub ski: Vec<SkiTrail>,
@@ -1034,11 +1035,11 @@ pub const BUILDING_FIRE_STATION: u8 = 11;
 /// (`osm-import`'s `bridge::sections`). Drawn and collided from its own concrete, carved by blasts as
 /// a house is but much harder to hurt (`combat`), standing on the ground under it rather than on its
 /// lowest cells; no windows, no inside, no colours of a house. Its roof is the top of the deck, the
-/// roadway, painted as the road it carries (`DECK_ASPHALT`, `DECK_PLANKS`); everything else is
+/// roadway, painted as what it carries (`DECK_ASPHALT`, `DECK_PLANKS`, `DECK_BALLAST`); everything else is
 /// its walls, in `BRIDGE_CONCRETE`.
 pub const BUILDING_BRIDGE: u8 = 12;
 /// The colour of a bridge's concrete, `0xRRGGBB`: its sections' walls (sides, piers, edge beams and
-/// railings), and the deck of a railway's bridge.
+/// railings).
 pub const BRIDGE_CONCRETE: u32 = 0xb8b6ae;
 /// The colour of the top of a deck that carries a paved road or path, `0xRRGGBB`: the road's
 /// asphalt, drawn with its pattern.
@@ -1046,6 +1047,9 @@ pub const DECK_ASPHALT: u32 = 0x6e6e70;
 /// The colour of the top of a deck that carries a footpath or a track, `0xRRGGBB`: weathered timber
 /// planks laid across it.
 pub const DECK_PLANKS: u32 = 0x8a7356;
+/// The colour of the top of a deck that carries a railway, `0xRRGGBB`: the track's bed of crushed
+/// stone. The sleepers and rails on it are the tile's `rails` (`Rail::deck`).
+pub const DECK_BALLAST: u32 = 0x8a8478;
 /// How many kinds of building there are.
 pub const BUILDING_KINDS: usize = 13;
 
@@ -1093,6 +1097,18 @@ pub struct Rail {
     /// `RAIL_*`.
     pub kind: u8,
     pub points: Vec<[i32; 2]>,
+    /// The deck that carries it, or `None` where it lies on the ground.
+    pub deck: Option<RailDeck>,
+}
+
+/// What a stretch of track on a bridge lies on.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct RailDeck {
+    /// The bridge's section (`BUILDING_BRIDGE`) it lies on, by its place in the same tile's
+    /// `buildings`: the track is gone where that section's cells are.
+    pub building: u32,
+    /// Height of the deck's top under each of the track's points, centimetres.
+    pub tops: Vec<i32>,
 }
 
 /// A groomed ski track's centre line.
@@ -1654,7 +1670,7 @@ mod tests {
             streams: vec![Stream { width: 200, points: vec![[0, 0], [300, 100]] }],
             bridges: vec![Bridge { first: 0, steel: 4 }],
             detail: vec![0, -3, 127, -127],
-            rails: vec![Rail { gauge: 144, kind: RAIL_TRAIN, points: vec![[0, 0], [900, 50]] }],
+            rails: vec![Rail { gauge: 144, kind: RAIL_TRAIN, points: vec![[0, 0], [900, 50]], deck: None }, Rail { gauge: 144, kind: RAIL_TRAIN, points: vec![[900, 50], [1800, 50]], deck: Some(RailDeck { building: 1, tops: vec![620, 640] }) }],
             ski: vec![SkiTrail { width: 400, points: vec![[0, 0], [900, 50]] }],
             lines: vec![Line { kind: LINE_POWER, points: vec![[0, 0], [5000, 0]], base: vec![120, 150], end: false }, Line { kind: LINE_WALL, points: vec![[0, 0], [300, 0]], base: vec![120, 125], end: true }],
             stones: vec![0, 40, STONES_ANGULAR | 90, 0],

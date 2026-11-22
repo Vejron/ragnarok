@@ -251,8 +251,8 @@ export class Layer {
 
   constructor(
     private readonly lift: number,
-    /** The tile's shading, shared by its layers (`GroundShade`). */
-    private readonly shade: GroundShade,
+    /** What the layer lies on: the tile's ground (`GroundShade`, shared by its layers), or a bridge's deck. */
+    private readonly shade: Pick<GroundShade, 'height' | 'normal' | 'mean'>,
     /** How the layer is drawn. */
     private readonly look: Look = PLAIN,
     /** The tile's `[x0, z0, x1, z1]`, which its cover map spans, for a worn or asphalt layer's `uvs`. */

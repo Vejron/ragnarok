@@ -73,8 +73,8 @@ describe('surfaces', () => {
 
   it('paints ballast as gravel under the roads, and not under a tram', () => {
     const rails = [
-      { kind: RAIL_TRAIN, gauge: 1.435, points: [[20, 0], [20, 100]] as [number, number][] },
-      { kind: RAIL_TRAM, gauge: 1.435, points: [[60, 0], [60, 40]] as [number, number][] },
+      { kind: RAIL_TRAIN, gauge: 1.435, points: [[20, 0], [20, 100]] as [number, number][], deck: null },
+      { kind: RAIL_TRAM, gauge: 1.435, points: [[60, 0], [60, 40]] as [number, number][], deck: null },
     ]
     const surface = rasterSurface({ cover: [], roads: [{ kind: ROAD_MINOR, width: 6, carried: false, lanes: 0, forward: 0, marks: 0, along: 0, points: [[0, 50], [100, 50]] }], water: new Float32Array(), rails }, 0, 0, 100)
     const at = (x: number, z: number) => surface.cells[Math.floor(z / 2) * surface.side + Math.floor(x / 2)]

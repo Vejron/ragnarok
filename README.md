@@ -20,7 +20,7 @@ The docs are in [docs/](docs/).
 
 - [WORLD.md](docs/WORLD.md): generating the world: data sources, credentials, download cache, squared footprints and the catalogue of roof shapes (gable, hip, gambrel, cross-gabled wings, dormers)
 - [FRANCE.md](docs/FRANCE.md): worlds in France from IGN LiDAR HD
-- [TERRAIN-SHAPING.md](docs/TERRAIN-SHAPING.md): the height model shaped to OpenStreetMap: houses on level pads, streams cut into the ground and never running uphill, roads level across with clean cuts and embankments
+- [TERRAIN-SHAPING.md](docs/TERRAIN-SHAPING.md): the height model shaped to OpenStreetMap: houses on level pads, streams cut into the ground and never running uphill, roads level across with clean cuts and embankments, and underpasses dug out under roads and railways
 - [EDITOR.md](docs/EDITOR.md): the map editor
 - [SCENARIOS.md](docs/SCENARIOS.md): a guide to writing a world's `scenario.json` by hand, since there is no scenario editor
 
@@ -69,7 +69,7 @@ The docs are in [docs/](docs/).
 - [CHURCHES.md](docs/CHURCHES.md): churches get a roof fit, windows, a door and colours of their own: one steep gable down the nave with the sacristy roofed lower, tall round-headed windows, and one open hall inside
 - [BUILDING-STYLES.md](docs/BUILDING-STYLES.md): barns, outbuildings, halls, shops, blocks of flats, public buildings, fire stations, cabins, old wooden houses and post-war villas told from plain houses by their OpenStreetMap tags, the shops and police stations mapped inside them, the land use they stand in and their yard, each with its own doors, windows, inside and colours, and its front towards its road; the gates of barns, halls and garages are opened and shut with E and driven through
 - [ROADS.md](docs/ROADS.md): roads as wide as their tagged lanes, white Swedish paint (dashed edge lines, centre and lane lines, solid where overtaking is barred) drawn by the asphalt's own shader, a steel guard rail down the middle of every fast divided road such as a 2+1 road, inferred from its two one-way carriageways, and asphalt that no longer shows its shoulder or the ground through it
-- [BRIDGES.md](docs/BRIDGES.md): bridges carved by blasts as houses are, in sections that each stand on a pier, so a blown pier or a deck cut across drops a span into the river; small arms do nothing to them and the 40 mm barely marks them
+- [BRIDGES.md](docs/BRIDGES.md): bridges carved by blasts as houses are, in sections that each stand on a pier, so a blown pier or a deck cut across drops a span into the river; small arms do nothing to them and the 40 mm barely marks them; railways have them too, over roads and underpasses, with track on the deck that goes where the deck does
 - [BARRIERS.md](docs/BARRIERS.md): fences and walls from OpenStreetMap and orienteering maps, solid piece by piece and breakable: a car drives through a fence and breaks it, a wall stops it unless it is going fast, and tanks, blasts and Titans go through both
 - [GRAVEYARDS.md](docs/GRAVEYARDS.md): tombstones of three kinds in every cemetery and churchyard from OpenStreetMap, stood in rows along the yard's paths or in rows of their own where it has none, solid and unbreakable like rocks
 - [LIFTS.md](docs/LIFTS.md): ski lifts from OpenStreetMap, every one built as a chair lift whose chairs run on the server's clock, boarded with E at a station and ridden round until you jump off

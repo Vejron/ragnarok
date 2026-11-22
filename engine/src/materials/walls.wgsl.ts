@@ -6,7 +6,7 @@
  */
 export const WALLS_WGSL = /* wgsl */ `
 // The kinds, as custom x: plain, upright boards (falu red houses), lap boards, brick, render, roof tiles, sheet metal, felt, cut stone, wooden shingles,
-// and a bridge's roadway (its roof): asphalt or timber planks.
+// and a bridge's deck (its roof): asphalt, timber planks or a railway's ballast.
 const WALL_UPRIGHT = 1.0;
 const WALL_LAP = 2.0;
 const WALL_BRICK = 3.0;
@@ -21,6 +21,8 @@ const ROOF_SHINGLES = 9.0;
 // A bridge's deck: the road's asphalt (\`asphaltLook\`), or planks laid across a footbridge.
 const ROOF_ASPHALT = 10.0;
 const ROOF_PLANKS = 11.0;
+// A railway bridge's deck: the bed of crushed stone its track lies on.
+const ROOF_BALLAST = 12.0;
 // Mortar, a share of the brick's colour pulled towards this grey.
 const WALL_MORTAR = vec3f(0.5, 0.48, 0.44);
 
@@ -89,6 +91,12 @@ fn wallsLook(rgb: vec3f, world: vec3f, n: vec3f, kind: f32, pixel: f32) -> vec3f
   if (kind > ROOF_ASPHALT - 0.5 && kind < ROOF_ASPHALT + 0.5) {
     // No line along the deck is known here: its patches lie square to the world, and it has no paint.
     return asphaltLook(rgb, world.xz, 0.0, world.x, world.z, 30.0, pixel, vec3f(0.0), false).rgb;
+  }
+  if (kind > ROOF_BALLAST - 0.5) {
+    // Faint stones 7 cm across, evening out where they are under a pixel: the track's bed on the
+    // ground either side is nearly plain, and the deck's must not show as a patch in it.
+    let stone = floor(world.xz / 0.07);
+    return rgb * wallTone(stone.x, stone.y, 0.06, 0.07, pixel);
   }
   if (kind > ROOF_PLANKS - 0.5) {
     // Planks 20 cm wide running along z, a dark gap between them; each 2.4 m long, the joints staggered,

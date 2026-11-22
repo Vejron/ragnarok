@@ -39,9 +39,9 @@ over it in this order:
    (`assemble::culverted`). Bridges, tunnels and ways with a negative `layer` are left alone.
 4. **Underpasses.** A footway, cycleway or road in a short tunnel (`tunnel=yes` or a negative
    `layer`, no more than 60 m from portal to portal once the pieces OSM cuts it into are joined)
-   that a road crosses over is dug out last. The height model has such a passage far too shallow,
-   or not at all: the laser took the road's embankment for the ground, and grading the road filled
-   in what dip there was. So:
+   that a road crosses over, or no more than 100 m that a railway's track does (a station's yard), is
+   dug out last. The height model has such a passage far too shallow, or not at all: the laser took
+   the embankment for the ground, and grading the road or track filled in what dip there was. So:
    - The road's level over it is the lower of the highest ground along the road within 12 m either
      side of the crossing, which bridges whatever dip the model has under it.
    - The floor runs straight from portal to portal, but never higher than the headroom (3 m for a
@@ -50,6 +50,17 @@ over it in this order:
    - The ways leading in at each portal come down to the floor at a 6 % grade, for up to 60 m.
    - The floor is the way's width and half a metre either side, with banks of 1 in 1 beside it.
      Nothing is dug more than 5 m below the model, and the ground is only ever lowered.
+
+   Under tracks three things differ:
+   - The levels of every such passage are read before any passage is dug. A yard's tracks cross two
+     side by side, and the second would be read off the first's trench and dug metres too deep.
+   - A track that ends within 12 m of the crossing, as a crossover does, sets no level where another
+     runs on past it both ways: at that end it has only the trench to read.
+   - The floor is 1.25 m wider each side and 0.35 m deeper (`PASSAGE_WIDER_RAIL`, `PASSAGE_SPARE_RAIL`).
+     The ground is sampled every 2 m and averaged, which narrows so short a trench, and the ways in
+     start to climb under the deck's edges.
+
+   A track over it gets its deck from `assemble::track_cuttings` in the same way.
 
    The road over it then gets its deck from `assemble::cuttings`, which finds the dug passage as a
    trench across the road. With the headroom, the deck is a slab over the passage, where a deck lower

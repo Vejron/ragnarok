@@ -7,6 +7,11 @@
 //! road there: the same kind, lanes and paint, both on the ground or both a bridge or a tunnel, and
 //! driven the same way. Their widths may differ a little (`EVEN`), and the longer one's is kept, so a
 //! road does not step in and out by half a metre where one mapper measured it and the next did not.
+//!
+//! Railways are joined the same (`join_tracks`), and only tracks count where they meet: a level
+//! crossing does not end a track, and a switch does. A track's ways are often cut just where it
+//! crosses an underpass, whose trench is only found along a line that runs on past it
+//! (`assemble::cuttings`).
 
 use crate::lanes::{Lanes, Oneway};
 use crate::osm::{LatLon, Osm, Way};
@@ -25,6 +30,10 @@ struct Alike {
     bridge: bool,
     underground: bool,
     layer: Option<String>,
+    /// The signed height limit of a road under a railway's bridge: the track leaves room for it
+    /// (`bridge::headroom_under`), so the stretch that has it is not lost in a road that has none.
+    /// Anywhere else a limit does not end a road.
+    max_height: Option<String>,
     junction: Option<String>,
     carriageway: bool,
     fast: bool,
@@ -34,7 +43,7 @@ struct Alike {
 
 /// A road way's width, metres, and what it must share with another to be joined to it, or `None` for
 /// a way that is not a road drawn as a line: no highway, or an area.
-fn alike(way: &Way) -> Option<(f64, Alike)> {
+fn alike(way: &Way, frame: Frame, spans: &[[[f64; 2]; 2]]) -> Option<(f64, Alike)> {
     let tag = |key: &str| way.tags.get(key).cloned();
     let (width, kind, lanes) = crate::lanes::style(&way.tags)?;
     if tag("area").is_some_and(|value| value != "no") || way.geometry.len() < 2 {
@@ -49,6 +58,7 @@ fn alike(way: &Way) -> Option<(f64, Alike)> {
             bridge: crate::assemble::is_bridge(way),
             underground: tag("tunnel").is_some_and(|value| value != "no"),
             layer: tag("layer"),
+            max_height: tag("maxheight").filter(|_| under_span(way, frame, spans)),
             junction: tag("junction"),
             carriageway: crate::assemble::is_carriageway(&way.tags),
             fast: crate::assemble::is_fast(&way.tags),
@@ -62,6 +72,22 @@ fn turns(way: &Way, like: &Alike) -> bool {
     like.oneway == Oneway::Both && !way.tags.keys().any(|key| key.contains(":forward") || key.contains(":backward"))
 }
 
+/// A road this near a railway's bridge is under it, metres: a way often ends in the middle under one.
+const UNDER_SPAN: f64 = 3.0;
+
+/// Whether `way` runs under one of `spans`, the segments of the railways' bridges.
+fn under_span(way: &Way, frame: Frame, spans: &[[[f64; 2]; 2]]) -> bool {
+    let line: Vec<[f64; 2]> = way.geometry.iter().map(|g| frame.project(g.lat, g.lon)).collect();
+    let side = |a: [f64; 2], b: [f64; 2], p: [f64; 2]| (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0]);
+    line.windows(2).any(|pair| {
+        let (a, b) = (pair[0], pair[1]);
+        spans.iter().any(|&[c, d]| {
+            let across = side(a, b, c) * side(a, b, d) < 0.0 && side(c, d, a) * side(c, d, b) < 0.0;
+            across || [a, b].iter().any(|&p| crate::assemble::distance_to_segment(p, c, d) < UNDER_SPAN)
+        })
+    })
+}
+
 /// A point of OpenStreetMap: two ways that share one have its coordinates to the last digit.
 fn key(g: &LatLon) -> (u64, u64) {
     (g.lat.to_bits(), g.lon.to_bits())
@@ -73,11 +99,42 @@ fn length(way: &Way, frame: Frame) -> f64 {
 }
 
 /// `osm` with the ways of one road joined (see the module's notes), and how many joints went.
-pub fn join(mut osm: Osm, frame: Frame) -> (Osm, usize) {
-    // How many times a road touches each point, at an end or along the way: two ways meet alone
-    // where it is twice. Joining leaves the count as it was.
+pub fn join(osm: Osm, frame: Frame) -> (Osm, usize) {
+    let spans: Vec<[[f64; 2]; 2]> = osm
+        .ways
+        .iter()
+        .filter(|way| crate::assemble::is_bridge(way) && crate::assemble::rail_style(way).is_some())
+        .flat_map(|way| way.geometry.windows(2).map(|pair| [frame.project(pair[0].lat, pair[0].lon), frame.project(pair[1].lat, pair[1].lon)]))
+        .collect();
+    merge(osm, frame, |way| way.tags.contains_key("highway"), |way| alike(way, frame, &spans), turns)
+}
+
+/// What must be the same of two ways for them to be one track.
+#[derive(PartialEq)]
+struct AlikeTrack {
+    /// Millimetres.
+    gauge: i64,
+    kind: u8,
+    bridge: bool,
+    layer: Option<String>,
+}
+
+/// `osm` with the ways of one track joined, and how many joints went. A track set in a street, the
+/// same way as its road, is left to `join`.
+pub fn join_tracks(osm: Osm, frame: Frame) -> (Osm, usize) {
+    let track = |way: &Way| {
+        let (gauge, kind) = crate::assemble::rail_style(way).filter(|_| !way.tags.contains_key("highway") && way.geometry.len() >= 2)?;
+        Some((gauge, AlikeTrack { gauge: (gauge * 1000.0).round() as i64, kind, bridge: crate::assemble::is_bridge(way), layer: way.tags.get("layer").cloned() }))
+    };
+    merge(osm, frame, |way| crate::assemble::rail_style(way).is_some(), track, |_, _| true)
+}
+
+/// Joins end to end the ways that `alike` says are one line, where no other way that `counts` touches.
+fn merge<L: PartialEq>(mut osm: Osm, frame: Frame, counts: impl Fn(&Way) -> bool, alike: impl Fn(&Way) -> Option<(f64, L)>, turns: impl Fn(&Way, &L) -> bool) -> (Osm, usize) {
+    // How many times a road (or a track) touches each point, at an end or along the way: two ways
+    // meet alone where it is twice. Joining leaves the count as it was.
     let mut touched: HashMap<(u64, u64), u32> = HashMap::new();
-    for way in osm.ways.iter().filter(|way| way.tags.contains_key("highway")) {
+    for way in osm.ways.iter().filter(|way| counts(way)) {
         for g in &way.geometry {
             *touched.entry(key(g)).or_default() += 1;
         }
@@ -195,6 +252,37 @@ mod tests {
         ];
         // Only the two four-lane pieces are one road; the paths meet on it, where three ways touch.
         assert_eq!(joined(ways).iter().map(|&(id, _)| id).collect::<Vec<_>>(), [1, 2, 3, 4, 5, 6, 7, 8]);
+    }
+
+    #[test]
+    fn a_track_joins_through_a_level_crossing_and_not_through_a_switch_or_onto_its_bridge() {
+        let track = [("railway", "rail")];
+        let ways = vec![
+            // Cut where a street crosses it on the level, and drawn from both sides.
+            way(1, &track, &[[0.0, 0.0], [100.0, 0.0]]),
+            way(2, &track, &[[200.0, 0.0], [100.0, 0.0]]),
+            way(3, &[("highway", "residential")], &[[100.0, -30.0], [100.0, 0.0], [100.0, 30.0]]),
+            // A switch.
+            way(4, &track, &[[200.0, 0.0], [300.0, 0.0]]),
+            way(5, &track, &[[200.0, 0.0], [300.0, 8.0]]),
+            // Onto a bridge.
+            way(6, &[("railway", "rail"), ("bridge", "yes")], &[[300.0, 0.0], [340.0, 0.0]]),
+        ];
+        let frame = Frame::Equirect { origin: (0.0, 0.0) };
+        let (osm, count) = join_tracks(Osm { ways, areas: Vec::new(), pois: Vec::new() }, frame);
+        assert_eq!((osm.ways.len(), count), (5, 1));
+        let tracks: Vec<usize> = osm.ways.iter().filter(|way| way.tags.contains_key("railway")).map(|way| way.geometry.len()).collect();
+        assert_eq!(tracks.iter().copied().max(), Some(3), "the two pieces at the crossing are one");
+    }
+
+    #[test]
+    fn a_height_limit_ends_a_road_under_a_railway_bridge_and_nowhere_else() {
+        let (low, street) = ([("highway", "residential"), ("maxheight", "3.6")], [("highway", "residential")]);
+        let road = || vec![way(1, &low, &[[0.0, 0.0], [40.0, 0.0]]), way(2, &street, &[[40.0, 0.0], [300.0, 0.0]])];
+        assert_eq!(joined(road()).len(), 1, "a limit alone");
+        let mut bridged = road();
+        bridged.push(way(3, &[("railway", "rail"), ("bridge", "yes")], &[[20.0, -20.0], [20.0, 20.0]]));
+        assert_eq!(joined(bridged).len(), 3, "under a railway's bridge");
     }
 
     #[test]
