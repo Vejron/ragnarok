@@ -125,7 +125,13 @@ the roads and bridges have taken theirs (`thin.rs`):
 - **Crowded trees.** A tree nearer a kept neighbour of any height than `CROWDED` (0.6) of their two crown
   radii added goes: the two crowns are nearly one, and the taller stays.
 
-Register trees are never thinned, only kept off the walls. In the home world 106,289 trees would stand
+- **Lumps in the register.** Register trees less than `LUMP_GAP` (2 m) apart, directly or through one
+  another, are one lump, and at most `LUMP_MOST` (3) of it stay, spread out, whatever the register says
+  (`trees::merge`). Umeå's has clumps of birches as a dozen trees a metre apart, and each got the whole
+  crown the laser saw over the clump. Those left out still take that crown, so it does not come back as a
+  tree from the laser.
+
+Otherwise register trees are never thinned, only kept off the walls. In the home world 106,289 trees would stand
 without it and 81,059 do: 2,688 went from against houses and 22,542 out of the woods. The import prints
 both. The canopy's outline, its gaps and its tallest trees stay. To try other values on a world built
 before thinning, `WORLD=<name> cargo test --release -p osm-import thinning -- --ignored --nocapture`

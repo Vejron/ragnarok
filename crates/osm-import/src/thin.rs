@@ -34,8 +34,8 @@ pub fn clear_of_walls(wall: f64, crown: f64) -> bool {
 
 /// For each of `trees`, whether it is kept: the tallest first, each tree is kept unless a kept one
 /// is crowding it, or is so much taller and so near that it is suppressed (`SUPPRESSED`,
-/// `CROWDED`). Planted trees, from a register, are always kept, and so are rocks, shrubs and flags,
-/// which are not trees.
+/// `CROWDED`). Planted trees, from a register, are always kept (their lumps are thinned earlier, in
+/// `trees::merge`), and so are rocks, shrubs and flags, which are not trees.
 pub fn woods(trees: &[Planted]) -> Vec<bool> {
     thinned(trees, SUPPRESSED, CROWDED)
 }

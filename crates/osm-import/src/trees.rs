@@ -16,6 +16,12 @@ const ENDPOINT: &str = "https://opendata.umea.se/api/explore/v2.1/catalog/datase
 const REFERENCE_YEAR: i32 = 2025;
 /// A tree planted this many years ago or less is still smaller than a grown one.
 const YEARS_TO_GROW: f64 = 15.0;
+/// Register trees nearer each other than this, directly or through one another, are one lump, metres.
+/// Street trees in a row stand farther apart.
+const LUMP_GAP: f64 = 2.0;
+/// The most register trees left standing in one lump, however many the register has there. Umeå's
+/// has clumps of birches as a dozen trees a metre apart, each as big as the one crown the laser sees.
+const LUMP_MOST: usize = 3;
 
 #[derive(Debug, Deserialize)]
 struct Point {
@@ -191,7 +197,9 @@ fn plant(record: Record) -> Option<Planted> {
 /// The register's trees with the laser's: a detected tree within `max(2 m, its crown)` of a
 /// register tree is that tree, keeping the register's species and the laser's measured size; the
 /// rest of the detected trees are added, named by `species` where it has a mix for them and from the
-/// laser alone elsewhere. Detections are in `region`'s projected coordinates.
+/// laser alone elsewhere. Of a lump of register trees only some are kept (`thin_lumps`), but those
+/// left out still take their detections, so none comes back as a tree from the laser. Detections are
+/// in `region`'s projected coordinates.
 pub fn merge(region: crate::region::Region, register: Vec<Planted>, detected: &[crate::canopy::Detected], species: Option<&crate::species::Species>) -> Vec<Planted> {
     const BIN: f64 = 8.0;
     let bin = |e: f64, n: f64| ((e / BIN).floor() as i64, (n / BIN).floor() as i64);
@@ -201,8 +209,9 @@ pub fn merge(region: crate::region::Region, register: Vec<Planted>, detected: &[
     }
     let mut taken = vec![false; detected.len()];
     let mut out = Vec::with_capacity(register.len() + detected.len());
-    for mut tree in register {
-        let (e, n) = region.source(tree.lat, tree.lon);
+    let places: Vec<(f64, f64)> = register.iter().map(|tree| region.source(tree.lat, tree.lon)).collect();
+    let keep = thin_lumps(&places);
+    for ((mut tree, &(e, n)), &kept) in register.into_iter().zip(&places).zip(&keep) {
         let (bx, by) = bin(e, n);
         let mut best: Option<(f64, usize)> = None;
         for dx in -1..=1 {
@@ -221,8 +230,11 @@ pub fn merge(region: crate::region::Region, register: Vec<Planted>, detected: &[
             tree.height = detected[i].height;
             tree.crown = detected[i].crown;
         }
-        out.push(tree);
+        if kept {
+            out.push(tree);
+        }
     }
+    eprintln!("trees: {} of the register's thinned out of lumps", keep.iter().filter(|keep| !**keep).count());
     let rest: Vec<_> = detected.iter().zip(taken).filter(|(_, taken)| !taken).map(|(found, _)| *found).collect();
     let named = species.map_or_else(|| vec![None; rest.len()], |species| crate::species::assign(&rest, |block| species.shares(block)));
     eprintln!("trees: {} of the laser's named by NMD, {} from the laser alone", named.iter().flatten().count(), named.iter().filter(|kind| kind.is_none()).count());
@@ -235,6 +247,63 @@ pub fn merge(region: crate::region::Region, register: Vec<Planted>, detected: &[
         out.push(Planted { lat, lon, kind, height: found.height, crown: found.crown, registered: false });
     }
     out
+}
+
+/// For each of the register's trees at `places`, metres, whether it is kept: all but those of a lump
+/// (`LUMP_GAP`) of more than `LUMP_MOST`, which keeps that many spread out over it. The two farthest
+/// apart stay, then whichever is farthest from those that stay. The order of `places` doesn't matter,
+/// as the register's API gives no stable one.
+fn thin_lumps(places: &[(f64, f64)]) -> Vec<bool> {
+    let bin = |(e, n): (f64, f64)| ((e / LUMP_GAP).floor() as i64, (n / LUMP_GAP).floor() as i64);
+    let apart = |a: usize, b: usize| (places[a].0 - places[b].0).hypot(places[a].1 - places[b].1);
+    let mut grid: std::collections::HashMap<(i64, i64), Vec<usize>> = Default::default();
+    for (i, &at) in places.iter().enumerate() {
+        grid.entry(bin(at)).or_default().push(i);
+    }
+    let mut keep = vec![true; places.len()];
+    let mut seen = vec![false; places.len()];
+    for first in 0..places.len() {
+        if std::mem::replace(&mut seen[first], true) {
+            continue;
+        }
+        let mut lump = vec![first];
+        let mut next = 0;
+        while let Some(&from) = lump.get(next) {
+            next += 1;
+            let (x, y) = bin(places[from]);
+            for key in (-1..=1).flat_map(|dx| (-1..=1).map(move |dy| (x + dx, y + dy))) {
+                for &to in grid.get(&key).map(Vec::as_slice).unwrap_or_default() {
+                    if !seen[to] && apart(from, to) < LUMP_GAP {
+                        seen[to] = true;
+                        lump.push(to);
+                    }
+                }
+            }
+        }
+        if lump.len() <= LUMP_MOST {
+            continue;
+        }
+        // By position, so that of equal distances the same tree wins whatever the order.
+        lump.sort_by(|&a, &b| places[a].0.total_cmp(&places[b].0).then(places[a].1.total_cmp(&places[b].1)));
+        let mut ends = (lump[0], lump[1]);
+        for (i, &a) in lump.iter().enumerate() {
+            for &b in &lump[i + 1..] {
+                if apart(a, b) > apart(ends.0, ends.1) {
+                    ends = (a, b);
+                }
+            }
+        }
+        let mut staying = vec![ends.0, ends.1];
+        while staying.len() < LUMP_MOST {
+            let room = |tree: usize| staying.iter().map(|&other| apart(tree, other)).fold(f64::MAX, f64::min);
+            let Some(farthest) = lump.iter().copied().filter(|tree| !staying.contains(tree)).max_by(|&a, &b| room(a).total_cmp(&room(b))) else { break };
+            staying.push(farthest);
+        }
+        for tree in lump {
+            keep[tree] = staying.contains(&tree);
+        }
+    }
+    keep
 }
 
 /// The archetype for a scientific name (cultivar and clone suffixes included), falling back on
@@ -358,5 +427,48 @@ mod tests {
         // The second is classified from the laser alone and lands where it was seen.
         let (back_e, _) = crate::dem::sweref99tm(merged[1].lat, merged[1].lon);
         assert!((back_e - (e + 30.0)).abs() < 0.01);
+    }
+
+    #[test]
+    fn a_lump_of_register_trees_is_thinned_to_three() {
+        // A clump of birches by Umeå's register, metres.
+        let lump = [(0.8, 4.64), (2.27, 4.12), (1.51, 3.47), (0.35, 3.35), (1.82, 2.73), (1.04, 2.03), (0.22, 1.43), (1.39, 1.19), (0.67, 0.48), (0.0, 0.0), (1.0, -0.23)];
+        let kept = |places: &[(f64, f64)]| {
+            let mut kept: Vec<_> = places.iter().zip(thin_lumps(places)).filter_map(|(&at, keep)| keep.then_some(at)).collect();
+            kept.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            kept
+        };
+        let three = kept(&lump);
+        assert_eq!(three.len(), LUMP_MOST);
+        for (i, a) in three.iter().enumerate() {
+            for b in &three[i + 1..] {
+                assert!((a.0 - b.0).hypot(a.1 - b.1) > 1.5, "{a:?} and {b:?} are bunched");
+            }
+        }
+        let reversed: Vec<_> = lump.iter().rev().copied().collect();
+        assert_eq!(kept(&reversed), three, "the register's order doesn't choose");
+    }
+
+    #[test]
+    fn a_row_of_street_trees_is_not_a_lump() {
+        let row: Vec<_> = (0..12).map(|i| (f64::from(i) * 3.0, 0.0)).collect();
+        assert_eq!(thin_lumps(&row), vec![true; row.len()]);
+    }
+
+    #[test]
+    fn a_thinned_trees_crown_does_not_return_as_a_laser_tree() {
+        let region = crate::region::Region::Sweden;
+        let (e, n) = crate::dem::sweref99tm(63.83, 20.17);
+        let register = (0..5)
+            .map(|i| {
+                let (lat, lon) = region.degrees(e + f64::from(i) * 1.9, n);
+                Planted { lat, lon, kind: TREE_BIRCH, height: 12.0, crown: 2.2, registered: true }
+            })
+            .collect();
+        // Only the second tree, which is thinned out, is near enough to take this crown.
+        let found = crate::canopy::Detected { e: e + 1.9, n: n + 1.9, height: 17.0, crown: 1.5, multi: 0.8, intensity: 650.0, base: 0.45 };
+        let merged = merge(region, register, &[found], None);
+        assert_eq!(merged.len(), LUMP_MOST);
+        assert!(merged.iter().all(|tree| tree.registered), "the crown came back");
     }
 }
