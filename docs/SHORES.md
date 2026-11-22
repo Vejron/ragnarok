@@ -85,10 +85,14 @@ The importer cuts a stream's bed half a metre under its banks (`condition.rs`, s
 - Its depth is the water over the ground at each vertex, negative past the banks, and the shader
   fades it there as it does a lake.
 - It runs `STREAM_TIP` (1 m) past each end of its line, its depth tapering below zero, so it reaches
-  into the pond it feeds and ends softly at a culvert.
+  into the pond it feeds and ends softly at a culvert. The line itself ends on the pond's drawn
+  waterline (`Placed::out_of_water`), wherever OSM's points lie, so no ribbon runs on along the bed.
 
-The shader shades a stream by its own depth: dark down the middle and clear at the banks, over a
-muddy bed. It mirrors its banks more than the sky, since the scene's mirror is made for the lake's
+A river drawn as a line is no ribbon: it has banks and a shoreline like any river's
+([RIVER-CHANNELS.md](RIVER-CHANNELS.md)).
+
+The shader shades a stream by its own depth, in the river's colour: dark down the middle and clear at
+the banks. It mirrors its banks more than the sky, since the scene's mirror is made for the lake's
 level and misses it. Its shore foam is a fine line (`STREAM_FOAM_DEPTH`, 8 cm), not the lake's
 35 cm, which had whitened the whole ribbon. Its sun glints are a third as strong.
 

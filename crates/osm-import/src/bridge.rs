@@ -5,7 +5,8 @@
 //! height is inferred: it follows the ground between its two ends, is lifted to clear the water
 //! surface where it crosses water (the river bed is carved deep, so a road draped on the ground
 //! would lie under the water), and where it ends above ground it carries on as a ramp down to the
-//! ground.
+//! ground. A small river's channel (`water::Placed::channel`) is no water to sail under: a deck over
+//! one runs from bank to bank, just clear of it.
 
 use shared::terrain::Ground;
 use shared::world::{BRIDGE_CONCRETE, DECK_ASPHALT, DECK_BALLAST, DECK_PLANKS, NO_WATER, ROAD_FAINT, ROAD_MAJOR, ROAD_MINOR, ROAD_PATH, ROAD_PAVED_PATH, ROAD_TRACK};
@@ -67,6 +68,12 @@ pub(crate) const HEADROOM_ROAD: f64 = 4.7;
 /// Clear height over a track that passes under a deck, from the ground to the deck's underside,
 /// metres: a train's, with room for the contact wire over it.
 pub(crate) const HEADROOM_RAIL: f64 = 6.0;
+/// How high a deck stands over a small river's channel, its roadway over the surface, metres: its
+/// slab and a hand's breadth or two of air. A big river's is by the road's class (`clearance`).
+const CHANNEL_CLEARANCE: f64 = THICKNESS + 0.6;
+/// A deck's line is looked along this often for a channel under it, metres: one may be no wider
+/// than 4 m.
+const CHANNEL_LOOK: f64 = 1.0;
 /// The least a track leaves over a road under it however low the road's `maxheight` is, metres:
 /// a bus still gets under.
 pub(crate) const HEADROOM_LOWEST: f64 = 3.6;
@@ -189,6 +196,9 @@ struct Node {
     g: f64,
     /// Water surface, where the sample is under water.
     level: Option<f64>,
+    /// Whether it is over a small river's channel, or a section's length from it: the deck is an open
+    /// span there, so its solid ends do not close the river.
+    over_channel: bool,
     /// Distance along the deck from its first node.
     arc: f64,
 }
@@ -497,6 +507,49 @@ fn measured_profile(nodes: &[Node], returns: &[[f64; 3]], grade: f64) -> Option<
     Some((0..nodes.len()).map(|i| if i < first { towards(first, i) } else if i > last { towards(last, i) } else { found[i].unwrap_or(nodes[i].g + LIFT) }).collect())
 }
 
+/// Whether `p` is in a small river's channel or on the bank cut down to it (`channel`,
+/// `water::Placed::channel`: one entry per sample of `ground`, empty without channels).
+pub(crate) fn in_channel(ground: &Ground, channel: &[bool], p: P) -> bool {
+    if channel.len() != ground.heights.len() || ground.is_flat() {
+        return false;
+    }
+    let at = |v: f64| ((v * 100.0 - f64::from(ground.origin)) / f64::from(ground.cell)).round();
+    let (i, j) = (at(p[0]), at(p[1]));
+    let last = f64::from(ground.side) - 1.0;
+    i >= 0.0 && j >= 0.0 && i <= last && j <= last && channel[j as usize * ground.side as usize + i as usize]
+}
+
+/// Where the line of `points` is over the water of a small river's channel.
+fn channel_crossed(points: &[P], ground: &Ground, levels: &[i32], channel: &[bool]) -> Vec<P> {
+    if channel.is_empty() {
+        return Vec::new();
+    }
+    resample(points, CHANNEL_LOOK).into_iter().filter(|&p| in_channel(ground, channel, p) && water_at(ground, levels, p).is_some()).collect()
+}
+
+/// Whether a span through `samples` is short and has no drop under it. Over level ground it is a
+/// culvert; one over a cutting (a path under a road, which the terrain has as a trench across it)
+/// needs its deck, or the road has a ditch in it.
+fn short_and_even(samples: &[P], ground: &Ground) -> bool {
+    let mut arc = 0.0;
+    let mut along: Vec<(f64, f64)> = Vec::with_capacity(samples.len());
+    for (k, &p) in samples.iter().enumerate() {
+        if k > 0 {
+            arc += (p[0] - samples[k - 1][0]).hypot(p[1] - samples[k - 1][1]);
+        }
+        along.push((arc, f64::from(ground.height_at(p[0] as f32, p[1] as f32))));
+    }
+    let (Some(&(_, from)), Some(&(_, to))) = (along.first(), along.last()) else { return true };
+    let dip = along.iter().map(|&(at, g)| from + (to - from) * at / arc.max(1e-9) - g).fold(0.0, f64::max);
+    arc < MIN_LENGTH && dip < SHORT_DIP
+}
+
+/// Whether a bridge along `points` gets no deck, the terrain carrying it: it is short, the ground
+/// under it is even and it crosses no channel.
+pub(crate) fn left_to_terrain(points: &[P], ground: &Ground, levels: &[i32], channel: &[bool]) -> bool {
+    short_and_even(&resample(points, STEP), ground) && channel_crossed(points, ground, levels, channel).is_empty()
+}
+
 /// How high the deck stands over water: the surface plus this, by road class.
 fn clearance(kind: u8) -> f64 {
     match kind {
@@ -553,8 +606,9 @@ fn lay_deck(mesh: &mut Mesh, nodes: &[Node], hw: f64, railings: bool, leans: boo
         [dx / length, 0.0, dz / length]
     };
     let side = |t: V3| [-t[2], 0.0, t[0]];
-    // Underside: solid down to the ground where the deck is close to it, else a slab.
-    let bottom = |n: &Node| if n.y - n.g <= SOLID_BELOW + THICKNESS { n.g - 0.3 } else { n.y - THICKNESS };
+    // Underside: solid down to the ground where the deck is close to it, else a slab. Always a slab
+    // over a river's channel, or it would dam it.
+    let bottom = |n: &Node| if !n.over_channel && n.y - n.g <= SOLID_BELOW + THICKNESS { n.g - 0.3 } else { n.y - THICKNESS };
     let last = nodes.len() - 1;
     let section = |i: usize| {
         let n = &nodes[i];
@@ -682,7 +736,7 @@ pub fn slip(line: &[P], width: f64, from: f64, grade: f64, ground: &Ground, leve
             break;
         }
         let y = (from - grade * arc).max(g + LIFT);
-        nodes.push(Node { p, y, g, level: None, arc });
+        nodes.push(Node { p, y, g, level: None, over_channel: false, arc });
         if y - g <= LIFT + 0.05 {
             break;
         }
@@ -702,7 +756,7 @@ pub fn slip(line: &[P], width: f64, from: f64, grade: f64, ground: &Ground, leve
 #[allow(clippy::too_many_arguments)]
 pub fn build(points: &[P], width: f64, kind: u8, pylons: Pylons, measured: &[[f64; 3]], under: &[(&[P], f64)], ground: &Ground, levels: &[i32], limit: f64) -> Vec<Piece> {
     let under = &under.iter().map(|&(line, width)| Crossed::road(line, width)).collect::<Vec<_>>();
-    build_along(points, [&[], &[]], [None, None], &|_| None, width, kind, pylons, measured, under, ground, levels, limit).0
+    build_along(points, [&[], &[]], [None, None], &|_| None, width, kind, pylons, measured, under, ground, levels, &[], limit).0
 }
 
 /// The line midway between two lines that set out side by side: each walked from its start in
@@ -734,9 +788,11 @@ pub type Built = (Vec<Piece>, Vec<P>, Vec<(Vec<P>, f64)>);
 /// height at a point `rides` gives, for as long as it lies on it: the two leave each other slowly,
 /// side by side, and must be one surface until they have parted.
 #[allow(clippy::too_many_arguments)]
-pub fn build_along(points: &[P], onward: [&[(Vec<P>, f64)]; 2], joined: [Option<f64>; 2], rides: &dyn Fn(P) -> Option<f64>, width: f64, kind: u8, pylons: Pylons, measured: &[[f64; 3]], under: &[Crossed], ground: &Ground, levels: &[i32], limit: f64) -> Built {
+pub fn build_along(points: &[P], onward: [&[(Vec<P>, f64)]; 2], joined: [Option<f64>; 2], rides: &dyn Fn(P) -> Option<f64>, width: f64, kind: u8, pylons: Pylons, measured: &[[f64; 3]], under: &[Crossed], ground: &Ground, levels: &[i32], channel: &[bool], limit: f64) -> Built {
     let track_over_cutting = kind == TRACK && pylons == Pylons::Flush;
     let grade = max_grade(kind);
+    let crossed = channel_crossed(points, ground, levels, channel);
+    let crosses_channel = !crossed.is_empty();
     let samples = resample(points, if track_over_cutting { STEP_CUTTING_RAIL } else { STEP });
     if samples.len() < 2 || pylons == Pylons::Carried {
         return (Vec::new(), Vec::new(), Vec::new());
@@ -746,6 +802,7 @@ pub fn build_along(points: &[P], onward: [&[(Vec<P>, f64)]; 2], joined: [Option<
         y: 0.0,
         g: ground.height_at(p[0] as f32, p[1] as f32) as f64,
         level: water_at(ground, levels, p),
+        over_channel: crossed.iter().any(|q| (q[0] - p[0]).hypot(q[1] - p[1]) <= STEP),
         arc,
     };
     let mut arc = 0.0;
@@ -756,10 +813,7 @@ pub fn build_along(points: &[P], onward: [&[(Vec<P>, f64)]; 2], joined: [Option<
         }
         nodes.push(node(p, arc));
     }
-    // A short span over level ground is a culvert; one over a cutting (a path under a road, which the
-    // terrain has as a trench across it) needs its deck, or the road has a ditch in it.
-    let dip = nodes.iter().map(|n| nodes[0].g + (nodes[nodes.len() - 1].g - nodes[0].g) * n.arc / arc.max(1e-9) - n.g).fold(0.0, f64::max);
-    if arc < MIN_LENGTH && dip < SHORT_DIP {
+    if !crosses_channel && short_and_even(&samples, ground) {
         return (Vec::new(), Vec::new(), Vec::new());
     }
     let lift = clearance(kind);
@@ -843,7 +897,7 @@ pub fn build_along(points: &[P], onward: [&[(Vec<P>, f64)]; 2], joined: [Option<
         let over = need_over(&arcs, &crossings.iter().zip(lifting).filter(|(_, lift)| **lift).map(|(u, _)| u).collect::<Vec<_>>());
         // The ground under a ramp's line holds up only the ramp itself, below: rising ground past a
         // bridge's end does not lift its deck. A road under the ramp does.
-        let required: Vec<f64> = (0..all.len()).map(|i| if deck.contains(&i) { all[i].level.map_or(all[i].g + LIFT, |level| level + lift).max(over[i]).max(ridden[i].unwrap_or(f64::MIN)) } else { over[i] }).collect();
+        let required: Vec<f64> = (0..all.len()).map(|i| if deck.contains(&i) { all[i].level.map_or(all[i].g + LIFT, |level| level + if all[i].over_channel { CHANNEL_CLEARANCE } else { lift }).max(over[i]).max(ridden[i].unwrap_or(f64::MIN)) } else { over[i] }).collect();
         let mut y: Vec<f64> = (0..all.len()).map(|i| if deck.contains(&i) { (h0 + (h1 - h0) * (arcs[i] - a0) / arc + LIFT).max(required[i]) } else { required[i] }).collect();
         limit_grade(&mut y, &arcs, grade);
         // The deck, and a ramp held up over a road, from the first thing that holds it up to the last.
@@ -937,7 +991,7 @@ pub fn build_along(points: &[P], onward: [&[(Vec<P>, f64)]; 2], joined: [Option<
                 .take_while(|&(run, p)| run <= most + STEP && p[0].abs() <= limit && p[1].abs() <= limit)
                 .map(|(run, p)| {
                     let g = f64::from(ground.height_at(p[0] as f32, p[1] as f32));
-                    Node { p, y: height_at(edge + out * run.min(most)).max(g + LIFT), g, level: None, arc: edge + out * run.min(most) }
+                    Node { p, y: height_at(edge + out * run.min(most)).max(g + LIFT), g, level: None, over_channel: false, arc: edge + out * run.min(most) }
                 })
                 .collect();
             if strand.len() >= 2 {
@@ -974,7 +1028,8 @@ pub fn build_along(points: &[P], onward: [&[(Vec<P>, f64)]; 2], joined: [Option<
     for i in piered {
         since += nodes[i].arc - nodes[i - 1].arc;
         let n = &nodes[i];
-        if since >= PIER_SPACING && n.y - n.g > SOLID_BELOW + THICKNESS {
+        // A small river is spanned: no pier stands in its channel.
+        if since >= PIER_SPACING && n.y - n.g > SOLID_BELOW + THICKNESS && !n.over_channel {
             since = 0.0;
             let t = tangent(i);
             mesh.arc = n.arc;
@@ -1119,7 +1174,7 @@ mod tests {
             let x = 30.0 + f64::from(k) * 0.25;
             returns.extend([[x, -1.0, 9.0], [x, 0.0, 9.1], [x, 1.0, 8.9]]);
         }
-        let nodes: Vec<Node> = resample(&points, STEP).iter().map(|&p| Node { p, y: 0.0, g: 0.0, level: None, arc: p[0] }).collect();
+        let nodes: Vec<Node> = resample(&points, STEP).iter().map(|&p| Node { p, y: 0.0, g: 0.0, level: None, over_channel: false, arc: p[0] }).collect();
         let y = measured_profile(&nodes, &returns, MAX_GRADE).unwrap();
         let at = |x: f64| y[(x / STEP).round() as usize];
         assert!((at(60.0) - 9.0).abs() < 0.11);
@@ -1165,6 +1220,35 @@ mod tests {
         let near_end = vertices(&pieces).filter(|v| v[0] > 140.0 && v[1] > 1.0).map(|v| v[1]).fold(f64::MAX, f64::min);
         assert!((near_end - 3.12).abs() < 0.5, "the deck meets the bank, got {near_end}");
         assert!(pieces.iter().any(|p| p.steel), "a 160 m crossing gets a pylon");
+    }
+
+    /// Ground at 3 m with a small river down the middle: 8 m of water at 1.5 m, its bed at 0.5 m.
+    fn small_river() -> (Ground, Vec<i32>, Vec<bool>) {
+        let side = 201u32;
+        let across = |k: u32| (f64::from(k % side) - 100.0).abs();
+        let heights = (0..side * side).map(|k| if across(k) <= 4.0 { 50 } else if across(k) <= 6.0 { 200 } else { 300 }).collect();
+        let levels = (0..side * side).map(|k| if across(k) <= 4.0 { 150 } else { NO_WATER }).collect();
+        let channel = (0..side * side).map(|k| across(k) <= 6.0).collect();
+        (Ground { origin: -10_000, cell: 100, side, heights }, levels, channel)
+    }
+
+    #[test]
+    fn a_bridge_over_a_small_river_stays_level_with_its_banks() {
+        let (ground, levels, channel) = small_river();
+        let (pieces, ..) = build_along(&[[-15.0, 0.0], [15.0, 0.0]], [&[], &[]], [None, None], &|_| None, 8.0, ROAD_MAJOR, Pylons::None, &[], &[], &ground, &levels, &channel, 95.0);
+        let top = top_at(&pieces, 4.5, [0.0, 0.0]).expect("a deck over the river");
+        assert!((2.8..3.5).contains(&top), "not the 7 m a big river's is raised: {top}");
+        assert!(!pieces.iter().any(|piece| piece.pier && piece.at[0].abs() <= 4.0), "and no pier in it");
+    }
+
+    #[test]
+    fn a_short_bridge_over_a_carved_river_is_still_built() {
+        let (ground, levels, channel) = small_river();
+        // Both ends in the channel, so between them the ground does not dip at all.
+        let (pieces, ..) = build_along(&[[-3.0, 0.0], [3.0, 0.0]], [&[], &[]], [None, None], &|_| None, 4.0, ROAD_PATH, Pylons::None, &[], &[], &ground, &levels, &channel, 95.0);
+        let under = vertices(&pieces).filter(|v| v[0].abs() < 0.5).map(|v| v[1]).fold(f64::MAX, f64::min);
+        assert!(!pieces.is_empty(), "a deck, not a culvert");
+        assert!(under > 1.6, "its underside is clear of the water, no dam: {under}");
     }
 
     #[test]
@@ -1354,7 +1438,7 @@ mod tests {
         let under: &[P] = &[[0.0, -80.0], [0.0, 80.0]];
         let (dx, dz) = (30f64.to_radians().cos(), 30f64.to_radians().sin());
         let on = [(vec![[20.0, 0.0], [20.0 + 200.0 * dx, 200.0 * dz]], 8.0)];
-        let (pieces, ..) = build_along(&[[-20.0, 0.0], [20.0, 0.0]], [&[], &on], [None, None], &|_| None, 8.0, ROAD_MAJOR, Pylons::None, &[], &[Crossed::road(under, 10.0)], &ground, &[], 1000.0);
+        let (pieces, ..) = build_along(&[[-20.0, 0.0], [20.0, 0.0]], [&[], &on], [None, None], &|_| None, 8.0, ROAD_MAJOR, Pylons::None, &[], &[Crossed::road(under, 10.0)], &ground, &[], &[], 1000.0);
         // Every bit of ramp east of the bridge lies on the road, within its width of the road's line.
         let off = pieces.iter().filter(|p| p.deck && p.at[0] > 21.0).map(|p| ((p.at[0] - 20.0) * dz - p.at[1] * dx).abs()).fold(0.0, f64::max);
         assert!(off < 0.5, "the ramp strays {off} m from the road");
@@ -1371,7 +1455,7 @@ mod tests {
         let ground = Ground::default();
         let under: &[P] = &[[0.0, -80.0], [0.0, 80.0]];
         let roads = [(vec![[20.0, -4.5], [60.0, -8.0], [200.0, -8.0]], 8.0), (vec![[20.0, 4.5], [60.0, 14.0], [160.0, 90.0]], 8.0)];
-        let (pieces, line, _) = build_along(&[[-20.0, 0.0], [20.0, 0.0]], [&[], &roads], [None, None], &|_| None, 17.0, ROAD_MAJOR, Pylons::None, &[], &[Crossed::road(under, 10.0)], &ground, &[], 1000.0);
+        let (pieces, line, _) = build_along(&[[-20.0, 0.0], [20.0, 0.0]], [&[], &roads], [None, None], &|_| None, 17.0, ROAD_MAJOR, Pylons::None, &[], &[Crossed::road(under, 10.0)], &ground, &[], &[], 1000.0);
         let off = |p: P, road: &[P]| road.windows(2).map(|w| crate::assemble::distance_to_segment(p, w[0], w[1])).fold(f64::MAX, f64::min);
         // Past the deck every piece of roadway is on one carriageway or the other, and both are covered
         // as far as the ramps go.
@@ -1394,7 +1478,7 @@ mod tests {
     fn a_bridge_that_leaves_another_out_over_the_water_starts_at_its_deck() {
         // A slip road's bridge from the middle of the river, where it leaves a bridge 9 m up, to the bank.
         let (ground, levels) = river();
-        let (pieces, ..) = build_along(&[[0.0, 0.0], [150.0, 0.0]], [&[], &[]], [Some(9.0), None], &|p| (p[0] < 30.0).then_some(9.0), 4.5, ROAD_MINOR, Pylons::None, &[], &[], &ground, &levels, 295.0);
+        let (pieces, ..) = build_along(&[[0.0, 0.0], [150.0, 0.0]], [&[], &[]], [Some(9.0), None], &|p| (p[0] < 30.0).then_some(9.0), 4.5, ROAD_MINOR, Pylons::None, &[], &[], &ground, &levels, &[], 295.0);
         let top = |x: f64| pieces.iter().filter(|p| p.deck && (p.at[0] - x).abs() < 2.0).flat_map(|p| p.tris.iter().flatten()).map(|v| v[1]).fold(f64::MIN, f64::max);
         assert!((top(1.5) - 9.0).abs() < 0.2, "it starts {} m up", top(1.5));
         // It keeps to the deck it leaves for the 30 m it lies on it, then comes down.
@@ -1428,7 +1512,7 @@ mod tests {
 
     /// A bridge of `kind` along x over `under` on flat ground at 0.
     fn over(half: f64, kind: u8, under: &[Crossed]) -> Vec<Piece> {
-        build_along(&[[-half, 0.0], [half, 0.0]], [&[], &[]], [None, None], &|_| None, 8.0, kind, Pylons::None, &[], under, &Ground::default(), &[], 1000.0).0
+        build_along(&[[-half, 0.0], [half, 0.0]], [&[], &[]], [None, None], &|_| None, 8.0, kind, Pylons::None, &[], under, &Ground::default(), &[], &[], 1000.0).0
     }
 
     #[test]

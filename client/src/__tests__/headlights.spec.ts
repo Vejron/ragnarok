@@ -7,8 +7,9 @@ import { Headlights } from '@/entities/presenters/headlights'
 import { Seating } from '@/entities/presenters/seating'
 import { Vehicles, type VehicleWorld } from '@/entities/presenters/vehicles'
 import { EntityStore } from '@/entities/store'
-import { FLAG_LAMP, KIND_HELI, KIND_JEEP, KIND_MORTAR, KIND_SPORTS, KIND_TANK } from '@/net/codec'
+import { FLAG_LAMP, KIND_AIR_AMBULANCE, KIND_HELI, KIND_JEEP, KIND_MORTAR, KIND_SPORTS, KIND_TANK } from '@/net/codec'
 import type { Components } from '@/net/components.generated'
+import { parseAirAmbulanceModel } from '@/render/airambulance'
 import { parseCarModel } from '@/render/car'
 import { parseHeliModel } from '@/render/heli'
 import { DAY_SECONDS } from '@/render/daynight'
@@ -18,11 +19,12 @@ import { parseTankModel } from '@/render/tank'
 import { TICK_RATE } from '@/sim/consts'
 
 beforeAll(async () => {
-  for (const name of ['jeep', 'sports', 'tank', 'heli'] as const) {
+  for (const name of ['jeep', 'sports', 'tank', 'heli', 'air_ambulance'] as const) {
     const bytes = readFileSync(resolve(process.cwd(), `public/models/${name}.glb`))
     const copy = new Uint8Array(bytes.length)
     copy.set(bytes)
     if (name === 'tank') await parseTankModel(copy.buffer)
+    else if (name === 'air_ambulance') await parseAirAmbulanceModel(copy.buffer)
     else if (name === 'heli') await parseHeliModel(copy.buffer)
     else await parseCarModel(name, copy.buffer)
   }
@@ -139,5 +141,15 @@ describe('headlights', () => {
     store.push(MIDNIGHT + 1, new Map([[1, heli(0.6)], [11, rider(1, 0)]]), true)
     const turned = settle(MIDNIGHT + 1)
     expect(turned[0]!.direction!.x).toBeCloseTo(-Math.sin(0.6) * Math.cos(0.3), 2)
+  })
+
+  it('shine an air ambulance\'s searchlight as far, fixed under its nose', () => {
+    const { store, settle } = harness()
+    store.push(MIDNIGHT, new Map([[1, vehicle(KIND_AIR_AMBULANCE, 0)], [11, rider(1, 0)]]), true)
+    const lights = settle(MIDNIGHT)
+    expect(lights).toHaveLength(1)
+    expect(lights[0]).toMatchObject({ radius: 80, intensity: 5 })
+    expect(lights[0]!.direction!.z).toBeLessThan(-0.9)
+    expect(lights[0]!.direction!.y).toBeLessThan(-0.2)
   })
 })

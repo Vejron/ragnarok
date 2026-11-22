@@ -10,6 +10,7 @@ Every vehicle that can be driven has lamps, and its driver switches them with **
 - **Where they shine from**, by kind:
   - A car (jeep, sports car, Roadster, technical, golf cart, bus, snowmobile, snow racer): from the middle of the `lamp` meshes on its nose (`CarModel.headlight`), dipped a little toward the road, 40 m.
   - A helicopter: the searchlight under its nose gun, turning and nodding with the gun (`HeliModel.searchlight`), 80 m in a narrower beam.
+  - An air ambulance: the same beam, fixed under its nose and dipped ahead (`AirAmbulanceModel.searchlight`).
   - A Titan: the searchlight in its visor, the way its head faces, so it lights what the pilot looks at (`TitanModel.searchlight`), cold white, 320 m ([VEHICLES-XIV.md](VEHICLES-XIV.md)).
   - Anything else (tanks, the Pbv and Strf, planes, ships, the submarine, drones, the walker): from the middle of the front of its hull a little above its centre, along the nose, as a car's (`Headlights.hullLamp`).
 - **What has none**: the towed guns (mortar, Pak), the ship's guns, missiles and loitering munitions in flight, and the hen.

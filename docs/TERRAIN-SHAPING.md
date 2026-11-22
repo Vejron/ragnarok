@@ -16,7 +16,8 @@ over it in this order:
 1. **Building pads.** The ground inside a building's outline is pulled to its low quartile, by up to
    `PAD_MAX` (1 m), so a house on a slope sits into it rather than on a plinth, and a hillside is not
    dug out for a shed. The pull eases off over a 2 m apron outside the walls.
-2. **Streams and ditches.** Every OSM stream line (the ones `water.rs` draws) gets a bed:
+2. **Streams and ditches.** Every OSM stream line (the ones `water.rs` draws) gets a bed. A river's line
+   is none of them: its channel is cut with the water ([RIVER-CHANNELS.md](RIVER-CHANNELS.md)).
    - The bed follows the lowest ground within 1.5 m of the line, so a line drawn a little off the
      ditch still finds it.
    - That ground is binned every 10 m and fitted with the closest profile that never rises

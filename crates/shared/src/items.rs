@@ -731,8 +731,9 @@ mod tests {
                 let board = d.board.map_or("null".to_string(), |[x, y, z]| format!("[{x}, {y}, {z}]"));
                 let gunners: Vec<String> = (0..d.seats).filter(|&seat| d.mounts.iter().any(|mount| mount.seat == seat)).map(|seat| seat.to_string()).collect();
                 let gunners = gunners.join(", ");
+                let rotor = d.spec.rotor.map_or("null".to_string(), |r| format!("{{\"hoverLever\": {}, \"leverRate\": {}, \"etlSpeed\": {}}}", r.hover_lever, r.lever_rate, r.etl_speed));
                 format!(
-                    "    {{\"kind\": {}, \"name\": \"{}\", \"hp\": {}, \"seats\": {}, \"halfExtents\": [{hx}, {hy}, {hz}], \"gun\": {}, \"arms\": {}, \"carWheels\": {}, \"trackHalf\": {}, \"axleZ\": {}, \"crew\": \"{}\", \"crewGuns\": {}, \"gunners\": [{gunners}], \"seatHeads\": [{}], \"mountSeat\": {mount_seat}, \"legged\": {}, \"heavy\": {}, \"towed\": {}, \"shedsTurret\": {}, \"drone\": {}, \"fists\": {}, \"board\": {board}, \"slits\": [{slits}]}}",
+                    "    {{\"kind\": {}, \"name\": \"{}\", \"hp\": {}, \"seats\": {}, \"halfExtents\": [{hx}, {hy}, {hz}], \"gun\": {}, \"arms\": {}, \"carWheels\": {}, \"trackHalf\": {}, \"axleZ\": {}, \"crew\": \"{}\", \"crewGuns\": {}, \"gunners\": [{gunners}], \"seatHeads\": [{}], \"mountSeat\": {mount_seat}, \"legged\": {}, \"heavy\": {}, \"towed\": {}, \"shedsTurret\": {}, \"drone\": {}, \"fists\": {}, \"board\": {board}, \"rotor\": {rotor}, \"slits\": [{slits}]}}",
                     d.kind, d.name, d.hp, d.seats, d.gun(), d.arms(), d.car_wheels, d.track_half(), d.axle_z(), d.crew.name(), d.crew_guns, heads, d.body.legs > 0.0, d.body.heavy, d.body.towed, d.sheds_turret(), d.drone.is_some(), d.spec.arms.is_some()
                 )
             })

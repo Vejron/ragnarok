@@ -13,10 +13,11 @@ use crate::consts::*;
 use crate::mounts::{Aim, Ammo, Dial, Eye, Fire, MountDef, Muzzle, Need, Refill, Show};
 use crate::items::*;
 use crate::protocol::{
-    KIND_AMV, KIND_BUS, KIND_CB90, KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MISSILE, KIND_MORTAR, KIND_PAK, KIND_PBV, KIND_PLANE, KIND_RAFT, KIND_ROADSTER, KIND_SEAPLANE, KIND_SHIP, KIND_SHIP_GUN, KIND_SNOWMOBILE, KIND_SNOWRACER, KIND_SPORTS, KIND_STRF, KIND_STRV, KIND_SUBMARINE, KIND_TANK, KIND_TECHNICAL, KIND_TITAN, KIND_TUPP, KIND_WALKER, PROJECTILE_AMV_BOMB, PROJECTILE_BALL, PROJECTILE_BOMB, PROJECTILE_CANNON, PROJECTILE_CANNON_AP,
+    KIND_AIR_AMBULANCE, KIND_AMV, KIND_BUS, KIND_CB90, KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MISSILE, KIND_MORTAR, KIND_PAK, KIND_PBV, KIND_PLANE, KIND_RAFT, KIND_ROADSTER, KIND_SEAPLANE, KIND_SHIP, KIND_SHIP_GUN, KIND_SNOWMOBILE, KIND_SNOWRACER, KIND_SPORTS, KIND_STRF, KIND_STRV, KIND_SUBMARINE, KIND_TANK, KIND_TECHNICAL, KIND_TITAN, KIND_TUPP, KIND_WALKER, PROJECTILE_AMV_BOMB, PROJECTILE_BALL, PROJECTILE_BOMB, PROJECTILE_CANNON, PROJECTILE_CANNON_AP,
     PROJECTILE_EGG, PROJECTILE_HE, PROJECTILE_MORTAR, PROJECTILE_ROTARY, PROJECTILE_SHELL, WEAPON_AUTOCANNON, WEAPON_DRONE, WEAPON_LASER, WEAPON_LOITER, WEAPON_MG, WEAPON_MISSILE, WEAPON_ROCKET, WEAPON_SHELL,
 };
 
+pub mod air_ambulance;
 pub mod amv;
 pub mod bus;
 pub mod cb90;
@@ -281,6 +282,7 @@ pub static VEHICLES: &[VehicleDef] = &[
     amv::AMV,
     cb90::CB90,
     raft::RAFT,
+    air_ambulance::AIR_AMBULANCE,
 ];
 
 /// Where each kind id's definition is in `VEHICLES`: 0, the jeep's, for ids that are not a vehicle.
@@ -366,8 +368,27 @@ mod tests {
         assert!(!vehicle_def(KIND_JEEP).gun() && !vehicle_def(KIND_SPORTS).gun() && !vehicle_def(KIND_ROADSTER).gun() && !vehicle_def(KIND_HEN).gun());
         assert!(vehicle_def(KIND_TUPP).gun() && !vehicle_def(KIND_TUPP).arms());
         assert!(vehicle_def(KIND_MORTAR).gun() && vehicle_def(KIND_PAK).gun());
+        assert!(!vehicle_def(KIND_AIR_AMBULANCE).gun() && !vehicle_def(KIND_AIR_AMBULANCE).arms());
         assert!(!vehicle_def(KIND_SHIP).gun() && vehicle_def(KIND_SHIP_GUN).gun());
         assert!(vehicle_def(KIND_TECHNICAL).gun() && !vehicle_def(KIND_TECHNICAL).arms());
+    }
+
+    #[test]
+    fn nobody_aboard_an_air_ambulance_has_anything_to_fire() {
+        let def = vehicle_def(KIND_AIR_AMBULANCE);
+        assert_eq!(def.seats, 4);
+        assert!(def.mounts.is_empty());
+        assert!((0..def.seats).all(|seat| !crew_gun(KIND_AIR_AMBULANCE, seat)));
+    }
+
+    #[test]
+    fn every_rotor_kind_says_where_its_lever_hovers_and_no_other_kind_has_a_rotor() {
+        for def in VEHICLES {
+            assert_eq!(def.spec.rotor.is_some(), def.spec.lift == Lift::Rotor, "{}", def.name);
+            if let Some(rotor) = def.spec.rotor {
+                assert!(rotor.hover_lever > 0.0 && rotor.hover_lever < 1.0, "{}", def.name);
+            }
+        }
     }
 
     #[test]

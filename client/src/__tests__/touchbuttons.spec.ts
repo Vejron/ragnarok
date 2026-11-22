@@ -3,7 +3,7 @@ import { touchButtons } from '@/touchbuttons'
 import type { HudStats } from '@/hud'
 import { BUTTON_ALT, BUTTON_AMMO } from '@/sim/consts'
 
-const SEATS: HudStats['seat'][] = [null, 'driver', 'roadster', 'sled', 'helm', 'pilot', 'aviator', 'walker', 'hen', 'tupp', 'strv', 'mortar', 'drone', 'loiter', 'passenger', 'gunner', 'roofgunner']
+const SEATS: HudStats['seat'][] = [null, 'driver', 'roadster', 'sled', 'helm', 'pilot', 'airPilot', 'rider', 'aviator', 'walker', 'hen', 'tupp', 'strv', 'mortar', 'drone', 'loiter', 'passenger', 'gunner', 'roofgunner']
 
 describe('touch buttons', () => {
   it('gives every button a cell of its own, in every seat', () => {

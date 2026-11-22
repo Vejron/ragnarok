@@ -23,6 +23,25 @@ const MAX_CROWN_RADIUS: f64 = 8.0;
 /// Segments with a larger area are something else (a roof the footprints missed), m².
 const MAX_CROWN_AREA: f64 = 200.0;
 
+/// Lowest a crane's jib is looked for, metres above the terrain: over the roofs of a small town.
+const JIB_HEIGHT: f32 = 20.0;
+/// Returns along a jib are one structure across gaps of this many cells, as the cloud is sparse.
+const JIB_GAP: usize = 2;
+/// The most two neighbouring returns of a jib differ in height, metres: its chords are under 2 m apart.
+const JIB_STEP: f32 = 2.0;
+/// The shortest thing taken for a jib, metres.
+const JIB_LENGTH: f64 = 30.0;
+/// How far a jib's returns may lie to the side of its line, and above or below it, metres RMS. The
+/// three cranes over Umeå are 0.9 and 1.0, and trees as tall are wider or far more uneven.
+const JIB_SPREAD: f64 = 1.5;
+/// How far from a jib's line its mast, cab and counterweight reach, metres: 3.6 at most in Umeå.
+const JIB_REACH: f64 = 4.5;
+/// How far past the ends of a jib's level run the rest of the crane reaches along it, metres.
+const JIB_END: f64 = 8.0;
+/// The most of a jib's cells that may carry on down under `JIB_HEIGHT`. More, and it is no jib but
+/// the top of something lower that the height cuts off, as it does a roof along its ridge.
+const JIB_CUT: f64 = 0.25;
+
 /// A tree found in the cloud, in SWEREF 99 TM.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Detected {
@@ -124,7 +143,7 @@ impl Canopy {
         for r in 0..rows {
             for c in 0..cols {
                 let i = r * cols + c;
-                if self.masked[i] || self.top[i].is_nan() {
+                if self.top[i].is_nan() {
                     continue;
                 }
                 let (e, n) = centre(c, r);
@@ -136,6 +155,16 @@ impl Canopy {
                         chm[i] = above.max(0.0);
                     }
                 }
+            }
+        }
+        // Cranes are found before the roofs are masked: a jib swings over them, and would be cut in pieces.
+        let cranes = strike_jibs(&mut chm, cols, rows);
+        if cranes > 0 {
+            eprintln!("canopy: {cranes} cranes and other long, thin, level structures left out");
+        }
+        for (height, &masked) in chm.iter_mut().zip(&self.masked) {
+            if masked {
+                *height = f32::NAN;
             }
         }
         // Fill empty cells from the cells around them (the cloud is sparse: ~1 return per m²).
@@ -297,6 +326,86 @@ impl Canopy {
     }
 }
 
+/// Empties the cells of `chm` that are a tower crane's, and returns how many were found. The cloud
+/// does not tell one from vegetation, but a jib is what no trees are: tens of metres long, a truss's
+/// width across, straight and level. With it go the cells along its line that stand over half as
+/// high, which are its mast, cab and counterweight.
+fn strike_jibs(chm: &mut [f32], cols: usize, rows: usize) -> usize {
+    let mut seen = vec![false; chm.len()];
+    let mut found = 0;
+    for first in 0..chm.len() {
+        // NaN, where nothing is known, is not high either.
+        if seen[first] || !matches!(chm[first], h if h >= JIB_HEIGHT) {
+            continue;
+        }
+        seen[first] = true;
+        let mut cells = vec![first];
+        let mut next = 0;
+        let mut cut = 0;
+        while let Some(&from) = cells.get(next) {
+            next += 1;
+            let (c, r) = (from % cols, from / cols);
+            let mut goes_down = false;
+            for rr in r.saturating_sub(JIB_GAP)..=(r + JIB_GAP).min(rows - 1) {
+                for cc in c.saturating_sub(JIB_GAP)..=(c + JIB_GAP).min(cols - 1) {
+                    let to = rr * cols + cc;
+                    // A cell with nothing known is NaN, and within no step of another.
+                    if (chm[to] - chm[from]).abs() <= JIB_STEP {
+                        goes_down |= chm[to] < JIB_HEIGHT;
+                        if !seen[to] && chm[to] >= JIB_HEIGHT {
+                            seen[to] = true;
+                            cells.push(to);
+                        }
+                    }
+                }
+            }
+            cut += usize::from(goes_down);
+        }
+        // Too few cells to reach a jib's length, or the top of something lower.
+        if ((cells.len() * JIB_GAP) as f64) * CELL < JIB_LENGTH || cut as f64 > JIB_CUT * cells.len() as f64 {
+            continue;
+        }
+        let count = cells.len() as f64;
+        let at = |i: usize| [(i % cols) as f64 * CELL, (i / cols) as f64 * CELL, f64::from(chm[i])];
+        let sum = cells.iter().fold([0.0; 3], |sum, &i| std::array::from_fn(|k| sum[k] + at(i)[k]));
+        let [me, mn, level] = sum.map(|v| v / count);
+        // The line through the cells: the axis they spread most along.
+        let (mut ee, mut en, mut nn) = (0.0, 0.0, 0.0);
+        for &i in &cells {
+            let [e, n, _] = at(i);
+            ee += (e - me) * (e - me);
+            en += (e - me) * (n - mn);
+            nn += (n - mn) * (n - mn);
+        }
+        let (sin, cos) = (0.5 * (2.0 * en).atan2(ee - nn)).sin_cos();
+        let on_line = |e: f64, n: f64| ((e - me) * cos + (n - mn) * sin, (n - mn) * cos - (e - me) * sin);
+        let (mut from, mut to, mut aside, mut uneven) = (f64::MAX, f64::MIN, 0.0, 0.0);
+        for &i in &cells {
+            let [e, n, height] = at(i);
+            let (along, across) = on_line(e, n);
+            (from, to) = (from.min(along), to.max(along));
+            aside += across * across;
+            uneven += (height - level) * (height - level);
+        }
+        if to - from < JIB_LENGTH || (aside / count).sqrt() > JIB_SPREAD || (uneven / count).sqrt() > JIB_SPREAD {
+            continue;
+        }
+        found += 1;
+        let reach = (JIB_END.max(JIB_REACH) / CELL).ceil() as usize;
+        let (c0, c1, r0, r1) = cells.iter().fold((cols, 0, rows, 0), |(c0, c1, r0, r1), &i| (c0.min(i % cols), c1.max(i % cols), r0.min(i / cols), r1.max(i / cols)));
+        for r in r0.saturating_sub(reach)..=(r1 + reach).min(rows - 1) {
+            for c in c0.saturating_sub(reach)..=(c1 + reach).min(cols - 1) {
+                let i = r * cols + c;
+                let (along, across) = on_line(c as f64 * CELL, r as f64 * CELL);
+                if across.abs() <= JIB_REACH && (from - JIB_END..=to + JIB_END).contains(&along) && f64::from(chm[i]) > level / 2.0 {
+                    chm[i] = f32::NAN;
+                }
+            }
+        }
+    }
+    found
+}
+
 fn inside((e, n): (f64, f64), ring: &[(f64, f64)]) -> bool {
     let mut inside = false;
     let mut j = ring.len() - 1;
@@ -431,6 +540,57 @@ mod tests {
         let trees = canopy.detect(flat, MIN_HEIGHT);
         assert_eq!(trees.len(), 1, "{trees:?}");
         assert!((trees[0].height - 12.0).abs() < 1.0, "{}", trees[0].height);
+    }
+
+    #[test]
+    fn a_tower_crane_is_not_a_row_of_tall_trees() {
+        let mut canopy = Canopy::new([0.0, 0.0, 120.0, 80.0]);
+        let mut hit = |e: f64, n: f64, z: f64| canopy.add(&Point { e, n, z, class: 1, ret: 1, returns: 2, intensity: 900 });
+        // The jib: three chords 40 m up, 65 m long and askew to the raster.
+        for step in 0..93 {
+            let along = f64::from(step) * 0.7;
+            let (e, n) = (20.0 + along * 0.94, 20.0 + along * 0.34);
+            hit(e, n, 39.4);
+            hit(e - 0.2, n + 0.6, 41.6);
+            hit(e - 0.4, n + 1.2, 39.4);
+        }
+        // Its mast, seen on the way down.
+        for step in 0..20 {
+            for (de, dn) in [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0)] {
+                hit(34.0 + de, 25.0 + dn, 20.0 + f64::from(step));
+            }
+        }
+        // A house under the jib, which must not cut it into pieces too short to know.
+        canopy.mask(&[(45.0, 22.0), (57.0, 22.0), (57.0, 40.0), (45.0, 40.0)], 1.5);
+        crown(&mut canopy, 80.0, 20.0, 14.0, 3.0);
+        let trees = canopy.detect(flat, MIN_HEIGHT);
+        assert_eq!(trees.len(), 1, "{trees:?}");
+        assert!((trees[0].height - 14.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn the_ridge_of_a_long_roof_is_not_a_crane() {
+        // A roof 60 m long with its ridge 20.8 m up, so only a strip along the ridge is over the height
+        // a jib is looked for from.
+        let (cols, rows) = (70, 20);
+        let mut chm = vec![0.0f32; cols * rows];
+        for c in 5..65 {
+            for across in -5i32..=5 {
+                chm[(10 + across) as usize * cols + c] = 20.8 - 0.6 * across.unsigned_abs() as f32;
+            }
+        }
+        let before = chm.clone();
+        assert_eq!(strike_jibs(&mut chm, cols, rows), 0);
+        assert_eq!(chm, before);
+    }
+
+    #[test]
+    fn a_straight_row_of_tall_trees_is_still_trees() {
+        let mut canopy = Canopy::new([0.0, 0.0, 120.0, 40.0]);
+        for k in 0..8 {
+            crown(&mut canopy, 15.0 + f64::from(k) * 12.0, 20.0, if k % 2 == 0 { 24.0 } else { 27.0 }, 3.0);
+        }
+        assert_eq!(canopy.detect(flat, MIN_HEIGHT).len(), 8);
     }
 
     #[test]

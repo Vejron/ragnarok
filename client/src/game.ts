@@ -224,7 +224,7 @@ const ROOM_ARM_EASE = 4
 const VR_DUCK = 0.25
 
 /** Seats that steer something along, which get a speedometer. */
-const MOVERS: ReadonlySet<SeatView['role']> = new Set(['driver', 'roadster', 'sled', 'helm', 'pilot', 'aviator', 'walker', 'titan', 'hen', 'tupp', 'strv', 'drone', 'loiter', 'captain', 'missile', 'coxswain'] as const)
+const MOVERS: ReadonlySet<SeatView['role']> = new Set(['driver', 'roadster', 'sled', 'helm', 'pilot', 'airPilot', 'aviator', 'walker', 'titan', 'hen', 'tupp', 'strv', 'drone', 'loiter', 'captain', 'missile', 'coxswain'] as const)
 
 /** What the local player is up to this frame: worked out once, read by the stages of the frame. */
 interface Moment {
@@ -1096,7 +1096,8 @@ export class Game {
       this.leverSeat = key
       const ride = seat ? this.vehicles.placed.get(seat.vehicle) : undefined
       const height = ride ? ride.y - (this.terrain?.heightAt(ride.x, ride.z) ?? ride.y) : 0
-      this.lever.take(ride?.air ?? 0, height)
+      const rotor = seat ? vehicleDef(seat.kind).rotor : null
+      if (rotor) this.lever.take(rotor, ride?.air ?? 0, height)
     }
     return levered ? this.lever.step(buttons) : 0
   }
@@ -1449,7 +1450,7 @@ export class Game {
     const item = itemDef(this.held().item)
     // The phone is used on foot or from a passenger's seat, alive (or alone, offline); anywhere else it is put away.
     const living = able || (this.localId === null && this.transport.status !== 'CONNECTED')
-    if (this.input.phone && !(living && (!seated || view?.role === 'passenger'))) this.input.dropPhone()
+    if (this.input.phone && !(living && (!seated || view?.role === 'passenger' || view?.role === 'rider'))) this.input.dropPhone()
     // Aim held with a scoped gun in hand, alive and free to use it: look down the scope. With any other gun: half zoom over the shoulder.
     const scoped = handy && this.input.aimHeld && item?.scope === true
     const aiming = !scoped && handy && this.input.aimHeld && item?.kind === 'gun'

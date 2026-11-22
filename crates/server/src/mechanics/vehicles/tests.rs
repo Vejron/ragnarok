@@ -3,7 +3,7 @@ use super::*;
 use crate::entities::{Health, HurtBy};
 use crate::game::{Command, Game, Outgoing};
 use sim::STANDING_Y;
-use shared::protocol::{FLAG_LAMP, InputFrame, KIND_DRONE, THRUST_AIR, THRUST_BOOST, THRUST_LIFT};
+use shared::protocol::{FLAG_LAMP, InputFrame, KIND_AIR_AMBULANCE, KIND_DRONE, THRUST_AIR, THRUST_BOOST, THRUST_LIFT};
 use shared::world::{Road, WORLD_VERSION};
 use tokio::sync::{mpsc, oneshot};
 
@@ -249,6 +249,83 @@ fn a_pilot_lifts_off_with_one_passenger() {
     collective(&mut game, pilot, &mut seq_a, HELI_HOVER_LEVER, 60);
     let later = game.world.physics.car_pose(vid).unwrap();
     assert!((later.position[1] - hover.position[1]).abs() < 0.5, "hovering: {} -> {}", hover.position[1], later.position[1]);
+}
+
+/// An air ambulance settled on its skids clear of everything, and `people` players standing at its door.
+#[allow(clippy::type_complexity)]
+fn ambulance_crew(game: &mut Game, people: usize) -> (u32, Vec<(u32, u32, mpsc::Receiver<Outgoing>)>) {
+    let vid = super::add_vehicle(&mut game.world, KIND_AIR_AMBULANCE, [0.0, 1.3, 60.0], 0.0);
+    let mut crew: Vec<(u32, u32, mpsc::Receiver<Outgoing>)> = (0..people)
+        .map(|_| {
+            let (id, inbox) = join(game);
+            (id, 0, inbox)
+        })
+        .collect();
+    for (id, seq, _) in &mut crew {
+        idle(game, *id, seq, 30);
+    }
+    let pose = game.world.physics.car_pose(vid).unwrap();
+    for (id, seq, _) in &mut crew {
+        game.world.entities.get_mut::<Player>(*id).unwrap().character.position = [pose.position[0] + 2.2, STANDING_Y, pose.position[2]];
+        press(game, *id, seq, (0, 0), BUTTON_USE, 1);
+        idle(game, *id, seq, 3);
+    }
+    (vid, crew)
+}
+
+#[test]
+fn an_air_ambulance_takes_a_pilot_and_three_passengers_up_and_a_fifth_stays_behind() {
+    let mut game = game();
+    let (vid, mut crew) = ambulance_crew(&mut game, 5);
+    let aboard: Vec<Option<u32>> = crew[..4].iter().map(|(id, ..)| Some(*id)).collect();
+    assert_eq!(game.world.entities.of::<Seats>(vid)[..], aboard[..], "four seats, and the pilot first");
+    assert!(game.world.entities.of::<Player>(crew[4].0).seat.is_none());
+
+    let start = game.world.physics.car_pose(vid).unwrap();
+    let (pilot, seq, _) = &mut crew[0];
+    collective(&mut game, *pilot, seq, 1.0, 60 * 7);
+    let end = game.world.physics.car_pose(vid).unwrap();
+    assert!(end.position[1] > start.position[1] + 10.0, "climbed from {} to {}", start.position[1], end.position[1]);
+    let told = game.told(*pilot, vid).expect("the pilot is told of it");
+    assert!(told.thrust.as_ref().is_some_and(|thrust| thrust.air > 240), "with the rotor's speed: {:?}", told.thrust);
+    assert!(told.drive.as_ref().is_some_and(|drive| drive.vy > 400), "and its motion: {:?}", told.drive);
+    assert!(told.turret.is_none() && told.arms.is_none(), "and of no gun");
+    for (id, ..) in &crew[..4] {
+        assert_eq!(game.world.entities.of::<Player>(*id).character.position, end.position, "everyone aboard goes up with it");
+    }
+}
+
+#[test]
+fn nobody_aboard_an_air_ambulance_can_fire_though_they_carry_a_gun() {
+    let mut game = game();
+    let (vid, mut crew) = ambulance_crew(&mut game, 4);
+    for (id, seq, _) in &mut crew {
+        {
+            let mut player = game.world.entities.of_mut::<Player>(*id);
+            player.hands.hotbar[0] = shared::protocol::ItemSlot { item: shared::items::ITEM_AK5, count: 1, ammo: 30 };
+            player.hands.selected = Some(0);
+            assert!(player.seat.is_some_and(|seat| seat.vehicle == vid));
+        }
+        press(&mut game, *id, seq, (0, 0), BUTTON_FIRE, 30);
+        assert_eq!(game.world.entities.of::<Player>(*id).hands.hotbar[0].ammo, 30, "not a round gone");
+        assert!(game.seen_projectiles().is_empty(), "and nothing in the air");
+    }
+}
+
+#[test]
+fn everyone_gets_out_of_an_air_ambulance_clear_of_its_cabin_and_tail() {
+    let mut game = game();
+    let (vid, mut crew) = ambulance_crew(&mut game, 4);
+    for (id, seq, _) in &mut crew {
+        press(&mut game, *id, seq, (0, 0), BUTTON_USE, 1);
+        idle(&mut game, *id, seq, 3);
+        let out = game.world.entities.of::<Player>(*id).character.position;
+        assert!(game.world.entities.of::<Player>(*id).seat.is_none());
+        let pose = game.world.physics.car_pose(vid).unwrap();
+        let (x, z) = (out[0] - pose.position[0], out[2] - pose.position[2]);
+        assert!(x.abs() > AIR_AMBULANCE_HALF_EXTENTS[0] + CAPSULE_RADIUS, "beside the cabin, not in it or under the tail: {x} {z}");
+        assert!(out[1] < pose.position[1] + 1.0, "on the ground, not up by the rotor: {out:?}");
+    }
 }
 
 #[test]

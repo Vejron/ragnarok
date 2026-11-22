@@ -158,6 +158,9 @@ export const KIND_RAFT = 35
  */
 export const KIND_PARCEL = 36
 
+/** The air ambulance: an unarmed helicopter for a pilot and three passengers, with a shrouded tail fan. */
+export const KIND_AIR_AMBULANCE = 37
+
 /** Fixed simulation rate, in ticks per second. */
 export const TICK_RATE = 60
 
@@ -1413,6 +1416,47 @@ export const LIFT_WHEEL_SEGMENTS = 8
  * and the eye (crouched) is a sitting one's.
  */
 export const LIFT_RIDER_CENTRE = 0.45
+
+/**
+ * The air ambulance (`KIND_AIR_AMBULANCE`): a light twin-engined helicopter after the EC135, with
+ * skids, a shrouded tail fan and no weapons. The pilot sits front right, as helicopter pilots do, with
+ * one passenger beside them and two behind. It flies as the gunship does (`Lift::Rotor`), faster and
+ * climbing slower. Same body axes as the car.
+ */
+export const AIR_AMBULANCE_SEATS = 4
+
+/** Half the box round the cabin, from the skids' soles to the top of the windows, metres. */
+export const AIR_AMBULANCE_HALF_EXTENTS = [0.85, 1.1, 2.55] as const
+
+/** Half the engines' housing on the cabin's roof, and its middle in the hull frame, metres. */
+export const AIR_AMBULANCE_HOUSING_HALF = [0.55, 0.3, 1.3] as const
+export const AIR_AMBULANCE_HOUSING_CENTRE = [0.0, 1.4, 1.1] as const
+
+/**
+ * Half the tail boom and its middle, then half the fin round the fan and its middle, metres: the tail
+ * reaches five metres past the cabin's box.
+ */
+export const AIR_AMBULANCE_BOOM_HALF = [0.18, 0.25, 1.7] as const
+export const AIR_AMBULANCE_BOOM_CENTRE = [0.0, 0.68, 4.2] as const
+export const AIR_AMBULANCE_FIN_HALF = [0.16, 1.2, 0.8] as const
+export const AIR_AMBULANCE_FIN_CENTRE = [0.0, 1.05, 6.7] as const
+
+/** The main rotor's hub in the hull frame and its radius, then the tail fan's hub, metres. */
+export const AIR_AMBULANCE_ROTOR_HUB = [0.0, 2.1, 0.7] as const
+export const AIR_AMBULANCE_ROTOR_RADIUS = 5.1
+export const AIR_AMBULANCE_FAN_HUB = [0.0, 0.65, 6.55] as const
+
+/** The lamp under the nose that is its searchlight, in the hull frame, metres. */
+export const AIR_AMBULANCE_LAMP = [0.0, -0.5, -2.1] as const
+
+/**
+ * The lever that hovers it out of ground effect, measured by
+ * `the_air_ambulances_hover_lever_holds_it_out_of_ground_effect`.
+ */
+export const AIR_AMBULANCE_HOVER_LEVER = 0.56
+
+/** The pilot front right and a passenger front left, then two passengers behind them. */
+export const AIR_AMBULANCE_SEAT_HEADS = [[0.31, 0.72, -0.85], [-0.31, 0.72, -0.85], [-0.31, 0.74, 0.35], [0.31, 0.74, 0.35]] as const
 
 /**
  * The AMV XA-361 (`KIND_AMV`): an eight-wheeled armoured vehicle with a turret on its back carrying

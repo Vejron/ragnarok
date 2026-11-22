@@ -9,6 +9,8 @@ const SWITCH = ' · R switch seat'
 /** The driver's lamps (headlights, or a searchlight), on and off. */
 const LIGHTS = ' · L lights'
 const HITCH = 'H hitch a mortar or a Pak'
+/** How any helicopter is flown, whatever else its pilot can do. */
+const FLY = 'Mouse turn (it banks into the turn at speed) · W/S pitch · A/D roll (it holds the lean you leave it at: fly it back level) · Space raise collective · Shift lower it'
 const swapRound = (ammo: Stats['ammo']) => (ammo === 'HE' ? 'load AP' : 'load HE')
 const loaded = (reload: number) => (reload < 1 ? 'reloading…' : 'loaded')
 
@@ -35,9 +37,11 @@ const HINTS: Record<Seat, (stats: Stats) => string> = {
     return `Mouse turn the periscope · Hold right mouse to zoom · Click or F launch a missile · ${state}${canSwitchSeat ? SWITCH : ''}`
   },
   missile: () => 'Mouse steer (it banks and turns to where you look) · W/S pitch · A/D roll · Click or F detonate · E let it go',
-  pilot: ({ canSwitchSeat }) => `Mouse turn (it banks into the turn at speed) · W/S pitch · A/D roll (it holds the lean you leave it at: fly it back level) · Space raise collective · Shift lower it · Click or F rockets${LIGHTS}${canSwitchSeat ? SWITCH : ''}`,
+  pilot: ({ canSwitchSeat }) => `${FLY} · Click or F rockets${LIGHTS}${canSwitchSeat ? SWITCH : ''}`,
+  airPilot: ({ canSwitchSeat }) => `${FLY}${LIGHTS}${canSwitchSeat ? SWITCH : ''}`,
   aviator: ({ canSwitchSeat }) => `Mouse steer (the plane turns to where you look) · Space throttle up · Shift throttle down · W/S/A/D by hand · Click or F fire · C bomb${LIGHTS}${canSwitchSeat ? SWITCH : ''}`,
   passenger: ({ canSwitchSeat }) => `Mouse look · Click or F fire your gun · Right mouse aim · 1-5 or wheel switch · R reload${canSwitchSeat ? ', or switch seat when it is full' : ''}`,
+  rider: ({ canSwitchSeat }) => `Mouse look · E get out${canSwitchSeat ? SWITCH : ''}`,
   gunner: ({ ammo, jammed, heat, reload, canSwitchSeat }) => {
     const state = jammed ? 'jammed!' : heat !== null ? (heat > 0.6 ? 'overheating' : 'firing') : loaded(reload)
     return `Mouse aim · Hold right mouse for the gun sight · Click or F fire${ammo ? ` · Q ${swapRound(ammo)}` : ''} · ${ammo ? `${ammo} ` : ''}${state}${canSwitchSeat ? SWITCH : ''}`

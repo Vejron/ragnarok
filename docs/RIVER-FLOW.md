@@ -115,7 +115,7 @@ Under the rule the solver replaced, the same river ran at 2.5 m/s or more over 1
 
 ## What it does not do
 
-- **Lakes and the sea are still.** Only river polygons flow, and only they carry foam.
+- **Lakes and the sea are still.** Only rivers flow, and only they carry foam: the river polygons, and the channels and pools of the rivers drawn as lines ([RIVER-CHANNELS.md](RIVER-CHANNELS.md)).
 - **The level is not solved along the course.** It is still the profile fitted to the height model. Across the river it is now shaped by the pressure this solve finds under its lid, and a rapid stands in waves ([RIVER-SURFACE.md](RIVER-SURFACE.md)), but each cross-section's mean stays the profile's. A real river backs up above a narrows; this one runs faster through it instead, and where the bowl is too shallow for the water (Vindelälven's narrows above the fork) it runs at the 5 m/s limit.
 - **No backwater profile shapes the bed.** Each cross-section's depth comes from its own slope. The level is the measured surface, which already holds the real river's backwater, and the slope is taken over 120 m, so the bed has no ledges: its mean depth changes by 1.1 m at most from one 20 m to the next on Vindelälven, a ramp of 1 in 18 where a pool meets a rapid. The importer logs that step for each river.
 - **The bed's relief is made up.** Nothing measures a river's bed, so the bars and boulders are noise, put where the slope says a rapid is. They are not where the real ones are.

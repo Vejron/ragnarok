@@ -51,6 +51,8 @@ export const VEHICLE_KINDS: { kind: number; name: string; icon: string }[] = [
   { kind: 8, name: 'Strv', icon: 'V' },
   { kind: 28, name: 'Strf 90', icon: 'I' },
   { kind: 3, name: 'Helicopter', icon: 'H' },
+  // Every letter is taken, and a cross says it better. It wants twelve metres clear for its rotor and tail.
+  { kind: 37, name: 'Air ambulance', icon: '+' },
   { kind: 6, name: 'Plane', icon: 'P' },
   // Afloat where it is placed on open water, on its wheels anywhere else.
   { kind: 27, name: 'Seaplane', icon: 'F' },

@@ -48,8 +48,20 @@ export interface VehicleDef {
   fists: boolean
   /** Where it is boarded from in the hull frame, when not its middle: a ship's helm, a ship's gun's breech (`VehicleDef::board`). */
   board: Triple | null
+  /** For a helicopter: where its lever hovers it, how fast the lever moves and where translational lift is (`Rotorcraft`). Null for anything else. */
+  rotor: Rotor | null
   /** Its vision slits, which a round goes straight through (`Armor::slits`). */
   slits: readonly Slit[]
+}
+
+/** What the client needs of how a helicopter flies: the rest is the sim's. */
+export interface Rotor {
+  /** The collective lever that hovers it out of ground effect, 0..1. */
+  hoverLever: number
+  /** How fast its lever moves, share of its travel per second. */
+  leverRate: number
+  /** Through the air at about this speed it flies into clean air and shudders, m/s. */
+  etlSpeed: number
 }
 
 /** A vision slit: a box in the hull frame and the way it looks out; on a turret, placed at yaw 0 and turned about `pivot`. */
@@ -105,6 +117,9 @@ export const crewGun = (kind: number | undefined, index: number): boolean => {
   const def = vehicleDef(kind)
   return def.crewGuns && index !== 0 && !def.gunners.includes(index)
 }
+
+/** Whether `kind` is a helicopter, held up by a rotor and flown with a collective lever. */
+export const isRotorcraft = (kind: number | undefined): boolean => kind !== undefined && vehicleDef(kind).rotor !== null
 
 /** A walker or a hen: a hull on two spring legs, boarded from between its feet. */
 export const isLegged = (kind: number | undefined): boolean => kind !== undefined && vehicleDef(kind).legged

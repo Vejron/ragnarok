@@ -10,6 +10,7 @@ pub mod church;
 pub mod classify;
 pub mod condition;
 pub mod cache;
+pub mod channel;
 pub mod canopy;
 pub mod dem;
 pub mod field;

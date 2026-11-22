@@ -120,6 +120,14 @@ const WAVE_FOAM_LESS = 0.12
 /** How much of a rapid's white a smooth, deep tongue of it keeps. */
 const TONGUE_WHITE = 0.3
 /**
+ * A stream is the river's colour. It is only `STREAM_FILL` deep, which would show little but its bed,
+ * so it takes the light out as water this deep does, metres: dark down the middle as a river is, and
+ * clear at its banks.
+ */
+const STREAM_LOOKS_DEEP = 1.5
+/** How much of the pale bands that run along a stream show on it, of a lake's: brown water is not streaked. */
+const STREAM_BANDS = 0.3
+/**
  * How much light a metre of river water passes: the first of these in the colours its stain has none
  * of, the second in the stain's strongest.
  */
@@ -599,10 +607,10 @@ fn surface(s: Surface) -> vec4f {
   var clear = select(1.0 - smoothstep(0.0, 1.4, depth), 1.0 - smoothstep(0.0, ${STREAM_FILL.toFixed(2)}, depth), stream);
   // How much of this water is stained: a river's is (the importer writes even its slack water as
   // running, so it is the river's colour from bank to bank, fading only where it runs out into a lake),
-  // and on a world that says so (\`params.ice.y\`) so are its lakes and sea.
+  // so is a stream's, and on a world that says so (\`params.ice.y\`) so are its lakes and sea.
   var stained = 0.0;
-  if (!stream && params.wave.w > 0.5) {
-    stained = max(params.ice.y, smoothstep(0.0, 0.045, speed) * params.wave.y);
+  if (params.wave.w > 0.5) {
+    stained = max(params.ice.y, select(smoothstep(0.0, 0.045, speed), 1.0, stream) * params.wave.y);
   }
   if (stained < 1.0) {
     // A stream runs over mud and stones, darker than a lake's sandy shallows.
@@ -614,7 +622,7 @@ fn surface(s: Surface) -> vec4f {
     // more of the colours the stain is made of, so the bed shows through shallow water in the stain's
     // own warm tone and is lost in a pool.
     let strongest = max(max(params.river.r, params.river.g), max(params.river.b, 1e-3));
-    let kept = pow(mix(vec3f(${RIVER_PASSES[0].toFixed(2)}), vec3f(${RIVER_PASSES[1].toFixed(2)}), params.river / strongest), vec3f(${RIVER_PATH.toFixed(1)} * max(depth, 0.0)));
+    let kept = pow(mix(vec3f(${RIVER_PASSES[0].toFixed(2)}), vec3f(${RIVER_PASSES[1].toFixed(2)}), params.river / strongest), vec3f(${RIVER_PATH.toFixed(1)} * max(depth, 0.0) * select(1.0, ${(STREAM_LOOKS_DEEP / STREAM_FILL).toFixed(2)}, stream)));
     let seen = (kept.r + kept.g + kept.b) / 3.0;
     color = mix(color, params.river * (1.0 - kept) + params.bed * 0.8 * kept, stained);
     deep = mix(deep, 1.0 - seen, stained);
@@ -627,7 +635,7 @@ fn surface(s: Surface) -> vec4f {
     web = caustics(bedP, select(time * 0.8, time, stream));
   }
   color += params.foam * web * clear * 0.35;
-  color = mix(color, params.foam, band * 0.12);
+  color = mix(color, params.foam, band * select(0.12, ${(0.12 * STREAM_BANDS).toFixed(3)}, stream));
   // The water's own colour and its foam are lit as the flat ground is, so a lake darkens with the shore at night.
   let ground = groundLight(s.world, vec3f(0.0, 1.0, 0.0), 1.0) / PI;
   color *= ground;
@@ -689,7 +697,7 @@ fn surface(s: Surface) -> vec4f {
   // Down in its channel a stream mirrors its own banks more than the open sky, and the scene's mirror,
   // made for the lake's level, misses it.
   if (stream) {
-    mirror = mix(mirror, color * 0.55, 0.6);
+    mirror = mix(mirror, color * 0.55, 0.75);
   }
   color = mix(color, mirror, clamp((fresnel * 1.3 + 0.12) * mix(1.1, 0.8, gust), 0.0, 0.95));
 

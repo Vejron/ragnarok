@@ -1,6 +1,6 @@
 # The helicopter's flight model
 
-The helicopter (`KIND_HELI`) flies on a semi-realistic model, in the spirit of a home flight simulator's helicopters. It has a collective, a cyclic, pedals and a rotor with a speed of its own. It also has the effects a pilot feels: ground effect, translational lift and its shudder, transverse flow, flapback, the tail rotor's drift, vortex ring state, retreating blade stall and autorotation. It flies in the wind. The help it gives is what a real one's stability augmentation gives: it damps the rates and holds no attitude. Only the pedals' turn coordination at speed is more than that, so a mouse can fly it. The first model, an arcade one that set the angular velocity and held whatever vertical speed Space and Shift asked for, is in [VEHICLES-II.md](VEHICLES-II.md#the-helicopter).
+The helicopter (`KIND_HELI`) flies on a semi-realistic model, in the spirit of a home flight simulator's helicopters. It has a collective, a cyclic, pedals and a rotor with a speed of its own. It also has the effects a pilot feels: ground effect, translational lift and its shudder, transverse flow, flapback, the tail rotor's drift, vortex ring state, retreating blade stall and autorotation. It flies in the wind. The help it gives is what a real one's stability augmentation gives: it damps the rates and holds no attitude. Only the pedals' turn coordination at speed is more than that, so a mouse can fly it. The unarmed air ambulance flies on the same model with a tuning of its own ([VEHICLES-XXI.md](VEHICLES-XXI.md)): the numbers here are the gunship's. The first model, an arcade one that set the angular velocity and held whatever vertical speed Space and Shift asked for, is in [VEHICLES-II.md](VEHICLES-II.md#the-helicopter).
 
 ## Flying it
 
@@ -78,8 +78,8 @@ The rotor's own moments grow with its speed and its lift:
 
 ## Wire and client
 
-- **The lever on the wire.** `InputFrame.collective` (u8, protocol 90) carries the lever. The client keeps it (`client/src/sim/collective.ts`, `CollectiveLever`) for a seat with `lever: true`. `Buttons::Collective` reads it as the helicopter's `lift`.
-- **The rotor on the wire.** `Thrust.air` is the rotor's speed. Everyone's client spins the drawn rotor (`HeliModel.setRotor`) and beats the blades (`SoundInput.rotor`) with it.
+- **The lever on the wire.** `InputFrame.collective` (u8, protocol 90) carries the lever. The client keeps it (`client/src/sim/collective.ts`, `CollectiveLever`) for a seat with `lever: true`, starting and moving it by that kind's `rotor` row in the vehicle table (`Rotorcraft::hover_lever`, `lever_rate`). `Buttons::Collective` reads it as the helicopter's `lift`.
+- **The rotor on the wire.** `Thrust.air` is the rotor's speed. Everyone's client spins the drawn rotor (`RotorModel.setRotor`) and beats the blades (`SoundInput.rotor`) with it.
 - **The camera.** The pilot's seat has its own camera rig, `pilot`. The view follows the mouse and does not ease back behind the hull, since the hull turns to meet it.
 
 ## Tests

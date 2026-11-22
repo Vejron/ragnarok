@@ -1,5 +1,7 @@
-//! Water from OpenStreetMap: lakes and river polygons, stream centre lines and the sea. A stream
-//! that runs underground (`tunnel=culvert`) is left out, so it shows only where it is open.
+//! Water from OpenStreetMap: lakes and river polygons, the centre lines of rivers and of streams,
+//! and the sea. A river or stream that runs underground (`tunnel=culvert`) is left out, so it shows
+//! only where it is open. A river's line becomes water as wide as a river (`channel`); a stream's
+//! and a canal's stays a line.
 //!
 //! OSM has no sea polygon. The sea is the side of every `natural=coastline` way that is on its
 //! right (land is on the left), so it is built here: the coastline chains are cut at the edge of
@@ -16,7 +18,10 @@ pub type Polygon = Vec<Vec<LatLon>>;
 pub struct Found {
     pub lakes: Vec<Polygon>,
     pub rivers: Vec<Polygon>,
+    /// `waterway=stream` and `canal`.
     pub streams: Vec<Vec<LatLon>>,
+    /// `waterway=river`, drawn downstream.
+    pub river_lines: Vec<Vec<LatLon>>,
     /// Coastline ways, joined end to end, land on the left.
     pub coast: Vec<Vec<LatLon>>,
 }
@@ -56,7 +61,7 @@ fn read_way(way: &Way, found: &mut Found, coast: &mut Vec<Vec<LatLon>>) {
         if !matches!(tag("tunnel"), "" | "no") {
             return;
         }
-        found.streams.push(geometry.clone());
+        (if tag("waterway") == "river" { &mut found.river_lines } else { &mut found.streams }).push(geometry.clone());
     } else if is_closed(geometry) {
         (if is_river(&way.tags) { &mut found.rivers } else { &mut found.lakes }).push(vec![geometry.clone()]);
     }
@@ -312,6 +317,18 @@ mod tests {
             nodes: Vec::new(),
         };
         assert_eq!(from(&data).streams.len(), 2, "the open stream and the one tagged tunnel=no");
+    }
+
+    #[test]
+    fn a_river_line_is_neither_a_ribbon_nor_culverted_and_a_stream_still_is() {
+        let way = |id, kind: &str| Way {
+            id,
+            tags: [("waterway".to_string(), kind.to_string())].into_iter().collect(),
+            geometry: vec![LatLon { lat: 64.0, lon: 19.0 }, LatLon { lat: 64.001, lon: 19.0 }],
+        };
+        let found = from(&Data { ways: vec![way(1, "river"), way(2, "stream"), way(3, "canal")], relations: Vec::new(), nodes: Vec::new() });
+        // Only `streams` are drawn as ribbons, trenched and taken under roads.
+        assert_eq!((found.river_lines.len(), found.streams.len()), (1, 2));
     }
 
     #[test]

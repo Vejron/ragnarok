@@ -1,7 +1,7 @@
 import { Quaternion, Vector3 } from '@ragnarok/engine'
 import { DAMAGE_FRONT, FLAG_LAMP, KIND_HEN, KIND_LOITER, KIND_MISSILE, KIND_MORTAR, KIND_PAK, KIND_SHIP_GUN } from '@/net/codec'
 import { CarModel } from '@/render/car'
-import { HeliModel } from '@/render/heli'
+import { RotorModel } from '@/render/rotor'
 import { TitanModel } from '@/render/titan'
 import { LIGHTS_BREAK } from '@/render/carwear'
 import { dayPhase, nightAt } from '@/render/daynight'
@@ -51,7 +51,8 @@ const UNLIT = new Set([KIND_MORTAR, KIND_PAK, KIND_SHIP_GUN, KIND_MISSILE, KIND_
  * A vehicle's lamps, which its driver switches (L, `FLAG_LAMP`), at full strength in the dark and
  * `BY_DAY` of it by day (`nightAt`), fading in and out over `FADE`:
  * - a car's headlights, from the front lamps in its model along the nose, until the lamps are smashed;
- * - a helicopter's searchlight, under the nose gun and turning with it;
+ * - a helicopter's searchlight: under the gunship's nose gun and turning with it, or fixed under an
+ *   air ambulance's nose;
  * - a Titan's searchlight, from its visor the way its head faces;
  * - anything else's headlights, from the middle of the front of its hull along the nose.
  *
@@ -95,7 +96,7 @@ export class Headlights implements Presenter<Frame> {
       this.world.lights.hold(at.x, at.y, at.z, { color: TITAN_COLOR, intensity: TITAN_INTENSITY * level, direction, radius: TITAN_REACH, angle: TITAN_ANGLE, penumbra: TITAN_PENUMBRA })
       return
     }
-    if (model instanceof HeliModel) {
+    if (model instanceof RotorModel) {
       const { at, direction } = model.searchlight()
       this.world.lights.hold(at.x, at.y, at.z, { color: COLOR, intensity: INTENSITY * level, direction, radius: SEARCH_REACH, angle: SEARCH_ANGLE, penumbra: SEARCH_PENUMBRA })
       return

@@ -3,6 +3,7 @@
  * here; a test holds every kind the server defines to having one.
  */
 
+import { AIR_AMBULANCE } from './airambulance'
 import { AMV } from './amv'
 import { BUS } from './bus'
 import { CB90 } from './cb90'
@@ -37,7 +38,7 @@ import { WALKER } from './walker'
 
 export type { VehicleKind } from './kind'
 
-export const KINDS: readonly VehicleKind[] = [JEEP, TANK, HELI, SPORTS, PLANE, WALKER, STRV, MORTAR, ROADSTER, DRONE, HEN, LOITER, PAK, TUPP, SNOWMOBILE, SHIP, SHIP_GUN, GOLF_CART, TECHNICAL, SUBMARINE, MISSILE, SEAPLANE, STRF, SNOWRACER, TITAN, BUS, PBV, AMV, CB90, RAFT]
+export const KINDS: readonly VehicleKind[] = [JEEP, TANK, HELI, SPORTS, PLANE, WALKER, STRV, MORTAR, ROADSTER, DRONE, HEN, LOITER, PAK, TUPP, SNOWMOBILE, SHIP, SHIP_GUN, GOLF_CART, TECHNICAL, SUBMARINE, MISSILE, SEAPLANE, STRF, SNOWRACER, TITAN, BUS, PBV, AMV, CB90, RAFT, AIR_AMBULANCE]
 
 const byKind = new Map(KINDS.map((kind) => [kind.kind, kind]))
 

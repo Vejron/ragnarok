@@ -11,6 +11,8 @@ export function dialMax(seat: HudStats['seat']): number {
       return 400
     case 'pilot':
       return 240
+    case 'airPilot':
+      return 280
     case 'drone':
     case 'loiter':
       return 160

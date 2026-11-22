@@ -38,7 +38,7 @@ export interface HudStats {
   /** A hint for the key that does something right now, or null. */
   prompt: string | null
   /** Set while in a vehicle: the seat's role. A plane's pilot is an aviator; a helicopter's, a pilot. */
-  seat: 'driver' | 'roadster' | 'sled' | 'helm' | 'pilot' | 'aviator' | 'walker' | 'titan' | 'hen' | 'tupp' | 'strv' | 'mortar' | 'drone' | 'loiter' | 'captain' | 'periscope' | 'missile' | 'passenger' | 'gunner' | 'roofgunner' | 'coxswain' | null
+  seat: 'driver' | 'roadster' | 'sled' | 'helm' | 'pilot' | 'airPilot' | 'aviator' | 'walker' | 'titan' | 'hen' | 'tupp' | 'strv' | 'mortar' | 'drone' | 'loiter' | 'captain' | 'periscope' | 'missile' | 'passenger' | 'rider' | 'gunner' | 'roofgunner' | 'coxswain' | null
   /** A Roadster's driver: what is left in the air tank, 0..1; a snowmobile's: its boost; a hen's: its wings' stamina; a ship's helmsman: how well her sail draws; null elsewhere. */
   air: number | null
   /**

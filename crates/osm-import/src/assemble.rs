@@ -276,40 +276,7 @@ fn culverted(line: &[P], ways: &[(&[P], f64)]) -> Vec<Vec<P>> {
         return vec![line.to_vec()];
     }
     let under = |p: P| near.iter().any(|&(points, reach)| points.windows(2).any(|pair| distance_to_segment(p, pair[0], pair[1]) < reach));
-    let mut runs = Vec::new();
-    let mut run: Vec<P> = Vec::new();
-    let mut was = under(line[0]);
-    if !was {
-        run.push(line[0]);
-    }
-    for pair in line.windows(2) {
-        let (a, b) = (pair[0], pair[1]);
-        let at = |t: f64| [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
-        let steps = ((b[0] - a[0]).hypot(b[1] - a[1]) / CULVERT_STEP).ceil().max(1.0) as usize;
-        for k in 1..=steps {
-            let t = k as f64 / steps as f64;
-            if under(at(t)) == was {
-                continue;
-            }
-            // Halve the step down to the road's reach: `lo` stays on the side the stream came from.
-            let (mut lo, mut hi) = ((k - 1) as f64 / steps as f64, t);
-            for _ in 0..12 {
-                let middle = (lo + hi) / 2.0;
-                if under(at(middle)) == was { lo = middle } else { hi = middle }
-            }
-            if was {
-                run.push(at(hi));
-            } else {
-                run.push(at(lo));
-                runs.push(std::mem::take(&mut run));
-            }
-            was = !was;
-        }
-        if !was {
-            run.push(b);
-        }
-    }
-    runs.push(run);
+    let mut runs = crate::water::uncovered(line, CULVERT_STEP, under);
     runs.retain(|run| run.windows(2).map(|pair| (pair[1][0] - pair[0][0]).hypot(pair[1][1] - pair[0][1])).sum::<f64>() >= SHORTEST_STREAM);
     runs
 }
@@ -620,7 +587,7 @@ fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collecti
             false => onward(points, from_end, *width, *kind, driven),
         });
         let under = if track { &under_track_deck } else { &under_road_deck };
-        let (pieces, line, ramps) = bridge::build_along(points, [&leads[0], &leads[1]], joined, rides, *width, *kind, *pylons, deck, under, &ground, &water.levels, inner);
+        let (pieces, line, ramps) = bridge::build_along(points, [&leads[0], &leads[1]], joined, rides, *width, *kind, *pylons, deck, under, &ground, &water.levels, &water.channel, inner);
         ((if line.len() >= 2 { line } else { points.clone() }, *width, *kind, *pylons, pieces), ramps)
     };
     let (mut structures, mut ramps): (Vec<BuiltBridge>, Vec<Ramps>) = spanning.iter().map(|way| build(way, [None, None], &|_| None)).unzip();
@@ -1434,12 +1401,32 @@ pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::B
     let trenches = track_cuttings(&rails, &ground);
     eprintln!("railways: {} stretches of track over cuttings, {} ways mapped as bridges", trenches.len(), rail_bridges.len());
     rail_bridges.extend(trenches);
-    railway.decks = railway::decks(onto_the_banks(joined_bridges(rail_bridges), &track_ways, &ground));
+    let wet_tracks = river_crossings(&track_ways, &ground, &water);
+    // Not where the track has a deck already, over the cutting the channel makes (`track_cuttings`).
+    let wet_tracks: Vec<_> = wet_tracks
+        .into_iter()
+        .filter(|(points, width)| {
+            let middle = points[points.len() / 2];
+            !rail_bridges.iter().any(|(line, ..)| line.windows(2).any(|pair| distance_to_segment(middle, pair[0], pair[1]) < width / 2.0))
+        })
+        .collect();
+    rail_bridges.extend(wet_tracks.into_iter().map(|(points, width)| (points, width, bridge::TRACK, Pylons::Flush, Deck::new())));
+    railway.decks = railway::decks(out_of_channels(onto_the_banks(joined_bridges(rail_bridges), &track_ways, &ground, &water), &track_ways, &ground, &water.channel));
     eprintln!("railways: {} decks under them", railway.decks.len());
     eprintln!("bridges: {} decks over cuttings the roads cross", cuts.len());
-    bridges.extend(cuts.into_iter().map(|(points, width, kind)| (points, width, kind, Pylons::Flush, Deck::new())));
+    let mut decked: Vec<(Vec<P>, f64, u8)> = Vec::new();
+    for road in &roads[..roads.len() - strips] {
+        for (points, width) in river_crossings(std::slice::from_ref(road), &ground, &water) {
+            let middle = points[points.len() / 2];
+            if !cuts.iter().any(|(cut, ..)| cut.windows(2).any(|pair| distance_to_segment(middle, pair[0], pair[1]) < width / 2.0)) {
+                decked.push((points, width, road.2));
+            }
+        }
+    }
+    eprintln!("bridges: {} decks where a way crosses a river with no bridge", decked.len());
+    bridges.extend(cuts.into_iter().chain(decked).map(|(points, width, kind)| (points, width, kind, Pylons::Flush, Deck::new())));
     let before = bridges.len();
-    let bridges = clear_of_bridges(onto_the_banks(joined_bridges(bridges), &roads, &ground));
+    let bridges = clear_of_bridges(out_of_channels(onto_the_banks(joined_bridges(bridges), &roads, &ground, &water), &roads, &ground, &water.channel));
     let (bridges, shared) = twin_decks(bridges);
     let (bridges, shared) = paths_alongside(bridges, shared);
     eprintln!("bridges: {before} ways built as {} bridges, {} of them one deck under two carriageways", bridges.len() - shared.len(), shared.len());
@@ -2002,12 +1989,93 @@ const BANK_REACH: f64 = 40.0;
 /// A bridge is lengthened when the road rises this much past its end, metres.
 const BANK_RISE: f64 = 1.0;
 
+/// The stretches of `ways` that cross a small river's channel with no bridge, each from level ground
+/// either side (clear of the bank cut down to the water, and `CUT_MARGIN` on) with the way's width:
+/// each gets a flush deck, or the way would go through the river.
+fn river_crossings(ways: &[(Vec<P>, f64, u8)], ground: &Ground, water: &Placed) -> Vec<(Vec<P>, f64)> {
+    if water.channel.is_empty() {
+        return Vec::new();
+    }
+    let in_channel = |p: &P| bridge::in_channel(ground, &water.channel, *p);
+    let mut found = Vec::new();
+    for (points, width, _) in ways.iter().filter(|(points, ..)| points.len() >= 2) {
+        let samples = bridge::resample(points, 1.0);
+        let mut from = 0;
+        while let Some(first) = (from..samples.len()).find(|&k| in_channel(&samples[k])) {
+            let past = (first..samples.len()).find(|&k| !in_channel(&samples[k])).unwrap_or(samples.len());
+            // Along the bank is not across the river.
+            if samples[first..past].iter().any(|&p| bridge::water_at(ground, &water.levels, p).is_some()) {
+                let margin = CUT_MARGIN as usize;
+                let deck = samples[first.saturating_sub(margin)..(past + margin).min(samples.len())].to_vec();
+                if deck.len() >= 2 {
+                    found.push((deck, *width));
+                }
+            }
+            from = past;
+        }
+    }
+    found
+}
+
+/// A bridge over a small river ends where OpenStreetMap has it, which may be in the channel or on the
+/// bank cut down to it (`channel`): built from there, its deck would dip to the water. Each such end
+/// is carried on along the road that leads to it, or straight on where none does, until it is on
+/// ground that was left as it was.
+fn out_of_channels(mut bridges: Vec<BridgeWay>, roads: &[(Vec<P>, f64, u8)], ground: &Ground, channel: &[bool]) -> Vec<BridgeWay> {
+    if channel.is_empty() {
+        return bridges;
+    }
+    let near = |a: P, b: P| (a[0] - b[0]).hypot(a[1] - b[1]) < BRIDGE_JOIN;
+    let in_channel = |p: P| bridge::in_channel(ground, channel, p);
+    for (points, _, _, pylons, _) in &mut bridges {
+        if *pylons == Pylons::Flush || points.len() < 2 {
+            continue;
+        }
+        for at_start in [true, false] {
+            if at_start {
+                points.reverse();
+            }
+            let end = points[points.len() - 1];
+            if in_channel(end) {
+                let road = roads.iter().find_map(|(way, ..)| {
+                    if way.len() < 2 {
+                        None
+                    } else if near(way[0], end) {
+                        Some(way.clone())
+                    } else if near(way[way.len() - 1], end) {
+                        Some(way.iter().rev().copied().collect())
+                    } else {
+                        None
+                    }
+                });
+                let way: Vec<P> = road.unwrap_or_else(|| {
+                    let before = points[points.len() - 2];
+                    let length = (end[0] - before[0]).hypot(end[1] - before[1]).max(1e-9);
+                    vec![end, [0, 1].map(|axis| end[axis] + (end[axis] - before[axis]) / length * BANK_REACH)]
+                });
+                let along: Vec<P> = bridge::resample(&way, 1.0).into_iter().take(BANK_REACH as usize + 1).collect();
+                // A road that never leaves the bank runs along it, and the bridge is left to end on it.
+                if let Some(out) = along.iter().position(|&p| !in_channel(p)) {
+                    points.extend_from_slice(&along[1.min(out)..=out]);
+                }
+            }
+            if at_start {
+                points.reverse();
+            }
+        }
+    }
+    bridges
+}
+
 /// OSM often ends a bridge part of the way down the bank it springs from, and the terrain has the
 /// bank as it is under the bridge: built between the ground at its ends, the deck would stop metres
 /// below the road with a wall of earth before it. Each bridge whose road goes on rising past an end
 /// is lengthened along that road (the `roads` and the other bridges that start where it ends) to the
 /// top of the rise, as far as `BANK_REACH`. Decks over cuttings start and end on the road already.
-fn onto_the_banks(mut bridges: Vec<BridgeWay>, roads: &[(Vec<P>, f64, u8)], ground: &Ground) -> Vec<BridgeWay> {
+/// A span the terrain would carry (`bridge::left_to_terrain`) is lengthened only where the road rises
+/// past both its ends, out of a valley. With a rise past one end it is a few boards on a hillside,
+/// and lengthened up it they would be a deck too gently sloped ever to come down to the hill.
+fn onto_the_banks(mut bridges: Vec<BridgeWay>, roads: &[(Vec<P>, f64, u8)], ground: &Ground, water: &Placed) -> Vec<BridgeWay> {
     let near = |a: P, b: P| (a[0] - b[0]).hypot(a[1] - b[1]) < BRIDGE_JOIN;
     let height = |p: P| f64::from(ground.height_at(p[0] as f32, p[1] as f32));
     // The road on from `end`, as points from there: the first way, not `own`, that starts or ends at it.
@@ -2027,6 +2095,7 @@ fn onto_the_banks(mut bridges: Vec<BridgeWay>, roads: &[(Vec<P>, f64, u8)], grou
         if bridges[index].3 == Pylons::Flush || bridges[index].0.len() < 2 {
             continue;
         }
+        let mut risen: Vec<(bool, Vec<P>)> = Vec::new();
         for at_start in [true, false] {
             let end = if at_start { bridges[index].0[0] } else { bridges[index].0[bridges[index].0.len() - 1] };
             let Some(way) = onward(end, index, &bridges) else { continue };
@@ -2038,8 +2107,13 @@ fn onto_the_banks(mut bridges: Vec<BridgeWay>, roads: &[(Vec<P>, f64, u8)], grou
             }
             // As far as where the road is first up on the bank.
             let Some(reached) = along.iter().position(|&p| height(p) >= top - 0.3) else { continue };
-            let extra = along[1..=reached.max(1).min(along.len() - 1)].to_vec();
-            let points = &mut bridges[index].0;
+            risen.push((at_start, along[1..=reached.max(1).min(along.len() - 1)].to_vec()));
+        }
+        if risen.len() == 1 && bridge::left_to_terrain(&bridges[index].0, ground, &water.levels, &water.channel) {
+            continue;
+        }
+        let points = &mut bridges[index].0;
+        for (at_start, extra) in risen {
             if at_start {
                 points.splice(0..0, extra.into_iter().rev());
             } else {
@@ -2934,7 +3008,7 @@ pub fn synthetic_water(half: f64) -> crate::water::Map {
         [x + 20.0 * a.cos(), top + 16.0 * a.sin()]
     }).collect();
     let stream: Vec<P> = (0..40).map(|k| [x + 10.0 * (k as f64 * 0.5).sin(), top + 14.0 + k as f64 * 12.0]).collect();
-    Map { bodies: vec![Body { kind: Kind::Lake, rings: vec![pond], level: None }], streams: vec![stream] }
+    Map { bodies: vec![Body { kind: Kind::Lake, rings: vec![pond], level: None }], streams: vec![stream], ..Map::default() }
 }
 
 /// An offline grid city: 48 m blocks separated by 10 m streets, each block holding a few
@@ -4099,6 +4173,36 @@ mod tests {
         }
     }
 
+    /// Level ground with a river 8 m wide down x = 0 and 3 m of bank cut down to it either side.
+    fn river_ground() -> (Ground, Placed) {
+        let side = 121u32;
+        let across = |k: u32| (f64::from(k % side) - 60.0).abs();
+        let heights = (0..side * side).map(|k| if across(k) <= 4.0 { 0 } else { 300 }).collect();
+        let levels = (0..side * side).map(|k| if across(k) <= 4.0 { 150 } else { NO_WATER }).collect();
+        let channel = (0..side * side).map(|k| across(k) <= 7.0).collect();
+        (Ground { origin: -6_000, cell: 100, side, heights }, Placed { levels, channel, ..Placed::default() })
+    }
+
+    #[test]
+    fn a_road_without_a_bridge_over_a_river_gets_a_deck() {
+        let (ground, water) = river_ground();
+        let found = river_crossings(&[(vec![[-40.0, 0.0], [40.0, 0.0]], 5.0, ROAD_MINOR)], &ground, &water);
+        assert_eq!(found.len(), 1);
+        let (first, last) = (found[0].0[0], found[0].0[found[0].0.len() - 1]);
+        assert!(first[0] < -8.0 && last[0] > 8.0, "from bank to bank: {first:?} to {last:?}");
+        let beside = (vec![[6.0, -40.0], [6.0, 40.0]], 2.0, ROAD_PATH);
+        assert!(river_crossings(&[beside], &ground, &water).is_empty(), "a path along the bank needs none");
+    }
+
+    #[test]
+    fn a_bridge_that_ends_in_a_channel_is_carried_on_to_the_bank() {
+        let (ground, water) = river_ground();
+        let short = (vec![[-5.0, 0.0], [5.0, 0.0]], 4.0, ROAD_PATH, Pylons::None, Deck::new());
+        let carried = out_of_channels(vec![short], &[], &ground, &water.channel);
+        let (first, last) = (carried[0].0[0], carried[0].0[carried[0].0.len() - 1]);
+        assert!(first[0] < -7.0 && last[0] > 7.0, "{first:?} to {last:?}");
+    }
+
     #[test]
     fn a_bridge_that_ends_down_the_bank_is_lengthened_to_the_top_of_it() {
         // Ground at 10 m west of x = 0 and falling east of it at one in three, down to a river bed.
@@ -4108,15 +4212,28 @@ mod tests {
         // The bridge ends 12 m down the bank, where the road from the west meets it.
         let bridge = (vec![[12.0, 0.0], [120.0, 0.0]], 10.0, ROAD_MAJOR, Pylons::None, Deck::new());
         let road = (vec![[-100.0, 0.0], [12.0, 0.0]], 10.0, ROAD_MAJOR);
-        let longer = onto_the_banks(vec![bridge.clone()], &[road], &ground);
+        let longer = onto_the_banks(vec![bridge.clone()], &[road], &ground, &Placed::default());
         let start = longer[0].0[0];
         assert!(start[0] <= 1.0 && start[0] > -6.0, "it starts at the top of the bank: {start:?}");
         assert_eq!(longer[0].0.last(), Some(&[120.0, 0.0]), "its other end is where it was");
         // With no road on from its end, or on level ground, it is left as it is.
-        assert_eq!(onto_the_banks(vec![bridge.clone()], &[], &ground)[0].0, bridge.0);
+        assert_eq!(onto_the_banks(vec![bridge.clone()], &[], &ground, &Placed::default())[0].0, bridge.0);
         let level = (vec![[-120.0, 0.0], [-60.0, 0.0]], 10.0, ROAD_MAJOR, Pylons::None, Deck::new());
         let west = (vec![[-140.0, 0.0], [-120.0, 0.0]], 10.0, ROAD_MAJOR);
-        assert_eq!(onto_the_banks(vec![level.clone()], &[west], &ground)[0].0, level.0);
+        assert_eq!(onto_the_banks(vec![level.clone()], &[west], &ground, &Placed::default())[0].0, level.0);
     }
 
+    #[test]
+    fn a_footbridge_on_a_hillside_is_not_lengthened_into_a_deck_in_the_air() {
+        // A hillside falling eastwards at one in four, with a path down it over a few metres of boards.
+        let (cell, side) = (100, 301u32);
+        let heights = (0..side * side).map(|k| ((150.0 - f64::from(k % side)) * 25.0) as i32 + 4_000).collect();
+        let ground = Ground { origin: -15_000, cell, side, heights };
+        let boards = (vec![[0.0, 0.0], [7.6, 0.0]], 2.5, ROAD_PATH, Pylons::None, Deck::new());
+        let paths = [(vec![[-40.0, 0.0], [0.0, 0.0]], 2.5, ROAD_PATH), (vec![[7.6, 0.0], [60.0, 0.0]], 2.5, ROAD_PATH)];
+        let kept = onto_the_banks(vec![boards.clone()], &paths, &ground, &Placed::default());
+        assert_eq!(kept[0].0, boards.0, "it is left where it is");
+        let (points, width, kind, pylons, deck) = &kept[0];
+        assert!(bridge::build(points, *width, *kind, *pylons, deck, &[], &ground, &[], 150.0).is_empty(), "and so left to the hillside");
+    }
 }

@@ -1,8 +1,9 @@
 import { Quaternion, Vector3 } from '@ragnarok/engine'
 import { TICK_DT, ROADSTER_AIR } from './consts'
 import { controlsOf, type CarBodyState, type Neighbour, type SimMotor, type VehiclePose } from './motor'
-import { KIND_HELI, type CarvedBuilding, type InputFrame } from '@/net/codec'
+import type { CarvedBuilding, InputFrame } from '@/net/codec'
 import type { DriveState } from '@/entities/units'
+import { isRotorcraft } from './vehicles'
 
 /** A correction larger than this is a teleport (respawn, unflip), not a misprediction: snap. */
 const SNAP_DISTANCE = 3
@@ -111,7 +112,7 @@ export class VehicleDriver {
 
   private stepWith(input: InputFrame): CarBodyState | null {
     const controls = controlsOf(input, this.kind)
-    this.worked = this.kind === KIND_HELI ? controls.lift : controls.throttle
+    this.worked = isRotorcraft(this.kind) ? controls.lift : controls.throttle
     const broke = this.motor.driveCar(this.id, controls, TICK_DT)
     const known = this.rams.find((ram) => ram.seq === input.seq)
     // A replay drives through the hole this input first broke: it slows as it did then.

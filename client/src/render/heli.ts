@@ -1,16 +1,13 @@
-import { Group, Mesh, type Material, type Node, Matrix4, Vector3 } from '@ragnarok/engine'
+import { Mesh, type Material, type Node, Matrix4, Vector3 } from '@ragnarok/engine'
 import { parseToonModel } from './models'
 import { toonMaterial } from './toon'
 import { HELI_GUN_LENGTH } from '@/sim/consts'
 import type { Turret } from '@/entities/units'
-import type { VehicleModel } from './car'
+import { RotorModel, type RotorLook } from './rotor'
 
 export const HELI_MODEL_URL = `${import.meta.env.BASE_URL}models/heli.glb`
 
-/** Main rotor speed at its governed speed, rad/s, and how fast the drawn speed follows the real one, rad/s². */
-const ROTOR_SPEED = 28
-const ROTOR_ACCEL = 14
-const TAIL_ROTOR_RATIO = 1.6
+const ROTORS: RotorLook = { speed: 28, tail: 1.6 }
 const RECOIL_STROKE = 0.08
 const RECOIL_SECONDS = 0.06
 /** Paint colours handed out by vehicle id, so neighbouring helicopters are told apart. */
@@ -41,18 +38,11 @@ export async function loadHeliModel(url = HELI_MODEL_URL) {
  * chin gun that the gunner (seat 1) swings and nods. The airframe box is the physics hull; the rotor
  * and the wings are bigger than it, as a cartoon's are.
  */
-export class HeliModel implements VehicleModel {
-  readonly root = new Group()
-  private readonly rotor: Node
-  private readonly tailRotor: Node
+export class HeliModel extends RotorModel {
   private readonly turret: Node
   private readonly gun: Node
   private readonly gunRest: number
   private readonly paint: Material
-  private rotorSpeed = 0
-  /** The rotor's speed as the physics has it, a share of governed (`Thrust.air`), or null if not told. */
-  private rotorShare: number | null = null
-  private lastUpdate = performance.now()
   /** `performance.now()` of the last round, for the barrels' kick. */
   private firedAt = -Infinity
   /** Whoever sits at the gun, 0 for nobody. */
@@ -65,50 +55,28 @@ export class HeliModel implements VehicleModel {
   constructor(id: number) {
     if (!asset) throw new Error('loadHeliModel() must finish before helicopters are created')
     const model = asset.clone()
-    this.root.add(model)
+    super(model, ROTORS)
     this.paint = toonMaterial({ color: PAINTS[id % PAINTS.length]! })
     model.traverse((node) => {
       if (node instanceof Mesh && node.material.name === 'paint') node.material = this.paint
     })
-    this.rotor = model.getObjectByName('rotor')!
-    this.tailRotor = model.getObjectByName('tail_rotor')!
     this.turret = model.getObjectByName('turret')!
     this.gun = model.getObjectByName('gun')!
     this.gunRest = this.gun.position.z
-
   }
 
-  /** The rotor's speed as the physics has it, a share of its governed speed (`Thrust.air`), or null if not known. */
-  setRotor(share: number | null) {
-    this.rotorShare = share
-  }
-
-  /**
-   * Places the helicopter and animates it. The rotor turns at the speed `setRotor` was last given, or
-   * before any spins up while seat 0 is taken. `turret` is the nose gun's angles in the hull frame.
-   * `steer` is unused: its lean and turn are in the orientation itself.
-   */
-  update(
+  /** Places the helicopter, turns its rotors and aims the nose gun: `turret` is its angles in the hull frame. */
+  override update(
     position: readonly [number, number, number],
     rotation: readonly [number, number, number, number],
-    _steer: number,
+    steer: number,
     seats: readonly number[],
     turret?: Turret | null,
   ) {
-    const now = performance.now()
-    const dt = Math.min(0.1, (now - this.lastUpdate) / 1000)
-    this.lastUpdate = now
-    this.root.position.set(...position)
-    this.root.quaternion.set(...rotation)
-    const target = this.rotorShare !== null ? this.rotorShare * ROTOR_SPEED : (seats[0] ?? 0) !== 0 ? ROTOR_SPEED : 0
-    const step = ROTOR_ACCEL * dt
-    this.rotorSpeed += Math.max(-step, Math.min(step, target - this.rotorSpeed))
-    this.rotor.rotation.y += this.rotorSpeed * dt
-    this.tailRotor.rotation.x += this.rotorSpeed * TAIL_ROTOR_RATIO * dt
-
+    super.update(position, rotation, steer, seats)
     this.turret.rotation.y = turret?.yaw ?? 0
     this.gun.rotation.x = turret?.pitch ?? 0
-    const since = (now - this.firedAt) / 1000
+    const since = (performance.now() - this.firedAt) / 1000
     this.gun.position.z = this.gunRest + (since < RECOIL_SECONDS ? RECOIL_STROKE * (1 - since / RECOIL_SECONDS) : 0)
     this.gunner = seats[1] ?? 0
   }
@@ -130,7 +98,7 @@ export class HeliModel implements VehicleModel {
    * The searchlight under the nose gun, which turns with it: from just past the muzzle (so it does not
    * light the gun), along the barrel, as of the last `update`. The vectors are reused by the next call.
    */
-  searchlight(): { at: Vector3; direction: Vector3 } {
+  override searchlight(): { at: Vector3; direction: Vector3 } {
     this.root.updateMatrixWorld(true)
     this.gun.getWorldPosition(this.beam.at)
     this.beam.direction.set(0, 0, -1).transformDirection(this.matrix.fromArray(this.gun.matrixWorld))
@@ -145,8 +113,8 @@ export class HeliModel implements VehicleModel {
   }
 
   /** Frees what this helicopter owns; the model's geometry and other materials are shared by every one. */
-  dispose() {
+  override dispose() {
     this.paint.dispose()
-    this.root.removeFromParent()
+    super.dispose()
   }
 }

@@ -23,8 +23,9 @@ import { TankModel } from '@/render/tank'
 import type { VehicleFx } from '@/render/tyres'
 import { TuppModel } from '@/render/tupp'
 import { WalkerModel } from '@/render/walker'
-import { HELI_ETL_SPEED, PASSENGER_DISTANCE, ROOF_AIM_BACK, ROOF_AIM_UP, STRV_AIM_BACK, STRV_AIM_UP, WALKER_AIM_BACK, WALKER_AIM_UP, PASSENGER_HEIGHT, PASSENGER_SHOULDER, PLANE_AIM_MAX_PITCH, PLANE_CRUISE_SPEED, SIGHT_EYE_UP, STRV_BARREL_MAX, STRV_BARREL_MIN, SUB_MAST_HEIGHT, SUB_SAIL_Z, TITAN_HEAD_DOWN, TITAN_HEAD_TURN, TITAN_HEAD_UP, TUPP_HEAD_LIMIT, TUPP_HEAD_PITCH_MAX, TUPP_HEAD_PITCH_MIN, WALKER_GUN_PITCH_MAX, WALKER_GUN_PITCH_MIN, WALKER_TORSO_LIMIT } from '@/sim/consts'
+import { PASSENGER_DISTANCE, ROOF_AIM_BACK, ROOF_AIM_UP, STRV_AIM_BACK, STRV_AIM_UP, WALKER_AIM_BACK, WALKER_AIM_UP, PASSENGER_HEIGHT, PASSENGER_SHOULDER, PLANE_AIM_MAX_PITCH, PLANE_CRUISE_SPEED, SIGHT_EYE_UP, STRV_BARREL_MAX, STRV_BARREL_MIN, SUB_MAST_HEIGHT, SUB_SAIL_Z, TITAN_HEAD_DOWN, TITAN_HEAD_TURN, TITAN_HEAD_UP, TUPP_HEAD_LIMIT, TUPP_HEAD_PITCH_MAX, TUPP_HEAD_PITCH_MIN, WALKER_GUN_PITCH_MAX, WALKER_GUN_PITCH_MIN, WALKER_TORSO_LIMIT } from '@/sim/consts'
 import type { InputController } from '@/sim/input'
+import { vehicleDef } from '@/sim/vehicles'
 import { layTube } from '@/sim/lob'
 import type { Rig, SeatView } from '@/seats'
 
@@ -311,7 +312,8 @@ export class Cameras {
         view[1] += (this.input.pitch - view[1]) * ease
         // The airframe shudders as the rotor flies into clean air (the ground speed stands in for the airspeed).
         const speed = motion ? Math.hypot(motion.velocity.x, motion.velocity.z) : 0
-        const shudder = ETL_SHUDDER * etlBand(speed, HELI_ETL_SPEED)
+        const rotor = vehicleDef(ride.kind).rotor
+        const shudder = rotor ? ETL_SHUDDER * etlBand(speed, rotor.etlSpeed) : 0
         const phase = (now / 1000) * ETL_SHUDDER_HZ * Math.PI * 2
         const shake = shudder > 0 ? [shudder * Math.sin(phase), shudder * Math.sin(phase * 1.37 + 1), 0] : undefined
         this.scene.follow([ride.x, ride.y + 0.4, ride.z], view[0], view[1], distance, 0, CAMERA_HEIGHT, shake)

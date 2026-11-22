@@ -529,7 +529,9 @@ was found):
 - **A bridge reaches the top of its bank.** OSM often ends a bridge part of the way down the bank,
   where the deck would stop metres below the road. A bridge whose road goes on rising more than a
   metre past its end is lengthened along that road to the top of the rise, up to 40 m
-  (`onto_the_banks`).
+  (`onto_the_banks`). A span the terrain would carry (under 12 m, no drop under it, no channel) is
+  lengthened only where the road rises past both its ends: 8 m of boards on a hillside path became a
+  deck down to the shore 20 m up in the air, as 6 % never meets a hill that falls at 25 %.
 - **A divided road crosses on one deck.** Two bridges of a kind that run beside each other all the
   way share a deck wide enough for both (`twin_decks`); the two stay roads, with no deck of their
   own (`Pylons::Carried`). Where decks of separate bridges still overlap, the railing between them
@@ -571,10 +573,12 @@ tuned by `clearance` in `bridge.rs`.
 
 ### Water
 Water comes from the OpenStreetMap read (`osm_water::from`): lakes (`natural=water`, reservoirs) and
-wide rivers (`waterway=riverbank`, `water=river`) are polygons, streams (`waterway=river|stream|canal`)
-are centre lines in the direction the water flows, and the sea is built from the coastline (see "The sea").
-The data has **no surface height or depth, and streams no width**, so:
+wide rivers (`waterway=riverbank`, `water=river`) are polygons, rivers (`waterway=river`) and streams
+(`waterway=stream|canal`) are centre lines in the direction the water flows, and the sea is built from
+the coastline (see "The sea"). The data has **no surface height or depth, and lines no width**, so:
 
+- a river's line outside the wide rivers is given banks, 10 m apart on average, and is then water like
+  theirs, levelled along the line with the pools painted over it ([RIVER-CHANNELS.md](RIVER-CHANNELS.md));
 - a lake's surface is the median of the DTM inside it (the DTM is flat over water); a lake whose
   10th and 90th percentile differ by more than 1.5 m is reported, since it is drawn flat;
 - a river falls along its course (`water::river_levels`), because a whole river is often one polygon
@@ -618,8 +622,11 @@ The data has **no surface height or depth, and streams no width**, so:
   (10 m³/s), wrapping round: the client draws the river's streaks along its lines. Both are empty
   in a tile where nothing flows, and only the water shader reads them. See
   [RIVER-SURFACE.md](RIVER-SURFACE.md);
-- streams are drawn 2.5 m wide as ribbons on the terrain (`Tile.streams`), and the stretches that
-  run through a lake or river polygon are dropped;
+- streams are drawn 2.5 m wide as ribbons on the terrain (`Tile.streams`). The stretches OSM draws
+  through a lake or river, between points in the water, are dropped, even where one strays over the
+  bank (`Surface::trim_streams`). What is left is cut where it crosses the drawn waterline
+  (`Placed::out_of_water`), so none lies on a bed, and a piece the water leaves shorter than 2 m
+  (`SHORTEST_ASHORE`) is dropped;
 - a stream goes under the roads and railways it crosses, as through a culvert: a way tagged
   `tunnel=culvert` (or any `tunnel` but `no`) is left out, and wherever a stream line passes within
   a road's half width, or a track's ballast, plus 1.5 m (`CULVERT_SHOULDER`) of its centre line, that
@@ -765,7 +772,12 @@ there is no vegetation class: trees are told from buildings by masking every OSM
 (plus 1.5 m of eaves) and from shrubs and cars by height.
 
 1. **Canopy height model:** a 1 m raster of the highest non-ground return per cell minus the DTM
-   at that cell. The cloud is ~1 return/m², so empty cells are filled from at least 3 known
+   at that cell. Tower cranes are taken out of it (`strike_jibs`), as they came out as rows of 40 m
+   trees in the middle of town: anything from 20 m up that is at least 30 m long, straight, a truss's
+   width across and level goes, with what stands over half as high along its line (mast, cab,
+   counterweight). The top of something that carries on below 20 m, as a roof's ridge does, stays.
+   This is looked for before the buildings are masked, as a jib swings over them.
+   The cloud is ~1 return/m², so empty cells are filled from at least 3 known
    neighbours, then smoothed 3×3.
 2. **Treetops:** local maxima at least `--min-tree-height` (3 m) tall, within a window that grows
    with height (3×3 up to 7×7 cells).

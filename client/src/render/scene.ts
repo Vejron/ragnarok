@@ -24,6 +24,8 @@ export const ON_FOOT_DISTANCE = 3.2
 export const DRIVING_DISTANCE = 9
 export const TANK_DISTANCE = 16
 export const HELI_DISTANCE = 16
+/** Behind an air ambulance, metres: it is a third longer than the gunship, under a wider rotor. */
+export const AIR_AMBULANCE_DISTANCE = 18
 export const WALKER_DISTANCE = 15
 /** Behind a Titan's shoulders, far enough to see all of it, and this far above the line of the look. */
 export const TITAN_DISTANCE = 60

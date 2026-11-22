@@ -528,6 +528,9 @@ pub struct Rotorcraft {
     /// The rotor's lift at full collective, governed speed, in still air and out of ground effect, m/s².
     /// The lever sets the blades' pitch as a share of full, and the lift goes with it.
     pub thrust: f32,
+    /// The lever that hovers it out of ground effect, measured by the sim's tests: where the lever starts
+    /// for a pilot who takes the seat in the air. The physics does not read it.
+    pub hover_lever: f32,
     /// How a vertical speed changes the blades' pitch, m/s: climbing at this speed takes a full lever's
     /// worth away, and descending adds it, as the air coming up through the disc meets the blades at a
     /// steeper angle. It damps the helicopter's rise and fall, and holds it up in autorotation.

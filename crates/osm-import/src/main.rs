@@ -20,7 +20,7 @@
 //! Credentials, data sources and the cache are described in `WORLD.md`.
 
 use osm_import::region::{Place, Region};
-use osm_import::{assemble, bushes, cache, canopy, condition, dem, detail, grid, ground, ign, lidar, maptiles, minimap, network, osm, overpass, paint, pbf, progress, roof, sidepaths, species, trees, water};
+use osm_import::{assemble, bushes, cache, canopy, channel, condition, dem, detail, grid, ground, ign, lidar, maptiles, minimap, network, osm, overpass, paint, pbf, progress, roof, sidepaths, species, trees, water};
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use std::path::PathBuf;
@@ -219,6 +219,7 @@ fn water_map(args: &Args, place: &Place, pieces: Option<&[[f64; 4]]>) -> Result<
     polygons(&found.lakes, water::Kind::Lake, &mut map);
     polygons(&found.rivers, water::Kind::River, &mut map);
     map.streams = found.streams.iter().map(|line| local(line)).collect();
+    map.river_lines = found.river_lines.iter().map(|line| local(line)).collect();
     // Every shore wanders and curves as a real one does, not in OSM's straight sides (`shoreline.rs`).
     let mut coast: Vec<Vec<[f64; 2]>> = found.coast.iter().map(|chain| local(chain)).collect();
     {
@@ -233,7 +234,7 @@ fn water_map(args: &Args, place: &Place, pieces: Option<&[[f64; 4]]>) -> Result<
         let rings = rings.iter().map(|ring| open(ring.iter().map(|&[x, y]| [x, -y]).collect())).collect();
         map.bodies.push(water::Body { kind: water::Kind::Sea, rings, level: Some(0.0) });
     }
-    eprintln!("water: {} lakes, {} river polygons, {} stream lines, {} sea polygons from OpenStreetMap", found.lakes.len(), found.rivers.len(), found.streams.len(), seas.len());
+    eprintln!("water: {} lakes, {} river polygons, {} river lines, {} stream lines, {} sea polygons from OpenStreetMap", found.lakes.len(), found.rivers.len(), found.river_lines.len(), found.streams.len(), seas.len());
     Ok(map)
 }
 
@@ -242,7 +243,7 @@ fn water_map(args: &Args, place: &Place, pieces: Option<&[[f64; 4]]>) -> Result<
 /// The ground is shaped to `features` (`condition.rs`); the shaping comes back too, for the detail
 /// slopes to follow.
 #[allow(clippy::too_many_arguments)]
-fn terrain(args: &Args, place: &Place, mask: Option<&std::collections::BTreeSet<(u16, u16)>>, map: &water::Map, features: &condition::Features, landforms: &[osm_import::ocad::relief::Landform], cliffs: &[osm_import::ocad::relief::Cliff]) -> Result<(shared::terrain::Ground, f64, Option<dem::Dem>, water::Placed, condition::Shaping)> {
+fn terrain(args: &Args, place: &Place, mask: Option<&std::collections::BTreeSet<(u16, u16)>>, map: &mut water::Map, beside: &channel::Beside, features: &condition::Features, landforms: &[osm_import::ocad::relief::Landform], cliffs: &[osm_import::ocad::relief::Cliff]) -> Result<(shared::terrain::Ground, f64, Option<dem::Dem>, water::Placed, condition::Shaping)> {
     if args.cell == 0.0 {
         return Ok((Default::default(), 0.0, None, Default::default(), Default::default()));
     }
@@ -266,6 +267,20 @@ fn terrain(args: &Args, place: &Place, mask: Option<&std::collections::BTreeSet<
         source.mean(e, n, half_cell).map(f64::from)
     };
     progress::stage("ground");
+    // The rivers' lines get their banks here, where the height model has their valleys and, unlike when
+    // the water was read, the roads and buildings they must get by are known.
+    let near_world = |[x, z]: [f64; 2]| {
+        let within = half + CHANNEL_MARGIN;
+        let tile = |v: f64| ((v + half) / args.tile).floor() as i64;
+        let Some(mask) = mask else { return x.abs() <= within && z.abs() <= within };
+        [-CHANNEL_MARGIN, 0.0, CHANNEL_MARGIN].into_iter().any(|dx| {
+            [-CHANNEL_MARGIN, 0.0, CHANNEL_MARGIN].into_iter().any(|dz| {
+                let (col, row) = (tile(x + dx), tile(z + dz));
+                u16::try_from(col).is_ok_and(|col| u16::try_from(row).is_ok_and(|row| mask.contains(&(col, row))))
+            })
+        })
+    };
+    channel::lay(map, beside, near_world, dtm);
     let surface = water::Surface::new(map, ground::grid(half, args.tile, args.cell)?, dtm);
     // Samples on or inside a painted tile; everywhere else is not read, so it costs no download.
     let (tile_cm, half_cm) = ((args.tile * 100.0).round() as i64, (half * 100.0).round() as i64);
@@ -326,6 +341,10 @@ fn terrain(args: &Args, place: &Place, mask: Option<&std::collections::BTreeSet<
     }
     Ok((ground, datum, Some(source), placed, shaping))
 }
+
+/// A river drawn as a line is given banks this far past the painted tiles, metres, so it runs out of
+/// the world rather than ending at its edge.
+const CHANNEL_MARGIN: f64 = 100.0;
 
 fn report(map: &water::Map, placed: &water::Placed) {
     let wet = placed.levels.iter().filter(|&&level| level != shared::world::NO_WATER).count();
@@ -610,7 +629,7 @@ fn main() -> Result<()> {
         }
         // Before the network-flaky step: a world that cannot fit the format should fail in seconds.
         progress::stage("water");
-        let map = water_map(&args, &place, pieces)?;
+        let mut map = water_map(&args, &place, pieces)?;
         // Like the species, a nicety: a map that cannot be read leaves the world as OSM has it.
         let mut ocad = args.ocad.as_ref().or(options.ocad.as_ref()).and_then(|path| osm_import::ocad::load(path, &place, options.ocad_shift).inspect_err(|error| eprintln!("no orienteering map: {error:#}")).ok());
         if let (Some(ocad), Some(path)) = (&ocad, &options.minimap_image) {
@@ -641,7 +660,7 @@ fn main() -> Result<()> {
         eprintln!("railways: {jointed} joints between ways of one track closed");
         let (landforms, cliffs) = ocad.as_ref().map_or((&[][..], &[][..]), |ocad| (ocad.landforms.as_slice(), ocad.cliffs.as_slice()));
         let features = if args.raw_ground { condition::Features::default() } else { condition::Features::from_osm(&osm, place.frame, &map.streams) };
-        let (ground, datum, dem, placed, shaping) = terrain(&args, &place, mask, &map, &features, landforms, cliffs)?;
+        let (ground, datum, dem, placed, shaping) = terrain(&args, &place, mask, &mut map, &channel::Beside::from_osm(&osm, place.frame), &features, landforms, cliffs)?;
         let Laser { roofs: cloud, decks, trees: detected, bushes: found_bushes } = laser(&args, &place, mask, datum, &osm, dem.as_ref())?;
         progress::stage("trees");
         let register = match trees::Register::over(place.region, bbox).filter(|_| !args.no_trees) {

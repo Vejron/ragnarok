@@ -4,7 +4,7 @@ import { controlsOf, SimMotor, type CarControls, type Neighbour, type VehiclePos
 import { heightIn, type TileGround } from '@/sim/terrain'
 import { f32 } from '@/sim/round'
 import { BUTTON_CROUCH, BUTTON_JUMP, BUTTON_RUN, LOITER_SPEED, TICK_DT, vehicleMaxHp } from '@/sim/consts'
-import { type CarvedBuilding, KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, type InputFrame } from '@/net/codec'
+import { type CarvedBuilding, KIND_AIR_AMBULANCE, KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER, type InputFrame } from '@/net/codec'
 import type { DriveState } from '@/entities/units'
 import { manifestBytes, tileBytes } from './worlds'
 
@@ -104,6 +104,14 @@ const flightCheckpoints: [number, [number, number, number]][] = [
   [210, [0.9357, 3.1621, 0.0317]],
   [330, [6.8222, 15.8349, -0.7983]],
   [480, [18.4246, 24.7133, -10.4861]],
+]
+
+/** `AMBULANCE_CHECKPOINTS` in vehicle.rs: an air ambulance flown the same, whose solids the gunship has none of. */
+const ambulanceCheckpoints: [number, [number, number, number]][] = [
+  [90, [0.0502, 1.0999, 0.0014]],
+  [210, [0.8792, 2.8737, 0.0216]],
+  [330, [6.4967, 12.076, -0.817]],
+  [480, [17.4981, 15.9223, -10.5615]],
 ]
 
 /** Same as `scripted_drone` in vehicle.rs. */
@@ -229,9 +237,14 @@ describe('helicopter prediction', () => {
     await run(KIND_HELI, [0, 3, 0], 480, flight, flightCheckpoints)
   })
 
+  it('WASM flies the air ambulance where the native server does', async () => {
+    await run(KIND_AIR_AMBULANCE, [0, 3, 0], 480, flight, ambulanceCheckpoints)
+  })
+
   it('reads the collective lever from the input, not jump or run, as on the server', () => {
     expect(controlsOf(frame(0, { collective: 255 }), KIND_HELI)).toMatchObject({ lift: 1, powered: true, handbrake: false })
     expect(controlsOf(frame(BUTTON_JUMP), KIND_HELI)).toMatchObject({ lift: 0 })
+    expect(controlsOf(frame(0, { collective: 255 }), KIND_AIR_AMBULANCE)).toMatchObject({ lift: 1, powered: true, handbrake: false })
     expect(controlsOf(frame(BUTTON_RUN, { collective: 51 }), KIND_HELI).lift).toBeCloseTo(0.2, 6)
   })
 })

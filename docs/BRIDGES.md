@@ -14,6 +14,7 @@ is left with nothing to hold it falls into the river. Bridges are much tougher t
 - **A Titan's punch bites it**, less than it would bite a house.
 
 How the bridges are built (deck heights, ramps, piers and pylons) is in [WORLD.md](WORLD.md), "Bridges".
+Over a small river a deck stays level with its banks: [RIVER-CHANNELS.md](RIVER-CHANNELS.md).
 
 ## Sections
 

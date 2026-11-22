@@ -1,5 +1,6 @@
 //! Simulation and network constants. `client/scripts/gen-consts.ts` generates the client's copy from this file: run `npm run gen:consts` in `client` after editing.
 
+pub use crate::vehicles::air_ambulance::*;
 pub use crate::vehicles::amv::*;
 pub use crate::vehicles::drone::*;
 pub use crate::vehicles::bus::*;
@@ -124,6 +125,8 @@ pub const KIND_RAFT: u8 = 35;
 /// A delivery's parcel lying on the ground (DELIVERY.md), dropped by a courier who died. Replicated as
 /// a place and this kind.
 pub const KIND_PARCEL: u8 = 36;
+/// The air ambulance: an unarmed helicopter for a pilot and three passengers, with a shrouded tail fan.
+pub const KIND_AIR_AMBULANCE: u8 = 37;
 
 /// Fixed simulation rate, in ticks per second.
 pub const TICK_RATE: u32 = 60;

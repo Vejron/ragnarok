@@ -28,6 +28,7 @@ pub const HELI_ETL_SPEED: f32 = 10.0;
 /// only damps its rates: the pilot holds its attitude.
 const FLIGHT: Rotorcraft = Rotorcraft {
     thrust: 1.9 * CAR_GRAVITY,
+    hover_lever: HELI_HOVER_LEVER,
     pitch_flow: 30.0,
     tilt_flow: 0.35,
     hover_inflow: 14.0,

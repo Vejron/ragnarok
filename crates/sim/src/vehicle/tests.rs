@@ -1,7 +1,7 @@
 use shared::vec3;
 use super::*;
 use shared::consts::TICK_DT;
-use shared::protocol::{KIND_AMV, KIND_BUS, KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MISSILE, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_SEAPLANE, KIND_SNOWMOBILE, KIND_SNOWRACER, KIND_SPORTS, KIND_STRF, KIND_STRV, KIND_TANK, KIND_TECHNICAL, KIND_TITAN, KIND_WALKER};
+use shared::protocol::{KIND_AIR_AMBULANCE, KIND_AMV, KIND_BUS, KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MISSILE, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_SEAPLANE, KIND_SNOWMOBILE, KIND_SNOWRACER, KIND_SPORTS, KIND_STRF, KIND_STRV, KIND_TANK, KIND_TECHNICAL, KIND_TITAN, KIND_WALKER};
 use shared::world::{CollisionMesh, WORLD_VERSION, WorldFile};
 
 fn flat() -> WorldFile {
@@ -854,6 +854,31 @@ fn scripted_flight_matches_fixture() {
     }
 }
 
+/// `(tick, position)` of an air ambulance flown the same script from `[0, 3, 0]` in the wind, mirrored
+/// in `vehicle.spec.ts`.
+const AMBULANCE_CHECKPOINTS: [(u32, [f32; 3]); 4] = [
+    (90, [0.0502, 1.0999, 0.0014]),
+    (210, [0.8792, 2.8737, 0.0216]),
+    (330, [6.4967, 12.0760, -0.8170]),
+    (480, [17.4981, 15.9223, -10.5615]),
+];
+
+#[test]
+fn scripted_ambulance_flight_matches_fixture() {
+    let mut physics = Physics::new(&flat()).unwrap();
+    physics.add_car(1, KIND_AIR_AMBULANCE, [0.0, 3.0, 0.0], 0.0);
+    for tick in 0..480 {
+        physics.drive_car(1, scripted_flight(tick), TICK_DT);
+        physics.step_cars(TICK_DT);
+        let done = tick + 1;
+        if let Some((_, expected)) = AMBULANCE_CHECKPOINTS.iter().find(|(t, _)| *t == done) {
+            let position = physics.car_pose(1).unwrap().position;
+            let close = position.iter().zip(expected).all(|(a, e)| (a - e).abs() < 0.001);
+            assert!(close, "tick {done}: {position:?}");
+        }
+    }
+}
+
 /// A scripted drone flight for the fixture in `vehicle.spec.ts`: hover, climb, fly ahead and down the
 /// look, turn towards a new look while strafing, then back off and sink.
 fn scripted_drone(tick: u32) -> CarControls {
@@ -1391,6 +1416,122 @@ fn the_ceiling_is_measured_from_the_ground_under_it() {
     let pose = fly_by(&mut physics, 60 * 20, |physics| holding(physics, lever(1.0), 0.0, 0.03));
     let above = pose.position[1] - 600.0;
     assert!(above > HELI_CEILING - 10.0 && above < HELI_CEILING + 15.0, "{pose:?}");
+}
+
+/// An air ambulance `height` metres up over the airfield in still air, its rotor governed, flying
+/// ahead at `speed` m/s.
+fn flying_ambulance(height: f32, speed: f32) -> Physics {
+    let mut physics = Physics::new(&airfield()).unwrap();
+    physics.calm_wind();
+    physics.add_car(1, KIND_AIR_AMBULANCE, [0.0, height, 0.0], 0.0);
+    let motion = CarMotion { linvel: [0.0, 0.0, -speed], angvel: [0.0; 3], steer: 0.0, spin: 0.0 };
+    physics.set_car_state(1, [0.0, height, 0.0], [0.0, 0.0, 0.0, 1.0], motion, Some(1.0));
+    physics
+}
+
+#[test]
+fn an_air_ambulance_stands_level_on_its_skids_with_its_tail_off_the_ground() {
+    let mut physics = Physics::new(&flat()).unwrap();
+    physics.add_car(1, KIND_AIR_AMBULANCE, [0.0, 1.3, 0.0], 0.0);
+    let pose = run(&mut physics, CarControls::IDLE, 60 * 3);
+    assert!((pose.position[1] - AIR_AMBULANCE_HALF_EXTENTS[1]).abs() < 0.05 && pose.up_y > 0.999, "{pose:?}");
+}
+
+#[test]
+fn an_air_ambulance_spins_up_before_it_lifts_off() {
+    let mut physics = Physics::new(&airfield()).unwrap();
+    physics.calm_wind();
+    physics.add_car(1, KIND_AIR_AMBULANCE, [0.0, 1.2, 0.0], 0.0);
+    let early = run(&mut physics, lever(1.0), 60);
+    assert!(early.position[1] < 1.3 && rotor(&physics).0 < 0.5, "{early:?}");
+    let late = fly_by(&mut physics, 60 * 6, |physics| holding(physics, lever(1.0), 0.0, 0.0));
+    assert!(late.position[1] > 5.0 && late.up_y > 0.99 && rotor(&physics).0 > 0.95, "{late:?}");
+}
+
+#[test]
+fn the_air_ambulances_hover_lever_holds_it_out_of_ground_effect() {
+    let mut physics = flying_ambulance(40.0, 0.0);
+    let pose = hover(&mut physics, AIR_AMBULANCE_HOVER_LEVER, 60 * 10);
+    assert!((pose.position[1] - 40.0).abs() < 1.5 && pose.velocity[1].abs() < 0.2, "{pose:?}");
+    assert!(rotor(&physics).0 > 0.99, "{:?}", rotor(&physics));
+}
+
+#[test]
+fn an_air_ambulance_climbs_at_about_eight_metres_a_second() {
+    let mut physics = flying_ambulance(20.0, 0.0);
+    let pose = hover(&mut physics, 1.0, 60 * 6);
+    assert!(pose.velocity[1] > 7.0 && pose.velocity[1] < 9.0, "{pose:?}");
+    assert!(rotor(&physics).0 > 0.97, "{:?}", rotor(&physics));
+}
+
+#[test]
+fn an_air_ambulance_outruns_the_gunship_at_about_sixty_two_metres_a_second() {
+    let mut physics = flying_ambulance(50.0, 0.0);
+    let pose = fly_by(&mut physics, 60 * 40, |physics| {
+        // The pilot works the lever to hold fifty metres.
+        let pose = physics.car_pose(1).unwrap();
+        let at = 0.78 + (50.0 - pose.position[1]) * 0.02 - pose.velocity[1] * 0.04;
+        holding(physics, lever(at.clamp(0.0, 1.0)), -0.39, 0.0)
+    });
+    // Over the ground: the nose is well down, so it is more than the speed along the nose.
+    let speed = pose.velocity[0].hypot(pose.velocity[2]);
+    assert!(speed > 59.0 && speed < 66.0, "{pose:?}");
+    let mut gunship = flying_heli(50.0, 0.0);
+    let slower = fly_by(&mut gunship, 60 * 24, |physics| holding(physics, lever(0.7), -0.45, 0.0));
+    assert!(speed > slower.velocity[0].hypot(slower.velocity[2]) + 5.0, "{pose:?} against {slower:?}");
+    assert!((pose.position[1] - 50.0).abs() < 12.0 && rotor(&physics).0 > 0.95, "level, with power to spare: {pose:?} {:?}", rotor(&physics));
+}
+
+#[test]
+fn an_air_ambulance_with_its_engines_dead_autorotates_and_a_flare_sets_it_down() {
+    let mut physics = flying_ambulance(150.0, 20.0);
+    physics.set_car_condition(1, CarCondition { power: 0.0, ..CarCondition::NEW });
+    let mut slowest = 1.0f32;
+    let mut touchdown = None;
+    for _ in 0..60 * 40 {
+        let pose = physics.car_pose(1).unwrap();
+        let height = pose.position[1] - AIR_AMBULANCE_HALF_EXTENTS[1];
+        // All the way down with the lever: it sinks slower than the gunship for the same lever, and needs
+        // the air coming up through the disc.
+        let controls = if height > 25.0 {
+            holding(&physics, lever(0.0), -0.08, 0.0)
+        } else if height > 6.0 {
+            holding(&physics, lever(0.0), 0.35, 0.0)
+        } else {
+            holding(&physics, lever(1.0), 0.0, 0.0)
+        };
+        if height > 25.0 {
+            slowest = slowest.min(rotor(&physics).0);
+        }
+        let after = run(&mut physics, controls, 1);
+        if after.position[1] < AIR_AMBULANCE_HALF_EXTENTS[1] + 0.05 {
+            touchdown = Some(pose);
+            break;
+        }
+    }
+    assert!(slowest > 0.85, "the upflow keeps the rotor turning: {slowest}");
+    let touchdown = touchdown.expect("it lands");
+    assert!(touchdown.velocity[1] > -4.0 && touchdown.up_y > 0.9, "{touchdown:?}");
+}
+
+#[test]
+fn an_air_ambulances_tail_is_solid_behind_its_cabin() {
+    let mut physics = Physics::new(&flat()).unwrap();
+    physics.add_car(1, KIND_AIR_AMBULANCE, [0.0, 1.1, 0.0], 0.0);
+    physics.step_cars(TICK_DT);
+    for (what, at) in [("boom", AIR_AMBULANCE_BOOM_CENTRE), ("fin", AIR_AMBULANCE_FIN_CENTRE)] {
+        let pose = physics.car_pose(1).unwrap();
+        let [x, y, z] = pose.world_point(at);
+        let strike = physics.armor_strike([x + 4.0, y, z], [-1.0, 0.0, 0.0], 8.0, 1);
+        assert!(strike.is_some_and(|strike| strike.solid.is_some()), "a round meets the {what}");
+    }
+}
+
+#[test]
+fn a_pilot_taking_an_air_ambulance_moves_its_lever_as_the_gunships() {
+    let input = shared::protocol::InputFrame { collective: 255, ..Default::default() };
+    let controls = CarControls::driven(KIND_AIR_AMBULANCE, &input);
+    assert!(controls.lift == 1.0 && controls.powered && !controls.handbrake, "{controls:?}");
 }
 
 /// Flat ground six kilometres across, so a plane has room.

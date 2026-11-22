@@ -1,12 +1,12 @@
 import { Quaternion, Vector3 } from '@ragnarok/engine'
 import type { Node, PointLights } from '@ragnarok/engine'
-import { ARMS_CUT, DAMAGE_WHEELS, KIND_HELI, KIND_MISSILE, KIND_SHIP, KIND_SHIP_GUN, KIND_TITAN, THRUST_LIFT } from '@/net/codec'
+import { ARMS_CUT, DAMAGE_WHEELS, KIND_MISSILE, KIND_SHIP, KIND_SHIP_GUN, KIND_TITAN, THRUST_LIFT } from '@/net/codec'
 import type { Debris } from '@/render/debris'
 import type { Effects } from '@/render/effects'
 import type { Rounds } from '@/render/rounds'
 import type { Flinch } from '@/render/flinch'
 import { HenModel } from '@/render/hen'
-import { HeliModel } from '@/render/heli'
+import { RotorModel } from '@/render/rotor'
 import { VehicleFx, slamDust, type FxWorld } from '@/render/tyres'
 import { kindView } from '@/kinds'
 import { missileLaunch, tubeSmoke } from '@/render/launch'
@@ -19,7 +19,7 @@ import type { VehicleModel } from '@/render/car'
 import type { DrivenPose } from '@/sim/driver'
 import type { VehiclePose } from '@/sim/motor'
 import { SHIP_DECK_Y, SHIP_GUN_HALF_EXTENTS, SHIP_GUN_X, SHIP_GUN_Z, TITAN_RIDE_HEIGHT, TITAN_SLAM_FULL, TITAN_SLAM_RADIUS, TITAN_SLAM_RADIUS_FULL, TITAN_SLAM_SPEED, vehicleMaxHp } from '@/sim/consts'
-import { vehicleDef } from '@/sim/vehicles'
+import { isRotorcraft, vehicleDef } from '@/sim/vehicles'
 import type { VehicleSounds } from '@/vehicleaudio'
 import type { Frame, Presenter } from '../presenter'
 import type { Sampled } from '../store'
@@ -282,7 +282,7 @@ export class Vehicles implements Presenter<Frame> {
     // A hen draws its wings and legs from its flags: the driver's own as predicted, at once.
     if (model instanceof HenModel) model.setFlags(jets)
     // A helicopter's rotor turns as fast as the physics has it turning: spinning up, drooping or autorotating.
-    if (model instanceof HeliModel) model.setRotor(entity.thrust?.air ?? null)
+    if (model instanceof RotorModel) model.setRotor(entity.thrust?.air ?? null)
     // A Titan's limbs are where the server has them.
     if (model instanceof TitanModel) model.setLimbs(entity.titan ?? null)
     // Rocked by the rounds striking it, about the ground under it; a Titan's legs bend to keep its feet
@@ -391,7 +391,7 @@ export class Vehicles implements Presenter<Frame> {
         cut,
         // A Titan in the air with its thrusters off is silent.
         jets: kind === KIND_TITAN ? placed.jets & THRUST_LIFT : placed.jets,
-        rotor: kind === KIND_HELI ? (placed.air ?? 0) : undefined,
+        rotor: isRotorcraft(kind) ? (placed.air ?? 0) : undefined,
       },
       position,
       [fx.velocity.x, fx.velocity.y, fx.velocity.z],

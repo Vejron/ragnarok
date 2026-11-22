@@ -16,6 +16,7 @@ A river's water now flows. It runs downstream as its OSM centre line is drawn, f
 
 `river_levels` measures each river stretch along its course and fits a profile that only ever falls one way. It also finds which way the stretch runs:
 
+- **Small rivers.** A river drawn as a line is levelled along that line instead, as a stretch of its own: see [RIVER-CHANNELS.md](RIVER-CHANNELS.md).
 - **Downstream.** The river's OSM centre lines (`waterway=river`, drawn downstream) vote on which way the distance along the stretch grows (`downstream`). Where none crosses the stretch, the way the profile fits the ground better decides. The vote also picks which profile is used, so the water never runs uphill.
 - **Direction.** The direction downstream is the gradient of a fast-marched (eikonal) distance from the same end (`march`). It is not taken from the chamfer distance used for the levels, whose 3-4 metric leans the gradient towards the eight grid directions: it pointed the current 18° off a straight river.
 - **Slope.** The slope is measured over 60 m up and down the course. A stretch with no centre line and less than 0.3 m of fall stays still.
