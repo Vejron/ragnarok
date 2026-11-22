@@ -2,7 +2,7 @@
 
 Every building used to be a house or a church. A barn drawn as a house has rows of windows up its
 walls and a front door a metre wide; a factory has the same, forty metres long. So a building now
-has one of eleven kinds (`Building::kind`, `BUILDING_*` in `crates/shared/src/world.rs`), and its
+has one of a dozen kinds (`Building::kind`, `BUILDING_*` in `crates/shared/src/world.rs`), and its
 doors, windows, inside and colours follow from it:
 
 | Kind | Doors | Windows | Inside | Walls and roof |
@@ -19,6 +19,7 @@ doors, windows, inside and colours follow from it:
 | `BUILDING_FARMHOUSE` 9, an old wooden house | as a house | tall and narrow, 0.9 × 1.5 m, 2.3 m apart, on every wall and storey | floors and stairs | falu red, ochre or white boards |
 | `BUILDING_VILLA` 10, a post-war villa | as a house | wide and low, 1.7 × 1.2 m, 3.6 m apart | floors and stairs | brick, pale boards or render |
 | `BUILDING_FIRE_STATION` 11 | up to three overhead doors 3.6 × 3.6 m side by side in its front, 0.8 m of wall between them | as a public building | one hall, driven into | red or yellow brick, render |
+| `BUILDING_SHELTER` 13, a lean-to (vindskydd) | none: one side is open | none | a plank bed, drawn only | tarred timber, falu red or grey boards; sheet or felt; or as its tags say |
 
 A door that does not fit its wall is tried smaller (a barn's at 2.4 × 2.4 m), and last as a house's
 door. A window keeps clear of the door in its wall. A fire station gets as many doors as its front
@@ -41,7 +42,9 @@ OpenStreetMap says what few buildings are. Of the 1 426 in the Vindeln world 87%
 and nothing more, and of the 9 219 in the countryside round it 90%. `crates/osm-import/src/classify.rs`
 therefore decides in this order, and the first rule that names a kind wins:
 
-1. **Its tags** (`by_tags`). `building=barn`, `stable`, `cowshed`, `sty`, and a `farm_auxiliary` of
+1. **Its tags** (`by_tags`). A lean-to, `amenity=shelter` with `shelter_type=lean_to`,
+   `weather_shelter` or none, is a shelter whatever its `building` says (a bus stop's, a picnic
+   shelter, a gazebo and a `basic_hut` are not). `building=barn`, `stable`, `cowshed`, `sty`, and a `farm_auxiliary` of
    80 m² or more, are barns; `garage`, `garages`, `shed`, `carport`, `service` and a smaller
    `farm_auxiliary` outbuildings; `industrial`, `warehouse`, `hangar`, `manufacture` and
    `man_made=works` halls; `retail`, `supermarket`, `commercial`, `kiosk`, anything with a `shop`
@@ -153,6 +156,38 @@ it for those on foot, and a press that got someone in or out of a vehicle is spe
   frame only. A gate whose wall is blasted from round it is no longer drawn.
 - Which gates are open lives in the room: after a server restart all are shut.
 
+## Shelters
+
+A lean-to (`crates/osm-import/src/shelter.rs`) has three walls and no fourth. In Umeå they are mapped
+as `amenity=shelter`, `shelter_type=lean_to` on a `building=yes` about 2.5 m across, with a
+`direction` (`west`, `sse`) the open side faces. The laser has too few returns over one to fit a
+roof, so it is built and not fitted:
+
+- **The open side** is the side of at least 1 m that faces `direction` most squarely. `direction` is
+  a compass point or degrees from north. Without one it faces the road (`front_of`), and with no road
+  near, its longest side is open. `Building::front` is the open side's outward normal, so the client
+  knows which way it faces, with no new field.
+- **The roof** is one plane, 2.2 m over the floor along the open side (`FRONT`), falling to the back
+  at 0.4 a metre (about 22°, `PITCH`). It is pitched less where the back would come lower than 1 m
+  (`BACK`). Its kind is `ROOF_SHED`.
+- **The walls** are built by `roof::build_with` with a `Walls` that leaves the open side out and lets
+  a wall be lower than a house's 2.5 m. The cells are cut from the three walls and the roof as from
+  any house's, so a shelter is hit, chipped and blasted as a house is, and hides a soldier inside it
+  only from behind and from the sides.
+- **No openings.** `openings_of` gives a shelter none, as it gives a bridge none, on the server and in
+  `windows.ts`. A shelter is too small for an inside.
+- **Colours** come from `building:colour` and `roof:colour` (named, or `#rrggbb`; red is falu red)
+  as its `paint`. Without them it takes its kind's palette.
+- **Drawn open** (`render/facade.ts`, `eaves.ts`):
+  - the boards show their thickness where they end along the open side (`Facade.rims`);
+  - the inside is lit nearly as the outside is (`SHELTER_SHADE` 0.6, where a closed house's is 0.18);
+  - the roof's high edge over the open side overhangs, with a fascia, as an eave does over a wall;
+  - the floor is drawn under the three walls, closed along the open side (`floorOf`).
+- **Details** (`render/details.ts`): a plank bed 0.4 m high from the back wall over two thirds of the
+  floor, cut from the footprint's own outline and kept 0.2 m in from the walls' outside, and a ring
+  of stones with two charred logs 1.7 m out in front of the open side. Both are only drawn, and go
+  when the back wall's lowest cell does. A hurt shelter is drawn without the rims.
+
 ## Chimneys and porches
 
 `client/src/render/details.ts` adds what the look leaves out, drawn into the tile's mesh with the
@@ -180,6 +215,12 @@ brick or rendered house it keeps its own boards.
   nearest its middle and not the one its real entrance is on. A garage faces the road too, not the
   drive up to it.
 - **Bots do not open gates**, and a gate is not shut from a seat.
+- **Shelters without a `building` tag are not imported**, and many are mapped so. Taking them in
+  needs them in `osm::wants_*` and the Overpass query, and a `pbf::VERSION` bump.
+- **Picnic shelters and gazebos** (a roof on posts) are still drawn as small houses.
+- **A shelter's bed and fire ring are only drawn**: nothing collides with them, and a soldier cannot
+  sit on the bed. The fire ring stands on the shelter's floor height, so on a slope it may sink into
+  the ground or float over it.
 - **Carports** (`building=carport`) are closed garages, and `building=roof` is left out as before.
 - **A fire station is one hall**, with no upper floor over the engines; neither world imported so far has one, so it has been seen in tests only. A block of flats has no balconies or door a stairwell.
 - **A house's quarters are a hash**, not the real age of the street, and there are no corner boards or other trim.

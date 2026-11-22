@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::terrain::Ground;
 
-pub const WORLD_VERSION: u8 = 39;
+pub const WORLD_VERSION: u8 = 40;
 
 /// `Manifest::theme`: the world as it always was.
 pub const THEME_PLAIN: u8 = 0;
@@ -758,7 +758,8 @@ pub struct Building {
     pub kind: u8,
     /// Which way the road it stands by lies from its middle, `[x, z]` of a unit vector times 127:
     /// the wall facing that way is its front, with its door (`windows::openings_of`). `[0, 0]` where
-    /// no road is near, and the front is its longest wall.
+    /// no road is near, and the front is its longest wall. A shelter's is the way its open side
+    /// faces (`BUILDING_SHELTER`).
     pub front: [i8; 2],
     /// The building's 1 m cubes (`carve::Shell`), worked out by the importer from its walls and
     /// roof; the server and clients make the boxes to collide with, and the clients the faces to
@@ -1050,8 +1051,12 @@ pub const DECK_PLANKS: u32 = 0x8a7356;
 /// The colour of the top of a deck that carries a railway, `0xRRGGBB`: the track's bed of crushed
 /// stone. The sleepers and rails on it are the tile's `rails` (`Rail::deck`).
 pub const DECK_BALLAST: u32 = 0x8a8478;
+/// A lean-to (vindskydd) out on a trail or by a ski slope: three timber walls and a roof that is high
+/// over the open side and falls towards the back, no door and no windows. `Building::front` is the
+/// way the open side faces (OSM `direction`), and the importer leaves that wall out.
+pub const BUILDING_SHELTER: u8 = 13;
 /// How many kinds of building there are.
-pub const BUILDING_KINDS: usize = 13;
+pub const BUILDING_KINDS: usize = 14;
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Road {
@@ -1159,6 +1164,8 @@ pub const COVER_GOLF_TEE: u8 = 16;
 pub const COVER_GOLF_BUNKER: u8 = 17;
 /// The gardens of a residential area (`landuse=residential`): mown lawn, with gravel round the houses.
 pub const COVER_GARDEN: u8 = 18;
+/// Asphalt laid as an area, not as a road: a car park (OSM's `amenity=parking`).
+pub const COVER_ASPHALT: u8 = 19;
 
 /// Whether cover `kind` is one of a golf course's playing surfaces, kept clear of trees and rocks.
 pub fn is_golf_cover(kind: u8) -> bool {

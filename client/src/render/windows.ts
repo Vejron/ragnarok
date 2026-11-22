@@ -1,4 +1,4 @@
-import { BUILDING_BARN, BUILDING_BRIDGE, BUILDING_CHURCH, BUILDING_FARMHOUSE, BUILDING_FIRE_STATION, BUILDING_HALL, BUILDING_OUTBUILDING, BUILDING_PUBLIC, BUILDING_SHOP, BUILDING_VILLA, type CollisionMesh } from '@/world'
+import { BUILDING_BARN, BUILDING_BRIDGE, BUILDING_CHURCH, BUILDING_FARMHOUSE, BUILDING_FIRE_STATION, BUILDING_HALL, BUILDING_OUTBUILDING, BUILDING_PUBLIC, BUILDING_SHELTER, BUILDING_SHOP, BUILDING_VILLA, type CollisionMesh } from '@/world'
 
 /*
  * Windows and a door on a building's walls, worked out from its look (`Tile.look`), so a house reads
@@ -135,8 +135,8 @@ interface Plane {
 
 /** The windows and door of building `range` of `look`: a house's, or a church's (`range.kind`). */
 export function openingsOf(look: CollisionMesh, range: LookRange): Opening[] {
-  // A bridge has no windows, no doors and so no inside.
-  if (range.kind === BUILDING_BRIDGE) return []
+  // A bridge has no windows, no doors and so no inside; a shelter is open along one side instead.
+  if (range.kind === BUILDING_BRIDGE || range.kind === BUILDING_SHELTER) return []
   const { vertices, triangles } = look
   const corner = (v: number): P => [vertices[v * 3]!, vertices[v * 3 + 1]!, vertices[v * 3 + 2]!]
   const planes: (Plane & { d: number })[] = []

@@ -1,11 +1,11 @@
-import { BUILDING_CABIN, BUILDING_FARMHOUSE, BUILDING_PLAIN, BUILDING_VILLA, type CollisionMesh } from '@/world'
+import { BUILDING_CABIN, BUILDING_FARMHOUSE, BUILDING_PLAIN, BUILDING_SHELTER, BUILDING_VILLA, type CollisionMesh } from '@/world'
 import type { P, RGB } from './geom'
 import { FRAME_RGB, type LookRange, type Opening } from './windows'
 
 /*
  * The small parts that make a house a house, worked out from its look (`Tile.look`) and its
  * openings: a chimney on its ridge, and over its front door a porch on two posts (an old house's, a
- * cabin's) or a flat canopy (a villa's). Only drawn, the same on every client; nothing collides
+ * cabin's) or a flat canopy (a villa's); in a shelter a plank bed, and a fire ring in front of it. Only drawn, the same on every client; nothing collides
  * with them. A hurt house keeps each while the cell it hangs from (`anchor`) stands. Pure, so it
  * runs in the tile worker too.
  */
@@ -30,8 +30,15 @@ const PORCH: readonly [number, number, number, number, number] = [2.0, 1.4, 0.45
 /** A canopy: its width, depth and height over the door's top, and its thickness, metres. */
 const CANOPY: readonly [number, number, number, number] = [1.8, 0.9, 0.15, 0.1]
 
-/** What a quad of a detail is painted as: brick, the house's roof, or white boards. */
-export type DetailPaint = 'chimney' | 'roof' | 'trim'
+/** A shelter's bed: how high its planks stand over the floor, and how much of the floor it fills from the back wall. */
+const BED: readonly [number, number] = [0.4, 0.65]
+/** How far the bed keeps in from the outside of the walls, metres: past their thickness. */
+const BED_CLEAR = 0.2
+/** A shelter's fire ring: how far its middle is out from the open side, its radius, how many stones, and a stone's half size, metres. */
+const FIRE: readonly [number, number, number, number] = [1.7, 0.55, 9, 0.11]
+
+/** What a quad of a detail is painted as: brick, the house's roof, white boards, bare planks, stone, or charred wood. */
+export type DetailPaint = 'chimney' | 'roof' | 'trim' | 'planks' | 'stone' | 'char'
 
 export interface DetailQuad {
   corners: [P, P, P, P]
@@ -45,6 +52,30 @@ export interface DetailQuad {
 /** Linear colours: a chimney's brick, and the trim (posts, the underside of a porch). */
 export const CHIMNEY_RGB: RGB = [0.19, 0.075, 0.05]
 export const DETAIL_TRIM_RGB: RGB = FRAME_RGB
+const PLANKS_RGB: RGB = [0.2, 0.12, 0.06]
+const STONE_RGB: RGB = [0.16, 0.16, 0.15]
+const CHAR_RGB: RGB = [0.025, 0.02, 0.018]
+
+/**
+ * How a detail quad painted `paint` is drawn: its colour (linear) and, where it has one, its pattern
+ * (`Surface` in `buildingmesh.ts`: `brick`, `planks`, or the house's `roof`, else 0 for plain).
+ */
+export function detailColour(paint: DetailPaint, roof: RGB, surfaces: { roof: number; brick: number; planks: number }): { rgb: RGB; surface: number } {
+  switch (paint) {
+    case 'chimney':
+      return { rgb: CHIMNEY_RGB, surface: surfaces.brick }
+    case 'roof':
+      return { rgb: roof, surface: surfaces.roof }
+    case 'planks':
+      return { rgb: PLANKS_RGB, surface: surfaces.planks }
+    case 'stone':
+      return { rgb: STONE_RGB, surface: 0 }
+    case 'char':
+      return { rgb: CHAR_RGB, surface: 0 }
+    default:
+      return { rgb: DETAIL_TRIM_RGB, surface: 0 }
+  }
+}
 
 const CHIMNEYED: ReadonlySet<number> = new Set([BUILDING_PLAIN, BUILDING_FARMHOUSE, BUILDING_VILLA, BUILDING_CABIN])
 
@@ -83,6 +114,7 @@ function roofAt(roof: readonly P[], x: number, z: number): number | null {
 export function detailsOf(look: CollisionMesh, range: LookRange, openings: readonly Opening[]): DetailQuad[] {
   const out: DetailQuad[] = []
   const kind = range.kind ?? BUILDING_PLAIN
+  if (kind === BUILDING_SHELTER) return shelterDetails(look, range)
   if (!CHIMNEYED.has(kind)) return out
   // The ridge: the roof's highest corners, and the two of them furthest apart.
   const { vertices, triangles } = look
@@ -177,4 +209,121 @@ export function detailsOf(look: CollisionMesh, range: LookRange, openings: reado
 /** The triangles `details` take to draw. */
 export function detailTriangles(details: readonly DetailQuad[]): number {
   return details.length * 2
+}
+
+/**
+ * A shelter's plank bed along its back wall and its fire ring out in front of its open side
+ * (`range.front`). The bed stands on the floor and hangs from the back wall's lowest cell; the ring
+ * goes with the shelter, from the same cell.
+ */
+function shelterDetails(look: CollisionMesh, range: LookRange): DetailQuad[] {
+  const out: DetailQuad[] = []
+  const footprint = range.footprint
+  const front = range.front ?? [0, 0]
+  const length = Math.hypot(front[0], front[1])
+  if (!footprint || footprint.length < 6 || length === 0) return out
+  const n = [front[0] / length, front[1] / length] as const
+  const u = [-n[1], n[0]] as const
+  // The floor: the walls' lowest corner.
+  let floor = Infinity
+  for (let t = range.first; t < range.first + range.walls; t++) {
+    for (let k = 0; k < 3; k++) floor = Math.min(floor, look.vertices[look.triangles[t * 3 + k]! * 3 + 1]!)
+  }
+  if (!Number.isFinite(floor)) return out
+  // The footprint along the way it faces (`n`) and across it (`u`), metres.
+  let [back, open, left, right] = [Infinity, -Infinity, Infinity, -Infinity]
+  for (let i = 0; i + 1 < footprint.length; i += 2) {
+    const [x, z] = [footprint[i]! / 100, footprint[i + 1]! / 100]
+    const along = x * n[0] + z * n[1]
+    const across = x * u[0] + z * u[1]
+    ;[back, open, left, right] = [Math.min(back, along), Math.max(open, along), Math.min(left, across), Math.max(right, across)]
+  }
+  const at = (along: number, across: number) => [n[0] * along + u[0] * across, n[1] * along + u[1] * across] as const
+  const mid = (left + right) / 2
+  const anchorAt = at(back + 0.05, mid)
+  const anchor: P = [anchorAt[0], floor + 0.3, anchorAt[1]]
+  // The bed: planks over the floor from the back wall out over most of it, inside the walls
+  // whatever shape the footprint is, the outline cut off towards the open side.
+  const [bedHigh, bedShare] = BED
+  const outline: [number, number][] = []
+  for (let i = 0; i + 1 < footprint.length; i += 2) outline.push([footprint[i]! / 100, footprint[i + 1]! / 100])
+  const bed = shrink(cutOff(outline, n, back + (open - back) * bedShare), BED_CLEAR)
+  if (bed.length >= 3) {
+    const top = floor + bedHigh
+    const corner = (p: readonly [number, number], y: number): P => [p[0], y, p[1]]
+    for (let k = 1; k + 1 < bed.length; k++) {
+      out.push({ corners: [corner(bed[0]!, top), corner(bed[k]!, top), corner(bed[k + 1]!, top), corner(bed[k + 1]!, top)], normal: [0, 1, 0], paint: 'planks', anchor })
+    }
+    const centre = bed.reduce<[number, number]>((c, p) => [c[0] + p[0] / bed.length, c[1] + p[1] / bed.length], [0, 0])
+    for (let k = 0; k < bed.length; k++) {
+      const [a, b] = [bed[k]!, bed[(k + 1) % bed.length]!]
+      const length = Math.hypot(b[0] - a[0], b[1] - a[1])
+      if (length < 1e-3) continue
+      let side: P = [(b[1] - a[1]) / length, 0, (a[0] - b[0]) / length]
+      if (side[0] * ((a[0] + b[0]) / 2 - centre[0]) + side[2] * ((a[1] + b[1]) / 2 - centre[1]) < 0) side = [-side[0], 0, -side[2]]
+      out.push({ corners: [corner(a, floor), corner(b, floor), corner(b, top), corner(a, top)], normal: side, paint: 'planks', anchor })
+    }
+  }
+  // The fire ring: stones round, and two charred logs across each other in it.
+  const [ahead, radius, stones, half] = FIRE
+  const ring = at(open + ahead, mid)
+  for (let k = 0; k < stones; k++) {
+    const a = (k / stones) * Math.PI * 2
+    const c = [ring[0] + Math.cos(a) * radius, ring[1] + Math.sin(a) * radius] as const
+    box(out, c, [Math.cos(a), Math.sin(a)], half, half * 1.2, floor - 0.4, floor + half * 1.4, 'stone', anchor)
+  }
+  for (const turn of [Math.PI / 4, -Math.PI / 4]) {
+    box(out, ring, [Math.cos(turn), Math.sin(turn)], radius * 0.7, 0.06, floor - 0.4, floor + 0.12, 'char', anchor)
+  }
+  return out
+}
+
+/** The convex polygon `ring` (`x, z`) cut off where it reaches past `limit` along the unit `n`. */
+function cutOff(ring: readonly (readonly [number, number])[], n: readonly [number, number], limit: number): [number, number][] {
+  const out: [number, number][] = []
+  const along = (p: readonly [number, number]) => p[0] * n[0] + p[1] * n[1] - limit
+  for (let k = 0; k < ring.length; k++) {
+    const [a, b] = [ring[k]!, ring[(k + 1) % ring.length]!]
+    const [da, db] = [along(a), along(b)]
+    if (da <= 0) out.push([a[0], a[1]])
+    if ((da < 0 && db > 0) || (da > 0 && db < 0)) {
+      const t = da / (da - db)
+      out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t])
+    }
+  }
+  return out
+}
+
+/** The convex polygon `ring` with every side moved `by` metres in, or nothing where it is too small for that. */
+function shrink(ring: readonly (readonly [number, number])[], by: number): [number, number][] {
+  const n = ring.length
+  if (n < 3) return []
+  let area = 0
+  for (let k = 0; k < n; k++) area += ring[k]![0] * ring[(k + 1) % n]![1] - ring[(k + 1) % n]![0] * ring[k]![1]
+  const turn = area > 0 ? 1 : -1
+  // Each side as a line moved in: a point on it and its direction.
+  const lines = ring.map((a, k) => {
+    const b = ring[(k + 1) % n]!
+    const length = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1
+    const d = [(b[0] - a[0]) / length, (b[1] - a[1]) / length] as const
+    // Inwards is to the left of a counter-clockwise ring.
+    const inward = [-d[1] * turn, d[0] * turn] as const
+    return { p: [a[0] + inward[0] * by, a[1] + inward[1] * by] as const, d }
+  })
+  const out: [number, number][] = []
+  for (let k = 0; k < n; k++) {
+    const { p: p0, d: d0 } = lines[(k + n - 1) % n]!
+    const { p: p1, d: d1 } = lines[k]!
+    const cross = d0[0] * d1[1] - d0[1] * d1[0]
+    if (Math.abs(cross) < 1e-6) {
+      out.push([p1[0], p1[1]])
+      continue
+    }
+    const t = ((p1[0] - p0[0]) * d1[1] - (p1[1] - p0[1]) * d1[0]) / cross
+    out.push([p0[0] + d0[0] * t, p0[1] + d0[1] * t])
+  }
+  // Too small: the sides moved in have crossed over and turned the ring inside out.
+  let after = 0
+  for (let k = 0; k < n; k++) after += out[k]![0] * out[(k + 1) % n]![1] - out[(k + 1) % n]![0] * out[k]![1]
+  return after * area > 0 ? out : []
 }

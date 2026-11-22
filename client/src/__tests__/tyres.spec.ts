@@ -4,10 +4,11 @@ import { kindView } from '@/kinds'
 import { tyreSlip } from '@/sim/slip'
 import { rasterSurface, Surfaces, SURFACE_ASPHALT, SURFACE_DIRT, SURFACE_GRASS, SURFACE_WATER } from '@/sim/surface'
 import { Skidmarks, SKID_LIFE } from '@/render/skidmarks'
+import { grassMask } from '@/render/grass'
 import { Particles } from '@/render/particles'
 import { VehicleFx, type FxWorld } from '@/render/tyres'
 import { JetSpray } from '@/render/jetspray'
-import { COVER_FARM, COVER_WATER, RAIL_TRAIN, RAIL_TRAM, ROAD_MINOR, ROAD_PATH, NO_WATER } from '@/world'
+import { COVER_ASPHALT, COVER_FARM, COVER_WATER, RAIL_TRAIN, RAIL_TRAM, ROAD_MINOR, ROAD_PATH, NO_WATER } from '@/world'
 import { KIND_CB90, KIND_HELI, KIND_JEEP, KIND_PLANE, KIND_RAFT, KIND_SNOWMOBILE, KIND_SPORTS, KIND_TANK } from '@/net/codec'
 import { setIced, setWinter } from '@/render/season'
 import { JEEP_RIDE_HEIGHT, SNOWMOBILE_RIDE_HEIGHT, TANK_HALF_EXTENTS, TANK_RIDE_HEIGHT } from '@/sim/consts'
@@ -69,6 +70,17 @@ describe('surfaces', () => {
     expect(at(50, 56)).toBe(SURFACE_GRASS)
     expect(at(90, 15)).toBe(SURFACE_DIRT)
     expect(at(95, 95)).toBe(SURFACE_GRASS)
+  })
+
+  it('paints a car park as asphalt, and nothing grows on it', () => {
+    const lot = { cover: [{ kind: COVER_ASPHALT, rings: [[[20, 20], [60, 20], [60, 60], [20, 60]] as [number, number][]] }], roads: [], water: new Float32Array(), buildings: [], streams: [] }
+    const surface = rasterSurface(lot, 0, 0, 100)
+    const at = (x: number, z: number) => surface.cells[Math.floor(z / 2) * surface.side + Math.floor(x / 2)]
+    expect(at(40, 40)).toBe(SURFACE_ASPHALT)
+    expect(at(80, 80)).toBe(SURFACE_GRASS)
+    const mask = grassMask(lot, 0, 0, 100)
+    expect(mask.cells[Math.floor(40 / 2) * mask.side + Math.floor(40 / 2)]).toBe(0)
+    expect(mask.cells[Math.floor(80 / 2) * mask.side + Math.floor(80 / 2)]).toBe(1)
   })
 
   it('paints ballast as gravel under the roads, and not under a tram', () => {

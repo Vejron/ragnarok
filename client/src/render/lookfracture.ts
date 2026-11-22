@@ -2,7 +2,7 @@ import { BUILDING_BRIDGE, type CollisionMesh } from '@/world'
 import { CELL_HP, type Shell } from '@/sim/carve'
 import { drawnOpenings, facing, openingQuads, openingsFor, type Opening } from './windows'
 import { SOFFIT_RGB, TRIM_RGB, eaveAnchor, eavesFor } from './eaves'
-import { CHIMNEY_RGB, DETAIL_TRIM_RGB, detailsOf } from './details'
+import { detailColour, detailsOf } from './details'
 import { Surface } from './buildingmesh'
 import { FLOOR_RGB, INSIDE_RGB, INTERIOR_SHADE, facadeFor, innerOf, type Facade } from './facade'
 import { add, centreOf, cross, dot, edgeKey, hash, keyOf, normalOf, split, sub, unit, type P, type Poly, type RGB } from './geom'
@@ -670,7 +670,7 @@ export function lookFracture(look: CollisionMesh, range: LookRange, shell: Shell
   // The room inside: what stands, turned in a wall's thickness, dim, with the same ragged edge; and the floor where the house still stands over it.
   // A bridge has no windows, so only what is next to a hole can be seen into, and its rails are thinner
   // than a wall: their inner faces would stand out beside them.
-  const dim = (c: RGB): RGB => [c[0] * INTERIOR_SHADE, c[1] * INTERIOR_SHADE, c[2] * INTERIOR_SHADE]
+  const dim = (c: RGB): RGB => [c[0] * facade.shade, c[1] * facade.shade, c[2] * facade.shade]
   if (range.kind !== BUILDING_BRIDGE) for (const piece of whole) out.poly(innerOf(piece.poly, piece.normal, facade.inset), dim(piece.roof ? roof : wall), shade, true)
   for (const piece of kept.filter(thick)) out.poly(innerOf(piece.poly, piece.normal, facade.inset, place), dim(piece.roof ? roof : wall), shade, true)
   for (const poly of floorStanding(facade.floor, grid, removed)) out.poly(poly, FLOOR_RGB, undefined, true)
@@ -736,8 +736,9 @@ export function lookFracture(look: CollisionMesh, range: LookRange, shell: Shell
   for (const { corners, normal, paint, anchor } of detailsOf(look, range, drawnOpenings(openings, facade.inside.length > 0))) {
     const [x, y, z] = [0, 1, 2].map((a) => grid.of(anchor[a]!, a)) as P
     if ((grid.has(x, y, z) && cut(shell.index(x, y, z))) || orphan(grid, x, y, z, cut)) continue
-    out.surface = paint === 'chimney' ? Surface.Brick : paint === 'roof' ? surfaces.roof : 0
-    out.poly(facing(corners, normal), paint === 'chimney' ? CHIMNEY_RGB : paint === 'roof' ? roof : DETAIL_TRIM_RGB, shade, true)
+    const { rgb, surface } = detailColour(paint, roof, { roof: surfaces.roof, brick: Surface.Brick, planks: Surface.Planks })
+    out.surface = surface
+    out.poly(facing(corners, normal), rgb, shade, true)
   }
   out.surface = 0
   return out.soup()

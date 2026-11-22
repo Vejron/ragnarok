@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { serverOpenings, type Tri } from '@/sim/carve'
 import { HEAD_ARCH, HEAD_ROUND, HEAD_SQUARE, drawnOpenings, openingQuads, openingTriangles, openingsOf } from '@/render/windows'
-import { BUILDING_BARN, BUILDING_CHURCH, BUILDING_FARMHOUSE, BUILDING_FIRE_STATION, BUILDING_HALL, BUILDING_OUTBUILDING, BUILDING_PUBLIC, BUILDING_SHOP, BUILDING_VILLA, type CollisionMesh } from '@/world'
+import { BUILDING_BARN, BUILDING_CHURCH, BUILDING_FARMHOUSE, BUILDING_FIRE_STATION, BUILDING_HALL, BUILDING_OUTBUILDING, BUILDING_PUBLIC, BUILDING_SHELTER, BUILDING_SHOP, BUILDING_VILLA, type CollisionMesh } from '@/world'
 
 /*
  * The server places windows with its own port of `openingsOf` (`shared::windows`), and cuts them out
@@ -107,6 +107,15 @@ describe('window placement', () => {
         for (let k = 0; k < 4; k++) for (let a = 0; a < 3; a++) expect(t.corners[k]![a]).toBeCloseTo(o.corners[k]![a]!, 4)
         for (let a = 0; a < 3; a++) expect(t.normal[a]).toBeCloseTo(o.normal[a]!, 5)
       })
+    }
+  })
+
+  it('gives a shelter no door and no windows on either side, its open side facing any way', () => {
+    for (const front of [[0, 0], [-127, 0], [49, 117]] as const) {
+      for (const walls of [gable(), hall()]) {
+        expect(openingsOf(lookOf(walls), { first: 0, walls: walls.length, roof: 0, kind: BUILDING_SHELTER, front })).toEqual([])
+        expect(serverOpenings(walls, BUILDING_SHELTER, front)).toEqual([])
+      }
     }
   })
 

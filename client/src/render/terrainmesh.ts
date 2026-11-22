@@ -1,6 +1,7 @@
 import type { TileGround } from '@/sim/terrain'
 import {
   CROP_NONE,
+  COVER_ASPHALT,
   COVER_FARM,
   COVER_GARDEN,
   COVER_INDUSTRIAL,
@@ -20,6 +21,7 @@ import {
   COVER_URBAN,
   COVER_WATER,
   COVER_WOOD,
+  DECK_ASPHALT,
   DETAIL_SLOPE_SCALE,
   type TileData,
 } from '@/world'
@@ -49,6 +51,8 @@ export const COVER_COLORS: Record<number, number> = {
   [COVER_SAND]: 0xd8cfae,
   // Paving round shops and schools.
   [COVER_URBAN]: 0xb9b5ab,
+  // A car park: the roads' own asphalt, so its aisles do not stand out from it.
+  [COVER_ASPHALT]: DECK_ASPHALT,
   // A garden's lawn: mown, a little yellower than a meadow.
   [COVER_GARDEN]: 0x80a856,
   // Gravel and packed earth.
@@ -127,6 +131,7 @@ const COVER_LAYERS: Record<number, readonly CoverLayer[]> = {
   [COVER_SAND]: [{ period: 128, cells: 16, strength: 0.14 }],
   [COVER_FARM]: [{ period: 256, cells: 10, strength: 0.14 }],
   [COVER_URBAN]: [{ period: 64, cells: 24, strength: 0.1 }],
+  [COVER_ASPHALT]: [{ period: 64, cells: 24, strength: 0.06 }],
   [COVER_INDUSTRIAL]: [
     { period: 64, cells: 24, strength: 0.18 },
     { period: 128, cells: 14, strength: 0.3, tint: 0x8a8272, share: 0.25 },

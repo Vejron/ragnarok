@@ -91,24 +91,89 @@ function toSegment(px: number, pz: number, ax: number, az: number, bx: number, b
 
 /** Side of the cells `Reach` sorts its strips into, metres. */
 const REACH_CELL = 16
+/**
+ * How far in from a car park's outline its asphalt counts as edge, metres: the half width its
+ * vertices carry (`Layer.area`), over which the shader dusts and crumbles it as it does a road's.
+ */
+const LOT_EDGE = 2
+/** A car park's place among the road kinds' ranks (`RANK`): over the worn paths and tracks, under every paved road. */
+const LOT_RANK = 2.5
+/**
+ * What a car park's vertices carry for how far across a road they are, metres: far off any road's
+ * middle, so the shader lays none of a road's mended patches, which follow a road's line, on it.
+ */
+const LOT_FAR = 1000
+
+/** A car park's outline: its rings in metres, filled even-odd, so inner rings are holes. */
+export type Lot = readonly (readonly Point2[])[]
+
+/** Whether `(x, z)` is inside `rings`, filled even-odd. */
+function insideRings(rings: Lot, x: number, z: number): boolean {
+  let inside = false
+  for (const ring of rings) {
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const [[ax, az], [bx, bz]] = [ring[i]!, ring[j]!]
+      if (az > z !== bz > z && x < ax + ((z - az) / (bz - az)) * (bx - ax)) inside = !inside
+    }
+  }
+  return inside
+}
 
 /**
  * How deep inside the surface some ribbons make together a point is: the most, over their strips, of
  * a strip's half width less how far the point is from its centre line, metres. Where ribbons overlap
  * at a junction, one strip's edge lying inside another is deep inside the whole, so it is drawn as the
- * middle of the road rather than as an edge that shows across the other.
+ * middle of the road rather than as an edge that shows across the other. Car parks (`lots`) are part
+ * of the surface too: a point inside one is as deep as it is far from the outline, so a road in a car
+ * park has no edge of its own there.
  */
 export class Reach {
   /** Each strip: its ends and half width, five numbers. */
   private readonly strips: number[] = []
   /** Which strips come near each cell of a `REACH_CELL` grid, by `cellKey`. */
   private readonly cells = new Map<number, number[]>()
+  /** Each car park: its rings and their `[x0, z0, x1, z1]`. */
+  private readonly lots: { rings: Lot; box: [number, number, number, number] }[] = []
+  /** The sides of the car parks' outlines, their ends, four numbers each. */
+  private readonly walls: number[] = []
+  /** Which walls come within `LOT_EDGE` of each cell of the grid, by `cellKey`. */
+  private readonly walled = new Map<number, number[]>()
 
   constructor(
     ribbons: readonly { points: readonly Point2[]; half: number }[],
     /** Whether the ribbons' widths stray along them as trodden paths' do (`wornHalf`). */
     private readonly wanders: boolean,
+    lots: readonly Lot[] = [],
+    /**
+     * The tile's `[x0, z0, x1, z1]`: a side of a car park lying along it is where the tile cut the car
+     * park, which carries on in the next, and not an edge of it.
+     */
+    border: readonly [number, number, number, number] | null = null,
   ) {
+    for (const rings of lots) {
+      const box: [number, number, number, number] = [Infinity, Infinity, -Infinity, -Infinity]
+      for (const ring of rings) {
+        for (let i = 0; i < ring.length; i++) {
+          const [[ax, az], [bx, bz]] = [ring[i]!, ring[(i + 1) % ring.length]!]
+          box[0] = Math.min(box[0], ax)
+          box[1] = Math.min(box[1], az)
+          box[2] = Math.max(box[2], ax)
+          box[3] = Math.max(box[3], az)
+          if (border && alongBorder(ax, az, bx, bz, border)) continue
+          const wall = this.walls.length / 4
+          this.walls.push(ax, az, bx, bz)
+          for (let cx = Math.floor((Math.min(ax, bx) - LOT_EDGE) / REACH_CELL); cx <= Math.floor((Math.max(ax, bx) + LOT_EDGE) / REACH_CELL); cx++) {
+            for (let cz = Math.floor((Math.min(az, bz) - LOT_EDGE) / REACH_CELL); cz <= Math.floor((Math.max(az, bz) + LOT_EDGE) / REACH_CELL); cz++) {
+              const key = cellKey(cx, cz)
+              const list = this.walled.get(key)
+              if (list) list.push(wall)
+              else this.walled.set(key, [wall])
+            }
+          }
+        }
+      }
+      this.lots.push({ rings, box })
+    }
     for (const { points, half } of ribbons) {
       const ends = points.length === 1 ? [points[0]!, points[0]!] : points
       for (let i = 0; i + 1 < ends.length; i++) {
@@ -136,8 +201,24 @@ export class Reach {
       const half = this.wanders ? wornHalf(this.strips[s + 4]!, x, z) : this.strips[s + 4]!
       deepest = Math.max(deepest, half - toSegment(x, z, this.strips[s]!, this.strips[s + 1]!, this.strips[s + 2]!, this.strips[s + 3]!))
     }
+    for (const { rings, box } of this.lots) {
+      if (x < box[0] || x > box[2] || z < box[1] || z > box[3] || !insideRings(rings, x, z)) continue
+      // No wall near: deep inside. A wall within `LOT_EDGE` of the point is always in its cell's list.
+      let nearest = Infinity
+      for (const wall of this.walled.get(cellKey(Math.floor(x / REACH_CELL), Math.floor(z / REACH_CELL))) ?? []) {
+        const w = wall * 4
+        nearest = Math.min(nearest, toSegment(x, z, this.walls[w]!, this.walls[w + 1]!, this.walls[w + 2]!, this.walls[w + 3]!))
+      }
+      deepest = Math.max(deepest, nearest)
+    }
     return deepest
   }
+}
+
+/** Whether the side `a -> b` lies along one side of the tile's `border` (`[x0, z0, x1, z1]`). */
+function alongBorder(ax: number, az: number, bx: number, bz: number, border: readonly [number, number, number, number]): boolean {
+  const on = (a: number, b: number, line: number) => Math.abs(a - line) < 0.01 && Math.abs(b - line) < 0.01
+  return on(ax, bx, border[0]) || on(ax, bx, border[2]) || on(az, bz, border[1]) || on(az, bz, border[3])
 }
 
 /** A `Reach` cell's key: its column and row packed into one number. */
@@ -390,6 +471,53 @@ export class Layer {
     }
   }
 
+  /**
+   * A car park: `rings` filled even-odd, cut into bands across z and each band along x so that no
+   * vertex is more than `ACROSS` from the next and the sheet keeps to the ground. A band runs between
+   * two neighbouring heights out of the rings' corners' and the grid's, so no corner lies inside one,
+   * and the sides that cross it, paired off left to right, bound the pieces of the car park in it.
+   * The layer must have a `reach` with the car park in it, which says how near the outline a vertex is.
+   */
+  area(rings: Lot) {
+    const sides: [number, number, number, number][] = []
+    const levels: number[] = []
+    for (const ring of rings) {
+      for (let i = 0; i < ring.length; i++) {
+        const [[ax, az], [bx, bz]] = [ring[i]!, ring[(i + 1) % ring.length]!]
+        levels.push(az)
+        if (az < bz) sides.push([ax, az, bx, bz])
+        else if (bz < az) sides.push([bx, bz, ax, az])
+      }
+    }
+    if (sides.length === 0) return
+    const [top, bottom] = [Math.min(...levels), Math.max(...levels)]
+    for (let z = Math.ceil(top / ACROSS) * ACROSS; z < bottom; z += ACROSS) levels.push(z)
+    levels.sort((a, b) => a - b)
+    const at = (x: number, z: number) => this.vertex(x, z, this.lift, 1, LOT_EDGE, x, LOT_FAR)
+    for (let k = 0; k + 1 < levels.length; k++) {
+      const [z0, z1] = [levels[k]!, levels[k + 1]!]
+      if (z1 - z0 < 1e-4) continue
+      // Where each side that crosses the band is at its top and its bottom, left to right.
+      const crossing = sides
+        .filter(([, az, , bz]) => az <= z0 && bz >= z1)
+        .map(([ax, az, bx, bz]) => [ax + ((bx - ax) * (z0 - az)) / (bz - az), ax + ((bx - ax) * (z1 - az)) / (bz - az)] as const)
+        .sort((a, b) => a[0] + a[1] - b[0] - b[1])
+      for (let i = 0; i + 1 < crossing.length; i += 2) {
+        const [left, right] = [crossing[i]!, crossing[i + 1]!]
+        const parts = Math.max(1, Math.ceil(Math.max(right[0] - left[0], right[1] - left[1]) / ACROSS))
+        let previous: [number, number] | null = null
+        for (let j = 0; j <= parts; j++) {
+          const pair: [number, number] = [at(left[0] + ((right[0] - left[0]) * j) / parts, z0), at(left[1] + ((right[1] - left[1]) * j) / parts, z1)]
+          if (previous) {
+            this.triangle(previous[0], pair[0], previous[1])
+            this.triangle(pair[0], pair[1], previous[1])
+          }
+          previous = pair
+        }
+      }
+    }
+  }
+
   /** The layer as a ribbon drawn in `color` with depth bias `offset`, or null when it has no triangles. */
   ribbon(color: number, offset: number): Ribbon | null {
     if (this.indices.length === 0) return null
@@ -453,10 +581,23 @@ function meeting(roads: readonly Road[], road: Road, x: number, z: number, pass:
  * casings, then all the fills, so a junction reads as one surface rather than a stack of outlines.
  * `border` is the tile's `[x0, z0, x1, z1]`; a road ending on it gets no round cap, since its
  * neighbour tile carries on from there. `shade` is the tile's (`GroundShade`).
+ *
+ * `lots` are the tile's car parks, laid in the roads' asphalt and one surface with the paved roads:
+ * a road has no shoulder and no edge inside one, and a car park none where a road leaves it. Under
+ * snow they are left to the ground's own cover.
  */
-export function roadRibbons(roads: readonly Road[], shade: GroundShade, border: readonly [number, number, number, number]): Ribbon[] {
+export function roadRibbons(roads: readonly Road[], shade: GroundShade, border: readonly [number, number, number, number], lots: readonly Lot[] = []): Ribbon[] {
   const out: Ribbon[] = []
+  if (winter) lots = []
+  const paved = roads.filter((road) => PAVED.has(road.kind))
   for (const pass of [0, 1] as const) {
+    if (pass === 1 && lots.length > 0) {
+      const reach = new Reach(paved.map((road) => ({ points: road.points, half: halfWidth(road, 1) })), false, lots, border)
+      const layer = new Layer(0.07 + LOT_RANK * 0.005, shade, { kind: 'asphalt' }, border, reach)
+      for (const lot of lots) layer.area(lot)
+      const ribbon = layer.ribbon(ROAD_COLORS[ROAD_MINOR]![1], 20 + LOT_RANK * 2)
+      if (ribbon) out.push(ribbon)
+    }
     for (const kind of KINDS) {
       const colors = (winter ? WINTER_ROAD_COLORS : ROAD_COLORS)[kind]!
       const color = colors[pass]
@@ -465,11 +606,12 @@ export function roadRibbons(roads: readonly Road[], shade: GroundShade, border: 
       const look = lookOf(kind, pass)
       // Paved roads make one surface whatever their class; a worn path's kind its own.
       const together = look.kind === 'plain' ? [] : roads.filter((road) => (PAVED.has(kind) ? PAVED.has(road.kind) : road.kind === kind))
-      const reach = together.length > 0 ? new Reach(together.map((road) => ({ points: road.points, half: halfWidth(road, pass) })), RAGGED[kind] !== undefined) : null
+      // The car parks are part of the asphalt's surface, and of nothing else's.
+      const reach = together.length > 0 ? new Reach(together.map((road) => ({ points: road.points, half: halfWidth(road, pass) })), RAGGED[kind] !== undefined, look.kind === 'asphalt' ? lots : [], border) : null
       // A paved road's shoulder is a band along each edge, not a sheet under the whole road, and none of it
       // lies under any road's asphalt: not at a joint's disc, nor where another road crosses.
       const shoulder = pass === 0 && PAVED.has(kind)
-      const asphalt = shoulder ? new Reach(roads.filter((road) => PAVED.has(road.kind)).map((road) => ({ points: road.points, half: halfWidth(road, 1) })), false) : null
+      const asphalt = shoulder ? new Reach(paved.map((road) => ({ points: road.points, half: halfWidth(road, 1) })), false, lots, border) : null
       const layer = new Layer((pass === 0 ? 0.05 : 0.07) + rank * 0.005, shade, look, border, reach, asphalt)
       for (const road of roads) {
         if (road.kind !== kind) continue

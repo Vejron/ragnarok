@@ -1,4 +1,4 @@
-import { BUILDING_BRIDGE, type CollisionMesh } from '@/world'
+import { BUILDING_BRIDGE, BUILDING_SHELTER, type CollisionMesh } from '@/world'
 import { add, centreOf, dot, edgeKey, keyOf, lerp, normalOf, sub, unit, type P, type RGB } from './geom'
 import { FRAME_RGB, facing, type LookRange } from './windows'
 
@@ -101,7 +101,8 @@ export function eavesOf(look: CollisionMesh, range: LookRange): EaveStrip[] {
     walls.push({ n, d: dot(p[0], n), u, u0: Math.min(...along), u1: Math.max(...along), low: Math.min(p[0][1], p[1][1], p[2][1]) })
   }
 
-  // The eaves and verges: outline edges with a wall hanging below them.
+  // The eaves and verges: outline edges with a wall hanging below them, and a shelter's high edge over its open side.
+  const open = range.kind === BUILDING_SHELTER
   const eaves: Edge[] = []
   for (const { a, b, tri, count } of edges.values()) {
     if (count !== 1) continue
@@ -114,9 +115,12 @@ export function eavesOf(look: CollisionMesh, range: LookRange): EaveStrip[] {
       if (Math.min(ua, ub) > w.u1 - 0.01 || Math.max(ua, ub) < w.u0 + 0.01) return false
       return w.low < top - WALL_BELOW
     })
-    if (!wall) continue
+    // Level and with no wall under it: a shelter's open front.
+    const front = !wall && open && Math.abs(a[1] - b[1]) < 0.02
+    if (!wall && !front) continue
     const mid = lerp(a, b, 0.5)
-    let out: P = [wall.n[0], 0, wall.n[2]]
+    const across = unit([b[2] - a[2], 0, a[0] - b[0]])
+    let out: P = wall ? [wall.n[0], 0, wall.n[2]] : across
     if (dot(out, sub(mid, tri.centre)) < 0) out = [-out[0], 0, -out[2]]
     eaves.push({ a, b, out, normal: tri.normal, offset: Math.abs(a[1] - b[1]) < 0.02 ? EAVE : VERGE })
   }

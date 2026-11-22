@@ -1,5 +1,5 @@
 import type { TileGround } from '@/sim/terrain'
-import type { TileData } from '@/world'
+import { COVER_ASPHALT, type TileData } from '@/world'
 import { railRibbons } from './rails'
 import { skiRibbons } from './skitrails'
 import { roadRibbons, type Ribbon } from './roads'
@@ -15,7 +15,7 @@ export type { Ribbon, WaterBuffers }
  */
 
 /** What of a tile is draped on its ground. */
-export type DrapedTile = Pick<TileData, 'roads' | 'rails' | 'ski' | 'water' | 'reach' | 'flow' | 'foam' | 'stir' | 'lane' | 'streams'>
+export type DrapedTile = Pick<TileData, 'roads' | 'rails' | 'ski' | 'cover' | 'water' | 'reach' | 'flow' | 'foam' | 'stir' | 'lane' | 'streams'>
 
 /** A tile's draped meshes: ribbons drawn in the tile's group, water drawn apart (`buildWater`). */
 export interface Draped {
@@ -29,14 +29,16 @@ export function drapedMeshes(tile: DrapedTile, ground: TileGround, around?: Heig
   return { ribbons: ribbonsOf(tile, ground, around), water: waterBuffers(tile, ground, around, height) }
 }
 
-/** The roads' and rails' ribbons of `tile`, sharing one `GroundShade`. */
-export function ribbonsOf(tile: Pick<DrapedTile, 'roads' | 'rails' | 'ski'>, ground: TileGround, around?: HeightSource): Ribbon[] {
-  if (tile.roads.length === 0 && tile.rails.length === 0 && tile.ski.length === 0) return []
+/** The roads', car parks' and rails' ribbons of `tile`, sharing one `GroundShade`. */
+export function ribbonsOf(tile: Pick<DrapedTile, 'roads' | 'rails' | 'ski' | 'cover'>, ground: TileGround, around?: HeightSource): Ribbon[] {
+  // A car park is laid in the roads' asphalt, over its cover's flat colour (`roadRibbons`).
+  const lots = tile.cover.filter((cover) => cover.kind === COVER_ASPHALT).map((cover) => cover.rings)
+  if (tile.roads.length === 0 && tile.rails.length === 0 && tile.ski.length === 0 && lots.length === 0) return []
   const size = (ground.side - 1) * ground.cell
   const border = [ground.x0, ground.z0, ground.x0 + size, ground.z0 + size] as const
   const shade = new GroundShade(heightSampler(ground, around), ground.cell, border)
   // A road a bridge's deck carries is not on the ground under it.
-  return [...roadRibbons(tile.roads.filter((road) => !road.carried), shade, border), ...railRibbons(tile.rails, shade, border), ...skiRibbons(tile.ski, shade)]
+  return [...roadRibbons(tile.roads.filter((road) => !road.carried), shade, border, lots), ...railRibbons(tile.rails, shade, border), ...skiRibbons(tile.ski, shade)]
 }
 
 /** The lake and river surface and the streams of `tile`. */

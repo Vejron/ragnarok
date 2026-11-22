@@ -41,6 +41,7 @@ pub mod railway;
 pub mod region;
 pub mod riverflow;
 pub mod roof;
+pub mod shelter;
 pub mod shoreline;
 pub mod sidepaths;
 pub mod square;

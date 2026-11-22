@@ -7,7 +7,7 @@
 //! every tree. Rocks are solid; a bush never is (`assemble` keeps it passable).
 
 use crate::assemble::point_in_polygon;
-use shared::world::{COVER_PARK, COVER_ROCK, COVER_SAND, COVER_WATER, COVER_WOOD, TREE_BIRCH, TREE_BUSH, TREE_ROCK_BOULDER, TREE_ROCK_SLAB};
+use shared::world::{COVER_ASPHALT, COVER_PARK, COVER_ROCK, COVER_SAND, COVER_WATER, COVER_WOOD, TREE_BIRCH, TREE_BUSH, TREE_ROCK_BOULDER, TREE_ROCK_SLAB};
 use std::collections::HashMap;
 
 type P = [f64; 2];
@@ -65,11 +65,11 @@ pub(crate) fn bounds(rings: &[Vec<P>]) -> Option<[f64; 4]> {
     found.then_some(b)
 }
 
-/// Rocks and bushes inside the wood, park and sand covers, never in water and no bush on bare rock,
-/// within `±inner` metres.
+/// Rocks and bushes inside the wood, park and sand covers, never in water or on a car park's asphalt
+/// and no bush on bare rock, within `±inner` metres.
 pub fn scatter(covers: &[(u8, Vec<Vec<P>>)], inner: f64) -> Vec<Placed> {
     let water: Vec<([f64; 4], &Vec<Vec<P>>)> =
-        covers.iter().filter(|(kind, _)| *kind == COVER_WATER).filter_map(|(_, rings)| Some((bounds(rings)?, rings))).collect();
+        covers.iter().filter(|(kind, _)| matches!(*kind, COVER_WATER | COVER_ASPHALT)).filter_map(|(_, rings)| Some((bounds(rings)?, rings))).collect();
     let in_water = |at: P| water.iter().any(|(b, rings)| at[0] >= b[0] && at[0] <= b[2] && at[1] >= b[1] && at[1] <= b[3] && inside(rings, at));
     let rock: Vec<([f64; 4], &Vec<Vec<P>>)> =
         covers.iter().filter(|(kind, _)| *kind == COVER_ROCK).filter_map(|(_, rings)| Some((bounds(rings)?, rings))).collect();
@@ -211,6 +211,13 @@ mod tests {
         assert!(props.iter().any(|p| p.1 == TREE_ROCK_BOULDER) && props.iter().any(|p| p.1 == TREE_BUSH));
         assert!(props.iter().all(|p| p.4 == (p.1 != TREE_BUSH)));
         assert!(scatter(&[(shared::world::COVER_URBAN, vec![square(-300.0, 300.0)])], 1000.0).is_empty());
+    }
+
+    #[test]
+    fn a_car_park_in_a_park_is_kept_clear_of_rocks_and_bushes() {
+        let props = scatter(&[(COVER_PARK, vec![square(-300.0, 300.0)]), (COVER_ASPHALT, vec![square(-200.0, 200.0)])], 1000.0);
+        assert!(!props.is_empty());
+        assert!(props.iter().all(|(at, ..)| at[0].abs() > 200.0 || at[1].abs() > 200.0), "on the asphalt");
     }
 
     #[test]

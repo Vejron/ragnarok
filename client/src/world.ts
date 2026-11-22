@@ -3,7 +3,7 @@ import tables from './sim/tables.generated.json'
 
 /** Mirrors `crates/shared/src/world.rs`. Coordinates are metres: +X east, +Z south, +Y up. */
 
-export const WORLD_VERSION = 39
+export const WORLD_VERSION = 40
 
 /** `Manifest::theme`, mirrors `crates/shared/src/world.rs`. */
 export const THEME_WINTER = 1
@@ -117,6 +117,8 @@ export const COVER_GOLF_TEE = 16
 export const COVER_GOLF_BUNKER = 17
 /** The gardens of a residential area: mown lawn, with gravel round the houses. */
 export const COVER_GARDEN = 18
+/** Asphalt laid as an area, not as a road: a car park. */
+export const COVER_ASPHALT = 19
 
 export const TREE_BIRCH = 0
 export const TREE_PINE = 1
@@ -303,6 +305,8 @@ export const BUILDING_VILLA = 10
 export const BUILDING_FIRE_STATION = 11
 /** A section of a bridge: drawn from its own concrete, carved by blasts, no windows and no inside. Its roof is the roadway. */
 export const BUILDING_BRIDGE = 12
+/** A lean-to (vindskydd): three walls, its `front` side open, a roof that falls to the back, no door or windows. */
+export const BUILDING_SHELTER = 13
 /** The colour of a bridge's concrete, `0xRRGGBB`: its sides, piers and railings. Mirrors `BRIDGE_CONCRETE`. */
 export const BRIDGE_CONCRETE = 0xb8b6ae
 /** The colour of a bridge's deck under a paved road or path, `0xRRGGBB`: drawn as asphalt. Mirrors `DECK_ASPHALT`. */

@@ -952,6 +952,25 @@ fn roof_pieces(roof: &Roof, triangles: Vec<Vec<P>>) -> Vec<Vec<P>> {
 /// roof is higher on one than the other, is a step: a wall facing the lower side (a dormer's front
 /// and cheeks, the end of a higher part).
 pub fn build(mesh: &mut CollisionMesh, footprint: &[P], floor: f64, roof: &Roof) -> Parts {
+    build_with(mesh, footprint, floor, roof, Walls::CLOSED)
+}
+
+/// Which walls a building has, and how low they may be under its roof.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Walls {
+    /// A side of the footprint, by its two ends, that has no wall: a shelter's open front.
+    pub open: Option<(P, P)>,
+    /// The least height of a wall under the roof, metres over the floor.
+    pub least: f64,
+}
+
+impl Walls {
+    /// A wall on every side, at least `MIN_WALL` high: a house.
+    pub const CLOSED: Walls = Walls { open: None, least: MIN_WALL };
+}
+
+/// `build`, with `walls` saying which side to leave open and how low a wall may be.
+pub fn build_with(mesh: &mut CollisionMesh, footprint: &[P], floor: f64, roof: &Roof, walls: Walls) -> Parts {
     let mut ids: HashMap<[i32; 3], u32> = HashMap::new();
     let mut vertex = |mesh: &mut CollisionMesh, x: f64, y: f64, z: f64| -> u32 {
         let key = [cm(x), cm(y), cm(z)];
@@ -960,7 +979,17 @@ pub fn build(mesh: &mut CollisionMesh, footprint: &[P], floor: f64, roof: &Roof)
             mesh.vertices.len() as u32 - 1
         })
     };
-    let clamp = |y: f64| y.max(floor + MIN_WALL);
+    let clamp = |y: f64| y.max(floor + walls.least);
+    // Whether the side `p`-`q` of a piece lies along the open side, so it gets no wall.
+    let open = |p: P, q: P| {
+        walls.open.is_some_and(|(a, b)| {
+            let (dx, dz) = (b[0] - a[0], b[1] - a[1]);
+            let length = dx.hypot(dz).max(1e-9);
+            let off = |r: P| ((r[0] - a[0]) * dz - (r[1] - a[1]) * dx).abs() / length;
+            let along = |r: P| ((r[0] - a[0]) * dx + (r[1] - a[1]) * dz) / length;
+            off(p) < 0.01 && off(q) < 0.01 && [p, q].iter().all(|&r| (-0.01..=length + 0.01).contains(&along(r)))
+        })
+    };
     let mut highest = floor;
     let push = |mesh: &mut CollisionMesh, tri: [u32; 3]| {
         if tri[0] != tri[1] && tri[1] != tri[2] && tri[0] != tri[2] {
@@ -988,6 +1017,8 @@ pub fn build(mesh: &mut CollisionMesh, footprint: &[P], floor: f64, roof: &Roof)
     let first_wall = mesh.triangles.len();
     for &((kp, kq), (i, p, q)) in &order {
         match sides.get(&(kq, kp)) {
+            // The open side of a shelter: no wall.
+            None if open(p, q) => {}
             // An outer wall, from the floor to the roof.
             None => {
                 let (tp, tq) = (height(i, p), height(i, q));

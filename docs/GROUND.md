@@ -14,6 +14,20 @@ wander and fray, where OpenStreetMap drew them straight.
   laser's own.
 - `landuse=residential` is `COVER_GARDEN`: lawn. `COVER_URBAN` is what is left of it, the paving round
   shops, schools and garages, and an orienteering map's paved areas.
+- `amenity=parking` drawn as an area is `COVER_ASPHALT`, a car park, whatever land use it also carries.
+  One that is `parking=underground`, `multi-storey` or `rooftop`, or `location=underground`, is not
+  ground and is left out. It grows no grass and is `SURFACE_ASPHALT` to tyres and boots
+  (`coverSurface`). It is drawn as the roads are: `roadRibbons` (`client/src/render/roads.ts`) lays
+  each car park as a sheet in the roads' own asphalt material (`Layer.area`: bands a metre deep,
+  cut a metre apart along, so it keeps to the ground), over the worn paths and under the paved roads.
+  The car parks and the paved roads are one surface (`Reach`): a road has no shoulder and no crumbled
+  edge inside a car park, a car park none where a road leaves it or where a tile's border cuts it,
+  and only its outline and its holes are dusted and broken as a road's edge is. The cover map under
+  it is painted the asphalt's flat colour (`DECK_ASPHALT`), which is what shows under snow, when the
+  sheet is not laid. A car park lies in a garden, a park or mown grass more often than not, so it is
+  painted after them and before water and marsh (`cover_rank`), and no rock or bush is scattered on it
+  (`props.rs`). The importer did not read it before, so the extract's index keeps it from version 9:
+  index an older extract again with `--fetch-osm`. It came with `WORLD_VERSION` 40.
 
 ## Colours and painted variation
 
@@ -109,3 +123,7 @@ files each side under the rows it crosses, which took the cover raster from 177 
 Scree and shingle are not imported: they would be better as stony ground (`Tile::stones`) than as
 slab. The forest's edge is still OpenStreetMap's, bent: where the laser has the trees, their crowns
 would draw it more truly.
+
+A car park is asphalt and nothing more: the ground under it is not levelled, the trees mapped or
+measured in it stay, and no bays are painted on it. A road's mended patches follow its line, so the
+aisles of a car park have them and the asphalt between has only the mottling, grit and cracks.

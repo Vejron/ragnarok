@@ -1,4 +1,4 @@
-import { BUILDING_BRIDGE, type CollisionMesh } from '@/world'
+import { BUILDING_BRIDGE, BUILDING_SHELTER, type CollisionMesh } from '@/world'
 import { add, centreOf, dot, keyOf, normalOf, splitPlane, sub, triangulate, unit, type P, type Poly, type RGB } from './geom'
 import { REVEAL, openingsFor, type LookRange, type Opening } from './windows'
 import { Part, insideFor, type InsidePiece } from '@/sim/interior'
@@ -40,7 +40,14 @@ export interface Facade {
   inside: readonly InsidePiece[]
   /** How far each corner of the walls and roof moves in to their inner faces (`insetOf`). */
   inset: Inset
+  /** How bright the inner faces are against the outer: dim in a closed house, nearly daylight in a shelter. */
+  shade: number
+  /** A shelter's cut edges along its open side, between the outer and inner faces of its walls and roof, outward-wound. Empty for any other building. */
+  rims: Poly[]
 }
+
+/** How bright a shelter's inside is: open to the day along one side. */
+export const SHELTER_SHADE = 0.6
 
 /** The faces of building `range` of `look`. */
 export function facadeOf(look: CollisionMesh, range: LookRange): Facade {
@@ -60,7 +67,38 @@ export function facadeOf(look: CollisionMesh, range: LookRange): Facade {
   // A house with rooms has its ground floor among them, on its plinth. A bridge is solid concrete
   // with no floor in it: one at the foot of its walls would lie at every height its underside does,
   // and be left in the air when it falls.
-  return { walls, roof, floor: inside.length > 0 || range.kind === BUILDING_BRIDGE ? [] : floorOf(walls), inside, inset: insetOf([...walls, ...roof]) }
+  const shelter = range.kind === BUILDING_SHELTER
+  const inset = insetOf([...walls, ...roof])
+  return { walls, roof, floor: inside.length > 0 || range.kind === BUILDING_BRIDGE ? [] : floorOf(walls, shelter), inside, inset, shade: shelter ? SHELTER_SHADE : INTERIOR_SHADE, rims: shelter ? rimsOf([...walls, ...roof], range, inset) : [] }
+}
+
+/**
+ * The cut edges of a shelter's walls and roof along its open side (the side `range.front` faces):
+ * a quad from each face's edge that lies in that side's upright plane back to its inner face's, so
+ * the boards have their thickness where they end.
+ */
+function rimsOf(faces: readonly Poly[], range: LookRange, inset: Inset): Poly[] {
+  const [fx, fz] = range.front ?? [0, 0]
+  const length = Math.hypot(fx, fz)
+  if (length === 0 || faces.length === 0) return []
+  const n: P = [fx / length, 0, fz / length]
+  // The open side's plane: as far along `n` as the faces reach.
+  let reach = -Infinity
+  for (const poly of faces) for (const p of poly) reach = Math.max(reach, dot(p, n))
+  const onSide = (p: P) => Math.abs(dot(p, n) - reach) < 0.02
+  const rims: Poly[] = []
+  for (const poly of faces) {
+    const normal = normalOf(poly)
+    // A face that lies in the plane itself (none should) has no edge to show.
+    if (Math.abs(dot(normal, n)) > 0.9) continue
+    for (let i = 0; i < poly.length; i++) {
+      const [p, q] = [poly[i]!, poly[(i + 1) % poly.length]!]
+      if (!onSide(p) || !onSide(q) || Math.hypot(q[0] - p[0], q[1] - p[1], q[2] - p[2]) < 0.01) continue
+      const rim: Poly = [q, p, innerPoint(p, normal, inset), innerPoint(q, normal, inset)]
+      rims.push(dot(normalOf(rim), n) < 0 ? rim.reverse() : rim)
+    }
+  }
+  return rims
 }
 
 /** The hole door `o` is in a house with rooms: from under its foot to the height of a step over its top, as the server cuts it. */
@@ -100,8 +138,11 @@ function cutWindow(walls: Poly[], o: Opening): Poly[] {
   return out
 }
 
-/** The floor under `walls`: the ring their bottom edges make, triangulated, facing up. */
-function floorOf(walls: readonly Poly[]): Poly[] {
+/**
+ * The floor under `walls`: the ring their bottom edges make, triangulated, facing up. A shelter's
+ * (`open`) is a ring with one side missing, the open one, which closes it.
+ */
+function floorOf(walls: readonly Poly[], open = false): Poly[] {
   let low = Infinity
   for (const wall of walls) for (const p of wall) low = Math.min(low, p[1])
   if (!Number.isFinite(low)) return []
@@ -119,20 +160,25 @@ function floorOf(walls: readonly Poly[]): Poly[] {
   }
   const floor: Poly[] = []
   const seen = new Set<string>()
-  for (const start of next.keys()) {
+  // An open ring is walked from its first corner, the one no edge leads to.
+  const led = new Set([...next.values()].map(keyOf))
+  const starts = [...next.keys()].sort((a, b) => Number(led.has(a)) - Number(led.has(b)))
+  for (const start of starts) {
     if (seen.has(start)) continue
     const ring: P[] = []
     let key = start
+    let at = points.get(start)!
     let closed = false
     while (!seen.has(key)) {
       seen.add(key)
-      ring.push(points.get(key)!)
+      ring.push(at)
+      // The last corner of an open ring leads nowhere.
       const q = next.get(key)
       if (!q) break
-      key = keyOf(q)
+      ;[key, at] = [keyOf(q), q]
       if (key === start) closed = true
     }
-    if (!closed || ring.length < 3) continue
+    if ((!closed && !open) || ring.length < 3) continue
     const ids = triangulate(ring.map((q) => [q[0], q[2]] as const))
     for (let i = 0; i + 2 < ids.length; i += 3) {
       const tri: Poly = [ids[i]!, ids[i + 1]!, ids[i + 2]!].map((k) => add(ring[k]!, [0, 1, 0], low - ring[k]![1] + FLOOR_UP))
@@ -156,13 +202,15 @@ function floorOf(walls: readonly Poly[]): Poly[] {
  * a hurt building is drawn from both sides, and it would fight the face for the same pixels.
  */
 export function innerOf(poly: Poly, normal: P, inset?: Inset, place?: (p: P) => P): Poly {
-  const straight: P = [normal[0] * WALL_THICKNESS, normal[1] * WALL_THICKNESS, normal[2] * WALL_THICKNESS]
-  return poly.map((p) => {
-    let d = inset?.get(keyOf(p)) ?? straight
-    const short = WALL_THICKNESS - dot(d, normal)
-    if (short > WALL_THICKNESS / 2) d = add(d, normal, short)
-    return sub(place ? place(p) : p, d)
-  }).reverse()
+  return poly.map((p) => innerPoint(p, normal, inset, place)).reverse()
+}
+
+/** Corner `p` of a face whose normal is `normal`, moved in to the face's inner side, as `innerOf` moves it. */
+function innerPoint(p: P, normal: P, inset?: Inset, place?: (p: P) => P): P {
+  let d = inset?.get(keyOf(p)) ?? ([normal[0] * WALL_THICKNESS, normal[1] * WALL_THICKNESS, normal[2] * WALL_THICKNESS] as P)
+  const short = WALL_THICKNESS - dot(d, normal)
+  if (short > WALL_THICKNESS / 2) d = add(d, normal, short)
+  return sub(place ? place(p) : p, d)
 }
 
 /** How far each corner of a facade moves in to the inner faces (by `keyOf`), metres. */

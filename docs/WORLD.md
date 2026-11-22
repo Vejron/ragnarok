@@ -417,7 +417,8 @@ come from the `height` tag, else `building:levels` Ã— 3 + 1, else a guess of 6â€
 marsh, by its `wetland` tag: `bog`, `swamp` and `fen` are `COVER_MARSH_DEEP`, `wet_meadow` is
 `COVER_MARSH_FAINT` and the rest `COVER_MARSH` (docs/ORIENTEERING.md has how the client draws them).
 `natural=bare_rock` is `COVER_ROCK`, and `landuse=residential` is `COVER_GARDEN`, lawn with gravel round
-its houses, where commercial, retail and school grounds are the paved `COVER_URBAN` (docs/GROUND.md). The
+its houses, where commercial, retail and school grounds are the paved `COVER_URBAN`, and a car park
+(`amenity=parking` as an area) is `COVER_ASPHALT`, laid over the land it lies in (docs/GROUND.md). The
 outlines of natural ground (woods, heath, rock, marsh) are bent like shores away from roads, buildings and
 ground in use, bare rock spreads onto rough ground beside it, and shrubs and young birch line the woods'
 edges (`edges.rs`, `props::edge_scatter`; docs/GROUND.md, "Natural edges"). A

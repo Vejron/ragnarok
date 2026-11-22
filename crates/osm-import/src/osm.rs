@@ -146,12 +146,12 @@ pub fn is_graveyard<T: Lookup + ?Sized>(tags: &T) -> bool {
     tag(tags, "landuse") == Some("cemetery") || tag(tags, "amenity") == Some("grave_yard")
 }
 
-/// Ground cover: `landuse=*`, some `natural` and some `leisure`, and a churchyard. The main query's `COVER_FILTERS`.
+/// Ground cover: `landuse=*`, some `natural` and some `leisure`, a churchyard and a car park. The main query's `COVER_FILTERS`.
 fn is_cover<T: Lookup + ?Sized>(tags: &T) -> bool {
     tag(tags, "landuse").is_some()
         || matches!(tag(tags, "natural"), Some("wood" | "scrub" | "grassland" | "heath" | "wetland" | "sand" | "beach" | "bare_rock"))
         || matches!(tag(tags, "leisure"), Some("park" | "garden" | "pitch" | "playground" | "golf_course" | "recreation_ground"))
-        || tag(tags, "amenity") == Some("grave_yard")
+        || matches!(tag(tags, "amenity"), Some("grave_yard" | "parking"))
 }
 
 /// A way of the main query: a building, a highway, a railway, cover, a fence, a wall or a power line.
@@ -315,5 +315,14 @@ mod tests {
         assert!(is_main_way(&tags(&[("amenity", "grave_yard")])), "the main view keeps a churchyard");
         assert!(is_cover_area(&tags(&[("type", "multipolygon"), ("amenity", "grave_yard")])));
         assert!(crate::overpass::query([0.0; 4]).contains(r#"way[amenity=grave_yard]"#), "and the query asks for it");
+    }
+
+    #[test]
+    fn a_car_park_is_kept_as_a_way_and_as_a_relation_and_asked_for() {
+        assert!(is_main_way(&tags(&[("amenity", "parking")])), "the main view keeps a car park");
+        assert!(is_cover_area(&tags(&[("type", "multipolygon"), ("amenity", "parking")])));
+        assert!(!is_main_way(&tags(&[("amenity", "bench")])));
+        let query = crate::overpass::query([0.0; 4]);
+        assert!(query.contains("way[amenity=parking]") && query.contains("relation[type=multipolygon][amenity=parking]"), "and the query asks for both");
     }
 }

@@ -188,8 +188,8 @@ struct Plane {
 /// longest; a church a row of tall windows along its long walls, and a door and a round window in an end;
 /// a barn, an outbuilding, a hall and a shop the doors and the one row of windows of their `Style`.
 pub fn openings_of(look: &Look, [first, walls, _]: [u32; 3], kind: u8, front: [i8; 2]) -> Vec<Window> {
-    // A bridge has no windows, no doors and so no inside.
-    if kind == crate::world::BUILDING_BRIDGE {
+    // A bridge has no windows, no doors and so no inside; a shelter is open along one side instead.
+    if kind == crate::world::BUILDING_BRIDGE || kind == crate::world::BUILDING_SHELTER {
         return Vec::new();
     }
     // As the client reads them: centimetres to metres, held in 32-bit floats.

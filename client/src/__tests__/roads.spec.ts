@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { PROFILE_SCALE, paintProfile, roadRibbons } from '@/render/roads'
+import { PROFILE_SCALE, paintProfile, roadRibbons, type Lot } from '@/render/roads'
 import { GroundShade } from '@/render/shade'
 import { MARK_CENTRE, MARK_EDGE, ROAD_MAJOR, ROAD_MINOR, ROAD_PATH, type Road } from '@/world'
 
 const flat = () => 2
-const buildRoads = (roads: Road[], border: readonly [number, number, number, number]) => roadRibbons(roads, new GroundShade(flat, 1, border), border)
+const buildRoads = (roads: Road[], border: readonly [number, number, number, number], lots: Lot[] = []) => roadRibbons(roads, new GroundShade(flat, 1, border), border, lots)
 
 /** The ribbon's vertices' x at its farthest either side, in the cross-section nearest `z`. */
 const sidesAt = (positions: Float32Array, z: number) => {
@@ -180,5 +180,67 @@ describe('roads', () => {
     expect(sidesAt(positions, 46)[1]! - sidesAt(positions, 46)[0]!).toBeCloseTo(7.5)
     // Alone, its end is a round cap half its width out.
     expect(beyond([wide])).toBeGreaterThan(2)
+  })
+
+  describe('a car park', () => {
+    const border = [0, 0, 100, 100] as const
+    // A square with a hole in it, cut by the tile's west border, and a road out of it to the east.
+    const lot: Lot = [[[0, 20], [60, 20], [60, 60], [0, 60]], [[30, 30], [40, 30], [40, 40], [30, 40]]]
+    const road = { kind: ROAD_MINOR, width: 6, carried: false, lanes: 0, forward: 0, marks: 0, along: 0, points: [[20, 50], [90, 50]] } as Road
+    const ribbons = buildRoads([road], border, [lot])
+    const asphalt = ribbons.filter((ribbon) => ribbon.look === 'asphalt')
+    /** A ribbon's area, square metres, and its vertices as `[x, z, inside]`. */
+    const measure = ({ buffers }: (typeof ribbons)[number]) => {
+      const { positions, indices, custom } = buffers
+      let area = 0
+      for (let i = 0; i < indices.length; i += 3) {
+        const [a, b, c] = [indices[i]! * 3, indices[i + 1]! * 3, indices[i + 2]! * 3]
+        area += Math.abs((positions[b]! - positions[a]!) * (positions[c + 2]! - positions[a + 2]!) - (positions[c]! - positions[a]!) * (positions[b + 2]! - positions[a + 2]!)) / 2
+      }
+      const vertices = Array.from({ length: positions.length / 3 }, (_, i) => [positions[i * 3]!, positions[i * 3 + 2]!, custom![i * 4]!] as const)
+      return { area, vertices }
+    }
+
+    it('is laid in the roads\' asphalt, under them, to its outline and round its hole, on the ground', () => {
+      expect(asphalt.length).toBe(2)
+      const [park, street] = asphalt
+      expect(park!.color).toBe(street!.color)
+      expect(park!.offset).toBeLessThan(street!.offset)
+      const { area, vertices } = measure(park!)
+      expect(area).toBeCloseTo(60 * 40 - 10 * 10, 3)
+      expect(vertices.every(([x, z]) => x >= -1e-6 && x <= 60 + 1e-6 && z >= 20 - 1e-6 && z <= 60 + 1e-6 && !(x > 30.01 && x < 39.99 && z > 30.01 && z < 39.99))).toBe(true)
+      // No vertex more than a metre from the next, so the sheet follows the ground.
+      const { positions, indices } = park!.buffers
+      for (let i = 0; i < indices.length; i += 3) {
+        for (const [a, b] of [[0, 1], [1, 2], [2, 0]] as const) {
+          const [p, q] = [indices[i + a]! * 3, indices[i + b]! * 3]
+          expect(Math.hypot(positions[p]! - positions[q]!, positions[p + 2]! - positions[q + 2]!)).toBeLessThan(1.5)
+        }
+      }
+      expect(positions[1]).toBeGreaterThan(2)
+    })
+
+    it('has an edge at its outline and its hole, and none at the tile\'s border or where a road leaves it', () => {
+      const { vertices } = measure(asphalt[0]!)
+      const inside = (x: number, z: number) => vertices.reduce((best, v) => (Math.hypot(v[0] - x, v[1] - z) < Math.hypot(best[0] - x, best[1] - z) ? v : best))[2]
+      expect(inside(10, 20)).toBeCloseTo(1)
+      expect(inside(30, 35)).toBeCloseTo(1)
+      expect(inside(10, 40)).toBeCloseTo(0)
+      expect(inside(0, 40)).toBeCloseTo(0)
+      expect(inside(60, 50)).toBeCloseTo(0)
+      expect(inside(60, 56)).toBeCloseTo(1)
+    })
+
+    it('takes the road in it into its surface: no edge and no shoulder inside it', () => {
+      const street = measure(asphalt[1]!)
+      for (const [x, , inside] of street.vertices) if (x < 55) expect(inside).toBeCloseTo(0)
+      expect(street.vertices.some(([x, z, inside]) => x > 70 && Math.abs(Math.abs(z - 50) - 3) < 0.01 && inside > 0.99)).toBe(true)
+      const shoulder = ribbons.find((ribbon) => ribbon.look === 'worn')!
+      const { positions, indices } = shoulder.buffers
+      for (let i = 0; i < indices.length; i += 3) {
+        const x = (positions[indices[i]! * 3]! + positions[indices[i + 1]! * 3]! + positions[indices[i + 2]! * 3]!) / 3
+        expect(x).toBeGreaterThan(59)
+      }
+    })
   })
 })

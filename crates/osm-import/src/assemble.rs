@@ -428,16 +428,16 @@ fn front_of(mid: P, streets: &HashMap<(i32, i32), Vec<[P; 2]>>) -> [i8; 2] {
 }
 
 /// A building to assemble: its footprint, its tagged height, its roof (if the laser gave one), its
-/// `[wall, roof]` colours (if the photo gave them), the most it may rise over its floor (`cap`) and
-/// what it is (`BUILDING_*`).
-type Footprint = (Vec<P>, f64, Option<Top>, Option<[u32; 2]>, Option<f64>, u8);
+/// `[wall, roof]` colours (if the photo or its tags gave them), the most it may rise over its floor
+/// (`cap`), what it is (`BUILDING_*`) and, for a shelter, the way its open side faces if it is mapped.
+type Footprint = (Vec<P>, f64, Option<Top>, Option<[u32; 2]>, Option<f64>, u8, Option<P>);
 
 /// A footprint to fit a roof to (`fit_roofs`): its ring, the most it may rise over its floor (`cap`),
 /// the roof shape OpenStreetMap names for it, and what it is (`BUILDING_*`).
 type Ring<'a> = (&'a [P], Option<f64>, Option<Category>, u8);
 
 /// A building outline before its roof is fitted: a `Footprint` without the `Top`.
-type Outline = (Vec<P>, f64, Option<[u32; 2]>, Option<f64>, u8);
+type Outline = (Vec<P>, f64, Option<[u32; 2]>, Option<f64>, u8, Option<P>);
 
 /// Assembles the world from building outlines (metres, any winding) and road polylines, and cuts
 /// it into square tiles of `tile_size` metres.
@@ -488,7 +488,7 @@ fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collecti
     // How tall each of `footprints` stands over its floor, metres.
     let mut tall: Vec<f64> = Vec::new();
     let streets = streets(&roads);
-    for (mut footprint, height, fitted, paint, ceiling, kind) in buildings {
+    for (mut footprint, height, fitted, paint, ceiling, kind, facing) in buildings {
         if footprint.len() > 1 && footprint.first() == footprint.last() {
             footprint.pop();
         }
@@ -511,7 +511,15 @@ fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collecti
         let first = tile.collision.triangles.len() as u32;
         let vertices = tile.collision.vertices.len();
         let boxed = Roof::Leaf(Shape::Flat { y: floor + height });
+        let mut front = front_of(centre, &streets);
         let (mut parts, mut roof_kind) = match fitted {
+            // A shelter is open on the side it faces (else towards the road, else on its longest), under a roof that falls to the back.
+            _ if kind == BUILDING_SHELTER => {
+                let towards = facing.unwrap_or([f64::from(front[0]) / 127.0, f64::from(front[1]) / 127.0]);
+                let (shed, walls, open) = crate::shelter::build(&footprint, floor, towards);
+                front = crate::shelter::front(open);
+                (roof::build_with(&mut tile.collision, &footprint, floor, &shed, walls), shed.kind())
+            }
             Some(Top::Measured(field)) => (crate::field::build(&mut tile.collision, &footprint, floor, &field), field.kind()),
             fitted => {
                 // Without laser data a building is a box of its tagged (or guessed) height.
@@ -523,7 +531,7 @@ fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collecti
             }
         };
         // A fit may reach a little past the returns it was fitted to: past its cap, a house is a box.
-        if ceiling.is_some_and(|ceiling| parts.top - floor > ceiling + 0.01) {
+        if kind != BUILDING_SHELTER && ceiling.is_some_and(|ceiling| parts.top - floor > ceiling + 0.01) {
             tile.collision.triangles.truncate(first as usize);
             tile.collision.vertices.truncate(vertices);
             (parts, roof_kind) = (roof::build(&mut tile.collision, &footprint, floor, &boxed), boxed.kind());
@@ -537,7 +545,7 @@ fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collecti
             roof: parts.roof,
             roof_kind,
             kind,
-            front: front_of(centre, &streets),
+            front,
             cells: Default::default(),
             paint,
         });
@@ -1158,8 +1166,8 @@ pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::B
         let sites: Vec<(&crate::osm::Tags, &[P])> = osm.ways.iter().filter(|way| is_building(way)).zip(&rings).map(|(way, ring)| (&way.tags, ring.as_slice())).collect();
         let nodes: Vec<(u8, P)> = osm.pois.iter().filter_map(|node| Some((crate::classify::by_use(&node.tags)?, frame.project(node.at.lat, node.at.lon)))).collect();
         let (kinds, tally) = crate::classify::classify(&sites, &lands, &nodes);
-        let [plain, churches, barns, outbuildings, halls, shops, flats, public, cabins, old, villas, fire, _bridges] = tally.kinds;
-        eprintln!("buildings: {plain} houses, {old} old houses, {villas} villas, {churches} churches, {barns} barns, {outbuildings} outbuildings, {halls} halls, {shops} shops, {flats} blocks of flats, {public} public, {fire} fire stations, {cabins} cabins; {} known by their tags, {} by a node in them, {} by the land they stand on, {} by their yard", tally.by_tags, tally.by_node, tally.by_land, tally.by_yard);
+        let [plain, churches, barns, outbuildings, halls, shops, flats, public, cabins, old, villas, fire, _bridges, shelters] = tally.kinds;
+        eprintln!("buildings: {plain} houses, {old} old houses, {villas} villas, {churches} churches, {barns} barns, {outbuildings} outbuildings, {halls} halls, {shops} shops, {flats} blocks of flats, {public} public, {fire} fire stations, {cabins} cabins, {shelters} shelters; {} known by their tags, {} by a node in them, {} by the land they stand on, {} by their yard", tally.by_tags, tally.by_node, tally.by_land, tally.by_yard);
         kinds
     };
     let mut kinds = kinds.into_iter();
@@ -1186,23 +1194,26 @@ pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::B
             let cap = if measured { None } else { cap(way, ring) };
             let height = cap.map_or(building_height(way), |[eaves, _]| building_height(way).min(eaves));
             let ceiling = cap.map(|[_, top]| top);
-            let paint = paint(&[ring]);
+            // A shelter is painted as its tags say, and faces where they say.
+            let shelter = kind == BUILDING_SHELTER;
+            let paint = shelter.then(|| crate::shelter::paint(&way.tags)).flatten().or_else(|| paint(&[ring]));
+            let facing = if shelter { crate::shelter::facing(&way.tags) } else { None };
             let found: Vec<Outline> = if big {
-                crate::footprints::pieces(ring).into_iter().map(|piece| (piece, height, paint, ceiling, kind)).collect()
+                crate::footprints::pieces(ring).into_iter().map(|piece| (piece, height, paint, ceiling, kind, facing)).collect()
             } else {
-                vec![(points.clone(), height, paint, ceiling, kind)]
+                vec![(points.clone(), height, paint, ceiling, kind, facing)]
             };
             hints.extend(found.iter().map(|_| hint));
             found
         })
         .collect();
     eprintln!("footprints: {} of {} squared", squared.into_inner(), outlines.len());
-    let rings: Vec<Ring> = outlines.iter().zip(&hints).map(|((points, _, _, ceiling, kind), hint)| (points.as_slice(), *ceiling, *hint, *kind)).collect();
+    let rings: Vec<Ring> = outlines.iter().zip(&hints).map(|((points, _, _, ceiling, kind, _), hint)| (points.as_slice(), *ceiling, *hint, *kind)).collect();
     let shapes = lidar.map(|cloud| fit_roofs(cloud, &source, measured, half, tile_size, mask, &ground, &rings)).unwrap_or_default();
     let mut shapes = shapes.into_iter();
-    for (points, height, paint, ceiling, kind) in outlines {
+    for (points, height, paint, ceiling, kind, facing) in outlines {
         // Roofs come from the laser returns over the footprint, where there are any.
-        buildings.push((points, height, shapes.next().flatten(), paint, ceiling, kind));
+        buildings.push((points, height, shapes.next().flatten(), paint, ceiling, kind, facing));
     }
     crate::progress::stage("buildings and roads");
     for (index, way) in osm.ways.iter().enumerate() {
@@ -1293,7 +1304,7 @@ pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::B
                 }
                 let returns = cloud.over(&ring, source);
                 if let Some(top) = from_catalogue(&ring, &returns, true, None, None, &Tally::default()).or_else(|| crate::field::Field::measure(&ring, &returns).map(Top::Measured)) {
-                    buildings.push((ring, 0.0, Some(top), paint, None, BUILDING_PLAIN));
+                    buildings.push((ring, 0.0, Some(top), paint, None, BUILDING_PLAIN, None));
                 }
             }
         }
@@ -1306,7 +1317,7 @@ pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::B
     }
     if photo.is_some() {
         let mut roofs = std::collections::BTreeMap::new();
-        for (.., paint, _, _) in &buildings {
+        for (.., paint, _, _, _) in &buildings {
             *roofs.entry(paint.map(|[_, roof]| format!("{roof:06x}"))).or_insert(0usize) += 1;
         }
         eprintln!("roof colours: {roofs:?}");
@@ -2898,6 +2909,11 @@ fn cover_kind(tags: &std::collections::HashMap<String, String>) -> Option<u8> {
     if tag("amenity") == Some("grave_yard") {
         return Some(COVER_PARK);
     }
+    // A car park on the ground is asphalt, whatever land use it also carries; one under the ground,
+    // on a roof or in a multi-storey building is not ground at all.
+    if tag("amenity") == Some("parking") && !matches!(tag("parking"), Some("underground" | "multi-storey" | "rooftop")) && tag("location") != Some("underground") {
+        return Some(COVER_ASPHALT);
+    }
     match tag("landuse")? {
         "forest" => Some(COVER_WOOD),
         "meadow" | "grass" | "village_green" | "recreation_ground" | "cemetery" | "allotments" | "greenfield" | "flowerbed" => Some(COVER_PARK),
@@ -2916,15 +2932,17 @@ fn is_field(tags: &std::collections::HashMap<String, String>) -> bool {
     cover_kind(tags) == Some(COVER_FARM) && tags.get("landuse").is_some_and(|value| value == "farmland")
 }
 
-/// Draw order: ground uses first, then green, water and marsh on top. The client paints in list order.
+/// Draw order: ground uses first, then green, a car park's asphalt over the garden or park it lies
+/// in, and water and marsh on top. The client paints in list order.
 fn cover_rank(kind: u8) -> u8 {
     match kind {
         COVER_URBAN | COVER_GARDEN | COVER_INDUSTRIAL | COVER_FARM => 0,
         COVER_WOOD | COVER_PARK | COVER_SAND | COVER_THICKET_SLOW | COVER_THICKET_WALK | COVER_THICKET_FIGHT => 1,
+        COVER_ASPHALT => 2,
         // A course over the park it lies in: its fairways, and on them its tees, greens and bunkers.
-        COVER_GOLF_FAIRWAY => 3,
-        COVER_GOLF_GREEN | COVER_GOLF_TEE | COVER_GOLF_BUNKER => 4,
-        _ => 2,
+        COVER_GOLF_FAIRWAY => 4,
+        COVER_GOLF_GREEN | COVER_GOLF_TEE | COVER_GOLF_BUNKER => 5,
+        _ => 3,
     }
 }
 
@@ -3073,7 +3091,7 @@ pub fn synthetic_city(half: f64, tile_size: f64, ground: Ground, water: Placed) 
                         Shape::Hip { y: top, at, ridge, pitch: 0.6, half: 0.0 }
                     }))
                 });
-                buildings.push((vec![[x, z], [x + half_size, z], [x + half_size, z + half_size], [x, z + half_size]], height, roof, None, None, BUILDING_PLAIN));
+                buildings.push((vec![[x, z], [x + half_size, z], [x + half_size, z + half_size], [x, z + half_size]], height, roof, None, None, BUILDING_PLAIN, None));
             }
         }
     }
@@ -3217,6 +3235,11 @@ mod tests {
         assert_eq!(cover_kind(&tags(&[("natural", "bare_rock")])), Some(COVER_ROCK));
         assert_eq!(cover_kind(&tags(&[("landuse", "residential")])), Some(COVER_GARDEN), "houses stand in gardens, not on paving");
         assert_eq!(cover_kind(&tags(&[("landuse", "retail")])), Some(COVER_URBAN));
+        assert_eq!(cover_kind(&tags(&[("amenity", "parking")])), Some(COVER_ASPHALT));
+        assert_eq!(cover_kind(&tags(&[("amenity", "parking"), ("landuse", "retail")])), Some(COVER_ASPHALT), "a car park first");
+        assert_eq!(cover_kind(&tags(&[("amenity", "parking"), ("parking", "surface")])), Some(COVER_ASPHALT));
+        assert_eq!(cover_kind(&tags(&[("amenity", "parking"), ("parking", "underground")])), None, "nothing shows on the ground");
+        assert_eq!(cover_kind(&tags(&[("amenity", "parking"), ("parking", "multi-storey"), ("landuse", "retail")])), Some(COVER_URBAN), "the land it stands on");
         assert_eq!(cover_kind(&tags(&[("natural", "wetland")])), Some(COVER_MARSH));
         assert_eq!(cover_kind(&tags(&[("natural", "wetland"), ("wetland", "bog")])), Some(COVER_MARSH_DEEP));
         assert_eq!(cover_kind(&tags(&[("natural", "wetland"), ("wetland", "wet_meadow")])), Some(COVER_MARSH_FAINT));
@@ -3732,7 +3755,7 @@ mod tests {
     #[test]
     fn trees_keep_their_trunks_and_crowns_off_a_house_and_shrubs_need_not() {
         // A 10 m house with its west wall at x = 20; trees west of it, along one line.
-        let house = (vec![[20.0, 20.0], [30.0, 20.0], [30.0, 30.0], [20.0, 30.0]], 6.0, None, None, None, BUILDING_PLAIN);
+        let house = (vec![[20.0, 20.0], [30.0, 20.0], [30.0, 30.0], [20.0, 30.0]], 6.0, None, None, None, BUILDING_PLAIN, None);
         let trees = vec![
             ([19.0, 22.0], TREE_BIRCH, 8.0, 0.8, true),
             ([17.5, 25.0], TREE_BIRCH, 8.0, 3.0, false),
@@ -3749,7 +3772,7 @@ mod tests {
     #[test]
     fn a_tree_the_laser_found_at_the_roof_of_a_tall_house_beside_it_is_dropped_as_its_wall() {
         // A house 15 m tall with its west wall at x = 20; trees 5 m west of it, clear of the wall.
-        let house = (vec![[20.0, 20.0], [30.0, 20.0], [30.0, 30.0], [20.0, 30.0]], 15.0, None, None, None, BUILDING_PLAIN);
+        let house = (vec![[20.0, 20.0], [30.0, 20.0], [30.0, 30.0], [20.0, 30.0]], 15.0, None, None, None, BUILDING_PLAIN, None);
         // (The low tree stands east of the house, out of the tall ones' shade.)
         let trees = vec![([15.0, 22.0], TREE_PINE, 14.0, 3.0, false), ([35.0, 25.0], TREE_PINE, 7.0, 3.0, false), ([15.0, 28.0], TREE_PINE, 14.0, 3.0, true), ([-10.0, 25.0], TREE_PINE, 14.0, 3.0, false)];
         let built = assemble(Frame::default(), 150.0, 100.0, None, vec![house], vec![], &[], 0, vec![], vec![], vec![], Railway::default(), vec![], vec![], trees, &[], Ground::default(), Placed::default());
@@ -3869,6 +3892,35 @@ mod tests {
         assert!(wheat_at(-80.0, 80.0), "a field drawn as a relation");
         assert!(!wheat_at(80.0, -80.0), "a farmyard");
         assert!(!wheat_at(0.0, 0.0), "open ground");
+    }
+
+    #[test]
+    fn a_car_park_from_osm_is_asphalt_laid_over_the_park_it_lies_in_whether_a_way_or_a_relation() {
+        let place = crate::region::Region::Sweden.around(63.82, 20.26, 150.0);
+        let latlon = |points: &[P]| -> Vec<LatLon> {
+            points.iter().map(|&[x, z]| { let (lat, lon) = place.frame.unproject(x, z); LatLon { lat, lon } }).collect()
+        };
+        let ring = |x0: f64, z0: f64, x1: f64, z1: f64| [[x0, z0], [x1, z0], [x1, z1], [x0, z1], [x0, z0]];
+        let tags = |key: &str, value: &str| -> std::collections::HashMap<String, String> { [(key.to_string(), value.to_string())].into() };
+        // The car parks come first in the data, and still go over the parks drawn after them.
+        let osm = Osm {
+            ways: vec![
+                crate::overpass::Way { id: 1, tags: tags("amenity", "parking"), geometry: latlon(&ring(-120.0, -120.0, -80.0, -80.0)) },
+                crate::overpass::Way { id: 2, tags: tags("leisure", "park"), geometry: latlon(&ring(-140.0, -140.0, -60.0, -60.0)) },
+                crate::overpass::Way { id: 3, tags: tags("leisure", "park"), geometry: latlon(&ring(-140.0, 60.0, -60.0, 140.0)) },
+            ],
+            areas: vec![Area { id: 4, tags: tags("amenity", "parking"), outer: vec![latlon(&ring(-120.0, 80.0, -80.0, 120.0))], inner: vec![latlon(&ring(-105.0, 95.0, -95.0, 105.0))] }],
+            pois: Vec::new(),
+        };
+        let ground = Ground { origin: -15_000, cell: 500, side: 61, heights: vec![250; 61 * 61] };
+        let built = from_osm(&place, 100.0, None, &osm, &[], ground, Placed::default(), None, None, None, &[], None, None, &[]);
+        for (tile, rings, what) in [((0, 0), 1, "a closed way"), ((0, 2), 2, "a relation, with its hole")] {
+            let cover = &built.tiles[&tile].cover;
+            let lot = cover.iter().position(|c| c.kind == COVER_ASPHALT).unwrap_or_else(|| panic!("no asphalt from {what}"));
+            let park = cover.iter().position(|c| c.kind == COVER_PARK).expect("the park");
+            assert!(lot > park, "{what}: the asphalt is painted after the park");
+            assert_eq!(cover[lot].rings.len(), rings, "{what}");
+        }
     }
 
     #[test]

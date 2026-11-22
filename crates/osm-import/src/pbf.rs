@@ -28,7 +28,7 @@ pub const DIR: &str = ".cache/osm";
 const MAGIC: &[u8; 8] = b"RAGOSM01";
 
 /// Bumped when the file's layout or what it keeps changes; an index of another version is ignored.
-const VERSION: u32 = 8;
+const VERSION: u32 = 9;
 
 /// A fine cell, degrees of latitude and longitude: about 5.5 km square in Sweden.
 const FINE: [f64; 2] = [0.05, 0.1];

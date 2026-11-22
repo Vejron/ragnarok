@@ -5,6 +5,7 @@ import { coverPixels, paintCover, reliefPixels, terrainBuffers, TERRAIN_LOD_ERRO
 import { ribbonsOf } from './groundmesh'
 import { prepareTile, preparedTransferables, terrainTransferables, type CoverPainter, type TileParts } from './tileprep'
 import { setWinter } from './season'
+import { COVER_ASPHALT } from '@/world'
 import type { TileReply, TileRequest } from './tileworker'
 
 /*
@@ -25,11 +26,11 @@ let terrain: Terrain | null = null
 const reliefs = new Map<number, { relief: Pixels; detail: Int8Array | undefined }>()
 
 /**
- * Each prepared tile's roads, rails and ski tracks, by `col * 65536 + row`, to drape on dented ground.
+ * Each prepared tile's roads, car parks (the asphalt of its cover), rails and ski tracks, by `col * 65536 + row`, to drape on dented ground.
  * Only they are kept of what the tile was made from: its buildings, its collision mesh and what is
  * worked out from them (their faces and openings) are a few megabytes a tile, and done with here.
  */
-const parts = new Map<number, Pick<TileParts, 'roads' | 'rails' | 'ski'>>()
+const parts = new Map<number, Pick<TileParts, 'roads' | 'rails' | 'ski' | 'cover'>>()
 
 const NEIGHBOURS = [[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]] as const
 
@@ -102,7 +103,7 @@ self.onmessage = async (event: MessageEvent<TileRequest>) => {
     try {
       if (input.tile.buildings.length > 0) await ready
       if (input.ground) terrain.set({ col, row, hash: 0 }, input.ground)
-      parts.set(key(col, row), { roads: input.tile.roads, rails: input.tile.rails, ski: input.tile.ski })
+      parts.set(key(col, row), { roads: input.tile.roads, rails: input.tile.rails, ski: input.tile.ski, cover: input.tile.cover.filter((cover) => cover.kind === COVER_ASPHALT) })
       const prepared = prepareTile(input, terrain, paint)
       if (prepared.terrain) {
         reliefs.set(key(col, row), { relief: prepared.terrain.relief, detail: input.tile.detail })

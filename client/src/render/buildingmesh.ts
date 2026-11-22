@@ -1,13 +1,13 @@
 import { Color } from '@ragnarok/engine'
 import type { Sphere } from '@ragnarok/engine'
-import { BUILDING_BARN, BUILDING_BRIDGE, BUILDING_CABIN, BUILDING_CHURCH, BUILDING_FARMHOUSE, BUILDING_FIRE_STATION, BUILDING_FLATS, BUILDING_HALL, BUILDING_PLAIN, BUILDING_VILLA, BUILDING_OUTBUILDING, BUILDING_PUBLIC, BUILDING_SHOP, DECK_ASPHALT, DECK_BALLAST, DECK_PLANKS, ROOF_FLAT, type Bridge, type Building, type TileData } from '@/world'
+import { BUILDING_BARN, BUILDING_BRIDGE, BUILDING_CABIN, BUILDING_CHURCH, BUILDING_FARMHOUSE, BUILDING_FIRE_STATION, BUILDING_FLATS, BUILDING_HALL, BUILDING_PLAIN, BUILDING_VILLA, BUILDING_OUTBUILDING, BUILDING_PUBLIC, BUILDING_SHELTER, BUILDING_SHOP, DECK_ASPHALT, DECK_BALLAST, DECK_PLANKS, ROOF_FLAT, type Bridge, type Building, type TileData } from '@/world'
 import { winter } from './season'
 import { shellOf } from '@/sim/carve'
 import { drawnOpenings, facing, openingQuads, openingTriangles, openingsFor, type Opening } from './windows'
 import { eaveQuads, eaveTriangles, eavesFor, type EaveStrip } from './eaves'
-import { CHIMNEY_RGB, DETAIL_TRIM_RGB, detailTriangles, detailsOf, type DetailQuad } from './details'
+import { detailColour, detailTriangles, detailsOf, type DetailQuad } from './details'
 import { glassBuffers, type GlassBuffers } from './glass'
-import { FLOOR_RGB, INSIDE_RGB, INTERIOR_SHADE, facadeFor, innerOf, type Facade } from './facade'
+import { FLOOR_RGB, INSIDE_RGB, facadeFor, innerOf, type Facade } from './facade'
 import { normalOf, type Poly } from './geom'
 
 /*
@@ -35,7 +35,8 @@ const SHEET_ROOF_COLORS = [0x5a5f63, 0x3f4447, 0x7d8388]
  * sheet metal: a barn falu red, now and then tarred dark or left to go grey; an outbuilding as the
  * wooden houses are; a hall profiled sheet in grey, blue, green, cream or red; a shop light render or
  * brick; a block of flats render or brick; a public building yellow or red brick or white render; a
- * cabin dark timber; an old house red, ochre or white boards; a villa brick, pale boards or render; a fire station red or yellow brick, or render.
+ * cabin dark timber; an old house red, ochre or white boards; a villa brick, pale boards or render; a fire station red or yellow brick, or render;
+ * a shelter tarred timber, falu red or boards gone grey, under sheet or felt.
  */
 const KIND_COLORS: Readonly<Record<number, { walls: readonly number[]; sheet: boolean }>> = {
   [BUILDING_BARN]: { walls: [0xa8432f, 0xa8432f, 0xa8432f, 0x6e5642, 0x8c857a], sheet: true },
@@ -48,6 +49,7 @@ const KIND_COLORS: Readonly<Record<number, { walls: readonly number[]; sheet: bo
   [BUILDING_FARMHOUSE]: { walls: [0xa8432f, 0xa8432f, 0xd9b45a, 0xeee9dc, 0xe4dcc6], sheet: false },
   [BUILDING_VILLA]: { walls: [0x8f3a2c, 0xcfae6a, 0xeee9dc, 0xc9c4b8, 0xd8c6a3, 0xa9a59c], sheet: false },
   [BUILDING_FIRE_STATION]: { walls: [0x8f3a2c, 0x8f3a2c, 0xcfae6a, 0xd8d3c8], sheet: false },
+  [BUILDING_SHELTER]: { walls: [0x4a3a2e, 0x4a3a2e, 0x8f3a2c, 0x7d776c], sheet: true },
 }
 
 /** What of a tile its buildings are drawn from: small enough to send to the worker. */
@@ -488,7 +490,7 @@ export function buildingBuffers(tile: BuildingTile, salt: number, destroyed: Rea
     const own = faces[index]
     const seen = destroyed.has(index) ? null : looked(index)
     const facade = facades[index]
-    if (seen && facade) count += (building.kind === BUILDING_BRIDGE ? 1 : 2) * (fan(facade.walls) + fan(facade.roof)) + fan(facade.floor) + 2 * facade.inside.length + openingTriangles(openings[index] ?? []) + eaveTriangles(eaves[index] ?? []) + detailTriangles(details[index] ?? [])
+    if (seen && facade) count += (building.kind === BUILDING_BRIDGE ? 1 : 2) * (fan(facade.walls) + fan(facade.roof)) + fan(facade.floor) + fan(facade.rims) + 2 * facade.inside.length + openingTriangles(openings[index] ?? []) + eaveTriangles(eaves[index] ?? []) + detailTriangles(details[index] ?? [])
     else if (own) count += own.roof.length
     else if (own === null) count += building.walls + building.roof
   })
@@ -505,11 +507,14 @@ export function buildingBuffers(tile: BuildingTile, salt: number, destroyed: Rea
     const surfaces = buildingSurfaces(tile, index, salt)
     const facade = facades[index]
     if (seen && facade) {
-      const dim = (c: Color) => [c.r * INTERIOR_SHADE, c.g * INTERIOR_SHADE, c.b * INTERIOR_SHADE] as const
+      const dim = (c: Color) => [c.r * facade.shade, c.g * facade.shade, c.b * facade.shade] as const
       soup.surface = surfaces.wall
       for (const poly of facade.walls) soup.poly(poly, [wall.r, wall.g, wall.b])
       soup.surface = surfaces.roof
       for (const poly of facade.roof) soup.poly(poly, [roof.r, roof.g, roof.b])
+      // A shelter's boards where they end along its open side.
+      soup.surface = Surface.Plain
+      for (const poly of facade.rims) soup.poly(poly, [wall.r, wall.g, wall.b])
       // The room inside: the walls' and roof's inner faces, dim, and the floor. A whole bridge has no
       // inside to see, and its rails are thinner than a wall, so their inner faces would stand out beside them.
       soup.surface = Surface.Plain
@@ -536,8 +541,9 @@ export function buildingBuffers(tile: BuildingTile, salt: number, destroyed: Rea
         soup.quad(facing(corners, normal), masonry ? [wall.r, wall.g, wall.b] : rgb)
       })
       for (const { corners, normal, paint } of details[index] ?? []) {
-        soup.surface = paint === 'chimney' ? Surface.Brick : paint === 'roof' ? surfaces.roof : Surface.Plain
-        soup.quad(facing(corners, normal), paint === 'chimney' ? CHIMNEY_RGB : paint === 'roof' ? [roof.r, roof.g, roof.b] : DETAIL_TRIM_RGB)
+        const { rgb, surface } = detailColour(paint, [roof.r, roof.g, roof.b], { roof: surfaces.roof, brick: Surface.Brick, planks: Surface.Planks })
+        soup.surface = surface as Surface
+        soup.quad(facing(corners, normal), rgb)
       }
       soup.surface = Surface.Plain
     } else if (own) soup.faces(own, wall, roof)

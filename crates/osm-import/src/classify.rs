@@ -1,5 +1,5 @@
 //! What each building is (`BUILDING_*`): a house, a church, a barn, an outbuilding, a hall, a shop,
-//! a block of flats, a public building, a fire station or a cabin.
+//! a block of flats, a public building, a fire station, a cabin or a shelter (a lean-to).
 //!
 //! OpenStreetMap says so for few of them: nine in ten of Sweden's are `building=yes` and no more.
 //! So a building is known, in this order, by its own tags; by a word in its name; by the land use it
@@ -165,6 +165,10 @@ pub fn by_tags(tags: &Tags, area: f64) -> Option<u8> {
     let tag = |key: &str| tags.get(key).map(String::as_str);
     if is_church(tags) {
         return Some(BUILDING_CHURCH);
+    }
+    // A lean-to in the woods, whatever its `building` says.
+    if crate::shelter::is_lean_to(tags) {
+        return Some(BUILDING_SHELTER);
     }
     // `building=school;library`: the first of several values.
     let building = tag("building").map(|value| value.split(';').next().unwrap_or(value));
@@ -528,6 +532,9 @@ mod tests {
             (&[("building", "yes"), ("amenity", "restaurant")], 300.0, BUILDING_SHOP),
             (&[("building", "yes"), ("amenity", "fuel")], 120.0, BUILDING_SHOP),
             (&[("building", "cabin")], 30.0, BUILDING_CABIN),
+            (&[("building", "yes"), ("amenity", "shelter"), ("shelter_type", "lean_to"), ("direction", "west")], 6.0, BUILDING_SHELTER),
+            (&[("building", "hut"), ("amenity", "shelter"), ("shelter_type", "weather_shelter")], 8.0, BUILDING_SHELTER),
+            (&[("building", "hut"), ("amenity", "shelter"), ("shelter_type", "basic_hut")], 12.0, BUILDING_CABIN),
             (&[("building", "yes"), ("tourism", "wilderness_hut")], 20.0, BUILDING_CABIN),
         ] {
             assert_eq!(by_tags(&tags(pairs), area), Some(kind), "{pairs:?}");
@@ -643,6 +650,6 @@ mod tests {
         let sites: Vec<(&Tags, &[P])> = vec![(&yes, &rings[0]), (&yes, &rings[1]), (&barn, &rings[2])];
         let (kinds, tally) = classify(&sites, &[], &[]);
         assert_eq!(kinds, [BUILDING_FARMHOUSE, BUILDING_OUTBUILDING, BUILDING_BARN]);
-        assert_eq!(tally, Tally { by_tags: 1, by_node: 0, by_land: 0, by_yard: 1, kinds: [0, 0, 1, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0] });
+        assert_eq!(tally, Tally { by_tags: 1, by_node: 0, by_land: 0, by_yard: 1, kinds: [0, 0, 1, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0] });
     }
 }
