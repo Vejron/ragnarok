@@ -14,7 +14,8 @@ import { value } from './marshnoise'
  * and its fill is asphalt (`PAVED`).
  */
 const ROAD_COLORS: Record<number, [number | null, number]> = {
-  [ROAD_MAJOR]: [0x9a9486, 0x6a6a6c],
+  // One asphalt for every paved road, and a bridge's deck (`DECK_ASPHALT`): no change of tone where two meet.
+  [ROAD_MAJOR]: [0x9a9486, 0x6e6e70],
   [ROAD_MINOR]: [0x9a9486, 0x6e6e70],
   [ROAD_PATH]: [null, 0xd8b98a],
   // A path wide enough to drive: the same worn dirt.
@@ -57,8 +58,18 @@ const SPACING = 1
 const ACROSS = 1
 /** Sides of the disc that rounds a joint or an end. */
 const DISC = 12
-/** Paths first, so the wider roads are drawn over them at junctions. */
-const RANK: Record<number, number> = { [ROAD_FAINT]: 0, [ROAD_PATH]: 0, [ROAD_TRACK]: 0, [ROAD_PAVED_PATH]: 0, [ROAD_MINOR]: 1, [ROAD_MAJOR]: 2 }
+/**
+ * Paths first, so the wider roads are drawn over them at junctions. Each kind has a rank of its own:
+ * two at one rank lie at one depth, and flicker through each other where they cross.
+ */
+const RANK: Record<number, number> = { [ROAD_FAINT]: 0, [ROAD_PATH]: 1, [ROAD_TRACK]: 2, [ROAD_PAVED_PATH]: 3, [ROAD_MINOR]: 4, [ROAD_MAJOR]: 5 }
+/**
+ * The sharpest bend whose two strips meet in a mitre, on the line that halves it, radians: sharper,
+ * and the mitre's point would reach far out, so the strips end square under a round patch instead.
+ */
+const MITRE = Math.PI / 3
+/** Over how far a road narrows to a narrower one it ends on, metres. */
+const TAPER = 8
 const KINDS = [ROAD_FAINT, ROAD_PATH, ROAD_TRACK, ROAD_PAVED_PATH, ROAD_MINOR, ROAD_MAJOR]
 /** How raggedly a worn kind's edges break up into the ground beside it (`Material.worn`), 0 to 1. */
 const RAGGED: Record<number, number> = { [ROAD_FAINT]: 1, [ROAD_PATH]: 0.6, [ROAD_TRACK]: 0.45 }
@@ -335,14 +346,17 @@ export class Layer {
   /**
    * A strip along a -> b, `half` either side. It is cut across as well as along, because a flat quad
    * the width of the road cuts the ground's crown or ditch by centimetres, which is enough for the
-   * wider casing to show through the fill (or the terrain through both).
+   * wider casing to show through the fill (or the terrain through both). `startCut` and `endCut` slant
+   * its ends for a mitre: how far along the road the end moves for each metre to the right across it.
+   * `startHalf` and `endHalf` are the half widths it narrows to at its ends, where it meets a narrower road.
    */
-  segment(ax: number, az: number, bx: number, bz: number, half: number, along = 0, hole = 0) {
+  segment(ax: number, az: number, bx: number, bz: number, half: number, along = 0, hole = 0, startCut = 0, endCut = 0, startHalf = half, endHalf = half) {
     const length = Math.hypot(bx - ax, bz - az)
     if (length < 1e-4) return
     // Right of the way it runs, x east and z south: where `lateral` is positive.
     const px = -(bz - az) / length
     const pz = (bx - ax) / length
+    const [tx, tz] = [(bx - ax) / length, (bz - az) / length]
     const parts = Math.max(1, Math.ceil(length / SPACING))
     // With a `hole`, two bands either side of the middle, from `hole` out to `half`.
     const sides: [number, number][] = hole > 0 ? [[-1, -hole / half], [hole / half, 1]] : [[-1, 1]]
@@ -352,11 +366,18 @@ export class Layer {
       for (let k = 0; k <= parts; k++) {
         const x = ax + ((bx - ax) * k) / parts
         const z = az + ((bz - az) * k) / parts
-        const width = this.wanders ? wornHalf(half, x, z) : half
+        // Drawn in towards a narrower road it meets at either end, over `TAPER` metres or half its length.
+        const run = Math.min(TAPER, length / 2)
+        const [fromStart, fromEnd] = [(length * k) / parts, length - (length * k) / parts]
+        const tapered = fromStart < run ? startHalf + ((half - startHalf) * fromStart) / run : fromEnd < run ? endHalf + ((half - endHalf) * fromEnd) / run : half
+        const width = this.wanders ? wornHalf(half, x, z) : tapered
         const section: number[] = []
         for (let j = 0; j <= across; j++) {
           const t = from + ((to - from) * j) / across
-          section.push(this.vertex(x + px * t * width, z + pz * t * width, this.lift, t, width, along + (length * k) / parts, t * width))
+          // Sheared towards each end's cut: how far along the road a point this far across it is moved.
+          const lateral = t * width
+          const shear = lateral * (startCut + ((endCut - startCut) * k) / parts)
+          section.push(this.vertex(x + px * lateral + tx * shear, z + pz * lateral + tz * shear, this.lift, t, width, along + (length * k) / parts + shear, lateral))
         }
         if (previous) {
           for (let j = 0; j < across; j++) {
@@ -405,6 +426,28 @@ function pastBorders(points: readonly Point2[], border: readonly [number, number
 }
 
 /**
+ * Whether `road` is the paving between two close carriageways, or of a fork (`barrier.rs` in the
+ * importer): a main road with no lanes. It fills what the roads round it leave, as wide as it is
+ * to its ends, whatever it meets there.
+ */
+function paving(road: Road): boolean {
+  return road.kind === ROAD_MAJOR && road.lanes === 0
+}
+
+/**
+ * The widest half width of the other roads of `road`'s surface (paved, or its own worn kind) that
+ * have a point at `(x, z)`, where `road` ends, or null when it ends alone there.
+ */
+function meeting(roads: readonly Road[], road: Road, x: number, z: number, pass: 0 | 1): number | null {
+  let widest: number | null = null
+  for (const other of roads) {
+    if (other === road || (PAVED.has(road.kind) ? !PAVED.has(other.kind) : other.kind !== road.kind)) continue
+    if (other.points.some(([px, pz]) => Math.abs(px - x) < 0.05 && Math.abs(pz - z) < 0.05)) widest = Math.max(widest ?? 0, halfWidth(other, pass))
+  }
+  return widest
+}
+
+/**
  * Roads as ribbons laid on the terrain, so their edges are as sharp as the screen is, however
  * close the camera gets (a texture would show its texels). One ribbon per kind and layer: all the
  * casings, then all the fills, so a junction reads as one surface rather than a stack of outlines.
@@ -436,20 +479,56 @@ export function roadRibbons(roads: readonly Road[], shade: GroundShade, border: 
         layer.profile = paintProfile(road)
         // A first point moved back past a border starts that much before the way's own `along`.
         let along = road.along - Math.hypot(points[0]![0] - road.points[0]![0], points[0]![1] - road.points[0]![1])
+        // A bend is mitred: the strips either side of it are cut on the line that halves it, so they
+        // meet edge to edge with nothing lying over anything. `cuts[i]` is that slant at point `i`
+        // (`Layer.segment`), or null where the bend is too sharp, or the strips too short, for one.
+        const heading = (i: number): [number, number] => {
+          const [[ax, az], [bx, bz]] = [points[i]!, points[i + 1]!]
+          const length = Math.hypot(bx - ax, bz - az) || 1
+          return [(bx - ax) / length, (bz - az) / length]
+        }
+        const span = (i: number) => Math.hypot(points[i + 1]![0] - points[i]![0], points[i + 1]![1] - points[i]![1])
+        const reachAcross = half * (RAGGED[kind] === undefined ? 1 : 1 + WIDTH_JITTER)
+        const cuts: (number | null)[] = points.map((_, i) => {
+          if (i === 0 || i === points.length - 1) return 0
+          const [[ax, az], [bx, bz]] = [heading(i - 1), heading(i)]
+          // Positive where the road turns right, x east and z south.
+          const turn = Math.atan2(ax * bz - az * bx, ax * bx + az * bz)
+          const cut = Math.tan(turn / 2)
+          return Math.abs(turn) <= MITRE && reachAcross * Math.abs(cut) <= Math.min(span(i - 1), span(i)) / 2 ? cut : null
+        })
+        // Where an end meets a narrower road, the half width it narrows to there: else its own.
+        const ends = [0, points.length - 1].map((i) => {
+          if (onBorder(road.points[i]!, border) || RAGGED[kind] !== undefined || paving(road)) return half
+          const met = meeting(roads, road, points[i]![0], points[i]![1], pass)
+          return met !== null && met < half ? met : half
+        }) as [number, number]
         const arcs = [along]
         for (let i = 0; i + 1 < points.length; i++) {
           const [[ax, az], [bx, bz]] = [points[i]!, points[i + 1]!]
-          layer.segment(ax, az, bx, bz, half, along, hole)
+          // The inside of a right turn ends early and starts late.
+          layer.segment(ax, az, bx, bz, half, along, hole, cuts[i] ?? 0, -(cuts[i + 1] ?? 0), i === 0 ? ends[0] : half, i + 2 === points.length ? ends[1] : half)
           along += Math.hypot(bx - ax, bz - az)
           arcs.push(along)
         }
         points.forEach(([x, z], i) => {
           if (onBorder(road.points[i]!, border)) return
+          const end = i === 0 || i === points.length - 1
+          // A round patch at a bend too sharp to mitre, and at an end: a cap where the road stops, and
+          // where it meets another, no wider than the narrower of the two, so that a wide road ending
+          // on a narrow one stops square and does not bulge out past it.
+          if (!end && cuts[i] !== null) return
+          let radius = RAGGED[kind] === undefined ? half : wornHalf(half, x, z)
+          if (end && !paving(road)) {
+            const met = meeting(roads, road, x, z, pass)
+            if (met !== null) radius = Math.min(radius, met)
+          }
+          if (radius <= hole) return
           const [ax, az] = points[Math.max(0, i - 1)]!
           const [bx, bz] = points[Math.min(points.length - 1, i + 1)]!
           const length = Math.hypot(bx - ax, bz - az) || 1
           const frame = { along: arcs[i]!, tx: (bx - ax) / length, tz: (bz - az) / length }
-          layer.disc(x, z, RAGGED[kind] === undefined ? half : wornHalf(half, x, z), frame, hole)
+          layer.disc(x, z, radius, frame, Math.min(hole, radius))
         })
       }
       const ribbon = layer.ribbon(color, (pass === 0 ? 8 : 20) + rank * 2)

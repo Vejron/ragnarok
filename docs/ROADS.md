@@ -17,9 +17,11 @@ widths of their class (`assemble::road_style`).
 
 | Tagged | Width |
 |---|---|
-| `width` between 2 and 30 m | that width |
-| `lanes`, or one-way | lanes × 3.5 m (3 m on a minor road) + 1 m of shoulders |
-| neither | the class's own: 10 m major, 7 m minor, 4.5 m service |
+| one lane (a one-way street, a slip road, a carriageway, a service road) | 5.5 m (`ONE_LANE`), whatever its class |
+| two lanes or more | lanes × 3.25 m (3 m on a minor road) + 1 m of shoulders: 7.5 m for a main road of two, 7 m for a street |
+| a roundabout's ring | at least 6 m (`ROUNDABOUT`) |
+| a paved track | 4.5 m |
+| a `width` tag | used, brought to within 1 m under and 2 m over the width above |
 
 **One-way roads.** A road is one-way if it is tagged `oneway`, or if it is a motorway or a roundabout.
 A one-way road has one lane unless tagged otherwise, two on a motorway. Each carriageway of a
@@ -112,6 +114,11 @@ unpainted `ROAD_MAJOR` road reaching 1 m under each. The two then read as one ro
 down it, and their edges lie inside the paved surface, so they do not crumble into a sliver of
 verge. A slow divided road is paved between in the same way, with a solid line in place of the rail.
 
+Where a wider two-way road forks into the two carriageways, both start on its centre line, and until
+they have drawn apart the two together are narrower than the road they left: a waist in the asphalt.
+The fork is paved as wide as that road, along the line between the carriageways, as far as their
+outer edges are closer together than its width (`barrier::lay`).
+
 ### The rail itself
 
 The rail is a `LINE_GUARDRAIL` line in the tile's `lines`, so it is built and broken like the walls
@@ -201,3 +208,22 @@ Most of a road's pixels are far off, uncracked and unpainted. So:
 - **2+1 stretches without a barrier** get the solid line only where `lanes:forward` is tagged.
 - **Grass at the road's edge.** The grass mask is a 2 m grid (`sim/surface.ts`), so grass can stand on
   the asphalt up to a cell in from its edge.
+
+## One road from junction to junction
+
+OpenStreetMap cuts a road into a new way wherever a tag changes, and each way was graded, drawn and
+painted alone. `network::join` (run before and after `sidepaths::prune`) joins two ways that meet end
+to end at a point no other road touches and are the same road there: the same kind, lanes and paint,
+both on the ground or both a bridge or tunnel, driven the same way. Widths within 1.5 m (`EVEN`) are
+evened out to the longer piece's. `worlds/home` closes 775 joints.
+
+On the client (`render/roads.ts`):
+
+- **A bend is mitred.** The strips either side are cut on the line that halves it and meet edge to
+  edge. Only a bend sharper than 60° (`MITRE`), or one whose strips are too short for the cut, still
+  gets a round patch.
+- **An end that meets another road** gets a patch no wider than the narrower of the two, and a wide
+  road narrows to a narrower one it ends on over 8 m (`TAPER`), so nothing bulges out past the joint.
+  A road that ends alone keeps its round cap. The paving between carriageways stays full width to its ends.
+- **Each kind has its own depth rank**, so two kinds of path that cross do not flicker.
+- **Major and minor roads share one asphalt colour**, which is also a bridge deck's.

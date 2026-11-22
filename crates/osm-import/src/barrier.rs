@@ -144,6 +144,29 @@ pub fn lay(ways: &[Way]) -> Barrier {
         }
         rail(&mut run, &mut barrier);
         pave(&mut strip, &mut barrier);
+        // Where a wider two-way road forks into this carriageway and the other, both start on its
+        // centre line, and until they have drawn apart the two together are narrower than the road
+        // they came from: a waist in the asphalt. The fork is paved as wide as that road as far as
+        // the carriageways' outer edges are closer than it.
+        for from_start in [true, false] {
+            let fork = if from_start { way.points[0] } else { way.points[way.points.len() - 1] };
+            let ends_here = |other: &Way| [other.points[0], other.points[other.points.len() - 1]].iter().any(|end| (end[0] - fork[0]).hypot(end[1] - fork[1]) < 0.1);
+            let wide = ways.iter().filter(|other| !other.carriageway && other.points.len() >= 2 && ends_here(other)).map(|other| 2.0 * other.half).fold(0.0, f64::max);
+            let order: Vec<&Option<Pair>> = if from_start { pairs.iter().collect() } else { pairs.iter().rev().collect() };
+            let mut apron = vec![fork];
+            for (k, pair) in order.into_iter().enumerate() {
+                match pair {
+                    Some(pair) if pair.other > i && pair.gap + 2.0 * (way.half + ways[pair.other].half) < wide => apron.push(pair.at),
+                    // The two lie on each other at the fork itself: no pair there yet, or one with a
+                    // carriageway further off.
+                    _ if k < 2 => {}
+                    _ => break,
+                }
+            }
+            if apron.len() > 1 {
+                barrier.strips.push((apron, wide));
+            }
+        }
     }
     barrier
 }
@@ -341,6 +364,24 @@ mod tests {
         let barrier = lay(&ways);
         assert_eq!(barrier.strips.len(), 1);
         assert!((barrier.strips[0].1 - 2.0 * STRIP_OVERLAP).abs() < 0.01);
+    }
+
+    #[test]
+    fn a_fork_into_two_carriageways_is_paved_as_wide_as_the_road_it_leaves() {
+        // A 10 m road from the west ends at the origin, where two 4.5 m carriageways start on its
+        // centre line and draw apart to 4 m either side of it over 80 m.
+        let ways = [
+            Way { points: vec![[-100.0, 0.0], [0.0, 0.0]], half: 5.0, carriageway: false, fast: false },
+            Way { points: vec![[0.0, 0.0], [80.0, 4.0], [200.0, 4.0]], half: 2.25, carriageway: true, fast: false },
+            Way { points: vec![[200.0, -4.0], [80.0, -4.0], [0.0, 0.0]], half: 2.25, carriageway: true, fast: false },
+        ];
+        let barrier = lay(&ways);
+        let apron = barrier.strips.iter().find(|(_, width)| *width == 10.0).expect("the fork is paved 10 m wide");
+        assert_eq!(apron.0[0], [0.0, 0.0]);
+        // It ends where the carriageways' outer edges are 10 m apart: their lines 5.5 m, at x = 55.
+        let reach = apron.0.iter().map(|p| p[0]).fold(0.0, f64::max);
+        assert!((40.0..=56.0).contains(&reach), "the apron reaches {reach} m");
+        assert!(apron.0.iter().all(|p| p[1].abs() < 0.5), "it lies between the two: {:?}", apron.0);
     }
 
     #[test]

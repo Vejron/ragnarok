@@ -134,7 +134,7 @@ The style is flat, bright and few-banded, not physically based.
   and lit by its shaped surface (RIVER-SURFACE.md). The waves' clock is the server's tick;
   `setWaterLight` points the reflection and glint at the palette's sky and sun.
 - **Roads** are draped ribbons that follow the ground every metre, with a casing and fill layer, and
-  round discs at joints. They share the terrain's ramp and sit over it by a depth bias per layer.
+  mitred bends, with a round patch only at a sharp bend or an end (ROADS.md). They share the terrain's ramp and sit over it by a depth bias per layer.
   Paved roads (`ROAD_MAJOR`, `ROAD_MINOR`) are asphalt in summer (`MAT_ASPHALT`, `asphalt.wgsl.ts`):
   dark grey with broad mottling, mended patches with a sealed seam on a 6 m grid, grit and the odd
   crack close up (faded by how many metres a pixel spans, so nothing shimmers far off) and an edge

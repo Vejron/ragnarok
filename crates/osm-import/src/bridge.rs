@@ -21,13 +21,17 @@ const MIN_LENGTH: f64 = 12.0;
 const SHORT_DIP: f64 = 1.0;
 /// Steepest slope of a deck, rise over run, and of the ramp that brings a deck still above ground at
 /// its end down to the ground.
-const MAX_GRADE: f64 = 0.06;
+pub(crate) const MAX_GRADE: f64 = 0.06;
 /// The longest such ramp, metres.
 const MAX_RAMP: f64 = 150.0;
 /// How deep a deck's slab is, from its roadway to its underside, metres.
 pub(crate) const THICKNESS: f64 = 0.7;
 /// The deck's top is this far above the ground where it meets it.
 const LIFT: f64 = 0.12;
+/// A roadway less than this over the ground follows the ground's slope across it, metres.
+const FOLLOWS: f64 = 0.5;
+/// How far over the ground the last edge of a deck or a ramp that ends on it lies, metres.
+const LANDING: f64 = 0.02;
 /// Deck sections this close to the ground are solid down to it; higher ones stand on piers.
 const SOLID_BELOW: f64 = 2.0;
 const PIER_SPACING: f64 = 24.0;
@@ -59,10 +63,14 @@ const UNDER_MARGIN: f64 = 1.0;
 /// A ramp that has come down to within this of a road it crosses meets that road at grade, metres:
 /// it is a crossroads on the ground, which OpenStreetMap has past the bridge's end. Any higher and the
 /// ramp would stand in the road's way as a wall, so it rises to let a bus under instead.
-const AT_GRADE: f64 = 0.3;
+pub(crate) const AT_GRADE: f64 = 0.3;
 /// A way whose line runs within this cosine of a bridge's own direction runs alongside it, not
 /// under it.
 pub(crate) const PARALLEL: f64 = 0.9;
+/// Two carriageways' ramps from a shared deck have no railing between them while their edges are
+/// closer than this, metres: they come down side by side at one height, and a railing there would
+/// stand in a slot too narrow to fall into.
+const STRAND_GAP: f64 = 2.0;
 /// A pylon is only worth building over a crossing at least this long, metres.
 const PYLON_MIN_SPAN: f64 = 60.0;
 const CABLE_SPACING: f64 = 12.0;
@@ -481,6 +489,131 @@ pub(crate) fn flush_top(points: &[P], width: f64, ground: &Ground, p: P) -> Opti
     Some((h0 + (h1 - h0) * along / total.max(1e-9) + LIFT).max(height(p) + LIFT))
 }
 
+/// Lays the deck along `nodes`, `hw` wide each side of them: a slab, solid down to the ground where
+/// it is close to it, and with `railings` an edge beam and a railing where there is a drop beside it.
+fn lay_deck(mesh: &mut Mesh, nodes: &[Node], hw: f64, railings: bool, ground: &Ground) {
+    let tangent = |i: usize| {
+        let (a, b) = (nodes[i.saturating_sub(1)].p, nodes[(i + 1).min(nodes.len() - 1)].p);
+        let (dx, dz) = (b[0] - a[0], b[1] - a[1]);
+        let length = dx.hypot(dz).max(1e-9);
+        [dx / length, 0.0, dz / length]
+    };
+    let side = |t: V3| [-t[2], 0.0, t[0]];
+    // Underside: solid down to the ground where the deck is close to it, else a slab.
+    let bottom = |n: &Node| if n.y - n.g <= SOLID_BELOW + THICKNESS { n.g - 0.3 } else { n.y - THICKNESS };
+    let last = nodes.len() - 1;
+    let section = |i: usize| {
+        let n = &nodes[i];
+        let t = tangent(i);
+        let s = scale(side(t), hw);
+        let at = |sign: f64, y: f64| [n.p[0] + sign * s[0], y, n.p[1] + sign * s[2]];
+        let b = bottom(n);
+        // Close to the ground the roadway follows it across, as the road it meets does, each edge as
+        // far over the ground under it as the middle is. Where the deck ends on the ground, its last
+        // edge lies on it: no step up onto the bridge, on the crown of the road or at its edges.
+        let landed = (i == 0 || i == last) && n.y - n.g <= LIFT + 0.06;
+        let top = |sign: f64| {
+            if n.y - n.g >= FOLLOWS {
+                return n.y;
+            }
+            let lean = (f64::from(ground.height_at((n.p[0] + sign * s[0]) as f32, (n.p[1] + sign * s[2]) as f32)) - n.g).clamp(-FOLLOWS, FOLLOWS);
+            if landed { n.g + lean + LANDING } else { n.y + lean }
+        };
+        [at(1.0, top(1.0)), at(-1.0, top(-1.0)), at(-1.0, b), at(1.0, b)]
+    };
+    let rings: Vec<[V3; 4]> = (0..nodes.len()).map(section).collect();
+    for i in 0..last {
+        let mid = [(nodes[i].p[0] + nodes[i + 1].p[0]) / 2.0, (nodes[i].p[1] + nodes[i + 1].p[1]) / 2.0];
+        mesh.arc = (nodes[i].arc + nodes[i + 1].arc) / 2.0;
+        // Capped at both ends, so a section cut from the bridge (`sections`) is a closed solid: an open
+        // end would be the edge of a hole to the client, drawn as a broken rim in the air once all
+        // round it is gone. The caps between two stretches are inside the concrete.
+        mesh.hexa(mid, false, rings[i], rings[i + 1], true, true);
+        if let Some(piece) = mesh.pieces.last_mut() {
+            piece.deck = true;
+        }
+        // A railing on an edge beam where there is a drop beside the deck.
+        if railings && nodes[i].y - nodes[i].g > 1.0 && nodes[i + 1].y - nodes[i + 1].g > 1.0 {
+            for sign in [1.0, -1.0] {
+                // A point `inward` metres in from the deck's edge on this side, `up` above node `k`'s roadway.
+                let edge = |k: usize, inward: f64, up: f64| {
+                    let s = scale(side(tangent(k)), sign * (hw - inward));
+                    [nodes[k].p[0] + s[0], nodes[k].y + up, nodes[k].p[1] + s[2]]
+                };
+                let flat = |a: V3, b: V3| unit(side(unit([b[0] - a[0], 0.0, b[2] - a[2]])));
+                // Where a stretch of railing stands: its own middle, not the deck's.
+                let middle = |a: V3, b: V3| [(a[0] + b[0]) / 2.0, (a[2] + b[2]) / 2.0];
+                let (a, b) = (edge(i, EDGE_BEAM_WIDTH / 2.0, EDGE_BEAM_HEIGHT / 2.0), edge(i + 1, EDGE_BEAM_WIDTH / 2.0, EDGE_BEAM_HEIGHT / 2.0));
+                mesh.prism(middle(a, b), false, a, b, [0.0, 1.0, 0.0], flat(a, b), EDGE_BEAM_HEIGHT / 2.0, EDGE_BEAM_WIDTH / 2.0);
+                mesh.mark_railing();
+                for height in [MID_RAIL_HEIGHT, RAILING_HEIGHT - RAIL_HALF] {
+                    let (a, b) = (edge(i, RAILING_INSET, height), edge(i + 1, RAILING_INSET, height));
+                    mesh.prism(middle(a, b), false, a, b, [0.0, 1.0, 0.0], flat(a, b), RAIL_HALF, RAIL_HALF);
+                    mesh.mark_railing();
+                }
+                // A post at this cross section, and at the last one where the railing ends.
+                let ends = if i + 1 == last || nodes[i + 2].y - nodes[i + 2].g <= 1.0 { vec![i, i + 1] } else { vec![i] };
+                for k in ends {
+                    let foot = edge(k, RAILING_INSET, EDGE_BEAM_HEIGHT);
+                    let t = tangent(k);
+                    mesh.prism([foot[0], foot[2]], false, foot, edge(k, RAILING_INSET, RAILING_HEIGHT), t, side(t), POST_HALF, POST_HALF);
+                    mesh.mark_railing();
+                }
+            }
+        }
+    }
+}
+
+/// The height of the roadway of the deck or ramp among `pieces` (of a bridge whose deck is `hw` to
+/// each side of its line) at `p`, metres, or `None` where `p` is not on it.
+pub fn top_at(pieces: &[Piece], hw: f64, p: P) -> Option<f64> {
+    let piece = pieces.iter().filter(|piece| piece.deck).min_by(|a, b| (a.at[0] - p[0]).hypot(a.at[1] - p[1]).total_cmp(&(b.at[0] - p[0]).hypot(b.at[1] - p[1])))?;
+    if (piece.at[0] - p[0]).hypot(piece.at[1] - p[1]) > hw + STEP {
+        return None;
+    }
+    let (low, high) = piece.tris.iter().flatten().fold((f64::MAX, f64::MIN), |(low, high), v| (low.min(v[1]), high.max(v[1])));
+    let top = piece.tris.iter().flatten().map(|v| v[1]).filter(|&y| y > (low + high) / 2.0).fold(f64::MAX, f64::min);
+    Some((top + high) / 2.0)
+}
+
+/// The steepest a path's ramp runs down from a deck it leaves, metres per metre: steps or a steep
+/// walk, which is what leads off a bridge to the bank under it, where a road's grade would carry the
+/// path far out over the ground.
+pub(crate) const PATH_GRADE: f64 = 0.25;
+
+/// The middle line of the deck and ramps among `pieces`, in order along the bridge.
+pub fn line_of(pieces: &[Piece]) -> Vec<P> {
+    pieces.iter().filter(|piece| piece.deck).map(|piece| piece.at).collect()
+}
+
+/// A ramp along `line` (a road that joins a deck or a ramp standing above the ground, from where it
+/// joins) of road `width`, from `from` metres up at its start down to the ground at `grade` (metres
+/// down per metre along): without it the road would end at the side of the deck, below it. It stops
+/// at the end of `line`, at water, or `limit` from the origin.
+pub fn slip(line: &[P], width: f64, from: f64, grade: f64, ground: &Ground, levels: &[i32], limit: f64) -> Vec<Piece> {
+    let mut nodes: Vec<Node> = Vec::new();
+    let mut arc = 0.0;
+    for p in resample(line, STEP) {
+        if let Some(before) = nodes.last() {
+            arc += (p[0] - before.p[0]).hypot(p[1] - before.p[1]);
+        }
+        let g = f64::from(ground.height_at(p[0] as f32, p[1] as f32));
+        if p[0].abs() > limit || p[1].abs() > limit || water_at(ground, levels, p).is_some() {
+            break;
+        }
+        let y = (from - grade * arc).max(g + LIFT);
+        nodes.push(Node { p, y, g, level: None, arc });
+        if y - g <= LIFT + 0.05 {
+            break;
+        }
+    }
+    let mut mesh = Mesh { pieces: Vec::new(), arc: 0.0 };
+    if nodes.len() >= 2 {
+        lay_deck(&mut mesh, &nodes, width / 2.0 + EDGE_BEAM_WIDTH, true, ground);
+    }
+    mesh.pieces
+}
+
 /// Builds the bridge along `points` (metres, centre line) of road `width`. `measured` holds deck
 /// returns `[x, z, y]` from a classified cloud, empty without one; `under` are the drivable roads on
 /// the ground (centre lines and widths) that may pass under it, which it rises to clear
@@ -488,9 +621,42 @@ pub(crate) fn flush_top(points: &[P], width: f64, ground: &Ground, p: P) -> Opti
 /// `limit` is how far from the origin the deck may reach.
 #[allow(clippy::too_many_arguments)]
 pub fn build(points: &[P], width: f64, kind: u8, pylons: Pylons, measured: &[[f64; 3]], under: &[(&[P], f64)], ground: &Ground, levels: &[i32], limit: f64) -> Vec<Piece> {
+    build_along(points, [&[], &[]], [None, None], &|_| None, width, kind, pylons, measured, under, ground, levels, limit).0
+}
+
+/// The line midway between two lines that set out side by side: each walked from its start in
+/// equal steps, as far as the shorter goes.
+fn between(a: &[P], b: &[P]) -> Vec<P> {
+    resample_by(a, STEP).iter().zip(&resample_by(b, STEP)).map(|(p, q)| [(p[0] + q[0]) / 2.0, (p[1] + q[1]) / 2.0]).collect()
+}
+
+/// `points` every `step` metres from its start, exactly, and no point for what is left at its end.
+fn resample_by(points: &[P], step: f64) -> Vec<P> {
+    let total: f64 = points.windows(2).map(|w| (w[1][0] - w[0][0]).hypot(w[1][1] - w[0][1])).sum();
+    (0..=(total / step).floor() as usize).map(|k| point_along(points, k as f64 * step)).collect()
+}
+
+/// A bridge as `build_along` makes it: its pieces, the line down the middle of what was built, and
+/// each carriageway's own ramp as its line and its road's width.
+pub type Built = (Vec<Piece>, Vec<P>, Vec<(Vec<P>, f64)>);
+
+/// `build`, with the roads its ramps follow. With the pieces come the line down the middle of what
+/// was built, ramps and all, and the line and road width of each carriageway's own ramp: `onward[0]` are the roads that lead on from the bridge's first point and `onward[1]` from
+/// its last, each a line from where it leaves the bridge and its width, as the road the bridge
+/// belongs to goes on along the ground. One road is followed by a ramp as wide as the deck. Two are
+/// the carriageways that share the deck: each gets a ramp of its own, on its own line and as wide as
+/// it, so that both are driven down wherever they go, and the ramps' heights are worked out along the
+/// line midway between them. A ramp that outruns its road, or has none, carries straight on.
+/// `joined` is the height of the roadway of another bridge that the first point, and the last, is a
+/// point of, where there is one: a road that leaves a bridge out over the water starts on its deck,
+/// at that height, and has no ramp there. From such an end it keeps to that bridge's roadway, whose
+/// height at a point `rides` gives, for as long as it lies on it: the two leave each other slowly,
+/// side by side, and must be one surface until they have parted.
+#[allow(clippy::too_many_arguments)]
+pub fn build_along(points: &[P], onward: [&[(Vec<P>, f64)]; 2], joined: [Option<f64>; 2], rides: &dyn Fn(P) -> Option<f64>, width: f64, kind: u8, pylons: Pylons, measured: &[[f64; 3]], under: &[(&[P], f64)], ground: &Ground, levels: &[i32], limit: f64) -> Built {
     let samples = resample(points, STEP);
     if samples.len() < 2 || pylons == Pylons::Carried {
-        return Vec::new();
+        return (Vec::new(), Vec::new(), Vec::new());
     }
     let node = |p: P, arc: f64| Node {
         p,
@@ -511,7 +677,7 @@ pub fn build(points: &[P], width: f64, kind: u8, pylons: Pylons, measured: &[[f6
     // terrain has as a trench across it) needs its deck, or the road has a ditch in it.
     let dip = nodes.iter().map(|n| nodes[0].g + (nodes[nodes.len() - 1].g - nodes[0].g) * n.arc / arc.max(1e-9) - n.g).fold(0.0, f64::max);
     if arc < MIN_LENGTH && dip < SHORT_DIP {
-        return Vec::new();
+        return (Vec::new(), Vec::new(), Vec::new());
     }
     let lift = clearance(kind);
     let hw = width / 2.0 + EDGE_BEAM_WIDTH;
@@ -519,15 +685,31 @@ pub fn build(points: &[P], width: f64, kind: u8, pylons: Pylons, measured: &[[f6
     // water and of the edge of the world. How much of it is built follows from the deck's height.
     let reach = |p: P| p[0].abs() <= limit && p[1].abs() <= limit;
     let ramp_line = |from_end: bool| -> Vec<Node> {
+        if joined[usize::from(from_end)].is_some() {
+            return Vec::new();
+        }
         let (last, before) = if from_end { (&nodes[nodes.len() - 1], &nodes[nodes.len() - 2]) } else { (&nodes[0], &nodes[1]) };
-        let (dx, dz) = (last.p[0] - before.p[0], last.p[1] - before.p[1]);
-        let length = dx.hypot(dz).max(1e-9);
-        let (dx, dz) = (dx / length, dz / length);
+        // Along the road that leads on, then straight on in the direction it, or the deck, ends in.
+        let along: Vec<P> = match onward[usize::from(from_end)] {
+            [(path, _)] if path.len() >= 2 => resample_by(path, STEP).into_iter().skip(1).collect(),
+            [(a, _), (b, _), ..] if a.len() >= 2 && b.len() >= 2 => between(a, b).into_iter().filter(|p| (p[0] - last.p[0]).hypot(p[1] - last.p[1]) > STEP / 2.0).collect(),
+            _ => Vec::new(),
+        };
+        let (from, towards) = match along.len() {
+            0 => (last.p, [last.p[0] - before.p[0], last.p[1] - before.p[1]]),
+            1 => (along[0], [along[0][0] - last.p[0], along[0][1] - last.p[1]]),
+            n => (along[n - 1], [along[n - 1][0] - along[n - 2][0], along[n - 1][1] - along[n - 2][1]]),
+        };
+        let length = towards[0].hypot(towards[1]).max(1e-9);
+        let (dx, dz) = (towards[0] / length, towards[1] / length);
         let mut out = Vec::new();
         let mut distance = 0.0;
+        let mut step = 0;
         while distance < MAX_RAMP {
             distance += STEP;
-            let p = [last.p[0] + dx * distance, last.p[1] + dz * distance];
+            step += 1;
+            let beyond = (step - along.len().min(step)) as f64 * STEP;
+            let p = if step <= along.len() { along[step - 1] } else { [from[0] + dx * beyond, from[1] + dz * beyond] };
             let next = node(p, 0.0);
             if !reach(p) || next.level.is_some() {
                 break;
@@ -552,7 +734,25 @@ pub fn build(points: &[P], width: f64, kind: u8, pylons: Pylons, measured: &[[f6
     // A deck over a cutting stays flush with its road: what goes under it is dug down instead.
     let crossings = if pylons == Pylons::Flush { Vec::new() } else { roads_under(&all, hw, (a0, a1), under, ground) };
     let end_height = |n: &Node| n.level.unwrap_or(n.g);
-    let (h0, h1) = (end_height(&all[deck.start]), end_height(&all[deck.end - 1]));
+    let (h0, h1) = (joined[0].map_or(end_height(&all[deck.start]), |top| top - LIFT), joined[1].map_or(end_height(&all[deck.end - 1]), |top| top - LIFT));
+    // The heights the deck is held to where it rides on the bridge it leaves: from a joined end in, as
+    // far as it lies on that bridge's roadway, and no farther than its own middle.
+    let mut ridden: Vec<Option<f64>> = vec![None; all.len()];
+    let middle = (deck.start + deck.end) / 2;
+    if let Some(top) = joined[0] {
+        ridden[deck.start] = Some(top);
+        for i in deck.start + 1..middle {
+            let Some(top) = rides(all[i].p) else { break };
+            ridden[i] = Some(top);
+        }
+    }
+    if let Some(top) = joined[1] {
+        ridden[deck.end - 1] = Some(top);
+        for i in (middle + 1..deck.end - 1).rev() {
+            let Some(top) = rides(all[i].p) else { break };
+            ridden[i] = Some(top);
+        }
+    }
     let measured = measured_profile(&all[deck.clone()], measured);
     // The deck's profile, its ramps descending from its ends at `MAX_GRADE`, held up over the roads
     // under it that `lifting` picks out.
@@ -560,7 +760,7 @@ pub fn build(points: &[P], width: f64, kind: u8, pylons: Pylons, measured: &[[f6
         let over = need_over(&arcs, &crossings.iter().zip(lifting).filter(|(_, lift)| **lift).map(|(u, _)| u).collect::<Vec<_>>());
         // The ground under a ramp's line holds up only the ramp itself, below: rising ground past a
         // bridge's end does not lift its deck. A road under the ramp does.
-        let required: Vec<f64> = (0..all.len()).map(|i| if deck.contains(&i) { all[i].level.map_or(all[i].g + LIFT, |level| level + lift).max(over[i]) } else { over[i] }).collect();
+        let required: Vec<f64> = (0..all.len()).map(|i| if deck.contains(&i) { all[i].level.map_or(all[i].g + LIFT, |level| level + lift).max(over[i]).max(ridden[i].unwrap_or(f64::MIN)) } else { over[i] }).collect();
         let mut y: Vec<f64> = (0..all.len()).map(|i| if deck.contains(&i) { (h0 + (h1 - h0) * (arcs[i] - a0) / arc + LIFT).max(required[i]) } else { required[i] }).collect();
         limit_grade(&mut y, &arcs);
         // The deck, and a ramp held up over a road, from the first thing that holds it up to the last.
@@ -586,6 +786,12 @@ pub fn build(points: &[P], width: f64, kind: u8, pylons: Pylons, measured: &[[f6
         limit_grade(&mut y, &arcs);
         for (i, y) in y.iter_mut().enumerate().filter(|(i, _)| !deck.contains(i)) {
             *y = y.max(all[i].g + LIFT);
+        }
+        // An end on another bridge's deck is at its roadway, whatever the rest wants.
+        for (y, ridden) in y.iter_mut().zip(&ridden) {
+            if let Some(top) = ridden {
+                *y = *top;
+            }
         }
         y
     };
@@ -626,7 +832,37 @@ pub fn build(points: &[P], width: f64, kind: u8, pylons: Pylons, measured: &[[f6
     }
     let span = built(&y);
     let first = arcs[*span.start()];
-    let nodes: Vec<Node> = all.into_iter().zip(y).enumerate().filter(|(i, _)| span.contains(i)).map(|(_, (n, y))| Node { y, arc: n.arc - first, ..n }).collect();
+    let whole: Vec<Node> = all.into_iter().zip(y).enumerate().filter(|(i, _)| span.contains(i)).map(|(_, (n, y))| Node { y, arc: n.arc - first, ..n }).collect();
+    let line: Vec<P> = whole.iter().map(|n| n.p).collect();
+    // Where two carriageways lead on from an end, the ramp there is theirs, each on its own line: the
+    // deck is laid without it, and they take their heights from the profile, by how far out they are.
+    let (from, to) = (deck.start - *span.start(), deck.end - 1 - *span.start());
+    let twin = |end: usize| onward[end].len() >= 2 && pylons != Pylons::Flush;
+    let height_at = |arc: f64| {
+        let k = whole.partition_point(|n| n.arc < arc).clamp(1, whole.len() - 1);
+        let (a, b) = (&whole[k - 1], &whole[k]);
+        a.y + (b.y - a.y) * ((arc - a.arc) / (b.arc - a.arc).max(1e-9)).clamp(0.0, 1.0)
+    };
+    let mut strands: Vec<(Vec<Node>, f64)> = Vec::new();
+    for end in [0, 1].into_iter().filter(|&end| twin(end)) {
+        let (edge, out, most) = if end == 1 { (whole[to].arc, 1.0, whole[whole.len() - 1].arc - whole[to].arc) } else { (whole[from].arc, -1.0, whole[from].arc) };
+        for (path, across) in onward[end].iter().take(2) {
+            let strand: Vec<Node> = resample_by(path, STEP)
+                .into_iter()
+                .enumerate()
+                .map(|(k, p)| (k as f64 * STEP, p))
+                .take_while(|&(run, p)| run <= most + STEP && p[0].abs() <= limit && p[1].abs() <= limit)
+                .map(|(run, p)| {
+                    let g = f64::from(ground.height_at(p[0] as f32, p[1] as f32));
+                    Node { p, y: height_at(edge + out * run.min(most)).max(g + LIFT), g, level: None, arc: edge + out * run.min(most) }
+                })
+                .collect();
+            if strand.len() >= 2 {
+                strands.push((strand, across / 2.0 + EDGE_BEAM_WIDTH));
+            }
+        }
+    }
+    let nodes: Vec<Node> = whole.into_iter().enumerate().filter(|&(i, _)| (i >= from || !twin(0)) && (i <= to || !twin(1))).map(|(_, n)| n).collect();
 
     let tangent = |i: usize| {
         let (a, b) = (nodes[i.saturating_sub(1)].p, nodes[(i + 1).min(nodes.len() - 1)].p);
@@ -635,58 +871,18 @@ pub fn build(points: &[P], width: f64, kind: u8, pylons: Pylons, measured: &[[f6
         [dx / length, 0.0, dz / length]
     };
     let side = |t: V3| [-t[2], 0.0, t[0]];
-    // Underside: solid down to the ground where the deck is close to it, else a slab.
-    let bottom = |n: &Node| if n.y - n.g <= SOLID_BELOW + THICKNESS { n.g - 0.3 } else { n.y - THICKNESS };
-    let section = |i: usize| {
-        let n = &nodes[i];
-        let t = tangent(i);
-        let s = scale(side(t), hw);
-        let at = |sign: f64, y: f64| [n.p[0] + sign * s[0], y, n.p[1] + sign * s[2]];
-        let b = bottom(n);
-        [at(1.0, n.y), at(-1.0, n.y), at(-1.0, b), at(1.0, b)]
-    };
     let mut mesh = Mesh { pieces: Vec::new(), arc: 0.0 };
     let last = nodes.len() - 1;
-    let rings: Vec<[V3; 4]> = (0..nodes.len()).map(section).collect();
-    for i in 0..last {
-        let mid = [(nodes[i].p[0] + nodes[i + 1].p[0]) / 2.0, (nodes[i].p[1] + nodes[i + 1].p[1]) / 2.0];
-        mesh.arc = (nodes[i].arc + nodes[i + 1].arc) / 2.0;
-        // Capped at both ends, so a section cut from the bridge (`sections`) is a closed solid: an open
-        // end would be the edge of a hole to the client, drawn as a broken rim in the air once all
-        // round it is gone. The caps between two stretches are inside the concrete.
-        mesh.hexa(mid, false, rings[i], rings[i + 1], true, true);
-        if let Some(piece) = mesh.pieces.last_mut() {
-            piece.deck = true;
-        }
-        // A railing on an edge beam where there is a drop beside the deck.
-        if pylons != Pylons::Flush && nodes[i].y - nodes[i].g > 1.0 && nodes[i + 1].y - nodes[i + 1].g > 1.0 {
-            for sign in [1.0, -1.0] {
-                // A point `inward` metres in from the deck's edge on this side, `up` above node `k`'s roadway.
-                let edge = |k: usize, inward: f64, up: f64| {
-                    let s = scale(side(tangent(k)), sign * (hw - inward));
-                    [nodes[k].p[0] + s[0], nodes[k].y + up, nodes[k].p[1] + s[2]]
-                };
-                let flat = |a: V3, b: V3| unit(side(unit([b[0] - a[0], 0.0, b[2] - a[2]])));
-                // Where a stretch of railing stands: its own middle, not the deck's.
-                let middle = |a: V3, b: V3| [(a[0] + b[0]) / 2.0, (a[2] + b[2]) / 2.0];
-                let (a, b) = (edge(i, EDGE_BEAM_WIDTH / 2.0, EDGE_BEAM_HEIGHT / 2.0), edge(i + 1, EDGE_BEAM_WIDTH / 2.0, EDGE_BEAM_HEIGHT / 2.0));
-                mesh.prism(middle(a, b), false, a, b, [0.0, 1.0, 0.0], flat(a, b), EDGE_BEAM_HEIGHT / 2.0, EDGE_BEAM_WIDTH / 2.0);
-                mesh.mark_railing();
-                for height in [MID_RAIL_HEIGHT, RAILING_HEIGHT - RAIL_HALF] {
-                    let (a, b) = (edge(i, RAILING_INSET, height), edge(i + 1, RAILING_INSET, height));
-                    mesh.prism(middle(a, b), false, a, b, [0.0, 1.0, 0.0], flat(a, b), RAIL_HALF, RAIL_HALF);
-                    mesh.mark_railing();
-                }
-                // A post at this cross section, and at the last one where the railing ends.
-                let ends = if i + 1 == last || nodes[i + 2].y - nodes[i + 2].g <= 1.0 { vec![i, i + 1] } else { vec![i] };
-                for k in ends {
-                    let foot = edge(k, RAILING_INSET, EDGE_BEAM_HEIGHT);
-                    let t = tangent(k);
-                    mesh.prism([foot[0], foot[2]], false, foot, edge(k, RAILING_INSET, RAILING_HEIGHT), t, side(t), POST_HALF, POST_HALF);
-                    mesh.mark_railing();
-                }
-            }
-        }
+    lay_deck(&mut mesh, &nodes, hw, pylons != Pylons::Flush, ground);
+    // The carriageways' ramps, with no railing of one standing on the other or across a narrow slot
+    // between the two.
+    for (k, (strand, half)) in strands.iter().enumerate() {
+        let before = mesh.pieces.len();
+        lay_deck(&mut mesh, strand, *half, true, ground);
+        let others: Vec<(&[Node], f64)> = strands.iter().enumerate().filter(|&(other, _)| other != k).map(|(_, (nodes, half))| (nodes.as_slice(), *half)).collect();
+        let on_another = |p: P| others.iter().any(|(nodes, half)| nodes.windows(2).any(|pair| crate::assemble::distance_to_segment(p, pair[0].p, pair[1].p) < *half + STRAND_GAP));
+        let laid = mesh.pieces.split_off(before);
+        mesh.pieces.extend(laid.into_iter().filter(|piece| !piece.railing || !on_another(piece.at)));
     }
     // Piers under the high stretches.
     let mut since = PIER_SPACING;
@@ -779,7 +975,9 @@ pub fn build(points: &[P], width: f64, kind: u8, pylons: Pylons, measured: &[[f6
             }
         }
     }
-    mesh.pieces
+    // Each carriageway's ramp, as its line and the width of its road.
+    let ramps = strands.iter().map(|(nodes, half)| (nodes.iter().map(|n| n.p).collect(), 2.0 * (half - EDGE_BEAM_WIDTH))).collect();
+    (mesh.pieces, line, ramps)
 }
 
 /// Longest section a bridge is cut into, metres: a long stretch without piers (a ramp, a deck on the
@@ -1061,6 +1259,86 @@ mod tests {
         let between: Vec<f64> = (-30..=30).map(|x| top(f64::from(x))).collect();
         let crest = top(-30.0).min(top(30.0));
         assert!(between.iter().all(|&y| y >= crest - 0.01), "the deck dips between the roads: {between:?}");
+    }
+
+    #[test]
+    fn a_ramp_follows_the_road_that_leads_on_from_the_bridges_end() {
+        // Flat ground: a bridge along x lifted over a road, and the road it belongs to turning off
+        // 30 degrees to the south at its east end.
+        let ground = Ground::default();
+        let under: &[P] = &[[0.0, -80.0], [0.0, 80.0]];
+        let (dx, dz) = (30f64.to_radians().cos(), 30f64.to_radians().sin());
+        let on = [(vec![[20.0, 0.0], [20.0 + 200.0 * dx, 200.0 * dz]], 8.0)];
+        let (pieces, ..) = build_along(&[[-20.0, 0.0], [20.0, 0.0]], [&[], &on], [None, None], &|_| None, 8.0, ROAD_MAJOR, Pylons::None, &[], &[(under, 10.0)], &ground, &[], 1000.0);
+        // Every bit of ramp east of the bridge lies on the road, within its width of the road's line.
+        let off = pieces.iter().filter(|p| p.deck && p.at[0] > 21.0).map(|p| ((p.at[0] - 20.0) * dz - p.at[1] * dx).abs()).fold(0.0, f64::max);
+        assert!(off < 0.5, "the ramp strays {off} m from the road");
+        let far = pieces.iter().filter(|p| p.deck).map(|p| p.at[0]).fold(f64::MIN, f64::max);
+        assert!(far > 60.0, "the ramp runs on to x = {far}");
+        // West of the bridge, with no road given, it carries straight on.
+        assert!(pieces.iter().filter(|p| p.deck && p.at[0] < -21.0).all(|p| p.at[1].abs() < 1e-6));
+    }
+
+    #[test]
+    fn two_carriageways_past_a_shared_deck_each_come_down_on_a_ramp_of_their_own() {
+        // Flat ground: a deck 17 m wide lifted over a road, and past its east end two carriageways
+        // 8 m wide that start 4.5 m either side of its line and draw apart, one bending off south.
+        let ground = Ground::default();
+        let under: &[P] = &[[0.0, -80.0], [0.0, 80.0]];
+        let roads = [(vec![[20.0, -4.5], [60.0, -8.0], [200.0, -8.0]], 8.0), (vec![[20.0, 4.5], [60.0, 14.0], [160.0, 90.0]], 8.0)];
+        let (pieces, line, _) = build_along(&[[-20.0, 0.0], [20.0, 0.0]], [&[], &roads], [None, None], &|_| None, 17.0, ROAD_MAJOR, Pylons::None, &[], &[(under, 10.0)], &ground, &[], 1000.0);
+        let off = |p: P, road: &[P]| road.windows(2).map(|w| crate::assemble::distance_to_segment(p, w[0], w[1])).fold(f64::MAX, f64::min);
+        // Past the deck every piece of roadway is on one carriageway or the other, and both are covered
+        // as far as the ramps go.
+        let ramp: Vec<&Piece> = pieces.iter().filter(|p| p.deck && p.at[0] > 23.0).collect();
+        assert!(ramp.iter().all(|p| off(p.at, &roads[0].0).min(off(p.at, &roads[1].0)) < 0.5), "a piece of ramp lies off both roads");
+        for (road, _) in &roads {
+            let far = ramp.iter().filter(|p| off(p.at, road) < 0.5).map(|p| p.at[0]).fold(f64::MIN, f64::max);
+            assert!(far > 60.0, "a carriageway's ramp ends at x = {far}");
+        }
+        // They leave the deck at its height and come down together.
+        let top = |x: f64, road: &[P]| ramp.iter().filter(|p| off(p.at, road) < 0.5 && (p.at[0] - x).abs() < 2.5).flat_map(|p| p.tris.iter().flatten()).map(|v| v[1]).fold(f64::MIN, f64::max);
+        assert!(top(26.0, &roads[0].0) > 3.5 && (top(26.0, &roads[0].0) - top(26.0, &roads[1].0)).abs() < 0.3);
+        // No railing between the two where they still lie against each other.
+        let between: Vec<P> = pieces.iter().filter(|p| p.railing && p.at[0] > 21.0 && p.at[0] < 24.0 && p.at[1].abs() < 2.0).map(|p| p.at).collect();
+        assert!(between.is_empty(), "a railing stands between the carriageways: {between:?}");
+        assert!(line.len() > 20);
+    }
+
+    #[test]
+    fn a_bridge_that_leaves_another_out_over_the_water_starts_at_its_deck() {
+        // A slip road's bridge from the middle of the river, where it leaves a bridge 9 m up, to the bank.
+        let (ground, levels) = river();
+        let (pieces, ..) = build_along(&[[0.0, 0.0], [150.0, 0.0]], [&[], &[]], [Some(9.0), None], &|p| (p[0] < 30.0).then_some(9.0), 4.5, ROAD_MINOR, Pylons::None, &[], &[], &ground, &levels, 295.0);
+        let top = |x: f64| pieces.iter().filter(|p| p.deck && (p.at[0] - x).abs() < 2.0).flat_map(|p| p.tris.iter().flatten()).map(|v| v[1]).fold(f64::MIN, f64::max);
+        assert!((top(1.5) - 9.0).abs() < 0.2, "it starts {} m up", top(1.5));
+        // It keeps to the deck it leaves for the 30 m it lies on it, then comes down.
+        assert!((top(25.0) - 9.0).abs() < 0.05, "25 m out, still on the other deck, it is {} m up", top(25.0));
+        assert!(top(40.0) > 5.4 && top(40.0) < 9.0, "over the water it is {} m up", top(40.0));
+        assert!(pieces.iter().all(|p| p.at[0] > -0.1), "it has a ramp back from the bridge it leaves");
+    }
+
+    #[test]
+    fn a_ramp_ends_on_the_ground_and_follows_its_slope_across_where_it_is_low() {
+        // Ground falling 5 % towards +z: a bridge along x lifted over a road, its ramps running out
+        // along the slope.
+        let side = 61u32;
+        let heights = (0..side).flat_map(|j| (0..side).map(move |_| (30 - j as i32) * 25)).collect();
+        let ground = Ground { origin: -15_000, cell: 500, side, heights };
+        let height = |x: f64, z: f64| f64::from(ground.height_at(x as f32, z as f32));
+        let under: &[P] = &[[0.0, -100.0], [0.0, 100.0]];
+        let pieces = build(&[[-20.0, 0.0], [20.0, 0.0]], 8.0, ROAD_MAJOR, Pylons::None, &[], &[(under, 8.0)], &ground, &[], 140.0);
+        let tops: Vec<V3> = pieces.iter().filter(|p| p.deck).flat_map(|p| p.tris.iter().flatten().copied()).filter(|v| v[1] > height(v[0], v[2]) - 0.01).collect();
+        // The far edge of each ramp lies on the ground at both its corners.
+        let far = tops.iter().map(|v| v[0]).fold(f64::MIN, f64::max);
+        for v in tops.iter().filter(|v| v[0] > far - 0.01) {
+            assert!((v[1] - height(v[0], v[2]) - LANDING).abs() < 0.03, "the ramp's end is {} m over the ground at z = {}", v[1] - height(v[0], v[2]), v[2]);
+        }
+        // Two cross sections back it is the deck's lip up at both edges, uphill and down.
+        for v in tops.iter().filter(|v| (v[0] - (far - 2.0 * STEP)).abs() < 0.01) {
+            let over = v[1] - height(v[0], v[2]);
+            assert!(over > 0.05 && over < FOLLOWS, "a low section is {over} m over the ground at z = {}", v[2]);
+        }
     }
 
     #[test]

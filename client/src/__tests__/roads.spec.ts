@@ -137,4 +137,48 @@ describe('roads', () => {
       expect(Math.hypot(x - 50, z - Math.max(10, Math.min(90, z)))).toBeGreaterThan(2.5)
     }
   })
+
+  it('mitres a bend, the strips either side meeting edge to edge with nothing drawn over the corner', () => {
+    // A 6 m road turning 45 degrees at (50, 50), well inside the tile.
+    const road = { kind: ROAD_MINOR, width: 6, carried: false, lanes: 0, forward: 0, marks: 0, along: 0 }
+    const [, bent] = buildRoads([{ ...road, points: [[50, 10], [50, 50], [80, 80]] }], [0, 0, 100, 100])
+    const straight = (points: [number, number][]) => buildRoads([{ ...road, points }], [0, 0, 100, 100])[1]!.buffers.positions.length
+    // No more vertices than its two strips have alone, less the round cap each would have at the bend.
+    const cap = straight([[50, 10], [50, 50]]) + straight([[50, 50], [80, 80]]) - bent!.buffers.positions.length
+    expect(cap).toBeGreaterThan(0)
+    // The outer corner of the bend is reached, where the two outer edges meet on the line that halves
+    // it, and that is the farthest any of the road lies from its line.
+    const { positions } = bent!.buffers
+    const toSegment = (x: number, z: number, [ax, az]: number[], [bx, bz]: number[]) => {
+      const t = Math.max(0, Math.min(1, ((x - ax!) * (bx! - ax!) + (z - az!) * (bz! - az!)) / ((bx! - ax!) ** 2 + (bz! - az!) ** 2)))
+      return Math.hypot(x - ax! - (bx! - ax!) * t, z - az! - (bz! - az!) * t)
+    }
+    let farthest = 0
+    for (let v = 0; v < positions.length; v += 3) {
+      const [x, z] = [positions[v]!, positions[v + 2]!]
+      // Away from the two ends, which are round.
+      if (z > 15 && z < 75) farthest = Math.max(farthest, Math.min(toSegment(x, z, [50, 10], [50, 50]), toSegment(x, z, [50, 50], [80, 80])))
+    }
+    expect(farthest).toBeCloseTo(3 / Math.cos(Math.PI / 8), 1)
+  })
+
+  it('narrows a wide road to a narrower one that carries on, and rounds one that ends alone', () => {
+    const road = { kind: ROAD_MINOR, carried: false, lanes: 0, forward: 0, marks: 0, along: 0 }
+    const wide = { ...road, width: 10, points: [[50, 10], [50, 50]] as [number, number][] }
+    const narrow = { ...road, width: 5, points: [[50, 50], [50, 90]] as [number, number][] }
+    const beyond = (roads: Road[]) => {
+      // How far past the wide road's end, and outside the narrow road's width, anything is drawn.
+      const { positions } = buildRoads(roads, [0, 0, 100, 100])[1]!.buffers
+      let far = 0
+      for (let v = 0; v < positions.length; v += 3) if (Math.abs(positions[v]! - 50) > 2.6) far = Math.max(far, positions[v + 2]! - 50)
+      return far
+    }
+    expect(beyond([wide, narrow])).toBeLessThan(0.01)
+    // It is its full width 10 m back, and half way in between 4 m back.
+    const { positions } = buildRoads([wide, narrow], [0, 0, 100, 100])[1]!.buffers
+    expect(sidesAt(positions, 40)[1]! - sidesAt(positions, 40)[0]!).toBeCloseTo(10)
+    expect(sidesAt(positions, 46)[1]! - sidesAt(positions, 46)[0]!).toBeCloseTo(7.5)
+    // Alone, its end is a round cap half its width out.
+    expect(beyond([wide])).toBeGreaterThan(2)
+  })
 })

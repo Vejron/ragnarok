@@ -10,13 +10,20 @@ use crate::osm::Tags;
 use shared::world::{MARK_CENTRE, MARK_CENTRE_SOLID, MARK_EDGE, MARK_EDGE_SOLID, MARK_LANES, ROAD_MAJOR, ROAD_MINOR};
 
 /// How wide a lane of a major road is, metres.
-const LANE_MAJOR: f64 = 3.5;
+const LANE_MAJOR: f64 = 3.25;
 /// How wide a lane of a minor road is, metres.
 const LANE_MINOR: f64 = 3.0;
 /// The shoulders either side of the lanes together, metres: the edge lines are painted on them.
 const SHOULDERS: f64 = 1.0;
-/// The narrowest and widest `width` tag believed, metres: anything else is a typo or a whole street.
-const TAGGED_WIDTH: (f64, f64) = (2.0, 30.0);
+/// How wide a road of one lane is, metres, whatever its class: a slip road, a carriageway, a service
+/// road or a one-way street. A lane and its shoulders alone (4 m) left a car half a metre either
+/// side once the asphalt's edge had crumbled, and looked too slim to drive.
+const ONE_LANE: f64 = 5.5;
+/// The narrowest a roundabout's ring is, metres: a bus sweeps wide going round it.
+const ROUNDABOUT: f64 = 6.0;
+/// How far under and over what its lanes make it a `width` tag may put a road, metres. A tag far off
+/// is a kerb-to-kerb measure of a street with parking, or of one lane of several.
+const TAGGED_WIDTH: (f64, f64) = (1.0, 2.0);
 
 /// What a road's tags say of its lanes and paint (`Road::lanes`, `forward`, `marks`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -68,12 +75,16 @@ pub fn style(tags: &Tags) -> Option<(f64, u8, Lanes)> {
         _ => 1,
     });
     let lane = if kind == ROAD_MAJOR { LANE_MAJOR } else { LANE_MINOR };
-    let width = tag("width")
-        .and_then(|value| value.trim().trim_end_matches('m').trim().parse::<f64>().ok())
-        .filter(|width| (TAGGED_WIDTH.0..=TAGGED_WIDTH.1).contains(width))
-        // A carriageway of a divided road is as wide as its lanes, not as a whole road of its class.
-        .or_else(|| (tagged.is_some() || way != Oneway::Both).then(|| f64::from(lanes) * lane + SHOULDERS))
-        .unwrap_or(class_width);
+    // As wide as its lanes, whatever its class: a carriageway of a divided road is one lane wide, and
+    // an untagged main road two. A paved track keeps its own width.
+    let ring = matches!(tag("junction"), Some("roundabout" | "circular"));
+    let natural = match lanes {
+        _ if highway == "track" => class_width,
+        1 => ONE_LANE,
+        _ => f64::from(lanes) * lane + SHOULDERS,
+    }
+    .max(if ring { ROUNDABOUT } else { 0.0 });
+    let width = tag("width").and_then(|value| value.trim().trim_end_matches('m').trim().parse::<f64>().ok()).map_or(natural, |width| width.clamp(natural - TAGGED_WIDTH.0, natural + TAGGED_WIDTH.1));
     let forward = match way {
         Oneway::Along => lanes,
         Oneway::Against => 0,
@@ -119,10 +130,13 @@ mod tests {
     fn a_tagged_width_sets_the_road_width() {
         let (width, kind, _) = style(&tags(&[("highway", "secondary"), ("width", "8.5")])).unwrap();
         assert_eq!((width, kind), (8.5, ROAD_MAJOR));
+        // A tag far from what the lanes make it is brought to within a metre under and two over.
+        assert_eq!(style(&tags(&[("highway", "residential"), ("width", "2")])).unwrap().0, 6.0);
+        assert_eq!(style(&tags(&[("highway", "residential"), ("width", "18")])).unwrap().0, 9.0);
     }
 
     #[test]
-    fn lanes_without_width_give_three_and_a_half_metres_each() {
+    fn lanes_without_width_give_three_and_a_quarter_metres_each() {
         let (width, _, lanes) = style(&tags(&[("highway", "trunk"), ("lanes", "2")])).unwrap();
         assert_eq!(width, 2.0 * LANE_MAJOR + SHOULDERS);
         assert_eq!((lanes.lanes, lanes.forward), (2, 1));
@@ -130,15 +144,23 @@ mod tests {
     }
 
     #[test]
-    fn an_untagged_road_keeps_its_class_width() {
-        let (width, ..) = style(&tags(&[("highway", "primary")])).unwrap();
-        assert_eq!(width, 10.0);
+    fn an_untagged_road_is_as_wide_as_its_two_lanes_and_a_service_road_as_one() {
+        assert_eq!(style(&tags(&[("highway", "primary")])).unwrap().0, 2.0 * LANE_MAJOR + SHOULDERS);
+        assert_eq!(style(&tags(&[("highway", "residential")])).unwrap().0, 7.0);
+        assert_eq!(style(&tags(&[("highway", "service")])).unwrap().0, ONE_LANE);
+        assert_eq!(style(&tags(&[("highway", "track"), ("surface", "asphalt")])).unwrap().0, 4.5);
+    }
+
+    #[test]
+    fn a_roundabout_is_wide_enough_to_sweep_round() {
+        assert_eq!(style(&tags(&[("highway", "tertiary"), ("junction", "roundabout")])).unwrap().0, ROUNDABOUT);
+        assert_eq!(style(&tags(&[("highway", "primary"), ("junction", "roundabout"), ("lanes", "2")])).unwrap().0, 2.0 * LANE_MAJOR + SHOULDERS);
     }
 
     #[test]
     fn a_one_lane_carriageway_of_a_divided_road_is_one_lane_wide() {
         let (width, _, lanes) = style(&tags(&[("highway", "trunk"), ("oneway", "yes")])).unwrap();
-        assert_eq!(width, LANE_MAJOR + SHOULDERS);
+        assert_eq!(width, ONE_LANE);
         assert_eq!((lanes.lanes, lanes.forward), (1, 1));
         assert_eq!(lanes.marks, MARK_EDGE);
     }

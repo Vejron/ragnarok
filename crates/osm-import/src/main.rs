@@ -20,7 +20,7 @@
 //! Credentials, data sources and the cache are described in `WORLD.md`.
 
 use osm_import::region::{Place, Region};
-use osm_import::{assemble, bushes, cache, canopy, condition, dem, detail, grid, ground, ign, lidar, maptiles, minimap, osm, overpass, paint, pbf, progress, roof, species, trees, water};
+use osm_import::{assemble, bushes, cache, canopy, condition, dem, detail, grid, ground, ign, lidar, maptiles, minimap, network, osm, overpass, paint, pbf, progress, roof, sidepaths, species, trees, water};
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use std::path::PathBuf;
@@ -629,6 +629,14 @@ fn main() -> Result<()> {
             }
             None => osm,
         };
+        // The pavements and cycle tracks of a street are part of it, not paths of their own.
+        // A road cut into several ways is one road, before and after the paths along streets go:
+        // a cycleway is judged whole, and what is left of the paths is joined where a branch went.
+        let (osm, first) = network::join(osm, place.frame);
+        let (osm, beside) = sidepaths::prune(osm, place.frame);
+        let (osm, second) = network::join(osm, place.frame);
+        eprintln!("paths: {beside} footways and cycleways along a street, and the stumps that led to them, left out");
+        eprintln!("roads: {} joints between ways of one road closed", first + second);
         let (landforms, cliffs) = ocad.as_ref().map_or((&[][..], &[][..]), |ocad| (ocad.landforms.as_slice(), ocad.cliffs.as_slice()));
         let features = if args.raw_ground { condition::Features::default() } else { condition::Features::from_osm(&osm, place.frame, &map.streams) };
         let (ground, datum, dem, placed, shaping) = terrain(&args, &place, mask, &map, &features, landforms, cliffs)?;

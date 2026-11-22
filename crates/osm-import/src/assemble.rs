@@ -27,6 +27,24 @@ const SPAWN_CLEARANCE: f64 = 1.5;
 const SOLID_REACH: f64 = 20.0;
 /// No tree stands this close to the edge of a bridge, metres.
 const BRIDGE_CLEAR: f64 = 4.0;
+/// The laser reads the edge of a deck as crowns, and the map's line lies some metres off the real
+/// bridge, which is often wider than its road: a tree the laser found within this of a bridge's
+/// edge, metres, whose top is up at the roadway, is that reading and not a tree.
+const GHOST_REACH: f64 = 12.0;
+/// The same beside a tall house, whose outline is nearer the truth: balconies, eaves and a wall the
+/// outline is a little off, within this of it, metres.
+const GHOST_WALL: f64 = 6.0;
+/// A ghost's top is no more than this below the roadway or the roof it was read from, metres.
+const GHOST_BELOW: f64 = 4.0;
+/// Only a roadway or a roof at least this far up leaves ghosts worth dropping trees for, metres:
+/// beside a low house or an overpass a tree as tall as it is an ordinary tree.
+const GHOST_HOUSE: f64 = 10.0;
+
+/// Whether a tree of `height` beside a roadway or a roof `up` metres over the tree's foot is the
+/// laser's reading of it: the thing stands high, and the tree's top is up at it or over it.
+fn reads_as_a_crown(up: f64, height: f64) -> bool {
+    up >= GHOST_HOUSE && height > up - GHOST_BELOW
+}
 /// A tree's trunk keeps this far from the water drawn in a stream, metres.
 const TRUNK_CLEAR: f64 = 0.5;
 /// A golf flagstick's height, metres.
@@ -183,7 +201,7 @@ fn floor_of(ground: &Ground, footprint: &[P]) -> f64 {
 const PAVED: [&str; 5] = ["asphalt", "paved", "concrete", "concrete:plates", "chipseal"];
 
 /// How wide a paved track is: a farm or forest road with asphalt on it, metres.
-const PAVED_TRACK: f64 = 3.5;
+const PAVED_TRACK: f64 = 4.5;
 
 /// Road width in metres and kind of a `highway` way with this `surface` tag, or `None` for ways that
 /// are not walkable roads. A track with asphalt on it is an asphalt road, and a footway or cycleway
@@ -202,9 +220,9 @@ pub(crate) fn road_style(highway: &str, surface: Option<&str>) -> Option<(f64, u
 /// Road width in metres and kind of a `highway` class, whatever it is surfaced with.
 fn road_class(highway: &str) -> Option<(f64, u8)> {
     Some(match highway {
-        "motorway" | "trunk" | "primary" | "secondary" | "motorway_link" | "trunk_link" | "primary_link" | "secondary_link" => (10.0, ROAD_MAJOR),
+        "motorway" | "trunk" | "primary" | "secondary" | "motorway_link" | "trunk_link" | "primary_link" | "secondary_link" => (7.5, ROAD_MAJOR),
         "tertiary" | "tertiary_link" | "residential" | "unclassified" | "living_street" => (7.0, ROAD_MINOR),
-        "service" => (4.5, ROAD_MINOR),
+        "service" => (5.5, ROAD_MINOR),
         "pedestrian" => (5.0, ROAD_PATH),
         "footway" | "path" | "cycleway" | "steps" | "track" => (2.5, ROAD_PATH),
         _ => return None,
@@ -485,7 +503,7 @@ fn push_triangles(mesh: &mut CollisionMesh, shared: &mut HashMap<[i32; 3], u32>,
 /// `rails` are `(centre line, gauge, RAIL_*)`; `rail_bridges` carry tracks (kind `bridge::TRACK`),
 /// or a road that is drawn already, and are built like road bridges, but draw no road. No rocks or shrubs are made up inside `mapped`, an orienteering map's outline.
 #[allow(clippy::too_many_arguments)]
-fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collections::BTreeSet<(u16, u16)>>, buildings: Vec<Footprint>, roads: Vec<(Vec<P>, f64, u8)>, paints: &[Lanes], bridges: Vec<(Vec<P>, f64, u8, Pylons, Deck)>, rails: Vec<(Vec<P>, f64, u8)>, rail_bridges: Vec<(Vec<P>, f64, u8, Pylons, Deck)>, ski: Vec<Vec<P>>, covers: Vec<(u8, Vec<Vec<P>>)>, trees: Vec<(P, u8, f64, f64, bool)>, mapped: &[P], ground: Ground, water: Placed) -> Built {
+fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collections::BTreeSet<(u16, u16)>>, buildings: Vec<Footprint>, roads: Vec<(Vec<P>, f64, u8)>, paints: &[Lanes], strips: usize, bridges: Vec<(Vec<P>, f64, u8, Pylons, Deck)>, rails: Vec<(Vec<P>, f64, u8)>, rail_bridges: Vec<(Vec<P>, f64, u8, Pylons, Deck)>, ski: Vec<Vec<P>>, covers: Vec<(u8, Vec<Vec<P>>)>, trees: Vec<(P, u8, f64, f64, bool)>, mapped: &[P], ground: Ground, water: Placed) -> Built {
     let inner = half - EDGE_MARGIN;
     let mut manifest = Manifest {
         version: WORLD_VERSION,
@@ -498,6 +516,8 @@ fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collecti
     };
     let mut tiles: BTreeMap<(u16, u16), Tile> = BTreeMap::new();
     let mut footprints = Vec::new();
+    // How tall each of `footprints` stands over its floor, metres.
+    let mut tall: Vec<f64> = Vec::new();
     let streets = streets(&roads);
     for (mut footprint, height, fitted, paint, ceiling, kind) in buildings {
         if footprint.len() > 1 && footprint.first() == footprint.last() {
@@ -553,6 +573,7 @@ fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collecti
             paint,
         });
         footprints.push(footprint);
+        tall.push(parts.top - floor);
     }
     let mut candidates = Vec::new();
     let side = tile_size;
@@ -560,7 +581,82 @@ fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collecti
     // the ground under the deck and never offers a spawn: the ground there is a river bed, or the
     // way under the bridge. That is every bridge's road, and the stretch of a ground road a deck
     // lies over (a deck over a cutting, a bridge lengthened onto its bank).
-    let decks: Vec<(&[P], f64)> = bridges.iter().chain(&rail_bridges).filter(|bridge| bridge.3 != Pylons::Carried).map(|(points, width, ..)| (points.as_slice(), *width)).collect();
+    // Every bridge's pieces, a deck rising to let a bus under where a drivable road on the ground passes
+    // under it, and then the ramps of the roads that join a deck or a ramp where it stands above the
+    // ground (`slips`). Each is `(middle line, road width, kind, pylons, pieces)`.
+    // The last `strips` of the roads are the paving between close carriageways: not roads that pass
+    // under a bridge, lead on from one or join one.
+    let driven = &roads[..roads.len() - strips];
+    let drivable: Vec<(&[P], f64)> = driven.iter().filter(|(_, _, kind)| matches!(*kind, ROAD_MAJOR | ROAD_MINOR)).map(|(points, width, _)| (points.as_slice(), *width)).collect();
+    let nodes: Vec<(usize, P)> = bridges.iter().chain(&rail_bridges).enumerate().flat_map(|(way, (points, ..))| points.iter().map(move |&p| (way, p))).collect();
+    // With each bridge, its carriageways' own ramps, as lines and widths (`bridge::build_along`).
+    let build = |(points, width, kind, pylons, deck): &BridgeWay, joined: [Option<f64>; 2], rides: &dyn Fn(P) -> Option<f64>| -> (BuiltBridge, Ramps) {
+        let leads = [onward(points, false, *width, *kind, driven), onward(points, true, *width, *kind, driven)];
+        let (pieces, line, ramps) = bridge::build_along(points, [&leads[0], &leads[1]], joined, rides, *width, *kind, *pylons, deck, &drivable, &ground, &water.levels, inner);
+        ((if line.len() >= 2 { line } else { points.clone() }, *width, *kind, *pylons, pieces), ramps)
+    };
+    let (mut structures, mut ramps): (Vec<BuiltBridge>, Vec<Ramps>) = bridges.iter().chain(&rail_bridges).map(|way| build(way, [None, None], &|_| None)).unzip();
+    // A bridge with an end at a point of another bridge, whose roadway there is higher than its own,
+    // starts on that deck: a slip road that leaves a bridge out over the river, which built from the
+    // water under its end came up to nothing. Twice, for a bridge that leaves one that leaves another.
+    let mut raised = 0;
+    for _ in 0..2 {
+        for (index, way) in bridges.iter().chain(&rail_bridges).enumerate() {
+            if way.0.len() < 2 || matches!(way.3, Pylons::Carried | Pylons::Flush) {
+                continue;
+            }
+            let own_half = way.1 / 2.0 + bridge::EDGE_BEAM_WIDTH;
+            let joined = [way.0[0], way.0[way.0.len() - 1]].map(|end| {
+                if !nodes.iter().any(|&(other, node)| other != index && same(node, end)) {
+                    return None;
+                }
+                let own = bridge::top_at(&structures[index].4, own_half, end).unwrap_or_else(|| f64::from(ground.height_at(end[0] as f32, end[1] as f32)));
+                let other = structures.iter().enumerate().filter(|&(other, _)| other != index).filter_map(|(_, (_, across, _, _, pieces))| bridge::top_at(pieces, across / 2.0 + bridge::EDGE_BEAM_WIDTH, end)).fold(f64::MIN, f64::max);
+                (other > own + bridge::AT_GRADE).then_some(other)
+            });
+            if joined.iter().any(Option::is_some) {
+                // The roadway of the highest other bridge at a point: what it rides on from a joined end.
+                let rebuilt = {
+                    let rides = |p: P| structures.iter().enumerate().filter(|&(other, _)| other != index).filter_map(|(_, (_, across, _, _, pieces))| bridge::top_at(pieces, across / 2.0 + bridge::EDGE_BEAM_WIDTH, p)).reduce(f64::max);
+                    build(way, joined, &rides)
+                };
+                (structures[index], ramps[index]) = rebuilt;
+                raised += 1;
+            }
+        }
+    }
+    eprintln!("bridges: {raised} start on the deck of the bridge they leave");
+    let joining: Vec<(&[P], f64, u8)> = driven.iter().map(|(points, width, kind)| (points.as_slice(), *width, *kind)).chain(bridges.iter().zip(&structures).filter(|(way, built)| way.3 == Pylons::None && built.4.is_empty()).map(|((points, width, kind, ..), _)| (points.as_slice(), *width, *kind))).collect();
+    let nodes: Vec<P> = nodes.iter().map(|&(_, p)| p).collect();
+    let slipped = slips(&structures, &joining, &nodes, &ground, &water.levels, inner);
+    eprintln!("bridges: {} roads that join a raised deck come down from it on ramps of their own", slipped.len());
+    structures.extend(slipped);
+    // What carries a road: every bridge's own line, and the raised stretch of each ramp (a bridge's,
+    // each carriageway's own, and those of the roads that join one). A road's stretch under any of them
+    // is not drawn on the ground, so no asphalt shows beside the concrete. Where a ramp is nearly down,
+    // the road is still drawn, over it: the ground's bumps come through so low a slab, as asphalt.
+    let raised = |line: &[P], across: f64, pieces: &[bridge::Piece]| -> Vec<(Vec<P>, f64)> {
+        let up = |p: P| bridge::top_at(pieces, across / 2.0 + bridge::EDGE_BEAM_WIDTH, p).is_some_and(|top| top - f64::from(ground.height_at(p[0] as f32, p[1] as f32)) > bridge::AT_GRADE);
+        let mut runs: Vec<(Vec<P>, f64)> = Vec::new();
+        let mut run: Vec<P> = Vec::new();
+        for &p in line.iter().chain(std::iter::once(&[f64::NAN, f64::NAN])) {
+            if p[0].is_finite() && up(p) {
+                run.push(p);
+            } else if run.len() >= 2 {
+                runs.push((std::mem::take(&mut run), across));
+            } else {
+                run.clear();
+            }
+        }
+        runs
+    };
+    let ramp_runs: Vec<(Vec<P>, f64)> = structures
+        .iter()
+        .enumerate()
+        .filter(|(_, built)| built.3 != Pylons::Carried)
+        .flat_map(|(index, (line, width, _, _, pieces))| raised(line, *width, pieces).into_iter().chain(ramps.get(index).into_iter().flatten().flat_map(|(line, across)| raised(line, *across, pieces))).collect::<Vec<_>>())
+        .collect();
+    let decks: Vec<(&[P], f64)> = bridges.iter().chain(&rail_bridges).filter(|bridge| bridge.3 != Pylons::Carried).map(|(points, width, ..)| (points.as_slice(), *width)).chain(ramp_runs.iter().map(|(line, width)| (line.as_slice(), *width))).collect();
     let laid = roads.iter().zip(paints).flat_map(|((points, width, kind), paint)| carried_runs(points, &decks).into_iter().map(move |(run, carried)| (run, points, *width, *kind, *paint, carried)));
     for (points, way, width, kind, paint, carried) in laid.chain(bridges.iter().map(|(points, width, kind, ..)| (points.clone(), points, *width, *kind, Lanes::default(), true))) {
         for run in clip_polyline(&points, half) {
@@ -591,14 +687,22 @@ fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collecti
             per_tile(&manifest, half, side, &run, |key, points| tiles.entry(key).or_default().ski.push(SkiTrail { width: cm(SKI_TRAIL_WIDTH), points }));
         }
     }
-    // Bridges are solid geometry in the collision mesh, each piece in the tile it lies in. A deck
-    // rises to let a bus under where a drivable road on the ground passes under it.
-    let drivable: Vec<(&[P], f64)> = roads.iter().filter(|(_, _, kind)| matches!(*kind, ROAD_MAJOR | ROAD_MINOR)).map(|(points, width, _)| (points.as_slice(), *width)).collect();
-    for (index, (points, width, kind, pylons, deck)) in bridges.iter().chain(&rail_bridges).enumerate() {
-        let mut pieces = bridge::build(points, *width, *kind, *pylons, deck, &drivable, &ground, &water.levels, inner);
+    // Bridges are solid geometry in the collision mesh, each piece in the tile it lies in.
+    let lines: Vec<(Vec<P>, f64, Pylons)> = structures.iter().map(|(line, width, _, pylons, _)| (line.clone(), *width, *pylons)).collect();
+    // Each roadway's height along its middle line, with half its width over the edge beams, metres:
+    // what the laser read as crowns where it stands high (`GHOST_REACH`).
+    let roadways: Vec<(Vec<(P, f64)>, f64)> = structures
+        .iter()
+        .map(|(line, width, _, _, pieces)| {
+            let half = width / 2.0 + bridge::EDGE_BEAM_WIDTH;
+            (line.iter().filter_map(|&q| bridge::top_at(pieces, half, q).map(|top| (q, top))).collect(), half)
+        })
+        .collect();
+    for (index, (points, width, kind, _, mut pieces)) in structures.into_iter().enumerate() {
+        let (points, width, kind) = (&points, &width, &kind);
         // No railing where another bridge's deck lies beside this one: the two carriageways of a
         // divided road, whose decks overlap, are one roadway. A deck reaches an edge beam past its road.
-        let on_another = |p: P| bridges.iter().chain(&rail_bridges).enumerate().any(|(other, (line, across, _, pylons, _))| other != index && *pylons != Pylons::Carried && line.windows(2).any(|pair| distance_to_segment(p, pair[0], pair[1]) < across / 2.0 + bridge::EDGE_BEAM_WIDTH));
+        let on_another = |p: P| lines.iter().enumerate().any(|(other, (line, across, pylons))| other != index && *pylons != Pylons::Carried && line.windows(2).any(|pair| distance_to_segment(p, pair[0], pair[1]) < across / 2.0 + bridge::EDGE_BEAM_WIDTH));
         pieces.retain(|piece| !piece.railing || !on_another(piece.at));
         // No pier in the way of what goes under the bridge: a road, a track, or another bridge's road
         // (but not a carriageway the deck itself carries). Another bridge running alongside, as the
@@ -613,7 +717,7 @@ fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collecti
             let reach = |across: f64| across / 2.0 + width * 0.55 + PIER_CLEAR;
             let ground = roads.iter().chain(&rails).any(|(line, across, _)| line.windows(2).any(|pair| distance_to_segment(p, pair[0], pair[1]) < reach(*across)));
             let own = along(p);
-            let crossing = bridges.iter().chain(&rail_bridges).enumerate().filter(|(other, bridge)| *other != index && bridge.3 != Pylons::Carried).any(|(_, (line, across, ..))| {
+            let crossing = lines.iter().enumerate().filter(|(other, bridge)| *other != index && bridge.2 != Pylons::Carried).any(|(_, (line, across, _))| {
                 line.windows(2).any(|pair| {
                     let beside = own.is_some_and(|d| {
                         let e = unit_of(pair);
@@ -742,6 +846,9 @@ fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collecti
     // Nothing grows in a stream's channel: the water drawn in it and a trunk's width either side.
     let stream_clear = STREAM_WIDTH / 2.0 + TRUNK_CLEAR;
     let stream_boxes: Vec<[f64; 4]> = water.streams.iter().map(|points| reach_box(points, stream_clear)).collect();
+    let ghost_boxes: Vec<[f64; 4]> = roadways.iter().map(|(line, half)| reach_box(&line.iter().map(|&(q, _)| q).collect::<Vec<P>>(), half + GHOST_REACH)).collect();
+    // Trees dropped as the laser's reading of a thing built: `[of a bridge's deck, of a tall house's wall]`.
+    let mut ghosts = [0usize; 2];
     // Each tree that may stand where it is, with whether it is near a road or building.
     let mut standing: Vec<(crate::thin::Planted, bool)> = Vec::new();
     // Trees dropped for standing against a house: `[from the laser, planted]`.
@@ -766,6 +873,17 @@ fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collecti
         let on_bridge = bridges.iter().zip(&bridge_boxes).any(|((points, width, ..), b)| {
             in_box(b, at) && points.windows(2).any(|pair| distance_to_segment(at, pair[0], pair[1]) < width / 2.0 + BRIDGE_CLEAR)
         });
+        // A tall trunk with its crown at the roadway, beside or under a deck: the laser's reading of the deck.
+        let floor = f64::from(ground.height_at(at[0] as f32, at[1] as f32));
+        let ghost_of_deck = !planted
+            && crate::thin::is_tree(kind)
+            && roadways.iter().zip(&ghost_boxes).any(|((line, half), b)| {
+                in_box(b, at) && line.iter().any(|&(q, top)| (q[0] - at[0]).hypot(q[1] - at[1]) < half + GHOST_REACH && reads_as_a_crown(top - floor, height))
+            });
+        if ghost_of_deck {
+            ghosts[0] += 1;
+            continue;
+        }
         let on_course = kind != TREE_FLAG && golf.iter().any(|(b, ring)| in_box(b, at) && point_in_polygon(at, ring));
         if on_building || on_road || on_bridge || on_course {
             continue;
@@ -789,6 +907,16 @@ fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collecti
             .filter(|(_, b)| in_box(b, at))
             .flat_map(|(footprint, _)| (0..footprint.len()).map(|i| distance_to_segment(at, footprint[i], footprint[(i + 1) % footprint.len()])))
             .fold(f64::MAX, f64::min);
+        // A crown at the roof of a tall house, close by its wall: the laser's reading of the wall.
+        let ghost_of_house = !planted
+            && crate::thin::is_tree(kind)
+            && footprints.iter().zip(&footprint_boxes).zip(&tall).any(|((footprint, b), &tall)| {
+                reads_as_a_crown(tall, height) && in_box(b, at) && (0..footprint.len()).any(|i| distance_to_segment(at, footprint[i], footprint[(i + 1) % footprint.len()]) < GHOST_WALL)
+            });
+        if ghost_of_house {
+            ghosts[1] += 1;
+            continue;
+        }
         // A tree keeps its trunk and its crown off a house; rocks and shrubs may stand against one.
         if crate::thin::is_tree(kind) && !crate::thin::clear_of_walls(wall, crown) {
             against_walls[usize::from(planted)] += 1;
@@ -799,6 +927,7 @@ fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collecti
     // The woods are thinned among the trees that stand, so none is crowded out by one that does not.
     let keep = crate::thin::woods(&standing.iter().map(|(tree, _)| *tree).collect::<Vec<_>>());
     if !standing.is_empty() {
+        eprintln!("trees: {} were the laser's reading of a bridge's deck, {} of a tall house's wall", ghosts[0], ghosts[1]);
         eprintln!(
             "trees: {} against a house ({} of them planted), {} in lakes and rivers, {} in streams, {} thinned out of the woods",
             against_walls[0] + against_walls[1],
@@ -1205,6 +1334,7 @@ pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::B
     }
     eprintln!("roads: {} guard rails down divided roads, {:.1} km", barrier.rails.len(), barrier.rails.iter().flat_map(|rail| rail.windows(2)).map(|p| (p[1][0] - p[0][0]).hypot(p[1][1] - p[0][1])).fold(0.0, |sum, length| sum + length) / 1000.0);
     lines.extend(barrier.rails.into_iter().map(|rail| (LINE_GUARDRAIL, rail)));
+    let strips = barrier.strips.len();
     for (points, width) in barrier.strips {
         roads.push((points, width, ROAD_MAJOR));
         paints.push(Lanes::default());
@@ -1227,7 +1357,8 @@ pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::B
     let over_station = |ring: &[P]| ends.iter().any(|&end| point_in_polygon(end, ring) || (0..ring.len()).any(|i| distance_to_segment(end, ring[i], ring[(i + 1) % ring.len()]) < LIFT_STATION_CLEAR));
     buildings.retain(|(ring, ..)| !over_station(ring));
     // A road over a cutting OSM has no bridge for gets a deck, or it has a trench across it.
-    let cuts = cuttings(&roads, &ground);
+    // Not the paving between carriageways: a strip is no road, and over a valley it runs along a bridge.
+    let cuts = cuttings(&roads[..roads.len() - strips], &ground);
     eprintln!("bridges: {} decks over cuttings the roads cross", cuts.len());
     bridges.extend(cuts.into_iter().map(|(points, width, kind)| (points, width, kind, Pylons::Flush, Deck::new())));
     let before = bridges.len();
@@ -1253,7 +1384,7 @@ pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::B
         trees.extend(grown.into_iter().filter(|(at, ..)| mapped.len() < 3 || !point_in_polygon(*at, &mapped)));
         eprintln!("trees: {} shrubs and young trees along the woods' edges", trees.len() - before);
     }
-    let mut built = assemble(frame, half, tile_size, mask, buildings, roads, &paints, bridges, rails, rail_bridges, ski, covers, trees, &mapped, ground, water);
+    let mut built = assemble(frame, half, tile_size, mask, buildings, roads, &paints, strips, bridges, rails, rail_bridges, ski, covers, trees, &mapped, ground, water);
     if let Some(ground) = &kept {
         lay_lifts(&mut built, &lifts, half, ground);
         lay_lines(&mut built, &lines, &decks, half, tile_size, ground);
@@ -1539,6 +1670,173 @@ const PIER_CLEAR: f64 = 1.0;
 
 /// A road bridge as `from_osm` gathers it: its centre line, width, `ROAD_*`, pylons and deck returns.
 type BridgeWay = (Vec<P>, f64, u8, Pylons, Deck);
+
+/// How far a bridge's ramp may be led along the roads that go on from its end, metres: as long as
+/// the longest ramp.
+const ONWARD: f64 = 150.0;
+
+/// The roads a bridge's ramp follows past one end of `bridge` (its last point with `from_end`, else its
+/// first), each as its line and its width: the road on the ground that goes on from there, and the
+/// next where that one ends, as far as `ONWARD`; two where the deck is one two carriageways share. A road goes on when it ends within the bridge's width
+/// of the end and leaves it within 45 degrees of the way the bridge was going; the straightest is
+/// taken, a driven road for a driven bridge and a path for a path's. Empty where none does.
+fn onward(bridge: &[P], from_end: bool, width: f64, kind: u8, roads: &[(Vec<P>, f64, u8)]) -> Vec<(Vec<P>, f64)> {
+    let driven = |kind: u8| matches!(kind, ROAD_MAJOR | ROAD_MINOR);
+    if bridge.len() < 2 {
+        return Vec::new();
+    }
+    let n = bridge.len();
+    let (end, before) = if from_end { (bridge[n - 1], bridge[n - 2]) } else { (bridge[0], bridge[1]) };
+    let unit = |a: P, b: P| {
+        let length = (b[0] - a[0]).hypot(b[1] - a[1]).max(1e-9);
+        [(b[0] - a[0]) / length, (b[1] - a[1]) / length]
+    };
+    // Each road with an end within `reach` of `at` that leads away within 45 degrees of `heading`, as
+    // (which, whether from its last point, how straight on), the straightest first.
+    let leading = |at: P, heading: P, reach: f64, taken: &[usize]| {
+        let mut found: Vec<(usize, bool, f64)> = roads
+            .iter()
+            .enumerate()
+            .filter(|(k, (points, _, other))| points.len() >= 2 && !taken.contains(k) && driven(*other) == driven(kind))
+            .flat_map(|(k, (points, ..))| {
+                let ends = [(points[0], points[1], false), (points[points.len() - 1], points[points.len() - 2], true)];
+                ends.into_iter().filter(|(end, ..)| (end[0] - at[0]).hypot(end[1] - at[1]) < reach).map(move |(end, then, reversed)| {
+                    let d = unit(end, then);
+                    (k, reversed, d[0] * heading[0] + d[1] * heading[1])
+                })
+            })
+            .filter(|&(.., straight)| straight > std::f64::consts::FRAC_1_SQRT_2)
+            .collect();
+        found.sort_by(|a, b| b.2.total_cmp(&a.2));
+        found
+    };
+    // The road `first` and the roads that go on from where it ends, as one line from its end at the bridge.
+    let follow = |first: (usize, bool, f64)| {
+        let mut line: Vec<P> = Vec::new();
+        let mut taken: Vec<usize> = Vec::new();
+        let mut length = 0.0;
+        let mut next = Some(first);
+        while let Some((k, reversed, _)) = next {
+            taken.push(k);
+            let points: Vec<P> = if reversed { roads[k].0.iter().rev().copied().collect() } else { roads[k].0.clone() };
+            if line.is_empty() {
+                line.push(points[0]);
+            }
+            for pair in points.windows(2) {
+                length += (pair[1][0] - pair[0][0]).hypot(pair[1][1] - pair[0][1]);
+                line.push(pair[1]);
+            }
+            // The next road shares the point this one ends at.
+            let (at, heading) = (points[points.len() - 1], unit(points[points.len() - 2], points[points.len() - 1]));
+            next = if length < ONWARD { leading(at, heading, 0.5, &taken).first().copied() } else { None };
+        }
+        line
+    };
+    let first = leading(end, unit(before, end), width / 2.0 + 1.0, &[]);
+    let Some(&best) = first.first() else { return Vec::new() };
+    let start = |&(k, reversed, _): &(usize, bool, f64)| if reversed { roads[k].0[roads[k].0.len() - 1] } else { roads[k].0[0] };
+    // The deck two carriageways share ends between the two, each leaving from a point of its own.
+    // Two roads leaving one point are a fork, and the straighter is followed.
+    let twin = first.iter().skip(1).find(|other| {
+        let (a, b) = (start(&best), start(other));
+        (a[0] - b[0]).hypot(a[1] - b[1]) > 1.0
+    });
+    [Some(best), twin.copied()].into_iter().flatten().map(|lead| (follow(lead), roads[lead.0].1)).filter(|(line, _)| line.len() >= 2).collect()
+}
+
+/// Whether two points are one node of OpenStreetMap, metres apart.
+fn same(a: P, b: P) -> bool {
+    (a[0] - b[0]).hypot(a[1] - b[1]) < 0.5
+}
+
+/// The ramps of the carriageways that leave a shared deck, each as its line and its road's width.
+type Ramps = Vec<(Vec<P>, f64)>;
+
+/// A bridge, or a joining road's ramp, as built: its middle line, its road's width, the kind of its
+/// road, its pylons and its pieces.
+type BuiltBridge = (Vec<P>, f64, u8, Pylons, Vec<bridge::Piece>);
+
+/// The ramps of the roads that join a deck or a ramp where it stands above the ground: a bridge that
+/// rose over a road under it has its end, and its ramp, up in the air, and a road that meets it there
+/// would end at its side, below it. `structures` are the bridges as built, `joining` the roads on the
+/// ground and the bridges too short to be built (`(line, width, kind)`). A road whose end lies on a
+/// roadway more than `AT_GRADE` up comes down from there along its own line (`bridge::slip`), a road
+/// through a junction on such a roadway comes down from it both ways, and a driven road that joins
+/// the ramp of another driven road does in turn. A path comes down at `bridge::PATH_GRADE`, and its
+/// ramp lifts nothing that meets it. The road a ramp already lies along is left to it. A road
+/// joins where its end is a point of a bridge's way (`nodes`) or of a road that lies along the ramp:
+/// one that only ends under a deck, as OpenStreetMap cuts a road in two under a bridge, passes under.
+fn slips(structures: &[BuiltBridge], joining: &[(&[P], f64, u8)], nodes: &[P], ground: &Ground, levels: &[i32], limit: f64) -> Vec<BuiltBridge> {
+    let mut found: Vec<BuiltBridge> = Vec::new();
+    let mut used = vec![false; joining.len()];
+    let unit = |a: P, b: P| {
+        let length = (b[0] - a[0]).hypot(b[1] - a[1]).max(1e-9);
+        [(b[0] - a[0]) / length, (b[1] - a[1]) / length]
+    };
+    let reach_box = |points: &[P], grow: f64| points.iter().fold([f64::MAX, f64::MAX, f64::MIN, f64::MIN], |b, p| [b[0].min(p[0] - grow), b[1].min(p[1] - grow), b[2].max(p[0] + grow), b[3].max(p[1] + grow)]);
+    let in_box = |b: &[f64; 4], p: P| p[0] >= b[0] && p[0] <= b[2] && p[1] >= b[1] && p[1] <= b[3];
+    for _ in 0..4 {
+        let boxes: Vec<[f64; 4]> = structures.iter().chain(&found).map(|(line, width, ..)| reach_box(line, width / 2.0 + 4.0)).collect();
+        let mut more = Vec::new();
+        for (k, &(road, width, kind)) in joining.iter().enumerate() {
+            if used[k] || road.len() < 2 {
+                continue;
+            }
+            // From each end, and from each point along it both ways: a road through a junction on a
+            // ramp climbs to it from either side.
+            let starts = (0..road.len()).flat_map(|i| [(i, false), (i, true)]).filter(|&(i, back)| if back { i > 0 } else { i + 1 < road.len() });
+            for (i, back) in starts {
+                let line: Vec<P> = if back { road[..=i].iter().rev().copied().collect() } else { road[i..].to_vec() };
+                let (end, towards) = (line[0], unit(line[0], line[1]));
+                let floor = f64::from(ground.height_at(end[0] as f32, end[1] as f32));
+                // The highest roadway the end lies on, unless one of them has its own ramp along this road.
+                let mut height = None::<f64>;
+                let mut onward = false;
+                // Only a driven road's ramp lifts what joins it, and only other driven roads: a path
+                // that came down from a deck would otherwise lift each path and street it meets on
+                // the way, and they the next, into a tangle of ramps over the bank.
+                let driven = |kind: u8| matches!(kind, ROAD_MAJOR | ROAD_MINOR);
+                let lifts = |index: usize, of: u8| index < structures.len() || (driven(of) && driven(kind));
+                for (_, ((along, across, _, pylons, pieces), _)) in structures.iter().chain(&found).zip(&boxes).enumerate().filter(|&(index, ((_, _, of, ..), b))| lifts(index, *of) && in_box(b, end)) {
+                    let Some(top) = bridge::top_at(pieces, across / 2.0 + bridge::EDGE_BEAM_WIDTH, end).filter(|top| top - floor > bridge::AT_GRADE && *pylons != Pylons::Flush) else { continue };
+                    let nearest = along.windows(2).min_by(|a, b| distance_to_segment(end, a[0], a[1]).total_cmp(&distance_to_segment(end, b[0], b[1])));
+                    let beside = nearest.is_some_and(|pair| {
+                        let d = unit(pair[0], pair[1]);
+                        (d[0] * towards[0] + d[1] * towards[1]).abs() > bridge::PARALLEL
+                    });
+                    let at_its_end = [along[0], along[along.len() - 1]].iter().any(|tip| (tip[0] - end[0]).hypot(tip[1] - end[1]) < 6.0);
+                    onward |= beside && !at_its_end;
+                    // A point of a road that runs along this roadway here: the road under its ramp.
+                    let lies_along = |other: &[P]| {
+                        (0..other.len()).any(|i| {
+                            same(other[i], end) && [i.checked_sub(1).map(|h| (other[h], other[i])), (i + 1 < other.len()).then(|| (other[i], other[i + 1]))].into_iter().flatten().any(|(a, b)| {
+                                let (d, e) = (unit(a, b), nearest.map_or([0.0, 0.0], |pair| unit(pair[0], pair[1])));
+                                (d[0] * e[0] + d[1] * e[1]).abs() > bridge::PARALLEL
+                            })
+                        })
+                    };
+                    if nodes.iter().any(|&node| same(node, end)) || joining.iter().enumerate().any(|(other, (line, ..))| other != k && lies_along(line)) {
+                        height = Some(height.map_or(top, |known| known.max(top)));
+                    }
+                }
+                let Some(height) = height.filter(|_| !onward) else { continue };
+                // A hair under the roadway it leaves, so the two do not lie in one plane where they overlap.
+                let grade = if matches!(kind, ROAD_MAJOR | ROAD_MINOR) { bridge::MAX_GRADE } else { bridge::PATH_GRADE };
+                let pieces = bridge::slip(&line, width, height - 0.02, grade, ground, levels, limit);
+                let built = bridge::line_of(&pieces);
+                if built.len() >= 2 {
+                    used[k] = true;
+                    more.push((built, width, kind, Pylons::None, pieces));
+                }
+            }
+        }
+        if more.is_empty() {
+            break;
+        }
+        found.extend(more);
+    }
+    found
+}
 
 /// Bridge ways that end within this of each other are one bridge, metres.
 const BRIDGE_JOIN: f64 = 1.0;
@@ -2339,7 +2637,7 @@ fn pylons_for(frame: Frame, points: &[P]) -> Pylons {
 
 /// Whether a road way may be a carriageway of a divided road: one way along its points, a through road
 /// (not a slip road or a roundabout), and not in a tunnel.
-fn is_carriageway(tags: &std::collections::HashMap<String, String>) -> bool {
+pub(crate) fn is_carriageway(tags: &std::collections::HashMap<String, String>) -> bool {
     let tag = |key: &str| tags.get(key).map(String::as_str);
     crate::lanes::oneway(tags) == crate::lanes::Oneway::Along
         && matches!(tag("highway"), Some("motorway" | "trunk" | "primary" | "secondary"))
@@ -2353,7 +2651,7 @@ const RAILED_SPEED: u32 = 70;
 /// Whether a road is driven fast enough for a rail down its middle: a motorway, a trunk road or a
 /// motorroad, or signed at `RAILED_SPEED` and over. A primary road with no `maxspeed` is taken as a
 /// country road, as most are in Sweden; a secondary one as a town's.
-fn is_fast(tags: &std::collections::HashMap<String, String>) -> bool {
+pub(crate) fn is_fast(tags: &std::collections::HashMap<String, String>) -> bool {
     let tag = |key: &str| tags.get(key).map(String::as_str);
     let signed = tag("maxspeed").and_then(|speed| speed.trim().parse::<u32>().ok());
     matches!(tag("highway"), Some("motorway" | "trunk")) || tag("motorroad") == Some("yes") || signed.map_or(tag("highway") == Some("primary"), |speed| speed >= RAILED_SPEED)
@@ -2613,7 +2911,7 @@ pub fn synthetic_city(half: f64, tile_size: f64, ground: Ground, water: Placed) 
     let middle = start + (count / 2) as f64 * PITCH;
     let rails = vec![(vec![[middle, -half], [middle, half]], 1.435, RAIL_TRAM)];
     let paints = vec![Lanes::default(); roads.len()];
-    let mut built = assemble(Frame::default(), half, tile_size, None, buildings, roads, &paints, bridges, rails, Vec::new(), Vec::new(), covers, trees, &[], ground, water);
+    let mut built = assemble(Frame::default(), half, tile_size, None, buildings, roads, &paints, 0, bridges, rails, Vec::new(), Vec::new(), covers, trees, &[], ground, water);
     if let Some(ground) = kept {
         lay_lines(&mut built, &lines, &[], half, tile_size, &ground);
         crate::graves::lay(&mut built, &yards, &ways, half, &ground);
@@ -2780,7 +3078,7 @@ mod tests {
         let heights = (0..side * side).map(|k| if (-15_000 + (k % side) as i32 * 500).abs() < 4_000 { -600 } else { 0 }).collect();
         let ground = Ground { origin: -15_000, cell: 500, side, heights };
         let way = |z: f64| (vec![[-70.0, z], [70.0, z]], 7.0, ROAD_MINOR, Pylons::None, Deck::new());
-        let built = assemble(Frame::default(), 150.0, 100.0, None, Vec::new(), Vec::new(), &[], vec![way(-3.8), way(3.8)], Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), &[], ground, Placed::default());
+        let built = assemble(Frame::default(), 150.0, 100.0, None, Vec::new(), Vec::new(), &[], 0, vec![way(-3.8), way(3.8)], Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), &[], ground, Placed::default());
         let vertices: Vec<[f64; 3]> = built.tiles.values().flat_map(|tile| tile.collision.vertices.iter().map(|v| v.map(|c| f64::from(c) / 100.0))).filter(|v| v[0].abs() < 30.0).collect();
         // The deck is flat at its lip over the ground at the ends; between the two roads only its top.
         let middle = vertices.iter().filter(|v| v[2].abs() < 1.5).map(|v| v[1]).fold(f64::MIN, f64::max);
@@ -2796,7 +3094,7 @@ mod tests {
         let heights = (0..side * side).map(|k| if (-15_000 + (k % side) as i32 * 500).abs() < 4_000 { -1_500 } else { 0 }).collect();
         let ground = Ground { origin: -15_000, cell: 500, side, heights };
         let way = |z: f64| (vec![[-70.0, z], [70.0, z]], 7.0, ROAD_MINOR, Pylons::None, Deck::new());
-        let built = assemble(Frame::default(), 150.0, 100.0, None, Vec::new(), Vec::new(), &[], vec![way(-4.0), way(4.0)], Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), &[], ground, Placed::default());
+        let built = assemble(Frame::default(), 150.0, 100.0, None, Vec::new(), Vec::new(), &[], 0, vec![way(-4.0), way(4.0)], Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), &[], ground, Placed::default());
         // A pier's foot is half a metre into the valley's floor.
         let feet = |z0: f64, z1: f64| built.tiles.values().flat_map(|tile| tile.collision.vertices.iter()).filter(|v| v[1] < -1_400 && (z0..z1).contains(&(f64::from(v[2]) / 100.0))).count();
         assert!(feet(-8.0, 0.0) > 0, "the carriageway at -4 stands on piers");
@@ -2825,7 +3123,7 @@ mod tests {
         // height model with no embankments has an interchange.
         let road = (vec![[0.0, -90.0], [0.0, 90.0]], 10.0, ROAD_MAJOR);
         let bridge = (vec![[-25.0, 0.0], [25.0, 0.0]], 8.0, ROAD_MINOR, Pylons::None, Deck::new());
-        let mut built = assemble(Frame::default(), 150.0, 100.0, None, Vec::new(), vec![road], &[Lanes::default()], vec![bridge], Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), &[], Ground::default(), Placed::default());
+        let mut built = assemble(Frame::default(), 150.0, 100.0, None, Vec::new(), vec![road], &[Lanes::default()], 0, vec![bridge], Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), &[], Ground::default(), Placed::default());
         for tile in built.tiles.values_mut() {
             crate::voxels::bake(tile);
         }
@@ -2843,6 +3141,69 @@ mod tests {
         let roof = f64::from(BUS_RIDE_HEIGHT + BUS_BODY_CENTRE[1] + BUS_BODY_HALF[1]);
         assert!(lowest < f64::MAX, "the bridge is built over the road");
         assert!(lowest >= roof + 0.5, "the bridge's underside over the road is {lowest} m up, a bus's roof {roof} m");
+    }
+
+    #[test]
+    fn a_road_joining_a_raised_bridge_at_its_end_comes_down_from_it_on_a_ramp_of_its_own() {
+        // Flat ground: a bridge along x lifted over a road under it, and a slip road that leaves its
+        // east end southwards, where the bridge's own ramp is still some 4 m up.
+        // The road under is cut in two under the deck, as OpenStreetMap often has it.
+        let (north, south) = ((vec![[0.0, -90.0], [0.0, 0.0]], 10.0, ROAD_MAJOR), (vec![[0.0, 0.0], [0.0, 90.0]], 10.0, ROAD_MAJOR));
+        let slip = (vec![[25.0, 0.0], [25.0, 20.0], [25.0, 120.0]], 4.5, ROAD_MINOR);
+        let bridge = (vec![[-25.0, 0.0], [25.0, 0.0]], 8.0, ROAD_MINOR, Pylons::None, Deck::new());
+        let across = (vec![[-60.0, 20.0], [25.0, 20.0], [130.0, 20.0]], 6.0, ROAD_MINOR);
+        let built = assemble(Frame::default(), 150.0, 100.0, None, Vec::new(), vec![north, south, slip, across], &[Lanes::default(); 4], 0, vec![bridge], Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), &[], Ground::default(), Placed::default());
+        // The highest roadway (a face looking up, below any railing) over a spot.
+        let vertices: Vec<[f64; 3]> = built.tiles.values().flat_map(|tile| tile.collision.vertices.iter().map(|v| v.map(|c| f64::from(c) / 100.0))).collect();
+        let top = |x: f64, z: f64| vertices.iter().filter(|v| (v[0] - x).abs() < 4.0 && (v[2] - z).abs() < 4.0).map(|v| v[1]).fold(0.0, f64::max);
+        // The slip road's ramp leaves the bridge at its height and comes down at 6 %.
+        let joint = top(25.0, 6.0);
+        assert!(joint > 3.0, "the slip road starts {joint} m up, on the bridge");
+        let (near, far) = (top(25.0, 30.0), top(25.0, 110.0));
+        assert!(near > 1.5 && near < joint, "30 m down the slip road its ramp is {near} m up");
+        assert!(far < 0.2, "the slip road is on the ground again at 110 m, {far} m up");
+        // The road under the deck only ends there: it joins nothing, and nothing is built along it.
+        assert!(top(0.0, 40.0) < 0.01 && top(0.0, -40.0) < 0.01, "a ramp lies on the road under the bridge");
+        // A road through a junction on the slip road's ramp climbs to it from both sides.
+        assert!(top(15.0, 20.0) > 1.0 && top(35.0, 20.0) > 1.0, "the road across the ramp is {} and {} m up beside it", top(15.0, 20.0), top(35.0, 20.0));
+        assert!(top(-40.0, 20.0) < 0.2 && top(110.0, 20.0) < 0.2, "the road across is down again further out");
+        // The stretch under the ramp is carried by it.
+        assert!(built.tiles.values().flat_map(|t| &t.roads).any(|r| r.carried && r.points.iter().any(|p| p[0] == 2_500 && p[1] > 1_000)), "the slip road is carried where its ramp lies");
+    }
+
+    #[test]
+    fn a_path_leaving_a_raised_bridge_comes_down_steeply_and_lifts_nothing_it_meets() {
+        // Flat ground: a bridge along x lifted over a road under it, and a footpath that leaves its
+        // east end southwards, across a street and past the end of another path.
+        let (north, south) = ((vec![[0.0, -90.0], [0.0, 0.0]], 10.0, ROAD_MAJOR), (vec![[0.0, 0.0], [0.0, 90.0]], 10.0, ROAD_MAJOR));
+        let path = (vec![[25.0, 0.0], [25.0, 8.0], [25.0, 12.0], [25.0, 120.0]], 2.5, ROAD_PATH);
+        let street = (vec![[-60.0, 8.0], [25.0, 8.0], [130.0, 8.0]], 6.0, ROAD_MINOR);
+        let walk = (vec![[25.0, 12.0], [90.0, 12.0]], 2.5, ROAD_PATH);
+        let bridge = (vec![[-25.0, 0.0], [25.0, 0.0]], 8.0, ROAD_MINOR, Pylons::None, Deck::new());
+        let built = assemble(Frame::default(), 150.0, 100.0, None, Vec::new(), vec![north, south, path, street, walk], &[Lanes::default(); 5], 0, vec![bridge], Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), &[], Ground::default(), Placed::default());
+        let vertices: Vec<[f64; 3]> = built.tiles.values().flat_map(|tile| tile.collision.vertices.iter().map(|v| v.map(|c| f64::from(c) / 100.0))).collect();
+        let top = |x: f64, z: f64, reach: f64| vertices.iter().filter(|v| (v[0] - x).abs() < reach && (v[2] - z).abs() < reach).map(|v| v[1]).fold(0.0, f64::max);
+        // The path starts on the bridge and is down within the length of a flight of steps.
+        assert!(top(25.0, 2.0, 2.0) > 3.0, "the path starts {} m up, on the bridge", top(25.0, 2.0, 2.0));
+        assert!(top(25.0, 40.0, 4.0) < 0.2, "the path is still {} m up 40 m from the bridge", top(25.0, 40.0, 4.0));
+        // The street it crosses and the path that ends on it stay on the ground.
+        assert!(top(60.0, 8.0, 1.5) < 0.2 && top(-10.0, 8.0, 1.5) < 0.2, "the street is lifted to the path's ramp");
+        assert!(top(60.0, 12.0, 1.5) < 0.2, "the other path is lifted to the path's ramp");
+    }
+
+    #[test]
+    fn a_ramp_is_led_along_the_road_past_the_bridge_and_along_each_of_two_carriageways() {
+        // One road on from the bridge's east end, bending south, cut in two ways.
+        let bridge = [[-20.0, 0.0], [20.0, 0.0]];
+        let roads = vec![(vec![[20.0, 0.0], [60.0, 10.0]], 8.0, ROAD_MAJOR), (vec![[100.0, 40.0], [60.0, 10.0]], 8.0, ROAD_MAJOR), (vec![[20.0, 0.0], [20.0, 80.0]], 6.0, ROAD_MINOR), (vec![[20.0, 0.0], [70.0, 5.0]], 2.5, ROAD_PATH)];
+        assert_eq!(onward(&bridge, true, 8.0, ROAD_MAJOR, &roads), [(vec![[20.0, 0.0], [60.0, 10.0], [100.0, 40.0]], 8.0)]);
+        assert!(onward(&bridge, false, 8.0, ROAD_MAJOR, &roads).is_empty(), "no road leads on from the west end");
+        // A deck 17 m wide that two carriageways share: they go on 4 m either side of its line, and
+        // each is followed from its own end, the one drawn towards the bridge turned round.
+        let pair = vec![(vec![[20.0, -4.0], [60.0, 6.0], [120.0, 46.0]], 8.0, ROAD_MAJOR), (vec![[120.0, 54.0], [60.0, 14.0], [20.0, 4.0]], 7.0, ROAD_MAJOR)];
+        let mut lines = onward(&bridge, true, 17.0, ROAD_MAJOR, &pair);
+        lines.sort_by(|a, b| a.0[0][1].total_cmp(&b.0[0][1]));
+        assert_eq!(lines, [(pair[0].0.clone(), 8.0), (pair[1].0.iter().rev().copied().collect(), 7.0)]);
     }
 
     #[test]
@@ -2901,7 +3262,7 @@ mod tests {
             ([stream[0] + 0.8, stream[1]], TREE_BIRCH, 10.0, 2.0, false),
             (dry, TREE_BIRCH, 10.0, 2.0, false),
         ];
-        let built = assemble(Frame::default(), 300.0, 100.0, None, vec![], vec![], &[], vec![], vec![], vec![], vec![], vec![], trees, &[], ground, placed);
+        let built = assemble(Frame::default(), 300.0, 100.0, None, vec![], vec![], &[], 0, vec![], vec![], vec![], vec![], vec![], trees, &[], ground, placed);
         let mut standing: Vec<(u8, [f64; 2])> = built.tiles.values().flat_map(|tile| &tile.trees).map(|tree| (tree.kind, [tree.x as f64 / 100.0, tree.z as f64 / 100.0])).collect();
         standing.sort_by_key(|tree| tree.0);
         assert_eq!(standing.len(), 2, "only the rock in the pond and the tree on dry ground stand: {standing:?}");
@@ -3015,7 +3376,7 @@ mod tests {
     fn a_track_is_cut_at_tile_borders_and_keeps_trees_off_its_bed() {
         let rails = vec![(vec![[-140.0, 10.0], [140.0, 10.0]], 1.435, RAIL_TRAIN)];
         let trees = vec![([20.0, 10.5], TREE_BIRCH, 10.0, 2.0, false), ([20.0, 25.0], TREE_BIRCH, 10.0, 2.0, false)];
-        let built = assemble(Frame::default(), 150.0, 100.0, None, vec![], vec![], &[], vec![], rails, vec![], vec![], vec![], trees, &[], Ground::default(), Placed::default());
+        let built = assemble(Frame::default(), 150.0, 100.0, None, vec![], vec![], &[], 0, vec![], rails, vec![], vec![], vec![], trees, &[], Ground::default(), Placed::default());
         let pieces: Vec<(&(u16, u16), &Rail)> = built.tiles.iter().flat_map(|(key, tile)| tile.rails.iter().map(move |rail| (key, rail))).collect();
         assert_eq!(pieces.len(), 3, "a 280 m track crosses three 100 m tiles");
         assert!(pieces.iter().all(|(_, rail)| rail.gauge == 144 && rail.kind == RAIL_TRAIN));
@@ -3035,11 +3396,27 @@ mod tests {
             ([16.0, 28.0], TREE_BIRCH, 8.0, 3.0, false),
             ([19.0, 26.0], TREE_BUSH, 1.5, 1.0, false),
         ];
-        let built = assemble(Frame::default(), 150.0, 100.0, None, vec![house], vec![], &[], vec![], vec![], vec![], vec![], vec![], trees, &[], Ground::default(), Placed::default());
+        let built = assemble(Frame::default(), 150.0, 100.0, None, vec![house], vec![], &[], 0, vec![], vec![], vec![], vec![], vec![], trees, &[], Ground::default(), Placed::default());
         let mut standing: Vec<(i32, u8)> = built.tiles.values().flat_map(|tile| &tile.trees).map(|tree| (tree.z, tree.kind)).collect();
         standing.sort();
         // The planted tree's trunk is a metre from the wall, the next one's crown reaches it.
         assert_eq!(standing, [(2600, TREE_BUSH), (2800, TREE_BIRCH)]);
+    }
+
+    #[test]
+    fn a_tree_the_laser_found_at_the_roof_of_a_tall_house_beside_it_is_dropped_as_its_wall() {
+        // A house 15 m tall with its west wall at x = 20; trees 5 m west of it, clear of the wall.
+        let house = (vec![[20.0, 20.0], [30.0, 20.0], [30.0, 30.0], [20.0, 30.0]], 15.0, None, None, None, BUILDING_PLAIN);
+        // (The low tree stands east of the house, out of the tall ones' shade.)
+        let trees = vec![([15.0, 22.0], TREE_PINE, 14.0, 3.0, false), ([35.0, 25.0], TREE_PINE, 7.0, 3.0, false), ([15.0, 28.0], TREE_PINE, 14.0, 3.0, true), ([-10.0, 25.0], TREE_PINE, 14.0, 3.0, false)];
+        let built = assemble(Frame::default(), 150.0, 100.0, None, vec![house], vec![], &[], 0, vec![], vec![], vec![], vec![], vec![], trees, &[], Ground::default(), Placed::default());
+        let mut standing: Vec<(i32, i32)> = built.tiles.values().flat_map(|tile| &tile.trees).map(|tree| (tree.x, tree.z)).collect();
+        standing.sort();
+        // The low tree, the planted one and the one 30 m off stand; the tall one by the wall does not.
+        assert_eq!(standing, [(-1000, 2500), (1500, 2800), (3500, 2500)]);
+        // The same of a deck: 40 m over a valley, a 38 m trunk is the deck, a 20 m tree is a tree,
+        // and beside a 6 m overpass a tree of any height is one.
+        assert!(reads_as_a_crown(40.0, 38.0) && !reads_as_a_crown(40.0, 20.0) && !reads_as_a_crown(6.0, 9.0));
     }
 
     #[test]
@@ -3314,7 +3691,7 @@ mod tests {
         assert_eq!(road_style("cycleway", Some("gravel")), Some((2.5, ROAD_PATH)));
         assert_eq!(road_style("steps", Some("concrete")), Some((2.5, ROAD_PATH)));
         // Any road is asphalt, whatever it is surfaced with.
-        assert_eq!(road_style("service", Some("gravel")), Some((4.5, ROAD_MINOR)));
+        assert_eq!(road_style("service", Some("gravel")), Some((5.5, ROAD_MINOR)));
     }
 
     #[test]

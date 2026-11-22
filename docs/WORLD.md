@@ -114,6 +114,12 @@ the roads and bridges have taken theirs (`thin.rs`):
 - **Trees against a house.** No trunk stands within `TRUNK_CLEARANCE` (1.5 m) of a wall, and no crown
   reaches one: a tree whose crown radius is more than its distance to the nearest wall goes. Register trees
   too. Rocks and shrubs may stand against a house.
+- **Trees the laser read off a building or a bridge.** The cloud has only ground and everything else,
+  and the map's outline or line lies a little off the real thing, so the wall of a tall house and the
+  edge of a high deck come out as trees: pines with a 40 m trunk under a viaduct. A tree from the
+  laser whose top is within 4 m of a roof or a roadway at least 10 m up (`reads_as_a_crown`), and
+  which stands within 6 m of that house's wall (`GHOST_WALL`) or 12 m of that deck's edge
+  (`GHOST_REACH`), is dropped. Planted trees are kept. In `worlds/home` that is 664 by bridges and 3,288 by houses.
 - **Suppressed trees.** Tallest first, a tree no taller than `SUPPRESSED` (0.75) of a kept neighbour whose
   crown touches its own goes: it is in that tree's shade.
 - **Crowded trees.** A tree nearer a kept neighbour of any height than `CROWDED` (0.6) of their two crown
@@ -429,6 +435,20 @@ with a track. Its ballast is gravel to the tyres (`sim/surface.ts`), it keeps tr
 it is a dark line on the minimap, and it never offers spawns. A railway with `bridge=*` gets a deck
 built like a minor road bridge, but no road on it, and the rails are not drawn on the deck.
 
+### Paths along a street (`sidepaths.rs`)
+OSM maps a street's pavements and cycle track as ways of their own beside it, with a short way across
+at every crossing. They add nothing to the street, and came out as a ribbon of asphalt beside the road
+and a litter of stumps, so they are left out before anything reads the ways (`sidepaths::prune`): a
+footway, cycleway or path tagged a `sidewalk` or a `crossing`, and one with 70 % of its length within
+7 m of the edge of a street (a residential road or bigger, not a service road) and within about 30° of
+its direction. A path of 40 m or less that led to one of those and now ends at nothing goes too. Steps,
+paths in tunnels and paths that only touch a street stay. The rule is rough and errs towards dropping:
+`worlds/home` loses 654 ways.
+
+A short path (25 m or less, `LINK`) with a driven road at both its ends is a link across a corner or a
+traffic island, and goes too. Before any of this, ways that are one road are joined (`network.rs`,
+ROADS.md).
+
 ### Bridges (`bridge.rs`)
 A highway way with `bridge=*` (and no `tunnel`) is still a road in `Tile.roads`, but it is also built
 as geometry in the tile's collision mesh, so it is drawn and collided with like a building and
@@ -442,7 +462,30 @@ embankments the road above stands on. A road running alongside the deck does not
 ends at a deck's end (a road joining the bridge), but one OSM cuts in two under the middle of the
 deck does. A ramp is held up the same over a road it crosses, unless it has come down to within
 0.3 m of it (`AT_GRADE`): that is a crossroads on the ground past the bridge's end. A deck over two
-roads never dips between them: it runs level from one crest to the next (`fill_sags`). Piers stand under stretches more than 2 m up, except
+roads never dips between them: it runs level from one crest to the next (`fill_sags`). A ramp
+follows the road that leads on from the bridge's end (`assemble::onward`: the road ending there that
+leaves within 45° of the bridge's direction, and the next where that one ends), so it lands on its
+road where the road bends; with no such road it carries straight on. Past a deck two carriageways
+share, each carriageway has a ramp of its own, on its own line and as wide as it, at the height the
+deck's profile has that far out along the line between them, with no railing between the two while
+their edges are within 2 m (`STRAND_GAP`): one deck-wide ramp fitted neither road and folded over
+itself at a bend. The paving between close carriageways (ROADS.md) is not a road to lead on along,
+pass under or join. A bridge with an end at a point of another bridge, whose roadway there is higher,
+starts on that deck at its height and has no ramp there (`joined` in `bridge::build_along`): a slip
+road's bridge that leaves Kyrkbron out over the river was built from the water under its end, and
+stopped far below the deck. From such an end it keeps to that bridge's roadway for as long as it
+lies on it (`rides`): the two part slowly, side by side, and were at two heights where they overlapped. Where a deck or a ramp ends on the ground its last edge lies on it, 2 cm
+up at each corner (`LANDING`), and a roadway less than 0.5 m up follows the ground's slope across
+(`FOLLOWS`), so there is no step onto a bridge. A ground road is hidden only under the raised part of
+a ramp (more than 0.3 m up); where the ramp is nearly down the road is drawn over it. A road that
+joins a deck or a ramp where it stands more than 0.3 m above the ground (its end, or a point it runs
+through, is a point of the bridge's way or of the road under the ramp) comes down from it on a ramp
+of its own along its line, at 6 % (`assemble::slips`, `bridge::slip`), and a driven road joining the
+ramp of another driven road does in turn; otherwise a slip road would end at the side of a lifted
+deck, below it. A path comes down at 25 % (`PATH_GRADE`), as steps would, and its ramp lifts nothing
+that meets it: at a road's grade a footpath off a bridge stayed in the air for 50 m and lifted each
+path and street it met on the bank, and they the next. A road that
+only ends under a deck, as OSM cuts a road in two under a bridge, passes under and gets none. Piers stand under stretches more than 2 m up, except
 where a road, a track or another bridge goes under; another bridge running alongside (the other
 carriageway of a divided road on a deck of its own) does not count. A footway or cycleway crossing beside a road
 bridge all the way is on the same bridge: it gets no bridge of its own, and the road's deck is
@@ -476,7 +519,9 @@ was found):
 - **A road over a cutting gets a deck.** Where a path goes under a road OSM does not map as a
   bridge, the terrain has a trench across the road. A drivable road over a dip in the ground
   narrower than 24 m and more than 1.5 m deep gets a deck flush with the road, with no railings
-  (`cuttings`, `Pylons::Flush`); the way under it stays open. A path or road OSM has in a short
+  (`cuttings`, `Pylons::Flush`); the way under it stays open. The paving between close carriageways
+  is not a road and gets none: along a viaduct it read the valley as a cutting and stood as a small
+  bridge under the real one. A path or road OSM has in a short
   tunnel under a road is first dug out to leave headroom under that deck, with ramps down to it
   (TERRAIN-SHAPING.md, "Underpasses"), and a guard rail or fence across the road stands on the deck
   (BARRIERS.md).
