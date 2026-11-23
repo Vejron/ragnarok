@@ -69,6 +69,8 @@ export interface VehicleKind {
 export const DRIVE = { name: 'drive' } as const
 /** A car's passenger, who fires their own guns from over their shoulder. */
 export const RIDE_ALONG: SeatView = { rig: { name: 'passenger' }, role: 'passenger', board: 'E: ride along' }
+/** A passenger in a closed car, behind its glass. */
+export const RIDE_INSIDE: SeatView = { ...RIDE_ALONG, enclosed: true }
 
 /** The chopped noise's filter for a kind with no blades or tracks to speak of. */
 export const PLAIN_CHOP = { type: 'lowpass', hz: 260 } as const

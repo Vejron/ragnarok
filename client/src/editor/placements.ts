@@ -70,6 +70,17 @@ export const VEHICLE_KINDS: { kind: number; name: string; icon: string }[] = [
   { kind: 23, name: 'Technical', icon: 'Q' },
   // Every letter is taken: its slow-vehicle triangle says it.
   { kind: 38, name: 'EPA traktor', icon: '▲' },
+  // The period cars: every letter is taken, so they are numbered.
+  { kind: 40, name: 'Saab 900 Turbo', icon: '0' },
+  { kind: 41, name: 'Saab 9000', icon: '1' },
+  { kind: 42, name: 'Volvo 240', icon: '2' },
+  { kind: 43, name: 'Volvo 740', icon: '3' },
+  { kind: 44, name: 'Golf GTI', icon: '4' },
+  { kind: 45, name: 'VW Transporter', icon: '5' },
+  { kind: 46, name: 'Opel Kadett', icon: '6' },
+  { kind: 47, name: 'Opel Omega', icon: '7' },
+  { kind: 48, name: 'Ford Sierra', icon: '8' },
+  { kind: 49, name: 'Ford Escort', icon: '9' },
   // Parked, with nobody driving it: the buses that run a world's lines come with the lines.
   { kind: 31, name: 'Bus', icon: 'O' },
   { kind: 32, name: 'Pbv 302', icon: 'A' },

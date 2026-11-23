@@ -153,7 +153,7 @@ impl Game {
                             seated: Some(wire::Seated { vehicle, seat: 0 }),
                             heading: Some(wire::Heading { yaw: to_mrad(pose.yaw()) }),
                             look: Some(wire::Look { pitch: 0 }),
-                            flags: Some(wire::Flags { flags: FLAG_CROUCHING, stance: STANCE_STANDING }),
+                            flags: Some(wire::Flags { flags: FLAG_CROUCHING | if entities.dead(id) { FLAG_DEAD } else { 0 }, stance: STANCE_STANDING }),
                             ..Default::default()
                         },
                     ));

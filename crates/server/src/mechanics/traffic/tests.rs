@@ -1,6 +1,6 @@
 use super::*;
 use crate::entities::Transform;
-use crate::game::{Command, Game, Profile};
+use crate::game::{Command, Game, Noise, Profile};
 use shared::world::{ROAD_MINOR, Road, WORLD_VERSION, WorldFile};
 use tokio::sync::{mpsc, oneshot};
 
@@ -47,7 +47,12 @@ fn join(game: &mut Game) -> u32 {
     std::mem::forget(inbox);
     let (reply, mut response) = oneshot::channel();
     game.handle(Command::Join { outbox, reply, profile: Profile::default() });
-    response.try_recv().unwrap().unwrap()
+    let id = response.try_recv().unwrap().unwrap();
+    // With nothing to hand: someone who stands by a road with a gun frightens whoever drives by
+    // slowly. `threaten` gives the gun back.
+    let gun = std::mem::take(&mut game.world.entities.get_mut::<Player>(id).unwrap().hands.hotbar[0]);
+    GUN.with(|kept| kept.set(gun));
+    id
 }
 
 /// Stands player `id` at `(x, z)`.
@@ -483,8 +488,19 @@ fn a_real_bridge_cut_across_is_shut() {
     println!("{on_shut} cars on a shut road");
 }
 
-/// Player `id` looks at the point `at`, as input number `seq`, with `buttons` held.
-fn look_at(game: &mut Game, id: u32, at: [f32; 3], seq: u32, buttons: u16) {
+thread_local! {
+    /// What a player joined with in their first slot: a gun, which `join` takes off them.
+    static GUN: std::cell::Cell<shared::protocol::ItemSlot> = const { std::cell::Cell::new(shared::protocol::ItemSlot { item: 0, count: 0, ammo: 0 }) };
+    /// The number of the last input a test's player sent: they go up by one, as a client's do.
+    static SEQ: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// Player `id` looks at the point `at`, with `buttons` held, as their next input.
+fn look_at(game: &mut Game, id: u32, at: [f32; 3], buttons: u16) {
+    let seq = SEQ.with(|seq| {
+        seq.set(seq.get() + 1);
+        seq.get()
+    });
     let eye = game.world.entities.get::<Player>(id).unwrap().eye();
     let d = [at[0] - eye[0], at[1] - eye[1], at[2] - eye[2]];
     let length = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt().max(0.01);
@@ -497,13 +513,14 @@ fn on_foot(game: &Game) -> Vec<(Driver, [f32; 3])> {
     game.world.entities.all::<Driver>().filter(|(_, driver)| driver.vehicle.is_none()).map(|(id, driver)| (*driver, game.world.entities.of::<Transform>(id).position)).collect()
 }
 
-/// Runs the highway with player `id` beside it at `(0, 9)`, a gun in hand kept on the nearest car
+/// Runs the highway with player `id` beside it at `(0, 9)`, a gun aimed down its sights at the nearest car
 /// that is not an EPA and whose driver has `nerve`, until `done` says so or `seconds` are up.
 /// Returns whether it said so.
 fn threaten(game: &mut Game, id: u32, nerve: Nerve, seconds: u32, mut done: impl FnMut(&Game) -> bool) -> bool {
+    game.world.entities.get_mut::<Player>(id).unwrap().hands.hotbar[0] = GUN.with(std::cell::Cell::get);
     let held = game.world.entities.get::<Player>(id).unwrap().held().item;
-    assert!(shared::items::def(held).is_some_and(|item| item.kind == shared::items::ItemKind::Gun), "a player joins with a gun in hand");
-    for seq in 1..=(seconds * TICK_RATE) {
+    assert!(shared::items::def(held).is_some_and(|item| item.kind == shared::items::ItemKind::Gun), "a player's first slot is a gun");
+    for _ in 0..(seconds * TICK_RATE) {
         game.with_mechanic(|traffic: &mut Traffic, _| traffic.cars.iter_mut().for_each(|car| car.nerve = nerve));
         let here = game.world.entities.get::<Player>(id).unwrap().character.position;
         let nearest = traffic(game)
@@ -513,7 +530,7 @@ fn threaten(game: &mut Game, id: u32, nerve: Nerve, seconds: u32, mut done: impl
             .filter_map(|car| game.world.physics.car_pose(car.vid?))
             .map(|pose| pose.position)
             .min_by(|a, b| (a[0] - here[0]).hypot(a[2] - here[2]).total_cmp(&(b[0] - here[0]).hypot(b[2] - here[2])));
-        look_at(game, id, nearest.unwrap_or([here[0], here[1], here[2] - 10.0]), seq, 0);
+        look_at(game, id, nearest.unwrap_or([here[0], here[1], here[2] - 10.0]), BUTTON_ALT);
         game.step();
         if done(game) {
             return true;
@@ -597,7 +614,7 @@ fn a_moving_traffic_car_is_not_boarded() {
     let i = driving.expect("a car is driving by");
     // Beside it, pressing to board it, for as long as it drives.
     let mut pressed = 0;
-    for seq in 1..=30 {
+    for _ in 0..30 {
         let car = traffic(&game).cars[i];
         let Some(pose) = car.vid.and_then(|vid| game.world.physics.car_pose(vid)) else { break };
         if pose.forward_speed < DRAG_SPEED + 1.0 {
@@ -605,7 +622,7 @@ fn a_moving_traffic_car_is_not_boarded() {
         }
         let [x, _, z] = pose.world_point([-2.6, 0.0, 0.0]);
         stand(&mut game, id, x, z);
-        look_at(&mut game, id, pose.position, seq, BUTTON_USE);
+        look_at(&mut game, id, pose.position, BUTTON_USE);
         game.step();
         assert!(game.world.entities.get::<Player>(id).unwrap().seat.is_none(), "nobody boards a car going {} m/s", pose.forward_speed);
         pressed += 1;
@@ -680,7 +697,7 @@ fn manned_car_near(game: &mut Game, within: f32) -> usize {
 }
 
 #[test]
-fn a_driver_at_the_wheel_is_hit_by_a_round_aimed_at_them_and_takes_it_as_a_threat() {
+fn a_driver_at_the_wheel_is_hit_by_a_round_aimed_at_them_and_panics() {
     let mut game = highway(24);
     let id = join(&mut game);
     stand(&mut game, id, 0.0, 9.0);
@@ -698,33 +715,59 @@ fn a_driver_at_the_wheel_is_hit_by_a_round_aimed_at_them_and_takes_it_as_a_threa
     let reach = (to[0] * to[0] + to[1] * to[1] + to[2] * to[2]).sqrt();
     let hit = crate::mechanics::life::first_hurtbox_hit(&game.world, eye, to.map(|v| v / reach), reach + 2.0, Some(id), 0, None);
     assert_eq!(hit.map(|(who, _)| who), Some(driver), "the round meets the driver");
-    // Wounded, they flee, as their nerve is.
+    // Wounded, they lose their head, whatever their nerve.
     crate::mechanics::damage_entity(&mut game.world, driver, crate::mechanics::Harm::new(30, Some(id), shared::protocol::WEAPON_BULLET));
     run(&mut game, 0.2);
-    assert!(matches!(traffic(&game).cars[i].mood, Mood::Fleeing { .. }), "{:?}", traffic(&game).cars[i].mood);
+    assert!(matches!(traffic(&game).cars[i].mood, Mood::Panicking { .. }), "{:?}", traffic(&game).cars[i].mood);
+    assert!(traffic(&game).cars[i].physical, "and the car is theirs to have it out in");
     assert!(game.world.entities.alive(driver) && game.world.entities.of::<Driver>(driver).vehicle == Some(vid), "and stay at the wheel");
 }
 
 #[test]
-fn a_driver_shot_dead_at_the_wheel_falls_out_and_the_car_stops_and_is_traffic_no_more() {
+fn a_driver_shot_dead_at_speed_is_carried_on_by_the_car_until_it_stops_and_then_falls_out() {
     let mut game = highway(24);
     let id = join(&mut game);
     stand(&mut game, id, 0.0, 9.0);
-    let i = manned_car_near(&mut game, 40.0);
+    // A car that is driving, with its driver in it.
+    let mut found = None;
+    for _ in 0..(180 * TICK_RATE) {
+        game.step();
+        found = traffic(&game).cars.iter().position(|car| car.driver.is_some() && car.nearest < 40.0 && car.speed > 8.0);
+        if found.is_some() {
+            break;
+        }
+    }
+    let i = found.expect("a car with a driver drove by");
     let car = traffic(&game).cars[i];
     let (vid, driver) = (car.vid.unwrap(), car.driver.unwrap());
+    let from = game.world.physics.car_pose(vid).unwrap().position;
     crate::mechanics::damage_entity(&mut game.world, driver, crate::mechanics::Harm::new(PLAYER_MAX_HP, Some(id), shared::protocol::WEAPON_BULLET));
     run(&mut game, 0.3);
+    assert!(matches!(traffic(&game).cars[i].mood, Mood::Runaway { .. }), "{:?}", traffic(&game).cars[i].mood);
+    assert!(game.world.entities.dead(driver) && game.world.entities.of::<Driver>(driver).vehicle == Some(vid), "dead, and still in the seat");
+    assert!(on_foot(&game).is_empty());
+    // It runs on until it is nobody's, with the player keeping up beside it to see.
+    for _ in 0..(12 * TICK_RATE) {
+        let at = game.world.physics.car_pose(vid).unwrap().position;
+        stand(&mut game, id, at[0], at[2] + 12.0);
+        game.step();
+        if game.world.entities.has::<Abandoned>(vid) {
+            break;
+        }
+    }
     assert!(game.world.entities.has::<Abandoned>(vid) && !game.world.entities.has::<TrafficCar>(vid), "nobody drives it");
+    let to = game.world.physics.car_pose(vid).unwrap().position;
+    let ran = (to[0] - from[0]).hypot(to[2] - from[2]);
+    assert!(ran > 20.0, "it ran on {ran} m");
     let out = on_foot(&game);
     assert_eq!(out.len(), 1, "the body is out of the car");
     assert!(game.world.entities.dead(driver) && out[0].0.hands_up == 0);
     let at = out[0].1;
-    run(&mut game, 4.0);
+    run(&mut game, 5.0);
     assert!(game.world.physics.car_pose(vid).unwrap().forward_speed.abs() < 0.5, "the car has stopped");
     let lies = on_foot(&game)[0].1;
     assert!((lies[0] - at[0]).hypot(lies[2] - at[2]) < 0.01, "the dead do not run");
-    run(&mut game, 8.0);
+    run(&mut game, 6.0);
     assert!(on_foot(&game).is_empty(), "and the body is taken away");
 }
 
@@ -830,7 +873,7 @@ fn a_car_left_in_the_lane_is_taken_away_soon_after_the_player_turns_their_back_o
     stand(&mut game, id, at[0], 60.0);
     let mut gone = None;
     for seq in 1..=(60 * TICK_RATE) {
-        look_at(&mut game, id, [at[0], sim::STANDING_Y, 200.0], 100_000 + seq, 0);
+        look_at(&mut game, id, [at[0], sim::STANDING_Y, 200.0], 0);
         game.step();
         if game.world.physics.car_pose(vid).is_none() {
             gone = Some(seq as f32 / TICK_RATE as f32);
@@ -850,11 +893,9 @@ fn a_car_left_in_the_lane_stays_a_while_under_a_players_eyes_and_for_good_with_o
     let at = game.world.physics.car_pose(vid).unwrap().position;
     // Watched from 20 m, it outlasts the time it would have with nobody looking, and then goes.
     stand(&mut game, id, at[0], 20.0);
-    let mut seq = 100_000;
-    let mut watch = |game: &mut Game, seconds: u32| {
+    let watch = |game: &mut Game, seconds: u32| {
         for _ in 0..(seconds * TICK_RATE) {
-            seq += 1;
-            look_at(game, id, at, seq, 0);
+            look_at(game, id, at, 0);
             game.step();
         }
     };
@@ -907,4 +948,231 @@ fn no_more_than_two_dozen_cars_that_were_traffic_are_left_standing() {
     }
     run(&mut game, 1.0);
     assert_eq!(game.world.entities.count::<Abandoned>(), ABANDONED_MAX);
+}
+
+/// A blast at `at`, heard as far as blasts are.
+fn blast(game: &mut Game, at: [f32; 3]) {
+    game.world.send(Noise { at, by: None, reach: crate::mechanics::bots::HEAR_BLAST, line: None });
+}
+
+/// Where shown car `i` is.
+fn place(game: &Game, i: usize) -> [f32; 3] {
+    game.world.physics.car_pose(traffic(game).cars[i].vid.unwrap()).unwrap().position
+}
+
+#[test]
+fn a_blast_in_earshot_makes_drivers_hurry_and_one_out_of_earshot_does_not() {
+    let mut game = highway(24);
+    let id = join(&mut game);
+    stand(&mut game, id, 0.0, 9.0);
+    run(&mut game, 90.0);
+    // 110 m south of the road: heard along 100 m of it either way, and no further.
+    blast(&mut game, [0.0, 0.0, 110.0]);
+    game.step();
+    let (mut near, mut far) = (0, 0);
+    for (i, car) in traffic(&game).cars.iter().enumerate().filter(|(_, car)| car.vid.is_some()) {
+        let x = place(&game, i)[0];
+        if x.abs() < 90.0 {
+            assert!(matches!(car.mood, Mood::Hurrying { .. }), "a car {x} m along heard it: {:?}", car.mood);
+            near += 1;
+        } else if x.abs() > 115.0 {
+            assert_eq!(car.mood, Mood::Calm, "a car {x} m along did not");
+            far += 1;
+        }
+    }
+    assert!(near > 0 && far > 0, "{near} cars in earshot and {far} out of it");
+    // And they drive faster than they would.
+    let mut over = 0.0f32;
+    for _ in 0..(8 * TICK_RATE) {
+        game.step();
+        let traffic = traffic(&game);
+        for car in traffic.cars.iter().filter(|car| matches!(car.mood, Mood::Hurrying { .. })) {
+            over = over.max(car.speed - traffic.graph.edge(car.way).speed * car.pace);
+        }
+    }
+    assert!(over > 1.5, "a hurrying car got {over} m/s over its pace");
+}
+
+#[test]
+fn a_blast_beside_a_car_has_its_driver_flee_panic_or_get_out_as_their_nerve_is() {
+    for nerve in [Nerve::GivesUp, Nerve::Flees, Nerve::Rams] {
+        let mut game = highway(24);
+        let id = join(&mut game);
+        stand(&mut game, id, 0.0, 9.0);
+        let i = manned_car_near(&mut game, 60.0);
+        game.with_mechanic(|traffic: &mut Traffic, _| traffic.cars[i].nerve = nerve);
+        let at = place(&game, i);
+        blast(&mut game, [at[0], at[1], at[2] + 8.0]);
+        game.step();
+        let mood = traffic(&game).cars[i].mood;
+        match nerve {
+            Nerve::GivesUp => assert_eq!(mood, Mood::GivingUp),
+            Nerve::Flees => assert!(matches!(mood, Mood::Fleeing { .. }), "{mood:?}"),
+            Nerve::Rams => assert!(matches!(mood, Mood::Panicking { .. }), "{mood:?}"),
+        }
+    }
+}
+
+#[test]
+fn gunfire_makes_drivers_hurry_and_a_round_past_the_car_makes_a_timid_one_duck_and_then_flee() {
+    let mut game = highway(24);
+    let id = join(&mut game);
+    stand(&mut game, id, 0.0, 9.0);
+    let i = manned_car_near(&mut game, 60.0);
+    game.with_mechanic(|traffic: &mut Traffic, _| traffic.cars[i].nerve = Nerve::GivesUp);
+    // A shot 50 m off, fired away from the road.
+    let at = place(&game, i);
+    game.world.send(Noise { at: [at[0], 1.0, at[2] + 50.0], by: None, reach: crate::mechanics::bots::HEAR_SHOT, line: Some([0.0, 0.0, 1.0]) });
+    game.step();
+    assert!(matches!(traffic(&game).cars[i].mood, Mood::Hurrying { .. }), "{:?}", traffic(&game).cars[i].mood);
+    // And one whose round goes by the car.
+    let at = place(&game, i);
+    game.world.send(Noise { at: [at[0] + 1.0, 1.0, at[2] + 30.0], by: None, reach: crate::mechanics::bots::HEAR_SHOT, line: Some([0.0, 0.0, -1.0]) });
+    game.step();
+    assert!(matches!(traffic(&game).cars[i].mood, Mood::Ducking { .. }), "{:?}", traffic(&game).cars[i].mood);
+    let mut stopped = false;
+    for _ in 0..(5 * TICK_RATE) {
+        game.step();
+        let car = traffic(&game).cars[i];
+        if !matches!(car.mood, Mood::Ducking { .. }) {
+            break;
+        }
+        stopped |= car.speed.abs() < 0.5;
+    }
+    assert!(stopped, "it stood while its driver was down");
+    assert!(matches!(traffic(&game).cars[i].mood, Mood::Fleeing { .. }), "{:?}", traffic(&game).cars[i].mood);
+}
+
+#[test]
+fn a_rash_driver_whose_car_is_shot_leaves_the_lane_and_ends_against_what_stands_by_the_road() {
+    let mut game = highway(24);
+    let id = join(&mut game);
+    stand(&mut game, id, 0.0, 30.0);
+    // A row of parked jeeps along each verge.
+    let ride = sim::Physics::car_ride_height(KIND_JEEP);
+    for n in 0..120 {
+        for z in [-7.5, 7.5] {
+            crate::mechanics::for_tests::add_vehicle(&mut game.world, KIND_JEEP, [n as f32 * 5.0 - 300.0, ride, z], std::f32::consts::FRAC_PI_2);
+        }
+    }
+    // A car driving between them, whose driver is rash.
+    let mut found = None;
+    for _ in 0..(180 * TICK_RATE) {
+        game.step();
+        found = traffic(&game).cars.iter().enumerate().position(|(i, car)| car.driver.is_some() && car.speed > 8.0 && car.mood == Mood::Calm && place(&game, i)[0].abs() < 100.0);
+        if found.is_some() {
+            break;
+        }
+    }
+    let i = found.expect("a car drove between the rows");
+    let vid = traffic(&game).cars[i].vid.unwrap();
+    game.with_mechanic(|traffic: &mut Traffic, _| traffic.cars[i].rash = true);
+    crate::mechanics::damage_vehicle(&mut game.world, vid, 5, Some(id));
+    let mut off = 0.0f32;
+    let mut panicked = false;
+    for _ in 0..(20 * TICK_RATE) {
+        game.step();
+        if game.world.entities.has::<Abandoned>(vid) || game.world.physics.car_pose(vid).is_none() {
+            break;
+        }
+        let car = traffic(&game).cars[i];
+        panicked |= matches!(car.mood, Mood::Panicking { .. });
+        off = off.max(car.lateral.abs());
+    }
+    assert!(panicked, "its driver lost their head");
+    assert!(off > 2.0, "it left its lane by {off} m");
+    assert!(game.world.entities.has::<Abandoned>(vid) || game.world.physics.car_pose(vid).is_none() || game.world.entities.dead(vid), "and came to a stop against something");
+}
+
+#[test]
+fn a_fleeing_driver_passes_a_slower_car_with_another_coming_the_other_way() {
+    let mut game = highway(40);
+    let id = join(&mut game);
+    stand(&mut game, id, 0.0, 9.0);
+    run(&mut game, 60.0);
+    // Every car flees: none of them cares who is coming.
+    let mut near = f32::MAX;
+    for _ in 0..(60 * TICK_RATE) {
+        game.with_mechanic(|traffic: &mut Traffic, _| traffic.cars.iter_mut().for_each(|car| car.mood = Mood::Fleeing { left: 1000 }));
+        game.step();
+        let traffic = traffic(&game);
+        for i in 0..traffic.cars.len() {
+            let car = &traffic.cars[i];
+            if car.shift > 1.0 && car.passing.is_some() && let Some((gap, ..)) = traffic.oncoming(i) {
+                near = near.min(gap);
+            }
+        }
+        if near < 100.0 {
+            break;
+        }
+    }
+    assert!(near < 100.0, "the nearest anyone came the other way while a car was out passing was {near} m");
+}
+
+#[test]
+fn a_car_on_rails_with_a_vehicle_right_ahead_of_it_is_let_off_them() {
+    let mut game = highway(24);
+    let id = join(&mut game);
+    // Far enough from the road that no car is let go for the player's being near.
+    stand(&mut game, id, 0.0, 120.0);
+    run(&mut game, 60.0);
+    assert_eq!(traffic(&game).counts().2, 0, "every shown car is on rails");
+    let i = traffic(&game).cars.iter().position(|car| car.vid.is_some() && car.speed > 5.0).expect("a car is shown");
+    // A jeep set down across its lane a car's length ahead of its nose.
+    let (ahead, _) = traffic(&game).pose_ahead(i, half_length(traffic(&game).cars[i].kind) + 2.2);
+    let ride = sim::Physics::car_ride_height(KIND_JEEP);
+    crate::mechanics::for_tests::add_vehicle(&mut game.world, KIND_JEEP, [ahead[0], ahead[1] + ride, ahead[2]], 0.0);
+    run(&mut game, 0.2);
+    assert!(traffic(&game).cars[i].physical, "it is let off its rails to be hit");
+}
+
+#[test]
+fn a_gun_that_is_in_hand_but_not_aimed_frightens_nobody_however_long_it_points_at_a_car() {
+    let mut game = highway(24);
+    let id = join(&mut game);
+    stand(&mut game, id, 0.0, 9.0);
+    game.world.entities.get_mut::<Player>(id).unwrap().hands.hotbar[0] = GUN.with(std::cell::Cell::get);
+    let mut pointed = 0;
+    for _ in 0..(120 * TICK_RATE) {
+        let here = game.world.entities.get::<Player>(id).unwrap().character.position;
+        let nearest = traffic(&game)
+            .cars
+            .iter()
+            .filter(|car| car.driver.is_some())
+            .filter_map(|car| game.world.physics.car_pose(car.vid?))
+            .map(|pose| pose.position)
+            .filter(|p| (p[0] - here[0]).hypot(p[2] - here[2]) < 25.0)
+            .min_by(|a, b| (a[0] - here[0]).hypot(a[2] - here[2]).total_cmp(&(b[0] - here[0]).hypot(b[2] - here[2])));
+        if let Some(at) = nearest {
+            look_at(&mut game, id, at, 0);
+            pointed += 1;
+        }
+        game.step();
+        assert!(traffic(&game).cars.iter().all(|car| car.mood == Mood::Calm), "a driver took fright");
+    }
+    assert!(pointed > 5 * TICK_RATE, "the gun was on a car for {pointed} ticks");
+}
+
+#[test]
+fn the_traffic_is_a_mix_of_the_period_cars_each_riding_at_its_own_height() {
+    let mut game = game(200);
+    run(&mut game, 1.0);
+    let mut kinds: Vec<u8> = traffic(&game).cars.iter().map(|car| car.kind).collect();
+    // The everyday cars are listed twice to the Bronco's, the Manta's, the van's and the EPA's once.
+    let everyday = kinds.iter().filter(|&&kind| ![KIND_JEEP, KIND_SPORTS, KIND_TRANSPORTER, KIND_EPA].contains(&kind)).count();
+    assert!(everyday > kinds.len() * 2 / 3, "{everyday} of {} are everyday cars", kinds.len());
+    kinds.sort_unstable();
+    kinds.dedup();
+    assert!(kinds.len() >= 10, "two hundred cars are of at least ten kinds: {kinds:?}");
+    // Shown beside a player, each sits on the road at the height its own springs hold it.
+    let id = join(&mut game);
+    stand(&mut game, id, 0.0, -140.0);
+    run(&mut game, 3.0);
+    let on_rails: Vec<u32> = shown(&game).into_iter().filter(|&(_, rails)| rails).map(|(vid, _)| vid).collect();
+    assert!(!on_rails.is_empty());
+    for vid in on_rails {
+        let kind = game.world.entities.of::<Vehicle>(vid).kind;
+        let y = game.world.physics.car_pose(vid).unwrap().position[1];
+        assert!((y - sim::Physics::car_ride_height(kind)).abs() < 0.05, "kind {kind} rides at {y}");
+    }
 }

@@ -313,9 +313,9 @@ fn spot(world: &World, id: u32, eye: [f32; 3], yaw: f32, alert: bool) -> Option<
     best.map(|(other, at, _)| (other, at))
 }
 
-/// Whether anything hears noises: a bot, or a wild animal.
+/// Whether anything hears noises: a bot, a wild animal, or the drivers of the traffic.
 fn listening(world: &World) -> bool {
-    world.entities.count::<Bot>() > 0 || world.entities.count::<super::wildlife::Wild>() > 0 || world.entities.count::<super::zombies::Zombie>() > 0
+    world.traffic > 0.0 || world.entities.count::<Bot>() > 0 || world.entities.count::<super::wildlife::Wild>() > 0 || world.entities.count::<super::zombies::Zombie>() > 0
 }
 
 /// Notes a noise at `at` made by `by` that carries `reach` metres, for the bots to hear on the next

@@ -27,5 +27,7 @@ export function bay(kind: number): [number, number, number] {
   if (kind === KIND_STRV) return [0, 0.75, 2.6]
   if (kind === KIND_HELI) return [0, 1.6, 0.4]
   if (kind === KIND_PLANE) return [0, 0.5, -1.8]
+  // Since remodelled as the Manta, its engine is under a low bonnet.
+  if (kind === KIND_SPORTS) return [0, 0.2, -1.6]
   return [0, 0.75, -1.35]
 }

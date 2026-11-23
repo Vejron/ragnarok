@@ -1,7 +1,7 @@
 use shared::vec3;
 use super::*;
 use shared::consts::TICK_DT;
-use shared::protocol::{KIND_AIR_AMBULANCE, KIND_AMV, KIND_BUS, KIND_DRONE, KIND_EPA, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MISSILE, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_SEAPLANE, KIND_SNOWMOBILE, KIND_SNOWRACER, KIND_SPORTS, KIND_STRF, KIND_STRV, KIND_TANK, KIND_TECHNICAL, KIND_TITAN, KIND_WALKER};
+use shared::protocol::{KIND_AIR_AMBULANCE, KIND_AMV, KIND_BUS, KIND_DRONE, KIND_EPA, KIND_ESCORT, KIND_GTI, KIND_KADETT, KIND_OMEGA, KIND_SAAB_900, KIND_SAAB_9000, KIND_SIERRA, KIND_TRANSPORTER, KIND_VOLVO_240, KIND_VOLVO_740, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MISSILE, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_SEAPLANE, KIND_SNOWMOBILE, KIND_SNOWRACER, KIND_SPORTS, KIND_STRF, KIND_STRV, KIND_TANK, KIND_TECHNICAL, KIND_TITAN, KIND_WALKER};
 use shared::world::{CollisionMesh, WORLD_VERSION, WorldFile};
 
 fn flat() -> WorldFile {
@@ -78,10 +78,10 @@ const SCRIPTED_CHECKPOINTS: [(u8, u32, [f32; 3]); 16] = [
     (KIND_JEEP, 210, [2.5239, 0.8564, -22.4112]),
     (KIND_JEEP, 300, [30.9153, 0.8560, -23.3722]),
     (KIND_JEEP, 480, [64.3589, 0.8568, -59.5452]),
-    (KIND_SPORTS, 90, [-0.0028, 0.3975, -1.9145]),
-    (KIND_SPORTS, 210, [4.3484, 0.3961, -44.2180]),
-    (KIND_SPORTS, 300, [56.9584, 0.3953, -54.7872]),
-    (KIND_SPORTS, 480, [125.6134, 0.3959, -128.6123]),
+    (KIND_SPORTS, 90, [-0.0004, 0.4175, -1.5324]),
+    (KIND_SPORTS, 210, [4.4976, 0.4166, -34.9612]),
+    (KIND_SPORTS, 300, [43.9007, 0.4159, -24.3587]),
+    (KIND_SPORTS, 480, [96.7076, 0.4164, -75.2516]),
     (KIND_TANK, 90, [0.0, 1.1300, -0.9490]),
     (KIND_TANK, 210, [0.5937, 1.1300, -18.9117]),
     (KIND_TANK, 300, [12.0193, 1.1300, -31.0185]),
@@ -155,7 +155,7 @@ fn a_car_climbs_a_slope_like_wasm() {
 #[test]
 fn ride_heights_differ_between_cars() {
     let mut heights = vec![];
-    for (kind, ride) in [(KIND_JEEP, JEEP_RIDE_HEIGHT), (KIND_SPORTS, SPORTS_RIDE_HEIGHT), (KIND_GOLF_CART, GOLF_CART_RIDE_HEIGHT), (KIND_TECHNICAL, TECHNICAL_RIDE_HEIGHT), (KIND_SNOWRACER, SNOWRACER_RIDE_HEIGHT), (KIND_BUS, BUS_RIDE_HEIGHT), (KIND_AMV, AMV_RIDE_HEIGHT), (KIND_EPA, EPA_RIDE_HEIGHT)] {
+    for (kind, ride) in [(KIND_JEEP, JEEP_RIDE_HEIGHT), (KIND_SPORTS, SPORTS_RIDE_HEIGHT), (KIND_GOLF_CART, GOLF_CART_RIDE_HEIGHT), (KIND_TECHNICAL, TECHNICAL_RIDE_HEIGHT), (KIND_SNOWRACER, SNOWRACER_RIDE_HEIGHT), (KIND_BUS, BUS_RIDE_HEIGHT), (KIND_AMV, AMV_RIDE_HEIGHT), (KIND_EPA, EPA_RIDE_HEIGHT), (KIND_SAAB_900, SAAB_900_RIDE_HEIGHT), (KIND_SAAB_9000, SAAB_9000_RIDE_HEIGHT), (KIND_VOLVO_240, VOLVO_240_RIDE_HEIGHT), (KIND_VOLVO_740, VOLVO_740_RIDE_HEIGHT), (KIND_GTI, GTI_RIDE_HEIGHT), (KIND_TRANSPORTER, TRANSPORTER_RIDE_HEIGHT), (KIND_KADETT, KADETT_RIDE_HEIGHT), (KIND_OMEGA, OMEGA_RIDE_HEIGHT), (KIND_SIERRA, SIERRA_RIDE_HEIGHT), (KIND_ESCORT, ESCORT_RIDE_HEIGHT)] {
         let mut physics = Physics::new(&flat()).unwrap();
         physics.add_car(1, kind, [0.0, 1.5, 0.0], 0.0);
         let pose = run(&mut physics, COAST, 240);
@@ -475,24 +475,23 @@ fn the_handbrake_swings_the_tail_out() {
 }
 
 #[test]
-fn a_hard_corner_at_speed_rolls_it_but_a_firm_one_does_not() {
-    for kind in [KIND_JEEP, KIND_SPORTS] {
-        let mut worst = [1.0_f32; 2];
-        for (i, steer) in [0.35_f32, 1.0].into_iter().enumerate() {
-            let mut physics = Physics::new(&flat()).unwrap();
-            // Back from the middle, so the run-up stays inside the 200 m world.
-            physics.add_car(1, kind, [0.0, 1.5, 190.0], 0.0);
-            run(&mut physics, COAST, 60);
-            let fast = run(&mut physics, FORWARD, 60 * 6);
-            assert!(fast.forward_speed > 20.0, "kind {kind}: {fast:?}");
-            for _ in 0..60 * 3 {
-                let pose = run(&mut physics, CarControls { throttle: 1.0, steer, ..CarControls::IDLE }, 1);
-                worst[i] = worst[i].min(pose.up_y);
-            }
+fn a_hard_corner_at_speed_rolls_the_bronco_but_a_firm_one_does_not() {
+    // The saloons sit low enough to stay up even at full lock (`every_period_car_...`); the tall Bronco does not.
+    let mut worst = [1.0_f32; 2];
+    for (i, steer) in [0.35_f32, 1.0].into_iter().enumerate() {
+        let mut physics = Physics::new(&flat()).unwrap();
+        // Back from the middle, so the run-up stays inside the 200 m world.
+        physics.add_car(1, KIND_JEEP, [0.0, 1.5, 190.0], 0.0);
+        run(&mut physics, COAST, 60);
+        let fast = run(&mut physics, FORWARD, 60 * 6);
+        assert!(fast.forward_speed > 20.0, "{fast:?}");
+        for _ in 0..60 * 3 {
+            let pose = run(&mut physics, CarControls { throttle: 1.0, steer, ..CarControls::IDLE }, 1);
+            worst[i] = worst[i].min(pose.up_y);
         }
-        assert!(worst[0] > 0.8, "kind {kind} rolls in a firm corner: {worst:?}");
-        assert!(worst[1] < 0.3, "kind {kind} stays up at full lock: {worst:?}");
     }
+    assert!(worst[0] > 0.8, "it stays up in a firm corner: {worst:?}");
+    assert!(worst[1] < 0.3, "it rolls at full lock: {worst:?}");
 }
 
 #[test]
@@ -3097,4 +3096,55 @@ fn a_car_on_rails_goes_where_it_is_put_and_is_a_car_again_when_let_off_them() {
         physics.remove_car(1);
         physics.step_cars(TICK_DT);
     }
+}
+
+/// The period cars of the traffic (VEHICLES-XXIII.md) apart from the Bronco, which is no car for a bend.
+const PERIOD_CARS: [u8; 11] = [KIND_SPORTS, KIND_SAAB_900, KIND_SAAB_9000, KIND_VOLVO_240, KIND_VOLVO_740, KIND_GTI, KIND_TRANSPORTER, KIND_KADETT, KIND_OMEGA, KIND_SIERRA, KIND_ESCORT];
+
+/// How car `kind` goes on a kilometre of flat ground: its speed 3 s and 15 s after setting off at full
+/// throttle, then the lowest its roof came (`up_y`) and how far it turned in 3 s flat out at full lock.
+fn flat_out(kind: u8) -> (f32, f32, f32, f32) {
+    let mut physics = Physics::new(&WorldFile { version: WORLD_VERSION, half_extent: 100_000, ..Default::default() }).unwrap();
+    physics.add_car(1, kind, [0.0, 1.5, 0.0], 0.0);
+    run(&mut physics, COAST, 60);
+    let early = run(&mut physics, FORWARD, 60 * 3);
+    let late = run(&mut physics, FORWARD, 60 * 12);
+    assert!(late.up_y > 0.98 && late.position[0].abs() < 1.0, "kind {kind} drives straight: {late:?}");
+    let start = yaw(&late);
+    let mut worst = 1.0_f32;
+    for _ in 0..60 * 3 {
+        worst = worst.min(run(&mut physics, CarControls { throttle: 1.0, steer: -1.0, ..CarControls::IDLE }, 1).up_y);
+    }
+    let turned = (yaw(&physics.car_pose(1).unwrap()) - start).rem_euclid(std::f32::consts::TAU);
+    (early.forward_speed, late.forward_speed, worst, turned)
+}
+
+#[test]
+fn every_period_car_nears_its_own_top_speed_and_stays_on_its_wheels_flat_out_at_full_lock() {
+    for kind in PERIOD_CARS {
+        let top = shared::vehicles::vehicle_def(kind).spec.max_speed;
+        let (_, late, worst, turned) = flat_out(kind);
+        assert!(late > top * 0.85 && late <= top + 0.5, "kind {kind} gets near {top} m/s and no further: {late}");
+        assert!(worst > 0.9, "kind {kind} stays on its wheels: {worst}");
+        assert!(turned > 0.8, "kind {kind} turns: {turned}");
+    }
+}
+
+#[test]
+fn the_period_cars_differ_off_the_line_and_flat_out() {
+    let runs: Vec<(u8, f32, f32)> = PERIOD_CARS.iter().map(|&kind| {
+        let (early, late, ..) = flat_out(kind);
+        (kind, early, late)
+    }).collect();
+    let of = |kind: u8| runs.iter().find(|run| run.0 == kind).map(|&(_, early, late)| (early, late)).unwrap();
+    let (gti, volvo, saab, manta, van) = (of(KIND_GTI), of(KIND_VOLVO_240), of(KIND_SAAB_900), of(KIND_SPORTS), of(KIND_TRANSPORTER));
+    // The hot hatch leaves the brick standing, but the Saab's turbo walks away from it flat out.
+    assert!(gti.0 > volvo.0 * 1.8, "a Golf GTI is far quicker off the line than a Volvo 240: {runs:?}");
+    assert!(saab.1 > gti.1 + 1.5 && saab.0 < gti.0, "a Saab 900 Turbo is slower off the line than the Golf and faster flat out: {runs:?}");
+    // The Manta is the quickest away, and the van the slowest of all, both ways.
+    assert!(runs.iter().all(|run| run.0 == KIND_SPORTS || run.1 < manta.0), "{runs:?}");
+    assert!(runs.iter().all(|run| run.0 == KIND_TRANSPORTER || (run.1 > van.0 && run.2 > van.1)), "{runs:?}");
+    // From the slowest to the fastest there is a spread of half again.
+    let (low, high) = runs.iter().fold((f32::MAX, 0.0_f32), |(low, high), run| (low.min(run.2), high.max(run.2)));
+    assert!(high > low * 1.5, "{runs:?}");
 }

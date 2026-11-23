@@ -11,7 +11,8 @@
 
 use super::{LOOK_EVERY, PULL_OVER_FOR, Traffic, sound, ticks};
 use crate::entities::{Component, Health, HurtBy, Hurtbox, NetKind, Transform, With};
-use crate::game::{Player, World};
+use crate::game::{Noise, Player, World};
+use crate::mechanics::bots::HEAR_BLAST;
 use crate::mechanics::bots::clear_line;
 use crate::mechanics::combat::look;
 use crate::mechanics::vehicles::exit_position;
@@ -28,10 +29,11 @@ const DRIVER_BEYOND: f32 = 180.0;
 /// A car of the traffic going faster than this is not boarded, m/s: its driver is dragged out of
 /// one that stands or crawls.
 pub const DRAG_SPEED: f32 = 3.0;
-/// How near a gun must be for a driver to see it pointed at them, metres, and how long it must
-/// stay on their car before they do something about it, seconds.
+/// How near a gun must be for a driver to see it aimed at them, metres, and how long it must stay
+/// on their car before they do something about it, seconds. Aimed is down its sights
+/// (`BUTTON_ALT`): a gun that is only in hand and happens to point their way is nothing to them.
 const AIM_WITHIN: f32 = 30.0;
-const AIM_FOR: f32 = 0.5;
+const AIM_FOR: f32 = 0.4;
 /// How long a driver who flees drives like it, seconds.
 const FLEE_FOR: f32 = 20.0;
 /// How near and how long a driver goes for the one who threatened them, metres and seconds.
@@ -54,6 +56,31 @@ const WAY_AHEAD: f32 = 2.5;
 const TURN_ASIDE: f32 = 0.6;
 /// How far above the middle of a driver on foot a hit on them is shown, metres: a soldier's chest.
 const CHEST_Y: f32 = 0.9;
+/// How long a driver who heard a blast hurries, seconds, and one who heard a shot.
+const HURRY_BLAST: f32 = 12.0;
+const HURRY_SHOT: f32 = 8.0;
+/// A blast this near is not something to drive past, metres: the driver takes it as meant for them.
+const BLAST_NEAR: f32 = 40.0;
+/// A round that passes this near a car is a near miss, metres, as far along its line as this.
+const NEAR_MISS: f32 = 4.0;
+const NEAR_MISS_REACH: f32 = 200.0;
+/// How long a driver who ducks sits there, seconds, at the least and at the most.
+const DUCK: [f32; 2] = [2.0, 4.0];
+/// How long a panic lasts, seconds, how far off its lane a driver in one aims, metres, and how
+/// long before they throw the wheel over again, seconds.
+const PANIC_FOR: f32 = 12.0;
+const PANIC_SWERVE: [f32; 2] = [2.0, 5.0];
+const PANIC_THROW: [f32; 2] = [0.4, 1.2];
+/// A car in a panic that has got going, m/s, and then all but stopped for this long, seconds, has
+/// hit something.
+const PANIC_GOING: f32 = 4.0;
+const PANIC_STOPPED: f32 = 1.5;
+/// A dead driver's car runs on while it does more than this, m/s, for this long at most, seconds,
+/// its wheel up to this share of full lock off straight and, half the time, this much throttle on.
+const RUNAWAY_SPEED: f32 = 2.0;
+const RUNAWAY_FOR: f32 = 8.0;
+const RUNAWAY_STEER: f32 = 0.15;
+const RUNAWAY_THROTTLE: f32 = 0.6;
 
 /// What a driver does when threatened: four in ten give the car up, four flee and two go for
 /// whoever it was.
@@ -76,7 +103,7 @@ impl Nerve {
 }
 
 /// What a car's driver is about.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) enum Mood {
     /// Driving as traffic does.
     Calm,
@@ -86,6 +113,17 @@ pub(super) enum Mood {
     Fleeing { left: u32 },
     /// Driving at player `at`, for `left` more ticks.
     Ramming { left: u32, at: u32 },
+    /// Driving faster than they would, for `left` more ticks: something went off, or someone is shooting.
+    Hurrying { left: u32 },
+    /// Down behind the wheel with the brake on for `left` more ticks, and then off.
+    Ducking { left: u32 },
+    /// Out of their mind for `left` more ticks: flat out, braking for nothing, steering for a
+    /// point `swerve` metres left of their lane, which is thrown again in `next` ticks. `going`
+    /// once the car has got up speed, and `stopped` the ticks it has since stood.
+    Panicking { left: u32, swerve: f32, next: u32, going: bool, stopped: u32 },
+    /// Dead at the wheel of a car that runs on for `left` more ticks at most, its wheel at `steer`
+    /// and its throttle at `throttle`; `stopped` the ticks it has all but stood.
+    Runaway { left: u32, steer: f32, throttle: f32, stopped: u32 },
     /// Taking a car too damaged to drive on off the road, onto the verge, for `left` more ticks
     /// at most.
     PullingOver { left: u32 },
@@ -95,6 +133,21 @@ pub(super) enum Mood {
 /// foot, and as a rider's when they sit at the wheel (`life::body`).
 fn body() -> Hurtbox {
     Hurtbox { centre_y: sim::STANDING_Y, half_height: CAPSULE_HALF_HEIGHT, radius: HURT_RADIUS, head: Some(HEAD_ZONE_Y), mark_y: CHEST_Y, hit_kind: shared::protocol::HIT_BODY }
+}
+
+/// What frightened a driver.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Fright {
+    /// A gun kept on their car.
+    Aimed,
+    /// Their car was hit.
+    Hit,
+    /// They were hit themselves.
+    Wounded,
+    /// A blast right by them.
+    Blast,
+    /// A round went past.
+    NearMiss,
 }
 
 /// A driver of the traffic. A component on their own entity.
@@ -189,7 +242,7 @@ impl Traffic {
         let gunmen: Vec<(u32, [f32; 3], [f32; 3])> = world
             .entities
             .all::<Player>()
-            .filter(|&(id, player)| super::human(world, id) && world.entities.alive(id) && player.seat.is_none() && shared::items::def(player.held().item).is_some_and(|item| item.kind == ItemKind::Gun))
+            .filter(|&(id, player)| super::human(world, id) && world.entities.alive(id) && player.seat.is_none() && player.input.buttons() & BUTTON_ALT != 0 && shared::items::def(player.held().item).is_some_and(|item| item.kind == ItemKind::Gun))
             .map(|(id, player)| (id, player.eye(), look(from_mrad(player.input.yaw), from_mrad(player.input.pitch()))))
             .collect();
         for i in 0..self.cars.len() {
@@ -201,47 +254,133 @@ impl Traffic {
             }
             let Some(driver) = car.driver else { continue };
             if world.entities.dead(driver) {
-                self.abandon(i, world);
+                // Dead at the wheel of a car that is going: it runs on, with nobody to stop it.
+                if matches!(car.mood, Mood::Runaway { .. }) {
+                    continue;
+                }
+                if car.speed > RUNAWAY_SPEED {
+                    self.let_go(i, world);
+                    let steer = (self.rng.next_f64() as f32 * 2.0 - 1.0) * RUNAWAY_STEER;
+                    let throttle = if self.rng.next_u64().is_multiple_of(2) { RUNAWAY_THROTTLE } else { 0.0 };
+                    self.cars[i].mood = Mood::Runaway { left: ticks(RUNAWAY_FOR), steer, throttle, stopped: 0 };
+                } else {
+                    self.abandon(i, world);
+                }
                 continue;
             }
-            if car.mood != Mood::Calm {
+            if !matches!(car.mood, Mood::Calm | Mood::Hurrying { .. }) {
+                // What the car and its driver take meanwhile is not news once they have calmed down.
+                (self.cars[i].hp, self.cars[i].hurt) = (world.entities.get::<Health>(vid).map_or(0, |health| health.hp), world.entities.get::<Health>(driver).map_or(0, |health| health.hp));
                 continue;
             }
             let Some(pose) = world.physics.car_pose(vid) else { continue };
-            let mut by: Option<(Option<u32>, [f32; 3])> = None;
+            let mut by: Option<(Option<u32>, [f32; 3], Fright)> = None;
             // Shot, and still alive: whoever did it is who they take it out on, or run from.
             let hurt = world.entities.get::<Health>(driver).map_or(0, |health| health.hp);
             if hurt < car.hurt {
                 let shooter = world.entities.get::<HurtBy>(driver).map(|&HurtBy(shooter)| shooter).filter(|&shooter| self.target(world, shooter).is_some());
-                by = Some((shooter, shooter.and_then(|shooter| self.target(world, shooter)).unwrap_or(pose.position)));
+                by = Some((shooter, shooter.and_then(|shooter| self.target(world, shooter)).unwrap_or(pose.position), Fright::Wounded));
             }
-            // Hurt since it was last looked at: whoever is nearest did it, for all the driver knows.
+            // Hurt since it was last looked at, by someone: a round, a blast, or a car driven into
+            // it. A knock from another car of the traffic, which nobody is behind, is only a knock.
             let hp = world.entities.get::<Health>(vid).map_or(0, |health| health.hp);
-            if hp < car.hp && by.is_none() {
-                let nearest = self.viewers.iter().copied().min_by(|a, b| (a[0] - pose.position[0]).hypot(a[2] - pose.position[2]).total_cmp(&(b[0] - pose.position[0]).hypot(b[2] - pose.position[2])));
-                by = Some((None, nearest.unwrap_or(pose.position)));
+            if hp < car.hp
+                && by.is_none()
+                && let Some(&HurtBy(who)) = world.entities.get::<HurtBy>(vid)
+            {
+                let from = crate::mechanics::position_of(world, who).unwrap_or(pose.position);
+                by = Some((Some(who).filter(|&who| self.target(world, who).is_some()), from, Fright::Hit));
             }
             let aimed = if car.nearest < AIM_WITHIN + 5.0 { gunmen.iter().find(|&&(_, eye, dir)| aims(world, eye, dir, &pose, car.kind)) } else { None };
             let car = &mut self.cars[i];
             (car.hp, car.hurt) = (hp, hurt);
             car.aimed = if aimed.is_some() { car.aimed + LOOK_EVERY } else { 0 };
-            if let Some(&(who, eye, _)) = aimed.filter(|_| car.aimed >= ticks(AIM_FOR)) {
-                by = Some((Some(who), eye));
+            if let Some(&(who, eye, _)) = aimed.filter(|_| car.aimed >= ticks(AIM_FOR) && by.is_none()) {
+                by = Some((Some(who), eye, Fright::Aimed));
             }
-            if let Some((who, at)) = by {
-                // Ahead of the car and near: one with the nerve for it drives at them.
-                let (to, forward) = ([at[0] - pose.position[0], at[2] - pose.position[2]], [-pose.yaw().sin(), -pose.yaw().cos()]);
-                let reach = to[0].hypot(to[1]);
-                let ahead = reach < RAM_WITHIN && to[0] * forward[0] + to[1] * forward[1] > 0.5 * reach;
-                car.threat = [at[0], at[2]];
-                car.aimed = 0;
-                car.boxed = 0;
-                car.mood = match (car.nerve, who) {
-                    (Nerve::GivesUp, _) => Mood::GivingUp,
-                    (Nerve::Rams, Some(who)) if car.physical && ahead => Mood::Ramming { left: ticks(RAM_FOR), at: who },
-                    _ => Mood::Fleeing { left: ticks(FLEE_FOR) },
-                };
-                tracing::debug!(car = i, mood = ?car.mood, "a driver is threatened");
+            if let Some((who, at, fright)) = by {
+                self.frighten(i, world, who, at, fright);
+            }
+        }
+    }
+
+    /// The driver of shown car `i` has been frightened by `fright`, which `who` did from `at`, and
+    /// does what their nerve has them do about it.
+    fn frighten(&mut self, i: usize, world: &mut World, who: Option<u32>, at: [f32; 3], fright: Fright) {
+        let Some(pose) = self.cars[i].vid.and_then(|vid| world.physics.car_pose(vid)) else { return };
+        // Ahead of the car and near: one with the nerve for it drives at them.
+        let (to, forward) = ([at[0] - pose.position[0], at[2] - pose.position[2]], [-pose.yaw().sin(), -pose.yaw().cos()]);
+        let reach = to[0].hypot(to[1]);
+        let ahead = reach < RAM_WITHIN && to[0] * forward[0] + to[1] * forward[1] > 0.5 * reach;
+        let car = self.cars[i];
+        let flee = Mood::Fleeing { left: ticks(FLEE_FOR) };
+        let panic = Mood::Panicking { left: ticks(PANIC_FOR), swerve: 0.0, next: 0, going: false, stopped: 0 };
+        let mood = match (fright, car.nerve, who) {
+            // Hit themselves, or with a driver who loses their head when the car is: a panic.
+            (Fright::Wounded, ..) => panic,
+            (Fright::Hit, ..) if car.rash => panic,
+            // A blast right by them: the bold lose their heads, the timid get out and run.
+            (Fright::Blast, Nerve::Rams, _) => panic,
+            (Fright::Blast, Nerve::GivesUp, _) => Mood::GivingUp,
+            (Fright::Blast, Nerve::Flees, _) => flee,
+            // A round past the car: the timid get down behind the wheel, and then drive off.
+            (Fright::NearMiss, Nerve::GivesUp, _) => Mood::Ducking { left: ticks(DUCK[0] + (DUCK[1] - DUCK[0]) * self.rng.next_f64() as f32) },
+            (Fright::NearMiss, ..) => flee,
+            (_, Nerve::GivesUp, _) => Mood::GivingUp,
+            (_, Nerve::Rams, Some(who)) if car.physical && ahead => Mood::Ramming { left: ticks(RAM_FOR), at: who },
+            _ => flee,
+        };
+        // A panic is the car's to have out: it is let off its rails for it.
+        if matches!(mood, Mood::Panicking { .. }) {
+            self.let_go(i, world);
+        }
+        let car = &mut self.cars[i];
+        (car.threat, car.aimed, car.boxed, car.mood) = ([at[0], at[2]], 0, 0, mood);
+        tracing::debug!(car = i, ?fright, mood = ?car.mood, "a driver is frightened");
+    }
+
+    /// What the drivers of the shown cars make of the noises since last tick: a blast or gunfire
+    /// in earshot makes them hurry, and a blast right by them or a round going past the car
+    /// frightens them.
+    pub(super) fn hear(&mut self, world: &mut World) {
+        let noises: Vec<Noise> = self.heard.read(world.events::<Noise>()).copied().collect();
+        if noises.is_empty() || self.shown == 0 {
+            return;
+        }
+        for i in 0..self.cars.len() {
+            let car = self.cars[i];
+            if car.vid.is_none() || !matches!(car.mood, Mood::Calm | Mood::Hurrying { .. }) {
+                continue;
+            }
+            let (p, _) = self.pose(i);
+            let mut hurry = 0;
+            let mut fright: Option<(Option<u32>, [f32; 3], Fright)> = None;
+            for noise in &noises {
+                let to = [p[0] - noise.at[0], p[1] - noise.at[1], p[2] - noise.at[2]];
+                let off = (to[0] * to[0] + to[1] * to[1] + to[2] * to[2]).sqrt();
+                match noise.line {
+                    // A blast: something to get away from, or right by them.
+                    None if noise.reach >= HEAR_BLAST && off < BLAST_NEAR => fright = Some((noise.by, noise.at, Fright::Blast)),
+                    None if noise.reach >= HEAR_BLAST && off < noise.reach => hurry = hurry.max(ticks(HURRY_BLAST)),
+                    None => {}
+                    // A shot: how near the car its round goes by, if it goes by it at all.
+                    Some(line) => {
+                        let length = (line[0] * line[0] + line[1] * line[1] + line[2] * line[2]).sqrt().max(1e-6);
+                        let along = (to[0] * line[0] + to[1] * line[1] + to[2] * line[2]) / length;
+                        let wide = (off * off - along * along).max(0.0).sqrt();
+                        if along > 0.0 && along < NEAR_MISS_REACH && wide < NEAR_MISS {
+                            fright = fright.or(Some((noise.by, noise.at, Fright::NearMiss)));
+                        } else if off < noise.reach {
+                            hurry = hurry.max(ticks(HURRY_SHOT));
+                        }
+                    }
+                }
+            }
+            if let Some((who, at, fright)) = fright {
+                self.frighten(i, world, who.filter(|&who| self.target(world, who).is_some()), at, fright);
+            } else if hurry > 0 {
+                let left = if let Mood::Hurrying { left } = car.mood { left.max(hurry) } else { hurry };
+                self.cars[i].mood = Mood::Hurrying { left };
             }
         }
     }
@@ -273,6 +412,36 @@ impl Traffic {
                     self.abandon(i, world);
                 } else {
                     self.cars[i].mood = Mood::PullingOver { left: left - 1 };
+                }
+            }
+            Mood::Hurrying { left } => self.cars[i].mood = if left <= 1 { Mood::Calm } else { Mood::Hurrying { left: left - 1 } },
+            Mood::Ducking { left } => self.cars[i].mood = if left <= 1 { Mood::Fleeing { left: ticks(FLEE_FOR) } } else { Mood::Ducking { left: left - 1 } },
+            Mood::Panicking { left, swerve, next, going, stopped } => {
+                let going = going || car.speed > PANIC_GOING;
+                let stopped = if going && car.speed.abs() < 1.0 { stopped + 1 } else { 0 };
+                if stopped > ticks(PANIC_STOPPED) {
+                    // It has hit something: out and away, if they can.
+                    self.abandon(i, world);
+                } else if left <= 1 || !car.physical {
+                    self.cars[i].mood = Mood::Fleeing { left: ticks(FLEE_FOR) };
+                } else {
+                    // The wheel thrown over, one way or the other.
+                    let (swerve, next) = if next == 0 {
+                        let far = PANIC_SWERVE[0] + (PANIC_SWERVE[1] - PANIC_SWERVE[0]) * self.rng.next_f64() as f32;
+                        let side = if self.rng.next_u64().is_multiple_of(2) { 1.0 } else { -1.0 };
+                        (far * side, ticks(PANIC_THROW[0] + (PANIC_THROW[1] - PANIC_THROW[0]) * self.rng.next_f64() as f32))
+                    } else {
+                        (swerve, next - 1)
+                    };
+                    self.cars[i].mood = Mood::Panicking { left: left - 1, swerve, next, going, stopped };
+                }
+            }
+            Mood::Runaway { left, steer, throttle, stopped } => {
+                let stopped = if car.speed.abs() < 1.0 { stopped + 1 } else { 0 };
+                if left <= 1 || stopped > TICK_RATE || !car.physical {
+                    self.abandon(i, world);
+                } else {
+                    self.cars[i].mood = Mood::Runaway { left: left - 1, steer, throttle, stopped };
                 }
             }
             Mood::Ramming { left, at } => {

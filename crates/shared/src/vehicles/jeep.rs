@@ -1,10 +1,10 @@
-//! The jeep: everything the game knows about it.
+//! The jeep, a Ford Bronco: everything the game knows about it.
 
 use super::*;
 
-/// Cars come in two kinds, which share the ray-cast wheel physics and differ in these numbers.
-/// The jeep (`KIND_JEEP`) is tall on big wheels with plenty of ground clearance: slower, but it
-/// rides over kerbs and rough ground. Half extents of the chassis box, metres.
+/// The jeep (`KIND_JEEP`) is a Ford Bronco of the early eighties with its top off: a short, wide
+/// four-by-four on big wheels with a roll bar over the front seats and plenty of ground clearance.
+/// Slow on the road, but it rides over kerbs and rough ground. Half extents of the chassis box, metres.
 pub const JEEP_HALF_EXTENTS: [f32; 3] = [1.0, 0.42, 1.95];
 pub const JEEP_WHEEL_RADIUS: f32 = 0.55;
 /// Wheel hard points relative to the chassis centre: half the track, and the distance of the
@@ -18,7 +18,7 @@ pub const JEEP_SUSPENSION_REST: f32 = 0.4;
 pub const JEEP_RIDE_HEIGHT: f32 = 0.857;
 /// Largest steering angle of the front wheels, radians. The wire carries it as -127..=127.
 pub const JEEP_MAX_STEER: f32 = 0.5;
-/// Forward speed above which engine force fades to zero, m/s.
+/// Forward speed above which engine force fades to zero, m/s: a big V8 and a brick's shape.
 pub const JEEP_MAX_SPEED: f32 = 32.0;
 /// Seated players. Each seat of a vehicle with open seats has a head point in the hull frame, where
 /// the client draws the sitting body's head (a car's `seat_N` markers, built by `build_car.py`). The
@@ -38,7 +38,7 @@ const ARMOR: Armor = Armor {
 
 pub(super) const JEEP: VehicleDef = VehicleDef {
     kind: KIND_JEEP,
-    name: "Jeep",
+    name: "Ford Bronco",
     hp: 100,
     seats: CAR_SEATS,
     mounts: &[],
@@ -49,8 +49,8 @@ pub(super) const JEEP: VehicleDef = VehicleDef {
     body: CAR,
     spec: Spec {
         half_extents: JEEP_HALF_EXTENTS,
-        // The box is 6.6 m³, so a jeep weighs about 1.3 tonnes. Big wheels and a soft top speed: it
-        // gets there slowly but clears kerbs the sports car would ground on.
+        // The box is 6.6 m³, so a Bronco weighs about 1.3 tonnes. Big wheels and a low top speed: it
+        // gets there slowly but clears kerbs the saloons would ground on.
         density: 200.0,
         wheel_radius: JEEP_WHEEL_RADIUS,
         track_half: JEEP_TRACK_HALF,
@@ -58,6 +58,7 @@ pub(super) const JEEP: VehicleDef = VehicleDef {
         hard_point_y: JEEP_HARD_POINT_Y,
         suspension_rest: JEEP_SUSPENSION_REST,
         max_suspension_force: 60_000.0,
+        // About 7.7 m/s² away from a standstill.
         engine_force: 10_000.0,
         max_speed: JEEP_MAX_SPEED,
         steer_lock: JEEP_MAX_STEER,

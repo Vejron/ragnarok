@@ -2,7 +2,7 @@
 // change the Rust and run `npm run gen:consts`. Client-only constants live in consts.ts.
 
 /** Wire schema version. Bumped on any incompatible protocol or world-format change. */
-export const PROTOCOL_VERSION = 93
+export const PROTOCOL_VERSION = 94
 
 /** Why a page closes its session (`Bye`): the tab is closing or reloading. */
 export const BYE_LEAVING = 0
@@ -172,6 +172,40 @@ export const KIND_EPA = 38
  * left it or been dragged out. Drawn as a soldier with nothing in hand.
  */
 export const KIND_CIVILIAN = 39
+
+/**
+ * The period cars of the traffic, 1980 to 1995 (VEHICLES-XXIII.md); the jeep and the sports car are two more.
+ * The Saab 900 Turbo: a three-door hatchback with a wraparound windscreen, slow off the line and the
+ * fastest of the everyday cars flat out.
+ */
+export const KIND_SAAB_900 = 40
+
+/** The Saab 9000: a big, quick five-door hatchback with a turbo. */
+export const KIND_SAAB_9000 = 41
+
+/** The Volvo 240 estate: the brick, heavy, slow and softly sprung. */
+export const KIND_VOLVO_240 = 42
+
+/** The Volvo 740: a square-cut saloon, in the middle of the pack for pace. */
+export const KIND_VOLVO_740 = 43
+
+/** The Volkswagen Golf GTI: a light hot hatch, the quickest of the everyday cars off the line. */
+export const KIND_GTI = 44
+
+/** The Volkswagen Transporter: a flat-fronted van for seven, tall and slow. */
+export const KIND_TRANSPORTER = 45
+
+/** The Opel Kadett: a wedge-shaped five-door hatchback, the everyday small car. */
+export const KIND_KADETT = 46
+
+/** The Opel Omega: a long, smooth saloon that cruises fast. */
+export const KIND_OMEGA = 47
+
+/** The Ford Sierra: a rounded five-door family hatchback. */
+export const KIND_SIERRA = 48
+
+/** The Ford Escort: a small, light, slow hatchback. */
+export const KIND_ESCORT = 49
 
 /** Fixed simulation rate, in ticks per second. */
 export const TICK_RATE = 60
@@ -1871,6 +1905,28 @@ export const EPA_MAX_SPEED = 8.33
 export const EPA_SEAT_HEADS = [[-0.38, 0.75, 0.1], [0.38, 0.75, 0.1]] as const
 
 /**
+ * The Ford Escort Mk3 (`KIND_ESCORT`): a small hatchback with a bustle at its back, cheap, light
+ * and slow. Five seats behind glass.
+ */
+export const ESCORT_SEATS = 5
+export const ESCORT_HALF_EXTENTS = [0.82, 0.3, 2.0] as const
+export const ESCORT_WHEEL_RADIUS = 0.28
+export const ESCORT_TRACK_HALF = 0.7
+export const ESCORT_AXLE_Z = 1.2
+export const ESCORT_HARD_POINT_Y = 0.0
+export const ESCORT_SUSPENSION_REST = 0.258
+
+/** Measured by `ride_heights_differ_between_cars` in vehicle.rs. */
+export const ESCORT_RIDE_HEIGHT = 0.445
+export const ESCORT_MAX_STEER = 0.55
+
+/** Slow flat out, m/s. */
+export const ESCORT_MAX_SPEED = 35.0
+
+/** The driver on the left, then the passengers, front to back. */
+export const ESCORT_SEAT_HEADS = [[-0.38, 0.73, -0.05], [0.38, 0.73, -0.05], [-0.4, 0.71, 0.75], [0.4, 0.71, 0.75], [0.0, 0.71, 0.75]] as const
+
+/**
  * The golf cart (`KIND_GOLF_CART`): two seats side by side under a canopy roof, small wheels and an
  * electric motor. Light and slow, it potters between the holes at the speed of a brisk cycle ride,
  * with a bag rack on the back.
@@ -1890,6 +1946,29 @@ export const GOLF_CART_MAX_STEER = 0.55
 /** About 43 km/h, which is quick for a golf cart. */
 export const GOLF_CART_MAX_SPEED = 12.0
 export const GOLF_CART_SEAT_HEADS = [[-0.28, 0.82, 0.25], [0.28, 0.82, 0.25]] as const
+
+/**
+ * The Volkswagen Golf GTI Mk2 (`KIND_GTI`): a short, light three-door hot hatch. The quickest of the
+ * everyday cars off the line and darting through traffic, though a Saab turbo walks away from it
+ * flat out. Four seats behind glass.
+ */
+export const GTI_SEATS = 4
+export const GTI_HALF_EXTENTS = [0.84, 0.3, 2.0] as const
+export const GTI_WHEEL_RADIUS = 0.29
+export const GTI_TRACK_HALF = 0.715
+export const GTI_AXLE_Z = 1.235
+export const GTI_HARD_POINT_Y = 0.0
+export const GTI_SUSPENSION_REST = 0.248
+
+/** Measured by `ride_heights_differ_between_cars` in vehicle.rs. */
+export const GTI_RIDE_HEIGHT = 0.445
+export const GTI_MAX_STEER = 0.55
+
+/** Flat out, m/s. */
+export const GTI_MAX_SPEED = 44.0
+
+/** The driver on the left, then the passengers, front to back. */
+export const GTI_SEAT_HEADS = [[-0.38, 0.73, -0.05], [0.38, 0.73, -0.05], [-0.4, 0.71, 0.75], [0.4, 0.71, 0.75]] as const
 
 /**
  * The helicopter: a hull flown by a pilot (seat 0) with a gunner (seat 1) on the nose gun. There are no
@@ -2034,9 +2113,9 @@ export const HEN_EGG_DAMAGE = 110.0
 export const HEN_EGG_KNOCK = 16.0
 
 /**
- * Cars come in two kinds, which share the ray-cast wheel physics and differ in these numbers.
- * The jeep (`KIND_JEEP`) is tall on big wheels with plenty of ground clearance: slower, but it
- * rides over kerbs and rough ground. Half extents of the chassis box, metres.
+ * The jeep (`KIND_JEEP`) is a Ford Bronco of the early eighties with its top off: a short, wide
+ * four-by-four on big wheels with a roll bar over the front seats and plenty of ground clearance.
+ * Slow on the road, but it rides over kerbs and rough ground. Half extents of the chassis box, metres.
  */
 export const JEEP_HALF_EXTENTS = [1.0, 0.42, 1.95] as const
 export const JEEP_WHEEL_RADIUS = 0.55
@@ -2059,7 +2138,7 @@ export const JEEP_RIDE_HEIGHT = 0.857
 /** Largest steering angle of the front wheels, radians. The wire carries it as -127..=127. */
 export const JEEP_MAX_STEER = 0.5
 
-/** Forward speed above which engine force fades to zero, m/s. */
+/** Forward speed above which engine force fades to zero, m/s: a big V8 and a brick's shape. */
 export const JEEP_MAX_SPEED = 32.0
 
 /**
@@ -2069,6 +2148,28 @@ export const JEEP_MAX_SPEED = 32.0
  * waist, so the hull box in front of the lower body takes the rounds aimed there.
  */
 export const JEEP_SEAT_HEADS = [[-0.4, 0.62, -0.3], [0.4, 0.62, -0.3], [-0.4, 0.62, 0.75], [0.4, 0.62, 0.75]] as const
+
+/**
+ * The Opel Kadett E (`KIND_KADETT`): a wedge-shaped five-door hatchback, the everyday small car of
+ * the late eighties. Five seats behind glass.
+ */
+export const KADETT_SEATS = 5
+export const KADETT_HALF_EXTENTS = [0.83, 0.3, 2.0] as const
+export const KADETT_WHEEL_RADIUS = 0.29
+export const KADETT_TRACK_HALF = 0.7
+export const KADETT_AXLE_Z = 1.26
+export const KADETT_HARD_POINT_Y = 0.0
+export const KADETT_SUSPENSION_REST = 0.248
+
+/** Measured by `ride_heights_differ_between_cars` in vehicle.rs. */
+export const KADETT_RIDE_HEIGHT = 0.445
+export const KADETT_MAX_STEER = 0.55
+
+/** Flat out, m/s. */
+export const KADETT_MAX_SPEED = 38.0
+
+/** The driver on the left, then the passengers, front to back. */
+export const KADETT_SEAT_HEADS = [[-0.38, 0.73, -0.05], [0.38, 0.73, -0.05], [-0.4, 0.71, 0.75], [0.4, 0.71, 0.75], [0.0, 0.71, 0.75]] as const
 
 /**
  * The loitering drone: a delta wing about 2.5 m across and 3.5 m long, with a pusher prop. It flies as
@@ -2226,6 +2327,28 @@ export const MORTAR_KNOCK = 30.0
 
 /** The mortar's gunner rides its mount, so this is in the mount's frame: `MORTAR_GUN_PIVOT` turned by the gun's yaw. */
 export const MORTAR_SEAT_HEAD = [0.6, 0.45, 0.6] as const
+
+/**
+ * The Opel Omega A (`KIND_OMEGA`): a long, smooth saloon with flush glass and a six under the
+ * bonnet, that cruises fast and quietly. Five seats behind glass.
+ */
+export const OMEGA_SEATS = 5
+export const OMEGA_HALF_EXTENTS = [0.88, 0.33, 2.33] as const
+export const OMEGA_WHEEL_RADIUS = 0.31
+export const OMEGA_TRACK_HALF = 0.725
+export const OMEGA_AXLE_Z = 1.365
+export const OMEGA_HARD_POINT_Y = 0.0
+export const OMEGA_SUSPENSION_REST = 0.258
+
+/** Measured by `ride_heights_differ_between_cars` in vehicle.rs. */
+export const OMEGA_RIDE_HEIGHT = 0.475
+export const OMEGA_MAX_STEER = 0.55
+
+/** Flat out, m/s. */
+export const OMEGA_MAX_SPEED = 42.0
+
+/** The driver on the left, then the passengers, front to back. */
+export const OMEGA_SEAT_HEADS = [[-0.38, 0.7, 0.0], [0.38, 0.7, 0.0], [-0.4, 0.68, 0.88], [0.4, 0.68, 0.88], [0.0, 0.68, 0.88]] as const
 
 /**
  * The Pak 38 (`KIND_PAK`): a towed 5 cm anti-tank gun on two wheels with split trails and a shield,
@@ -2617,12 +2740,21 @@ export const RAFT_SEAT_HEADS = [[-0.5, 1.05, 1.15], [0.0, 1.0, -0.85]] as const
 
 /**
  * The Roadster (`KIND_ROADSTER`): Tesla's 2026 two-seater with SpaceX cold-gas thrusters fed from a
- * tank of compressed air. Same chassis and wheels as the sports car, a stronger motor, and three
+ * tank of compressed air. A low, flat chassis on small wheels, a strong motor, and three
  * tricks: rear nozzles that push it far past what the tyres could (Shift), a hop straight up off the
  * ground (Space), and lift nozzles that hold it in the air while Space stays held. Thrust drains
  * the tank, which refills while it sits on its wheels.
  */
 export const ROADSTER_SEATS = 2
+export const ROADSTER_HALF_EXTENTS = [0.95, 0.3, 2.2] as const
+export const ROADSTER_WHEEL_RADIUS = 0.32
+export const ROADSTER_TRACK_HALF = 0.82
+export const ROADSTER_AXLE_Z = 1.45
+export const ROADSTER_HARD_POINT_Y = 0.05
+export const ROADSTER_SUSPENSION_REST = 0.22
+
+/** Measured by `ride_heights_differ_between_cars` in vehicle.rs. */
+export const ROADSTER_RIDE_HEIGHT = 0.397
 export const ROADSTER_MAX_STEER = 0.4
 export const ROADSTER_MAX_SPEED = 62.0
 
@@ -2664,6 +2796,51 @@ export const ROADSTER_CEILING = 40.0
 /** Refill rate on the ground with no nozzle firing, share of the tank per second. */
 export const ROADSTER_AIR_REFILL = 0.2
 export const ROADSTER_SEAT_HEADS = [[-0.33, 0.42, 0.12], [0.33, 0.42, 0.12]] as const
+
+/**
+ * The Saab 900 Turbo (`KIND_SAAB_900`): a three-door hatchback from Trollhättan with a wraparound
+ * windscreen and a long, sloping nose. Its turbo wakes late, so it is no quicker than a family car
+ * off the line but runs on to the highest top speed of the everyday cars. Four seats behind glass.
+ */
+export const SAAB_900_SEATS = 4
+export const SAAB_900_HALF_EXTENTS = [0.85, 0.32, 2.33] as const
+export const SAAB_900_WHEEL_RADIUS = 0.31
+export const SAAB_900_TRACK_HALF = 0.72
+export const SAAB_900_AXLE_Z = 1.26
+export const SAAB_900_HARD_POINT_Y = 0.0
+export const SAAB_900_SUSPENSION_REST = 0.248
+
+/** Measured by `ride_heights_differ_between_cars` in vehicle.rs. */
+export const SAAB_900_RIDE_HEIGHT = 0.465
+export const SAAB_900_MAX_STEER = 0.5
+
+/** The fastest of the everyday cars flat out, m/s. */
+export const SAAB_900_MAX_SPEED = 48.0
+
+/** The driver on the left, then the passengers, front to back. */
+export const SAAB_900_SEAT_HEADS = [[-0.38, 0.71, 0.0], [0.38, 0.71, 0.0], [-0.4, 0.69, 0.88], [0.4, 0.69, 0.88]] as const
+
+/**
+ * The Saab 9000 CS (`KIND_SAAB_9000`): a big five-door hatchback with a long glass tailgate, roomy
+ * and quick, its turbo pulling hard through the middle gears. Five seats behind glass.
+ */
+export const SAAB_9000_SEATS = 5
+export const SAAB_9000_HALF_EXTENTS = [0.88, 0.33, 2.3] as const
+export const SAAB_9000_WHEEL_RADIUS = 0.32
+export const SAAB_9000_TRACK_HALF = 0.76
+export const SAAB_9000_AXLE_Z = 1.335
+export const SAAB_9000_HARD_POINT_Y = 0.0
+export const SAAB_9000_SUSPENSION_REST = 0.248
+
+/** Measured by `ride_heights_differ_between_cars` in vehicle.rs. */
+export const SAAB_9000_RIDE_HEIGHT = 0.475
+export const SAAB_9000_MAX_STEER = 0.5
+
+/** Flat out, m/s. */
+export const SAAB_9000_MAX_SPEED = 45.0
+
+/** The driver on the left, then the passengers, front to back. */
+export const SAAB_9000_SEAT_HEADS = [[-0.38, 0.7, 0.0], [0.38, 0.7, 0.0], [-0.4, 0.68, 0.88], [0.4, 0.68, 0.88], [0.0, 0.68, 0.88]] as const
 
 /**
  * The seaplane: a two-seat biplane of the 1920s on twin pontoons, flown by a pilot (seat 0) who also
@@ -2835,6 +3012,28 @@ export const SHIP_GUN_BOARD = [0.0, 0.2, 0.6] as const
 export const SHIP_GUN_EXIT = [0.0, STAND_CENTRE + 0.05 - SHIP_GUN_HALF_EXTENTS[1], SHIP_GUN_HALF_EXTENTS[2] + CAPSULE_RADIUS + 0.3] as const
 
 /**
+ * The Ford Sierra (`KIND_SIERRA`): the rounded "jelly mould" five-door hatchback, a family car of
+ * middling pace. Five seats behind glass.
+ */
+export const SIERRA_SEATS = 5
+export const SIERRA_HALF_EXTENTS = [0.85, 0.32, 2.2] as const
+export const SIERRA_WHEEL_RADIUS = 0.3
+export const SIERRA_TRACK_HALF = 0.725
+export const SIERRA_AXLE_Z = 1.305
+export const SIERRA_HARD_POINT_Y = 0.0
+export const SIERRA_SUSPENSION_REST = 0.258
+
+/** Measured by `ride_heights_differ_between_cars` in vehicle.rs. */
+export const SIERRA_RIDE_HEIGHT = 0.465
+export const SIERRA_MAX_STEER = 0.55
+
+/** Flat out, m/s. */
+export const SIERRA_MAX_SPEED = 40.0
+
+/** The driver on the left, then the passengers, front to back. */
+export const SIERRA_SEAT_HEADS = [[-0.38, 0.71, 0.0], [0.38, 0.71, 0.0], [-0.4, 0.69, 0.88], [0.4, 0.69, 0.88], [0.0, 0.69, 0.88]] as const
+
+/**
  * The snowmobile (`KIND_SNOWMOBILE`): a modern mountain sled, light and very powerful, for two
  * riders one behind the other. The physics drives it as a car: the front pair of wheels are its
  * skis, which steer, and two pairs behind stand in for the track, whose long footprint keeps it
@@ -2953,27 +3152,25 @@ export const FLAT = 0.0
 export const CEILING_FADE = 40.0
 
 /**
- * The sports car (`KIND_SPORTS`): a low two-seater with small wheels and a big engine. Quick in a
- * straight line, with the chassis only about 12 cm off the ground.
+ * The sports car (`KIND_SPORTS`): an Opel Manta GT/E, a low rear-drive coupé from the early eighties
+ * with a long bonnet and a short roof. The quickest car on the road away from a standstill, with the
+ * chassis only about 12 cm off the ground. Four seats behind glass, the back two cramped.
  */
-export const SPORTS_SEATS = 2
-export const SPORTS_HALF_EXTENTS = [0.95, 0.3, 2.2] as const
-export const ROADSTER_HALF_EXTENTS = SPORTS_HALF_EXTENTS
-export const SPORTS_WHEEL_RADIUS = 0.32
-export const ROADSTER_WHEEL_RADIUS = SPORTS_WHEEL_RADIUS
-export const SPORTS_TRACK_HALF = 0.82
-export const ROADSTER_TRACK_HALF = SPORTS_TRACK_HALF
-export const SPORTS_AXLE_Z = 1.45
-export const ROADSTER_AXLE_Z = SPORTS_AXLE_Z
+export const SPORTS_SEATS = 4
+export const SPORTS_HALF_EXTENTS = [0.84, 0.3, 2.2] as const
+export const SPORTS_WHEEL_RADIUS = 0.3
+export const SPORTS_TRACK_HALF = 0.7
+export const SPORTS_AXLE_Z = 1.26
 export const SPORTS_HARD_POINT_Y = 0.05
-export const ROADSTER_HARD_POINT_Y = SPORTS_HARD_POINT_Y
-export const SPORTS_SUSPENSION_REST = 0.22
-export const ROADSTER_SUSPENSION_REST = SPORTS_SUSPENSION_REST
-export const SPORTS_RIDE_HEIGHT = 0.397
-export const ROADSTER_RIDE_HEIGHT = SPORTS_RIDE_HEIGHT
-export const SPORTS_MAX_STEER = 0.4
-export const SPORTS_MAX_SPEED = 50.0
-export const SPORTS_SEAT_HEADS = [[-0.35, 0.4, 0.1], [0.35, 0.4, 0.1]] as const
+export const SPORTS_SUSPENSION_REST = 0.26
+
+/** Measured by `ride_heights_differ_between_cars` in vehicle.rs. */
+export const SPORTS_RIDE_HEIGHT = 0.417
+export const SPORTS_MAX_STEER = 0.5
+export const SPORTS_MAX_SPEED = 46.0
+
+/** The driver on the left, a passenger beside them, and two more on the low back bench. */
+export const SPORTS_SEAT_HEADS = [[-0.37, 0.72, 0.1], [0.37, 0.72, 0.1], [-0.38, 0.66, 0.85], [0.38, 0.66, 0.85]] as const
 
 /**
  * The Strf 90 (`KIND_STRF`): a tracked infantry fighting vehicle. The driver (seat 0) sits front left
@@ -3545,6 +3742,30 @@ export const TITAN_TUBE_RELOAD = 20 * TICK_RATE
 export const TITAN_TUBE_COOLDOWN = TICK_RATE
 
 /**
+ * The Volkswagen Transporter T3 (`KIND_TRANSPORTER`): a flat-fronted van with its engine under the
+ * floor at the back. Its driver sits over the front wheels with one passenger beside them, then a
+ * bench of two by the sliding door and a bench of three at the back. Tall and slow, the slowest
+ * car on the road but the EPA. Seven seats behind glass.
+ */
+export const TRANSPORTER_SEATS = 7
+export const TRANSPORTER_HALF_EXTENTS = [0.92, 0.5, 2.25] as const
+export const TRANSPORTER_WHEEL_RADIUS = 0.33
+export const TRANSPORTER_TRACK_HALF = 0.785
+export const TRANSPORTER_AXLE_Z = 1.23
+export const TRANSPORTER_HARD_POINT_Y = 0.0
+export const TRANSPORTER_SUSPENSION_REST = 0.486
+
+/** Measured by `ride_heights_differ_between_cars` in vehicle.rs. */
+export const TRANSPORTER_RIDE_HEIGHT = 0.685
+export const TRANSPORTER_MAX_STEER = 0.6
+
+/** Flat out, m/s. */
+export const TRANSPORTER_MAX_SPEED = 30.0
+
+/** The driver on the left, then the passengers, front to back. */
+export const TRANSPORTER_SEAT_HEADS = [[-0.45, 0.87, -1.25], [0.45, 0.87, -1.25], [-0.4, 0.87, 0.05], [0.4, 0.87, 0.05], [-0.5, 0.87, 1.15], [0.0, 0.87, 1.15], [0.5, 0.87, 1.15]] as const
+
+/**
  * The tupp (`KIND_TUPP`): a giant robot rooster of the Swedish Hedemora breed, one driver in a cockpit
  * on its back. It walks, leaps, flaps and glides exactly as the hen does (the `WALKER_*` legs and the
  * `HEN_*` wings), and lays nothing: its head follows the driver's look and its eyes burn a laser.
@@ -3585,6 +3806,51 @@ export const TUPP_LASER_DAMAGE = 30
 export const TUPP_LASER_VEHICLE_DAMAGE = 14
 export const TUPP_LASER_PLANE_DAMAGE = 30
 export const TUPP_LASER_PEN = 60.0
+
+/**
+ * The Volvo 240 estate (`KIND_VOLVO_240`): the brick. Long, square and heavy, with a vertical
+ * tailgate and bumpers built for elks, it is slow to get going, slow flat out and soft on its
+ * springs. Five seats behind glass.
+ */
+export const VOLVO_240_SEATS = 5
+export const VOLVO_240_HALF_EXTENTS = [0.86, 0.36, 2.4] as const
+export const VOLVO_240_WHEEL_RADIUS = 0.32
+export const VOLVO_240_TRACK_HALF = 0.73
+export const VOLVO_240_AXLE_Z = 1.32
+export const VOLVO_240_HARD_POINT_Y = 0.0
+export const VOLVO_240_SUSPENSION_REST = 0.303
+
+/** Measured by `ride_heights_differ_between_cars` in vehicle.rs. */
+export const VOLVO_240_RIDE_HEIGHT = 0.506
+export const VOLVO_240_MAX_STEER = 0.55
+
+/** Slow flat out, m/s. */
+export const VOLVO_240_MAX_SPEED = 36.0
+
+/** The driver on the left, then the passengers, front to back. */
+export const VOLVO_240_SEAT_HEADS = [[-0.38, 0.67, 0.0], [0.38, 0.67, 0.0], [-0.4, 0.65, 0.88], [0.4, 0.65, 0.88], [0.0, 0.65, 0.88]] as const
+
+/**
+ * The Volvo 740 saloon (`KIND_VOLVO_740`): a square-cut four-door, solid and unhurried, in the
+ * middle of the pack for pace. Five seats behind glass.
+ */
+export const VOLVO_740_SEATS = 5
+export const VOLVO_740_HALF_EXTENTS = [0.88, 0.34, 2.4] as const
+export const VOLVO_740_WHEEL_RADIUS = 0.32
+export const VOLVO_740_TRACK_HALF = 0.735
+export const VOLVO_740_AXLE_Z = 1.385
+export const VOLVO_740_HARD_POINT_Y = 0.0
+export const VOLVO_740_SUSPENSION_REST = 0.258
+
+/** Measured by `ride_heights_differ_between_cars` in vehicle.rs. */
+export const VOLVO_740_RIDE_HEIGHT = 0.485
+export const VOLVO_740_MAX_STEER = 0.55
+
+/** Flat out, m/s. */
+export const VOLVO_740_MAX_SPEED = 40.0
+
+/** The driver on the left, then the passengers, front to back. */
+export const VOLVO_740_SEAT_HEADS = [[-0.38, 0.69, 0.0], [0.38, 0.69, 0.0], [-0.4, 0.67, 0.88], [0.4, 0.67, 0.88], [0.0, 0.67, 0.88]] as const
 
 /**
  * The walker (`KIND_WALKER`): a two-legged assault walker, one driver in the head. Its body is a single

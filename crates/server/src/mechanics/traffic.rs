@@ -26,7 +26,8 @@ mod graph;
 use super::Mechanic;
 use super::vehicles::{add_vehicle, remove_vehicle};
 use crate::entities::{Health, With};
-use crate::game::{Autopilot, Bot, Player, Seats, Vehicle, World};
+use crate::game::{Autopilot, Bot, Noise, Player, Seats, Vehicle, World};
+use bevy_ecs::message::MessageCursor;
 use crate::rng::Rng;
 pub use graph::{Graph, Way};
 pub use drivers::{DRAG_SPEED, Driver};
@@ -196,6 +197,19 @@ const PASS_REST: f32 = 3.0;
 const TOP_SHARE: f32 = 0.95;
 /// How much faster than traffic does a driver who flees takes a bend or a turn.
 const FLEE_BENDS: f32 = 1.3;
+/// How much faster than their pace a driver who hurries drives, and than traffic takes a bend.
+const HURRY: f32 = 1.4;
+const HURRY_BENDS: f32 = 1.15;
+/// How near the car ahead a driver who flees drives, metres.
+const FLEE_GAP: f32 = 1.0;
+/// How much harder than a driver in their senses one in a panic turns the wheel.
+const PANIC_STEER: f32 = 1.8;
+/// A car on rails that finds a vehicle this near ahead of it in its path is let off them, metres:
+/// what is about to hit it then moves it.
+const STRUCK_WITHIN: f32 = 1.0;
+/// A car going round a standing vehicle whose body is this far out of its lane goes on round it
+/// whoever comes, metres.
+const OUT_FOR_GOOD: f32 = 0.8;
 /// A car going round a standing vehicle is back in its lane this far short of a junction, metres.
 const SWERVE_END: f32 = 12.0;
 /// How far ahead along its road a car looks for the next junction and for cars coming the other way, metres.
@@ -203,8 +217,13 @@ const OPEN_SIGHT: f32 = 700.0;
 /// How much faster or slower than its road's speed a car likes to drive: each car has its own pace
 /// between these.
 const PACE: [f32; 2] = [0.75, 1.15];
-/// The kinds traffic is made of, each as often as it is listed.
-const KINDS: [u8; 6] = [KIND_JEEP, KIND_JEEP, KIND_JEEP, KIND_SPORTS, KIND_EPA, KIND_JEEP];
+/// The kinds traffic is made of, each as often as it is listed: the everyday cars of 1980 to 1995 twice
+/// each, and the Bronco, the Manta, the van and the EPA once (VEHICLES-XXIII.md).
+const KINDS: [u8; 22] = [
+    KIND_SAAB_900, KIND_SAAB_9000, KIND_VOLVO_240, KIND_VOLVO_740, KIND_GTI, KIND_KADETT, KIND_OMEGA, KIND_SIERRA, KIND_ESCORT,
+    KIND_SAAB_900, KIND_SAAB_9000, KIND_VOLVO_240, KIND_VOLVO_740, KIND_GTI, KIND_KADETT, KIND_OMEGA, KIND_SIERRA, KIND_ESCORT,
+    KIND_JEEP, KIND_SPORTS, KIND_TRANSPORTER, KIND_EPA,
+];
 
 /// A shown car of the traffic. A component on the vehicle's entity.
 #[derive(crate::entities::Component, Clone, Copy, Debug)]
@@ -288,6 +307,10 @@ struct Car {
     hurt: u8,
     /// Ticks it has stood while its driver flees.
     boxed: u32,
+    /// Its driver loses their head when the car is hit, where another would do as their nerve has it.
+    rash: bool,
+    /// The vehicle it last saw in its way; 0 for none, or someone on foot.
+    by: u32,
 }
 
 /// A vehicle that is not on rails: something a shown car may find in its way.
@@ -352,6 +375,8 @@ pub struct Traffic {
     looks: Vec<f32>,
     /// The vehicles the cars found standing in their paths this tick.
     in_way: Vec<u32>,
+    /// Where it has got to in the noises the world makes: the blasts and shots its drivers hear.
+    heard: MessageCursor<Noise>,
     /// The vehicles that are not on rails and everyone on foot, as of this tick: what a shown car
     /// may find in its way.
     obstacles: Vec<Obstacle>,
@@ -371,7 +396,7 @@ pub struct Traffic {
 impl Default for Traffic {
     fn default() -> Self {
         // Its own dice, so that a world with traffic rolls the same for everything else as one without.
-        Traffic { graph: Graph::default(), built: false, cars: Vec::new(), lanes: Vec::new(), junctions: Vec::new(), crossing: Vec::new(), decks: Vec::new(), deck_at: 0, viewers: Vec::new(), looks: Vec::new(), in_way: Vec::new(), obstacles: Vec::new(), people: Vec::new(), met: Vec::new(), overtakes: 0, shown: 0, physical: 0, tick: 0, rng: Rng::from_seed(0x7a3f_19c4_55d1_e2b7) }
+        Traffic { graph: Graph::default(), built: false, cars: Vec::new(), lanes: Vec::new(), junctions: Vec::new(), crossing: Vec::new(), decks: Vec::new(), deck_at: 0, viewers: Vec::new(), looks: Vec::new(), in_way: Vec::new(), heard: MessageCursor::default(), obstacles: Vec::new(), people: Vec::new(), met: Vec::new(), overtakes: 0, shown: 0, physical: 0, tick: 0, rng: Rng::from_seed(0x7a3f_19c4_55d1_e2b7) }
     }
 }
 
@@ -440,7 +465,7 @@ impl Traffic {
         while self.cars.len() < wanted {
             let kind = KINDS[(self.rng.next_u64() % KINDS.len() as u64) as usize];
             let pace = PACE[0] + (PACE[1] - PACE[0]) * self.rng.next_f64() as f32;
-            self.cars.push(Car { kind, way: Way { edge: 0, back: false }, along: 0.0, speed: 0.0, before: None, after: None, holds: None, vid: None, physical: false, blocked: f32::MAX, held: 0, waiting: 0, stood: 0, nearest: f32::MAX, stalled: 0, reverse_left: 0, tries: 0, pace, shift: 0.0, aside: 0.0, passing: None, swerve_to: 0.0, upon: 0.0, lateral: 0.0, easing: false, back: false, still: false, rest: 0, driver: None, nerve: Nerve::Flees, mood: Mood::Calm, aimed: 0, threat: [0.0; 2], hp: 0, hurt: 0, boxed: 0 });
+            self.cars.push(Car { kind, way: Way { edge: 0, back: false }, along: 0.0, speed: 0.0, before: None, after: None, holds: None, vid: None, physical: false, blocked: f32::MAX, held: 0, waiting: 0, stood: 0, nearest: f32::MAX, stalled: 0, reverse_left: 0, tries: 0, pace, shift: 0.0, aside: 0.0, passing: None, swerve_to: 0.0, upon: 0.0, lateral: 0.0, easing: false, back: false, still: false, rest: 0, driver: None, nerve: Nerve::Flees, mood: Mood::Calm, aimed: 0, threat: [0.0; 2], hp: 0, hurt: 0, boxed: 0, rash: false, by: 0 });
             self.start(self.cars.len() - 1, false);
         }
         if self.cars.len() != before {
@@ -567,7 +592,10 @@ impl Traffic {
         (car.speed, car.blocked, car.held, car.waiting, car.stood, car.nearest, car.stalled, car.reverse_left, car.tries) = (speed, f32::MAX, 0, 0, 0, f32::MAX, 0, 0, 0);
         (car.shift, car.lateral, car.easing, car.still, car.rest) = (0.0, 0.0, false, false, 0);
         // Another driver, with a nerve of their own.
-        (car.nerve, car.mood, car.aimed, car.boxed) = (Nerve::of(self.rng.next_u64()), Mood::Calm, 0, 0);
+        let roll = self.rng.next_u64();
+        (car.nerve, car.mood, car.aimed, car.boxed) = (Nerve::of(roll), Mood::Calm, 0, 0);
+        // The same roll's next digit, so that one in two of each nerve is rash.
+        (car.rash, car.by) = ((roll / 10).is_multiple_of(2), 0);
         self.enter(i, way, along, None);
         let car = &mut self.cars[i];
         car.speed = car.speed.min(self.graph.cap(way, along));
@@ -684,9 +712,25 @@ impl Traffic {
         // A driver who has been threatened: stopping to give the car up, going for whoever it was
         // whatever is in the way, or off as fast as the car goes and the bends allow.
         let fleeing = matches!(car.mood, Mood::Fleeing { .. });
+        // How near the car ahead it drives: a driver who flees sits on its tail, and one who
+        // hurries keeps half the time behind it.
+        let (keep, headway) = match car.mood {
+            Mood::Fleeing { .. } => (FLEE_GAP, 0.0),
+            Mood::Hurrying { .. } => (GAP, HEADWAY / 2.0),
+            _ => (GAP, HEADWAY),
+        };
         match car.mood {
             Mood::Calm => {}
-            Mood::GivingUp => return 0.0,
+            Mood::Hurrying { .. } => {
+                // Faster than they would on the straight, and a little faster through a bend.
+                let (cap, road) = (self.graph.cap(car.way, car.along), self.graph.edge(car.way).speed);
+                let hurry = (road * car.pace * HURRY).min(top);
+                limit = if cap > road * 0.95 { hurry } else { hurry.min(cap * HURRY_BENDS) };
+            }
+            // Down behind the wheel, standing on the brake.
+            Mood::GivingUp | Mood::Ducking { .. } => return 0.0,
+            // Out of their mind, or dead: nothing holds the car back.
+            Mood::Panicking { .. } | Mood::Runaway { .. } => return top,
             // Slowly onto the verge, and no further.
             Mood::PullingOver { .. } if self.pulled_over(i) => return 0.0,
             Mood::PullingOver { .. } => limit = limit.min(PULL_OVER_SPEED),
@@ -698,7 +742,7 @@ impl Traffic {
             }
         }
         if let Some((gap, speed)) = self.leader(i) {
-            limit = limit.min(slowing(speed, gap - GAP - HEADWAY * car.speed.max(0.0)));
+            limit = limit.min(slowing(speed, gap - keep - headway * car.speed.max(0.0)));
             // Closer than it should ever be (it came onto the road beside the other): it falls back.
             if gap < GAP / 2.0 {
                 limit = limit.min((speed - 1.5).max(0.0));
@@ -864,7 +908,22 @@ impl Traffic {
             Mood::Ramming { at, .. } => self.target(world, at),
             _ => None,
         };
-        if (off > LOST && ramming.is_none()) || pose.up_y < 0.3 || car.tries >= TRIES {
+        // Fallen out of the world: gone, to start afresh.
+        if pose.position[1] < KILL_Y + 5.0 {
+            self.reborn(i, world, false);
+            return;
+        }
+        // A driver in a panic, or a dead one, takes the car wherever it goes.
+        let wild = matches!(car.mood, Mood::Panicking { .. } | Mood::Runaway { .. });
+        if let Mood::Runaway { steer, throttle, .. } = car.mood {
+            if pose.up_y < 0.3 {
+                self.abandon(i, world);
+            } else if let Some(mut autopilot) = world.entities.get_mut::<Autopilot>(vid) {
+                autopilot.0 = CarControls { throttle, steer, powered: true, ..CarControls::IDLE };
+            }
+            return;
+        }
+        if (off > LOST && ramming.is_none() && !wild) || pose.up_y < 0.3 || (car.tries >= TRIES && !wild) {
             // Off the road, on its roof or stuck for good: gone if nobody is there to see, and
             // else left where it is.
             if unseen { self.reborn(i, world, false) } else { self.abandon(i, world) }
@@ -875,13 +934,17 @@ impl Traffic {
         // Steering: at a point ahead on its lane, turning as the arc through it asks.
         let spec = &vehicle_def(car.kind).spec;
         let ahead = (LOOK_AHEAD[0] + LOOK_PER_SPEED * speed.max(0.0)).min(LOOK_AHEAD[1]);
-        let goal = ramming.unwrap_or(self.pose_ahead(i, ahead).0);
+        let goal = match car.mood {
+            // All over the road: for a point thrown to one side of its lane or the other.
+            Mood::Panicking { swerve, .. } => self.pose_out(i, ahead, car.shift + swerve).0,
+            _ => ramming.unwrap_or(self.pose_ahead(i, ahead).0),
+        };
         let reach = (goal[0] - x).hypot(goal[2] - z).max(1.0);
         let bearing = wrap_angle((-(goal[0] - x)).atan2(-(goal[2] - z)) - pose.yaw());
         let wheelbase = spec.axles.iter().copied().fold(f32::MIN, f32::max) - spec.axles.iter().copied().fold(f32::MAX, f32::min);
         let lock = (2.0 * wheelbase * bearing.sin() / reach).atan();
         // A positive steer turns the hull clockwise seen from above, which takes its yaw down.
-        let steer = (-lock / spec.steer_lock.max(0.1)).clamp(-1.0, 1.0);
+        let steer = (-lock / spec.steer_lock.max(0.1) * if wild { PANIC_STEER } else { 1.0 }).clamp(-1.0, 1.0);
 
         let car = &mut self.cars[i];
         let controls = |throttle: f32, steer: f32, handbrake: bool| CarControls { throttle, steer, handbrake, powered: true, ..CarControls::IDLE };
@@ -889,7 +952,10 @@ impl Traffic {
         if car.easing && car.blocked <= EASE_GAP && speed.abs() < 0.3 && car.reverse_left == 0 {
             car.reverse_left = ticks(BACK_UP);
         }
-        let asked = if car.reverse_left > 0 {
+        let asked = if wild {
+            // Flat out, braking for nothing.
+            controls(1.0, steer, false)
+        } else if car.reverse_left > 0 {
             // Backing out of where it stuck.
             car.reverse_left -= 1;
             controls(if car.easing { -0.5 } else { -1.0 }, -steer, false)
@@ -983,7 +1049,7 @@ impl Traffic {
             self.in_way.push(by);
         }
         let car = &mut self.cars[i];
-        (car.blocked, car.still, car.easing) = (blocked, still, easing);
+        (car.blocked, car.still, car.easing, car.by) = (blocked, still, easing, by);
         if blocked == f32::MAX {
             car.held = 0;
         }
@@ -1094,7 +1160,15 @@ impl Traffic {
         let (ours, theirs) = (edge.lanes[usize::from(car.way.back)], edge.lanes[usize::from(!car.way.back)]);
         let (width, speed, no_passing) = (edge.width, edge.speed, edge.no_passing);
         // What it would drive at with nothing ahead: its pace, and no more than its kind goes.
-        let desired = (speed * car.pace).min(vehicle_def(car.kind).spec.max_speed * TOP_SHARE);
+        let top = vehicle_def(car.kind).spec.max_speed * TOP_SHARE;
+        // How much it cares who is coming and what the road allows: a driver who flees not at
+        // all, and one who hurries half as much as they should.
+        let (desired, care) = match car.mood {
+            Mood::Fleeing { .. } => (top, 0.0),
+            Mood::Hurrying { .. } => ((speed * car.pace * HURRY).min(top), 0.5),
+            _ => ((speed * car.pace).min(top), 1.0),
+        };
+        let reckless = care == 0.0;
         let from_junction = self.graph.nodes[self.graph.start(car.way) as usize].edges != 2;
         // Out is the next lane its own way where the road has one, and else the other side of the road.
         let across = ours < 2;
@@ -1123,15 +1197,16 @@ impl Traffic {
                         let time = gaining(to_gain, (car.speed - slower).max(0.0), desired - slower) + PULL_IN;
                         self.oncoming(i).is_some_and(|(gap, speed, _)| gap < (speed + car.speed) * time + MEET_ROOM)
                     }
-                    // Not yet up to the thing, it comes back in behind it for a car that would be
-                    // there before it was round.
+                    // Not yet up to the thing nor out of its lane, it stays in behind it for a car
+                    // that would be there before it was round. Once its body is out it goes on: back
+                    // in it could not get, and it would stand across the other lane for good.
                     None => {
                         let round = car.swerve_to - car.along;
-                        car.along < car.upon - 2.0 && self.oncoming(i).is_some_and(|(gap, speed, _)| gap < round + speed * (round / SWERVE_SPEED + PULL_IN) + MEET_ROOM)
+                        car.along < car.upon - 2.0 && car.lateral < OUT_FOR_GOOD && self.oncoming(i).is_some_and(|(gap, speed, _)| gap < round + speed * (round / SWERVE_SPEED + PULL_IN) + MEET_ROOM)
                     }
                 };
             // How far it is to the next junction: it is back in its lane by then.
-            let give_up = !past && (meeting || self.open_road(i) < if car.passing.is_some() { PASS_END } else { SWERVE_END });
+            let give_up = !reckless && !past && (meeting || self.open_road(i) < if car.passing.is_some() { PASS_END } else { SWERVE_END });
             if give_up && car.passing.is_some() && !behind {
                 // Beside the other car with no time to get by: it drops back to pull in behind it.
                 self.cars[i].back = true;
@@ -1171,7 +1246,12 @@ impl Traffic {
             let gap = other.along - car.along - half_length(other.kind) - half_length(car.kind);
             let room = self.ahead_of(index as usize).is_none_or(|next| self.cars[next as usize].along - other.along > PASS_ROOM);
             let straight = |along: f32| self.graph.cap(car.way, along) > speed * 0.95;
-            if other.aside > 0.0 || other.shift > 0.05 || gap > PASS_FROM + car.speed || other.speed > desired - PASS_FASTER || other.speed < 1.0 || !room || (across && no_passing) {
+            // A driver who flees passes whatever is slower, a standing queue too, wherever they are.
+            let faster = if care < 1.0 { 1.0 } else { PASS_FASTER };
+            if other.aside > 0.0 || other.shift > 0.05 || gap > PASS_FROM + car.speed || other.speed > desired - faster {
+                return;
+            }
+            if !reckless && (other.speed < 1.0 || !room || (across && no_passing)) {
                 return;
             }
             // How long it takes to gain the length of the pass on it, picking up speed as it goes,
@@ -1180,22 +1260,24 @@ impl Traffic {
             let (gain, closing, top) = (gap + 2.0 * half_length(other.kind) + 2.0 * GAP + desired, (car.speed - other.speed).max(0.0), desired - other.speed);
             // It gains on it faster and faster until it is at its own pace, and steadily from then.
             let need = other.speed * gaining(gain, closing, top) + gain;
-            if !straight(car.along) || !straight(car.along + need) {
+            if !reckless && (!straight(car.along) || !straight(car.along + need)) {
                 return;
             }
             (need, Some(index))
         };
         // How far it is to the next junction: it is back in its lane by then.
         let open = self.open_road(i);
-        if open - need < if passing.is_some() { PASS_END + 10.0 } else { SWERVE_END } {
+        if !reckless && open - need < if passing.is_some() { PASS_END + 10.0 } else { SWERVE_END } {
             return;
         }
-        if across && passing.is_some() {
+        if reckless {
+            // Out it goes, whoever is coming.
+        } else if across && passing.is_some() {
             // Nobody coming the other way within what it takes and what they cover meanwhile, nor
             // able to come onto the road at the next junction and get that near.
             let time = need / car.speed.max(SWERVE_SPEED) + PULL_IN;
             let fastest = speed * PACE[1];
-            if open < need + fastest * time + MEET_CLEAR || self.oncoming(i).is_some_and(|(gap, speed, _)| gap < need + speed.max(fastest) * time + MEET_CLEAR) {
+            if open < need + (fastest * time + MEET_CLEAR) * care || self.oncoming(i).is_some_and(|(gap, speed, _)| gap < need + (speed.max(fastest) * time + MEET_CLEAR) * care) {
                 return;
             }
         } else if across {
@@ -1250,6 +1332,17 @@ impl Traffic {
         }
     }
 
+    /// Lets shown car `i` off its rails at the speed it has: it is physical from now on.
+    fn let_go(&mut self, i: usize, world: &mut World) {
+        let car = self.cars[i];
+        let Some(vid) = car.vid.filter(|_| !car.physical) else { return };
+        let (_, d) = self.pose(i);
+        world.physics.set_car_rails(vid, false, d.map(|v| v * car.speed));
+        let car = &mut self.cars[i];
+        (car.physical, car.stalled, car.reverse_left, car.tries) = (true, 0, 0, 0);
+        self.physical += 1;
+    }
+
     /// Measures how near the players car `i` is, and shows, hides, lets go or puts back on rails
     /// its vehicle by that.
     fn rank(&mut self, i: usize, world: &mut World) {
@@ -1291,14 +1384,13 @@ impl Traffic {
         }
         let car = self.cars[i];
         let sound = sound(world, vid);
+        // A driver who only hurries drives as the rails would have it; any other mood needs the car.
+        let steady = matches!(car.mood, Mood::Calm | Mood::Hurrying { .. });
         if !car.physical {
             let hurt = !sound;
             let taken = world.entities.get::<Seats>(vid).is_some_and(|seats| !seats.vacant());
-            if (nearest < PHYSICAL_WITHIN || hurt || taken || car.held > ticks(HELD_RAILS) || car.mood != Mood::Calm) && self.physical < PHYSICAL_MAX {
-                world.physics.set_car_rails(vid, false, d.map(|v| v * car.speed));
-                let car = &mut self.cars[i];
-                (car.physical, car.stalled, car.reverse_left, car.tries) = (true, 0, 0, 0);
-                self.physical += 1;
+            if (nearest < PHYSICAL_WITHIN || hurt || taken || car.held > ticks(HELD_RAILS) || !steady) && self.physical < PHYSICAL_MAX {
+                self.let_go(i, world);
             }
         } else if nearest > RAILS_BEYOND
             && let Some(pose) = world.physics.car_pose(vid)
@@ -1306,7 +1398,7 @@ impl Traffic {
             // Back on rails once it drives its lane as the rails would have it.
             // A scratched car drives on as traffic; a badly damaged one is on its way off the road.
             let off = (pose.position[0] - p[0]).hypot(pose.position[2] - p[2]);
-            if sound && car.mood == Mood::Calm && pose.up_y > 0.97 && off < ON_LANE && wrap_angle(pose.yaw() - yaw_of(d)).abs() < ON_HEADING && car.blocked == f32::MAX {
+            if sound && steady && pose.up_y > 0.97 && off < ON_LANE && wrap_angle(pose.yaw() - yaw_of(d)).abs() < ON_HEADING && car.blocked == f32::MAX {
                 world.physics.set_car_rails(vid, true, [0.0; 3]);
                 let car = &mut self.cars[i];
                 (car.physical, car.speed) = (false, pose.forward_speed.max(0.0));
@@ -1420,6 +1512,7 @@ impl Mechanic for Traffic {
         if tick.is_multiple_of(LOOK_EVERY) {
             self.threats(world);
         }
+        self.hear(world);
         for i in 0..self.cars.len() {
             if (i as u32).wrapping_add(tick).is_multiple_of(NEAR_EVERY) {
                 self.rank(i, world);
@@ -1433,6 +1526,11 @@ impl Mechanic for Traffic {
                 car.held = if car.blocked < GAP + 2.0 && car.speed.abs() < 0.5 { car.held + 1 } else { 0 };
                 if (i as u32).wrapping_add(tick).is_multiple_of(LOOK_EVERY) {
                     self.look(i);
+                    // About to be hit by something that is not on rails: off them, to be moved by it.
+                    let car = &self.cars[i];
+                    if !car.physical && car.by != 0 && car.blocked < STRUCK_WITHIN {
+                        self.let_go(i, world);
+                    }
                 }
             }
             if self.cars[i].physical {
@@ -1457,6 +1555,11 @@ impl Mechanic for Traffic {
             let occupied = world.entities.get::<Seats>(vid).is_some_and(|seats| !seats.vacant());
             let wrecked = world.entities.dead(vid);
             let place = world.physics.car_pose(vid).map(|pose| pose.position);
+            // Fallen out of the world: gone, where `Vehicles` would put it back where it was first shown.
+            if place.is_some_and(|p| p[1] < KILL_Y + 5.0) {
+                remove_vehicle(world, vid);
+                continue;
+            }
             let watched = place.is_some_and(|p| self.watched(p));
             let theirs = place.is_some_and(|p| self.viewers.iter().any(|v| (v[0] - p[0]).hypot(v[2] - p[2]) < ABANDON_THEIRS));
             let found = self.in_way.contains(&vid);

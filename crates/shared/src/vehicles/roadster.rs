@@ -3,18 +3,19 @@
 use super::*;
 
 /// The Roadster (`KIND_ROADSTER`): Tesla's 2026 two-seater with SpaceX cold-gas thrusters fed from a
-/// tank of compressed air. Same chassis and wheels as the sports car, a stronger motor, and three
+/// tank of compressed air. A low, flat chassis on small wheels, a strong motor, and three
 /// tricks: rear nozzles that push it far past what the tyres could (Shift), a hop straight up off the
 /// ground (Space), and lift nozzles that hold it in the air while Space stays held. Thrust drains
 /// the tank, which refills while it sits on its wheels.
 pub const ROADSTER_SEATS: usize = 2;
-pub const ROADSTER_HALF_EXTENTS: [f32; 3] = SPORTS_HALF_EXTENTS;
-pub const ROADSTER_WHEEL_RADIUS: f32 = SPORTS_WHEEL_RADIUS;
-pub const ROADSTER_TRACK_HALF: f32 = SPORTS_TRACK_HALF;
-pub const ROADSTER_AXLE_Z: f32 = SPORTS_AXLE_Z;
-pub const ROADSTER_HARD_POINT_Y: f32 = SPORTS_HARD_POINT_Y;
-pub const ROADSTER_SUSPENSION_REST: f32 = SPORTS_SUSPENSION_REST;
-pub const ROADSTER_RIDE_HEIGHT: f32 = SPORTS_RIDE_HEIGHT;
+pub const ROADSTER_HALF_EXTENTS: [f32; 3] = [0.95, 0.3, 2.2];
+pub const ROADSTER_WHEEL_RADIUS: f32 = 0.32;
+pub const ROADSTER_TRACK_HALF: f32 = 0.82;
+pub const ROADSTER_AXLE_Z: f32 = 1.45;
+pub const ROADSTER_HARD_POINT_Y: f32 = 0.05;
+pub const ROADSTER_SUSPENSION_REST: f32 = 0.22;
+/// Measured by `ride_heights_differ_between_cars` in vehicle.rs.
+pub const ROADSTER_RIDE_HEIGHT: f32 = 0.397;
 pub const ROADSTER_MAX_STEER: f32 = 0.4;
 pub const ROADSTER_MAX_SPEED: f32 = 62.0;
 /// The air tank, as a share of full.

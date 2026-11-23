@@ -1068,9 +1068,10 @@ fn a_plane_dropped_flat_onto_its_wheels_is_hurt_as_before() {
 #[test]
 fn a_low_car_driven_fast_over_a_kerb_is_unhurt() {
     use shared::world::CollisionMesh;
-    // A slab a quarter of a metre high across the way, 20 m deep: well over what a sports car clears.
+    // A slab a quarter of a metre high across the way, 40 m deep, so that a car braking to a stop on it
+    // stays on it: well over what a sports car clears.
     let v = |x: f32, y: f32, z: f32| [(x * 100.0) as i32, (y * 100.0) as i32, (z * 100.0) as i32];
-    let vertices = vec![v(0.0, 0.0, -20.0), v(30.0, 0.0, -20.0), v(30.0, 0.0, 0.0), v(0.0, 0.0, 0.0), v(0.0, 0.25, -20.0), v(30.0, 0.25, -20.0), v(30.0, 0.25, 0.0), v(0.0, 0.25, 0.0)];
+    let vertices = vec![v(0.0, 0.0, -40.0), v(30.0, 0.0, -40.0), v(30.0, 0.0, 0.0), v(0.0, 0.0, 0.0), v(0.0, 0.25, -40.0), v(30.0, 0.25, -40.0), v(30.0, 0.25, 0.0), v(0.0, 0.25, 0.0)];
     let triangles = vec![[0, 1, 5], [0, 5, 4], [1, 2, 6], [1, 6, 5], [2, 3, 7], [2, 7, 6], [3, 0, 4], [3, 4, 7], [4, 5, 6], [4, 6, 7], [0, 2, 1], [0, 3, 2]];
     // Each at about the best it does on the flat.
     for (kind, speed) in [(KIND_SPORTS, 20.0), (KIND_ROADSTER, 20.0), (KIND_GOLF_CART, 10.0)] {

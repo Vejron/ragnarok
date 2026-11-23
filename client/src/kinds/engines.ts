@@ -29,6 +29,12 @@ export const DIESEL_FOUR: SynthSpec = { ...NONE, cylinders: 4, imbalance: 0.35, 
 /** An old saloon's petrol four: a plain, slightly uneven drone with an exhaust that has seen better days. */
 export const PETROL_FOUR: SynthSpec = { ...NONE, cylinders: 4, imbalance: 0.2, jitter: 0.15, pulse: 1.8, pipe: 1.2, resonance: 0.55, body: 330, intake: 0.45, mech: 0.25, crackle: 0.15, gain: 1.1 }
 
+/** A Saab's turbo four: a hard, even drone with the turbo's whistle and rush over it once it spools. */
+export const TURBO_FOUR: SynthSpec = { ...PETROL_FOUR, imbalance: 0.12, jitter: 0.1, crackle: 0.05, whine: 0.22, whineRatio: 24, roar: 0.1, roarHz: 2800 }
+
+/** A van's flat four under the back floor: a chattering, off-beat thrum. */
+export const BOXER_FOUR: SynthSpec = { ...NONE, cylinders: 4, imbalance: 0.4, jitter: 0.2, pulse: 1.6, pipe: 1.0, resonance: 0.6, body: 280, intake: 0.35, mech: 0.4, crackle: 0.05, gain: 1.1 }
+
 /** A jeep's petrol straight six: smooth, with a growl when it is pushed. */
 export const PETROL_SIX: SynthSpec = { ...NONE, cylinders: 6, imbalance: 0.1, jitter: 0.1, pulse: 2, pipe: 1.6, resonance: 0.5, body: 300, intake: 0.5, mech: 0.2, crackle: 0.1, gain: 1.1 }
 

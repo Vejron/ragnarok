@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { Group, Vector3 } from '@ragnarok/engine'
 import { Cameras, type Seated } from '@/cameras'
-import { isDrone, KIND_DRONE, KIND_HELI, KIND_HEN, KIND_LOITER, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER } from '@/net/codec'
+import { isDrone, KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER } from '@/net/codec'
 import type { Placed } from '@/entities/presenters/vehicles'
 import { MortarModel } from '@/render/mortar'
 import { TankModel } from '@/render/tank'
@@ -19,11 +19,11 @@ const before = {
     if (kind === KIND_STRV) return 'E: drive the Strv S'
     if (kind === KIND_HELI) return driverSeatFree ? 'E: fly' : 'E: man the nose gun'
     if (kind === KIND_PLANE) return driverSeatFree ? 'E: fly the triplane' : 'E: man the rear gun'
-    if (kind === KIND_SPORTS) return driverSeatFree ? 'E: drive the sports car' : 'E: ride along'
+    if (kind === KIND_SPORTS) return driverSeatFree ? 'E: drive the Opel Manta' : 'E: ride along'
     if (kind === KIND_ROADSTER) return driverSeatFree ? 'E: drive the Roadster' : 'E: ride along'
     if (kind === KIND_WALKER) return 'E: drive the walker'
     if (kind === KIND_HEN) return 'E: drive the hen'
-    return driverSeatFree ? 'E: drive the jeep' : 'E: ride along'
+    return driverSeatFree ? (kind === KIND_JEEP ? 'E: drive the Ford Bronco' : 'E: drive the jeep') : 'E: ride along'
   },
   role(kind: number, index: number) {
     if (kind === KIND_TANK && index === TANK_MG_SEAT) return 'roofgunner'

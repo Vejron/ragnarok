@@ -32,9 +32,19 @@ pub use crate::vehicles::submarine::*;
 pub use crate::vehicles::tank::*;
 pub use crate::vehicles::titan::*;
 pub use crate::vehicles::walker::*;
+pub use crate::vehicles::saab_900::*;
+pub use crate::vehicles::saab_9000::*;
+pub use crate::vehicles::volvo_240::*;
+pub use crate::vehicles::volvo_740::*;
+pub use crate::vehicles::gti::*;
+pub use crate::vehicles::transporter::*;
+pub use crate::vehicles::kadett::*;
+pub use crate::vehicles::omega::*;
+pub use crate::vehicles::sierra::*;
+pub use crate::vehicles::escort::*;
 
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
-pub const PROTOCOL_VERSION: u8 = 93;
+pub const PROTOCOL_VERSION: u8 = 94;
 
 /// Why a page closes its session (`Bye`): the tab is closing or reloading.
 pub const BYE_LEAVING: u8 = 0;
@@ -134,6 +144,28 @@ pub const KIND_EPA: u8 = 38;
 /// Someone who drives a car of the traffic (TRAFFIC.md): at its wheel, or on foot once they have
 /// left it or been dragged out. Drawn as a soldier with nothing in hand.
 pub const KIND_CIVILIAN: u8 = 39;
+/// The period cars of the traffic, 1980 to 1995 (VEHICLES-XXIII.md); the jeep and the sports car are two more.
+/// The Saab 900 Turbo: a three-door hatchback with a wraparound windscreen, slow off the line and the
+/// fastest of the everyday cars flat out.
+pub const KIND_SAAB_900: u8 = 40;
+/// The Saab 9000: a big, quick five-door hatchback with a turbo.
+pub const KIND_SAAB_9000: u8 = 41;
+/// The Volvo 240 estate: the brick, heavy, slow and softly sprung.
+pub const KIND_VOLVO_240: u8 = 42;
+/// The Volvo 740: a square-cut saloon, in the middle of the pack for pace.
+pub const KIND_VOLVO_740: u8 = 43;
+/// The Volkswagen Golf GTI: a light hot hatch, the quickest of the everyday cars off the line.
+pub const KIND_GTI: u8 = 44;
+/// The Volkswagen Transporter: a flat-fronted van for seven, tall and slow.
+pub const KIND_TRANSPORTER: u8 = 45;
+/// The Opel Kadett: a wedge-shaped five-door hatchback, the everyday small car.
+pub const KIND_KADETT: u8 = 46;
+/// The Opel Omega: a long, smooth saloon that cruises fast.
+pub const KIND_OMEGA: u8 = 47;
+/// The Ford Sierra: a rounded five-door family hatchback.
+pub const KIND_SIERRA: u8 = 48;
+/// The Ford Escort: a small, light, slow hatchback.
+pub const KIND_ESCORT: u8 = 49;
 
 /// Fixed simulation rate, in ticks per second.
 pub const TICK_RATE: u32 = 60;
