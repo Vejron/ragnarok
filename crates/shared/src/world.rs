@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::terrain::Ground;
 
-pub const WORLD_VERSION: u8 = 40;
+pub const WORLD_VERSION: u8 = 41;
 
 /// `Manifest::theme`: the world as it always was.
 pub const THEME_PLAIN: u8 = 0;
@@ -1076,6 +1076,9 @@ pub struct Road {
     /// How far along the way it was cut from its first point is, centimetres: a dashed line's rhythm
     /// carries on across tile borders from it.
     pub along: i32,
+    /// Whether it is driven one way only: along its `points` when its `forward` lanes are all of its
+    /// `lanes`, against them when it has none `forward`. A road of a single lane can be either.
+    pub one_way: bool,
 }
 
 /// White dashed lines along both edges, as on Swedish country roads (kantlinje): 1 m of paint, 2 m gap.

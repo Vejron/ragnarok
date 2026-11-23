@@ -2,7 +2,7 @@
 // change the Rust and run `npm run gen:consts`. Client-only constants live in consts.ts.
 
 /** Wire schema version. Bumped on any incompatible protocol or world-format change. */
-export const PROTOCOL_VERSION = 92
+export const PROTOCOL_VERSION = 93
 
 /** Why a page closes its session (`Bye`): the tab is closing or reloading. */
 export const BYE_LEAVING = 0
@@ -160,6 +160,18 @@ export const KIND_PARCEL = 36
 
 /** The air ambulance: an unarmed helicopter for a pilot and three passengers, with a shrouded tail fan. */
 export const KIND_AIR_AMBULANCE = 37
+
+/**
+ * The EPA traktor: an old saloon cut down into a two-seat pickup and held to 30 km/h, a Swedish
+ * teenager's first car.
+ */
+export const KIND_EPA = 38
+
+/**
+ * Someone who drives a car of the traffic (TRAFFIC.md): at its wheel, or on foot once they have
+ * left it or been dragged out. Drawn as a soldier with nothing in hand.
+ */
+export const KIND_CIVILIAN = 39
 
 /** Fixed simulation rate, in ticks per second. */
 export const TICK_RATE = 60
@@ -1830,6 +1842,33 @@ export const DRONE_RESPONSE = 14.0
 
 /** Air drag on the body, which is all that slows a drone whose motors are off. */
 export const DRONE_DAMPING = 0.1
+
+/**
+ * The EPA traktor (`KIND_EPA`): an old boxy saloon cut down into a two-seat pickup, as Swedish teenagers
+ * drive them. The back doors are welded shut and the roof ends behind the front seats, where a wall with
+ * a window and a slow-vehicle triangle closes the cab off from a short bed. Its gearbox is locked so that
+ * it can go no faster than 30 km/h, but it keeps the saloon's big engine, so it gets there briskly. A
+ * driver and a passenger sit behind glass.
+ */
+export const EPA_SEATS = 2
+export const EPA_HALF_EXTENTS = [0.87, 0.3, 2.38] as const
+
+/** Low-profile tyres on big aftermarket rims, metres. */
+export const EPA_WHEEL_RADIUS = 0.32
+export const EPA_TRACK_HALF = 0.74
+export const EPA_AXLE_Z = 1.385
+export const EPA_HARD_POINT_Y = 0.0
+export const EPA_SUSPENSION_REST = 0.22
+
+/** Measured by `ride_heights_differ_between_cars` in vehicle.rs. */
+export const EPA_RIDE_HEIGHT = 0.447
+export const EPA_MAX_STEER = 0.55
+
+/** 30 km/h, the most the law lets an EPA traktor do, m/s. */
+export const EPA_MAX_SPEED = 8.33
+
+/** The driver on the left and the passenger beside them, under the front of the roof. */
+export const EPA_SEAT_HEADS = [[-0.38, 0.75, 0.1], [0.38, 0.75, 0.1]] as const
 
 /**
  * The golf cart (`KIND_GOLF_CART`): two seats side by side under a canopy roof, small wheels and an

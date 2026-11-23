@@ -3,7 +3,7 @@ import tables from './sim/tables.generated.json'
 
 /** Mirrors `crates/shared/src/world.rs`. Coordinates are metres: +X east, +Z south, +Y up. */
 
-export const WORLD_VERSION = 40
+export const WORLD_VERSION = 41
 
 /** `Manifest::theme`, mirrors `crates/shared/src/world.rs`. */
 export const THEME_WINTER = 1
@@ -330,6 +330,8 @@ export interface Road {
   marks: number
   /** How far along the way it was cut from its first point is, metres: a dashed line's rhythm carries on from it. */
   along: number
+  /** Whether it is driven one way only: along its points when all its lanes are `forward`, against them when none is. */
+  oneWay: boolean
 }
 
 /** White dashed lines along both edges (kantlinje): 1 m of paint, 2 m gap. Mirrors `MARK_EDGE`. */
@@ -702,7 +704,7 @@ function flatIndices(triangles: readonly number[][]): Uint32Array {
 export function decodeTile(bytes: Uint8Array): TileData {
   const [buildings, roads, [vertices, triangles], ground, cover, trees, water, reach, flow, foam, stir, lane, streams, bridges, detail, rails, ski, lines, stones, crops, look, graves] = decode(bytes) as [
     [number, number[][], number, number, number, number, number, number, [number, number], [number[], number[], Uint8Array, Uint8Array], [number, number] | null][],
-    [number, number, boolean, number[][], number, number, number, number][],
+    [number, number, boolean, number[][], number, number, number, number, boolean][],
     [number[][], number[][]],
     [number, Uint8Array],
     [number, number[][][]][],
@@ -744,7 +746,7 @@ export function decodeTile(bytes: Uint8Array): TileData {
       paint,
       look: looks[index] && looks[index]![1]! + looks[index]![2]! > 0 ? { first: looks[index]![0]!, walls: looks[index]![1]!, roof: looks[index]![2]!, kind, front, footprint: Int32Array.from(footprint.flat()) } : null,
     })),
-    roads: roads.map(([width, kind, carried, points, lanes, forward, marks, along]) => ({ width: metres(width), kind, carried, points: points.map(point), lanes, forward, marks, along: metres(along) })),
+    roads: roads.map(([width, kind, carried, points, lanes, forward, marks, along, oneWay]) => ({ width: metres(width), kind, carried, points: points.map(point), lanes, forward, marks, along: metres(along), oneWay })),
     cover: cover.map(([kind, rings]) => ({ kind, rings: rings.map((ring) => ring.map(point)) })),
     trees: trees.map(([x, z, base, height, crown, kind, solid]) => ({
       x: metres(x),

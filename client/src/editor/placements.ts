@@ -68,6 +68,8 @@ export const VEHICLE_KINDS: { kind: number; name: string; icon: string }[] = [
   { kind: 29, name: 'Snowracer', icon: 'Z' },
   { kind: 22, name: 'Golf cart', icon: 'G' },
   { kind: 23, name: 'Technical', icon: 'Q' },
+  // Every letter is taken: its slow-vehicle triangle says it.
+  { kind: 38, name: 'EPA traktor', icon: '▲' },
   // Parked, with nobody driving it: the buses that run a world's lines come with the lines.
   { kind: 31, name: 'Bus', icon: 'O' },
   { kind: 32, name: 'Pbv 302', icon: 'A' },

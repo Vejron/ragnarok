@@ -3,7 +3,7 @@ Builds the three cars, an open jeep, a low sports car and the thruster Roadster,
 to client/public/models/.
 
     /Applications/Blender.app/Contents/MacOS/Blender -b -P tools/vehicles/build_car.py -- \
-        [--out DIR] [--only jeep|sports|roadster|snowmobile|golf_cart|technical|snowracer|bus|amv] [--preview DIR]
+        [--out DIR] [--only jeep|sports|roadster|snowmobile|golf_cart|technical|snowracer|bus|amv|epa] [--preview DIR]
 
 Everything is procedural and flat-shaded: about a thousand triangles each.
 
@@ -18,7 +18,7 @@ Conventions
       `seat_0` ... `seat_N`                            empties where a seated player's head is drawn, driver first
       `nozzle_rear_N`, `nozzle_lift_N`                the Roadster's thruster mouths: the rear ones blow backwards, the lift ones down
   * Materials: `paint` is tinted per car at runtime; `lamp` is drawn unlit; `dark` (tyres, trim, seats),
-    `glass`, `steel` (rims, bars), `red` and `white` keep their colours.
+    `glass`, `steel` (rims, bars), `red`, `white` and `amber` keep their colours.
 """
 
 import math
@@ -63,6 +63,8 @@ SPECS = {
     "bus": dict(half=(1.25, 0.5, 6.0), wheel_radius=0.5, wheel_width=0.3, track=1.05, axle=3.0, ride=1.057),
     # AMV_*: eight wheels on four axles (`axles`, front first in the game's z), under an armoured hull.
     "amv": dict(half=(1.4, 0.925, 3.85), wheel_radius=0.6, wheel_width=0.4, track=1.12, axle=2.35, axles=(-2.35, -0.85, 0.85, 2.35), ride=1.35),
+    # EPA_*: a lowered saloon on big rims and thin tyres.
+    "epa": dict(half=(0.87, 0.3, 2.38), wheel_radius=0.32, wheel_width=0.22, track=0.74, axle=1.385, ride=0.447),
 }
 
 MATERIAL_COLORS = {
@@ -73,9 +75,10 @@ MATERIAL_COLORS = {
     "lamp": (1.0, 0.96, 0.66),
     "red": (0.75, 0.05, 0.05),
     "white": (0.92, 0.92, 0.9),
+    "amber": (1.0, 0.33, 0.05),
 }
 NAMES = list(MATERIAL_COLORS)
-PAINT, DARK, GLASS, STEEL, LAMP, RED, WHITE = range(len(NAMES))
+PAINT, DARK, GLASS, STEEL, LAMP, RED, WHITE, AMBER = range(len(NAMES))
 
 scene = None
 MATERIALS[:] = []
@@ -777,7 +780,112 @@ def build_amv():
     return [body_obj, turret_obj, gun_obj, *wheels]
 
 
-BUILDERS = {"amv": build_amv, "bus": build_bus, "jeep": build_jeep, "sports": build_sports, "roadster": build_roadster, "snowmobile": build_snowmobile, "golf_cart": build_golf_cart, "technical": build_technical, "snowracer": build_snowracer}
+# --------------------------------------------------------------------------------------------------
+# The EPA traktor: an old boxy saloon cut down into a pickup. A wedge of a bonnet, the front doors
+# and their windows, then a blank panel where the back doors were welded shut and a wall with a
+# window and a slow-vehicle triangle behind the seats. The boot and the back of the cabin are one
+# short open bed, with tall tail lamps either side of the plate and a tow ball under the bumper.
+# Black bumpers and side strips, a sunroof, and big rims on thin tyres.
+# --------------------------------------------------------------------------------------------------
+def triangle(part, centre, side, depth, mat):
+    """An upright triangle, point up, facing along Y: a slow-vehicle sign."""
+    cx, cy, cz = centre
+    h = side * math.sqrt(3) / 2
+    outline = [(cx - side / 2, cz - h / 3), (cx + side / 2, cz - h / 3), (cx, cz + 2 * h / 3)]
+    a = [part.bm.verts.new((x, cy - depth / 2, z)) for x, z in outline]
+    b = [part.bm.verts.new((x, cy + depth / 2, z)) for x, z in outline]
+    faces = [part.bm.faces.new(a), part.bm.faces.new(b[::-1])]
+    for i in range(3):
+        j = (i + 1) % 3
+        faces.append(part.bm.faces.new((a[i], a[j], b[j], b[i])))
+    for face in faces:
+        face.material_index = mat
+
+
+def build_epa():
+    spec = SPECS["epa"]
+    hx, hy = 0.86, spec["half"][2]
+    axle, arch = spec["axle"], 0.4
+    # Heights over the origin: the bottom of the sills, the top of the wheel arches, the waist line
+    # under the windows, and the roof.
+    sill, top, belt, roof = -0.22, 0.25, 0.45, 0.93
+    # Along the car: the foot of the windscreen, its top, the door's back edge and the cab's back wall.
+    screen, crown, door, wall = 0.9, 0.2, -0.22, -0.78
+    body = Part("body")
+    # The lower body, cut away round the wheels, with the wells dark between them.
+    for y0, y1 in ((-hy, -axle - arch), (-axle + arch, axle - arch), (axle + arch, hy)):
+        body.box((0.0, (y0 + y1) / 2, (sill + top) / 2), (2 * hx, y1 - y0, top - sill), PAINT)
+    for y in (-axle, axle):
+        body.box((0.0, y, (sill + top) / 2), (2 * (spec["track"] - spec["wheel_width"] / 2) - 0.02, 2 * arch, top - sill), DARK)
+    # The bonnet and the wings, a wedge that rises to the windscreen.
+    body.prism([(hy - 0.02, top), (hy - 0.02, 0.33), (screen, belt), (screen, top)], -hx, hx, PAINT)
+    # The doors and the welded back doors up to the waist, a dash and two seats inside.
+    mirrored(body, hx - 0.04, (screen + wall) / 2, (top + belt) / 2, (0.08, screen - wall, belt - top), PAINT)
+    body.box((0.0, screen - 0.2, belt - 0.02), (2 * hx - 0.16, 0.4, 0.16), DARK)
+    for side in (-1, 1):
+        body.box((side * 0.38, -0.1, top + 0.06), (0.5, 0.5, 0.12), DARK)
+        body.box((side * 0.38, -0.38, 0.55), (0.5, 0.1, 0.6), DARK, rx=-0.15)
+    body.cylinder((-0.38, 0.45, 0.6), 0.18, 0.03, DARK, axis="Y", segments=12)
+    # The windscreen and its posts, the roof with a sunroof, and the side glass up to the B post.
+    rake = -math.atan2(roof - belt, screen - crown)
+    rise = math.hypot(roof - belt, screen - crown)
+    body.box((0.0, (screen + crown) / 2, (belt + roof) / 2), (1.5, rise, 0.03), GLASS, rx=rake)
+    mirrored(body, 0.78, (screen + crown) / 2, (belt + roof) / 2, (0.07, rise, 0.07), PAINT, rx=rake)
+    body.box((0.0, (crown + wall) / 2, roof - 0.03), (1.62, crown - wall + 0.04, 0.06), PAINT)
+    body.box((0.0, -0.2, roof + 0.015), (0.7, 0.5, 0.03), DARK)
+    for side in (-1, 1):
+        x = side * 0.79
+        body.prism([(screen - 0.04, belt), (crown + 0.02, roof - 0.06), (door, roof - 0.06), (door, belt)], x - 0.01, x + 0.01, GLASS)
+        # The B post, and the blank panel where the back door's window was.
+        body.box((x, door - 0.04, (belt + roof) / 2), (0.05, 0.08, roof - belt), PAINT)
+        body.box((x, (door + wall) / 2, (belt + roof) / 2), (0.04, door - wall, roof - belt), PAINT)
+    # The cab's back wall: paint round a big window, and the slow-vehicle triangle in it.
+    body.box((0.0, wall, (top + belt) / 2), (2 * hx - 0.08, 0.06, belt - top), PAINT)
+    mirrored(body, 0.71, wall, (belt + roof) / 2, (0.18, 0.06, roof - belt), PAINT)
+    body.box((0.0, wall, belt + 0.03), (1.3, 0.06, 0.06), PAINT)
+    body.box((0.0, wall, (belt + roof) / 2 + 0.01), (1.26, 0.03, roof - belt - 0.06), GLASS)
+    triangle(body, (-0.2, wall - 0.03, belt + 0.22), 0.36, 0.01, AMBER)
+    # The bed: its floor over the rear axle, its sides and the tailgate.
+    body.box((0.0, (wall - hy) / 2, top + 0.015), (2 * hx - 0.08, wall + hy, 0.03), DARK)
+    mirrored(body, hx - 0.04, (wall - hy) / 2, (top + belt) / 2, (0.08, wall + hy, belt - top), PAINT)
+    body.box((0.0, -hy + 0.04, (top + belt) / 2), (2 * hx, 0.08, belt - top), PAINT)
+    # A fuel flap on the left of the bed.
+    body.box((-hx - 0.003, -1.0, 0.35), (0.01, 0.14, 0.12), WHITE)
+    # The nose: a black bumper, a grille in a bright surround, square headlamps and amber indicators.
+    body.box((0.0, hy + 0.03, -0.11), (2 * hx + 0.04, 0.16, 0.2), DARK)
+    mirrored(body, hx - 0.02, hy - 0.2, -0.11, (0.08, 0.36, 0.2), DARK)
+    body.box((0.0, hy - 0.01, 0.13), (0.66, 0.03, 0.24), STEEL)
+    body.box((0.0, hy, 0.13), (0.58, 0.03, 0.18), DARK)
+    mirrored(body, 0.55, hy - 0.01, 0.14, (0.36, 0.04, 0.16), LAMP)
+    mirrored(body, 0.8, hy - 0.02, 0.14, (0.1, 0.04, 0.16), AMBER)
+    # Black strips down the sides, door seams, handles and mirrors.
+    mirrored(body, hx + 0.01, 0.0, 0.05, (0.02, 2 * (axle - arch) - 0.1, 0.06), DARK)
+    for y in (screen, door):
+        mirrored(body, hx + 0.002, y, (sill + belt) / 2 + 0.05, (0.01, 0.012, belt - sill - 0.1), DARK)
+    mirrored(body, hx + 0.01, door + 0.15, belt - 0.07, (0.02, 0.12, 0.03), DARK)
+    mirrored(body, hx + 0.08, screen - 0.1, belt + 0.1, (0.12, 0.07, 0.1), DARK)
+    # The tail: tall lamps either side of the plate, the bumper, a tow ball and the exhaust.
+    for side in (-1, 1):
+        x = side * (hx - 0.11)
+        body.box((x, -hy - 0.005, 0.2), (0.2, 0.03, 0.4), RED)
+        body.box((x, -hy - 0.015, 0.2), (0.2, 0.02, 0.08), WHITE)
+        body.box((x, -hy - 0.015, 0.12), (0.2, 0.02, 0.05), AMBER)
+    body.box((0.0, -hy - 0.005, 0.22), (0.6, 0.02, 0.17), DARK)
+    body.box((0.0, -hy - 0.015, 0.22), (0.52, 0.02, 0.11), WHITE)
+    body.box((0.0, -hy - 0.04, -0.11), (2 * hx + 0.04, 0.16, 0.22), DARK)
+    mirrored(body, hx - 0.02, -hy + 0.2, -0.11, (0.08, 0.36, 0.22), DARK)
+    body.box((0.0, -hy - 0.16, -0.24), (0.06, 0.26, 0.05), DARK)
+    body.box((0.0, -hy - 0.27, -0.19), (0.03, 0.03, 0.08), STEEL)
+    body.cylinder((0.0, -hy - 0.27, -0.13), 0.045, 0.06, STEEL, segments=8)
+    body.cylinder((-0.45, -hy - 0.02, -0.24), 0.035, 0.2, DARK, axis="Y", segments=6)
+    body_obj = body.build()
+    wheels = add_wheels(spec, lugs=0, rim_ratio=0.7)
+    # EPA_SEAT_HEADS, in this frame: x, -z, y.
+    add_seats([(-0.38, -0.1, 0.75), (0.38, -0.1, 0.75)])
+    return [body_obj, *wheels]
+
+
+BUILDERS = {"amv": build_amv, "bus": build_bus, "jeep": build_jeep, "sports": build_sports, "roadster": build_roadster, "snowmobile": build_snowmobile, "golf_cart": build_golf_cart, "technical": build_technical, "snowracer": build_snowracer, "epa": build_epa}
 
 
 # --------------------------------------------------------------------------------------------------

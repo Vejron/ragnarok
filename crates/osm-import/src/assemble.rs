@@ -676,8 +676,8 @@ fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collecti
             }
             per_tile(&manifest, half, side, &run, |key, points| {
                 let along = points.first().map_or(0, |&[x, z]| cm(arc_at(way, [f64::from(x) / 100.0, f64::from(z) / 100.0])));
-                let Lanes { lanes, forward, marks } = paint;
-                tiles.entry(key).or_default().roads.push(Road { width: cm(width), kind, carried, points, lanes, forward, marks, along });
+                let Lanes { lanes, forward, marks, one_way } = paint;
+                tiles.entry(key).or_default().roads.push(Road { width: cm(width), kind, carried, points, lanes, forward, marks, along, one_way });
             });
         }
     }

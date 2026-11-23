@@ -26,6 +26,9 @@ export const BUS_DIESEL: SynthSpec = { ...DIESEL_SIX, imbalance: 0.2, knock: 0.4
 /** A pickup's four-cylinder diesel: rough and rattly, knocking hard at idle. */
 export const DIESEL_FOUR: SynthSpec = { ...NONE, cylinders: 4, imbalance: 0.35, jitter: 0.3, pulse: 2.2, knock: 0.7, pipe: 1.4, resonance: 0.45, body: 260, intake: 0.35, mech: 0.35, gain: 1.15 }
 
+/** An old saloon's petrol four: a plain, slightly uneven drone with an exhaust that has seen better days. */
+export const PETROL_FOUR: SynthSpec = { ...NONE, cylinders: 4, imbalance: 0.2, jitter: 0.15, pulse: 1.8, pipe: 1.2, resonance: 0.55, body: 330, intake: 0.45, mech: 0.25, crackle: 0.15, gain: 1.1 }
+
 /** A jeep's petrol straight six: smooth, with a growl when it is pushed. */
 export const PETROL_SIX: SynthSpec = { ...NONE, cylinders: 6, imbalance: 0.1, jitter: 0.1, pulse: 2, pipe: 1.6, resonance: 0.5, body: 300, intake: 0.5, mech: 0.2, crackle: 0.1, gain: 1.1 }
 

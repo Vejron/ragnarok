@@ -31,6 +31,8 @@ pub struct Lanes {
     pub lanes: u8,
     pub forward: u8,
     pub marks: u8,
+    /// Whether it is driven one way only (`Road::one_way`).
+    pub one_way: bool,
 }
 
 /// Which way a road is driven, from its `oneway` tag (or a motorway's or roundabout's own rule).
@@ -90,7 +92,7 @@ pub fn style(tags: &Tags) -> Option<(f64, u8, Lanes)> {
         Oneway::Against => 0,
         Oneway::Both => count("lanes:forward").filter(|&n| n <= lanes).unwrap_or(lanes.div_ceil(2)),
     };
-    Some((width, kind, Lanes { lanes, forward, marks: marks(tags, kind, way, lanes, forward) }))
+    Some((width, kind, Lanes { lanes, forward, marks: marks(tags, kind, way, lanes, forward), one_way: way != Oneway::Both }))
 }
 
 /// The `MARK_*` lines painted on a road of `kind` with `lanes`, `forward` of them along its points.

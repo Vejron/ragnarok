@@ -48,6 +48,16 @@ struct FileSpec {
     /// Zombies that rise in hordes at night (ZOMBIES.md).
     #[serde(default)]
     zombies: Option<ZombiesSpec>,
+    /// Cars that drive the world's roads (TRAFFIC.md).
+    #[serde(default)]
+    traffic: Option<TrafficSpec>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TrafficSpec {
+    /// How many cars there are for each kilometre of lane that traffic drives.
+    per_km: f32,
 }
 
 #[derive(Deserialize)]
@@ -301,6 +311,8 @@ pub struct Scenario {
     backpack: Option<[f32; 2]>,
     /// Jobs on the delivery board at once, in a world with the delivery mode.
     deliveries: Option<u32>,
+    /// How many cars of traffic there are for each kilometre of lane they drive; 0 for none.
+    traffic: f32,
 }
 
 fn ticks(seconds: f32) -> u32 {
@@ -450,7 +462,7 @@ impl Scenario {
                 Ok(horde::Horde { areas, max: z.max, size: z.horde.max(1), every: ticks(z.every).max(1), day: z.day })
             })
             .transpose()?;
-        let mut scenario = Self { areas, zombies, squads, triggers, restart: ticks(file.restart), progress: Progress::default(), backpack, deliveries: file.deliveries.map(|d| d.jobs.max(1)) };
+        let mut scenario = Self { areas, zombies, squads, triggers, restart: ticks(file.restart), progress: Progress::default(), backpack, deliveries: file.deliveries.map(|d| d.jobs.max(1)), traffic: file.traffic.map_or(0.0, |t| t.per_km.max(0.0)) };
         scenario.progress = scenario.fresh();
         Ok(scenario)
     }
@@ -468,6 +480,12 @@ impl Scenario {
     /// How many jobs the delivery board holds, if the world has the delivery mode (DELIVERY.md).
     pub fn deliveries(&self) -> Option<u32> {
         self.deliveries
+    }
+
+    /// How many cars of traffic the world has for each kilometre of lane they drive (TRAFFIC.md);
+    /// 0 for none.
+    pub fn traffic(&self) -> f32 {
+        self.traffic
     }
 
     /// What everyone is meant to be doing now; empty when nothing.

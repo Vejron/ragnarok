@@ -1,7 +1,7 @@
 use shared::vec3;
 use crate::entities::{Health, HurtBy, Hurtbox, Transform, With};
 use super::Mechanic;
-use crate::game::{Burning, Died, Mounts, Player, Seat, Seats, Vehicle, World, Wreck};
+use crate::game::{Autopilot, Burning, Died, Mounts, Player, Seat, Seats, Vehicle, World, Wreck};
 use sim::{CarCondition, CarControls, CarImpact, CarPose, Character, Obj, half_extents};
 use shared::consts::*;
 use shared::vehicles::vehicle_def;
@@ -219,7 +219,7 @@ fn axes(yaw: f32) -> ([f32; 2], [f32; 2]) {
 }
 
 /// The standing spot next to a car for a player leaving `seat`, or above it when it is boxed in.
-fn exit_position(world: &World, kind: u8, pose: &CarPose, seat: usize) -> [f32; 3] {
+pub(super) fn exit_position(world: &World, kind: u8, pose: &CarPose, seat: usize) -> [f32; 3] {
     let half = half_extents(kind);
     let yaw = pose.yaw();
     let (right, back) = axes(yaw);
@@ -300,6 +300,10 @@ fn board(world: &mut World, id: u32) {
         }
         let Some(free) = world.entities.get::<Seats>(vid).and_then(Seats::free) else { continue };
         let Some(pose) = world.physics.car_pose(vid) else { continue };
+        // A car of the traffic has its driver in it, who is dragged out: not while it is driving.
+        if world.entities.has::<super::traffic::TrafficCar>(vid) && pose.forward_speed.abs() > super::traffic::DRAG_SPEED {
+            continue;
+        }
         let distance = boarding_point(vehicle.kind, &pose).iter().zip(here).map(|(a, b)| (a - b) * (a - b)).sum::<f32>().sqrt();
         if distance <= ENTER_RADIUS && nearest.is_none_or(|(best, ..)| distance < best) {
             nearest = Some((distance, vid, free));
@@ -459,7 +463,8 @@ fn plow_trees(world: &mut World, before: &BTreeMap<u32, CarPose>) {
     for (vid, kind) in moving {
         let (Some(was), Some(now)) = (before.get(&vid), world.physics.car_pose(vid)) else { continue };
         let speed = was.velocity[0].hypot(was.velocity[2]);
-        if speed < TANK_TREE_RAM_MIN_SPEED {
+        // A car on rails keeps to its lane, where there is nothing to drive through.
+        if speed < TANK_TREE_RAM_MIN_SPEED || world.physics.car_on_rails(vid) {
             continue;
         }
         let heavy = vehicle_def(kind).body.heavy;
@@ -674,7 +679,8 @@ fn severity(kind: u8, impact: &CarImpact) -> f32 {
 fn run_down_creatures(world: &mut World) {
     let mut run_down = Vec::new();
     for id in world.entities.ids::<(With<Transform>, With<Hurtbox>, With<Health>)>() {
-        if world.entities.dead(id) {
+        // A driver of the traffic at the wheel is in a car, not under one.
+        if world.entities.dead(id) || world.entities.get::<super::Driver>(id).is_some_and(|driver| driver.vehicle.is_some()) {
             continue;
         }
         let (transform, hurtbox) = (world.entities.of::<Transform>(id), world.entities.of::<Hurtbox>(id));
@@ -884,6 +890,7 @@ impl Mechanic for Vehicles {
             let hp = world.entities.of::<Health>(vid).hp;
             let driver = world.entities.of::<Seats>(vid).rider(0).and_then(|driver| world.entities.get::<Player>(driver)).filter(|driver| driver.seat.is_none_or(|seat| seat.vehicle == vid)).map(|driver| driver.input);
             let occupied = world.entities.of::<Seats>(vid).rider(0).is_some();
+            let autopilot = world.entities.get::<Autopilot>(vid).map(|autopilot| autopilot.0);
             let mut vehicle = world.entities.of_mut::<Vehicle>(vid);
             // The driver switches the lamps; they go out when the seat is left or the vehicle is wrecked.
             let pressed = driver.is_some_and(|input| input.buttons() & BUTTON_LAMP != 0);
@@ -896,7 +903,8 @@ impl Mechanic for Vehicles {
             } else {
                 match driver {
                     Some(input) => CarControls::driven(vehicle.kind, &input),
-                    None => CarControls { handbrake: true, ..Default::default() },
+                    // Nobody at the wheel: what drives it by itself, or its handbrake.
+                    None => autopilot.unwrap_or(CarControls { handbrake: true, ..Default::default() }),
                 }
             };
             world.physics.set_car_condition(vid, CarCondition::of(vehicle.kind, hp, vehicle.damage));

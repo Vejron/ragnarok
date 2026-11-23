@@ -2,10 +2,10 @@ import { Group, Mesh, type Material, type Node, Matrix4, Vector3 } from '@ragnar
 import { parseToonModel, unlitMaterial } from './models'
 import { toonMaterial } from './toon'
 import {
-  AMV_MAX_STEER, AMV_SEATS, AMV_WHEEL_RADIUS, BUS_MAX_STEER, BUS_SEATS, BUS_WHEEL_RADIUS, GOLF_CART_MAX_STEER, GOLF_CART_SEATS, GOLF_CART_WHEEL_RADIUS, TECHNICAL_MAX_STEER, TECHNICAL_SEATS, TECHNICAL_WHEEL_RADIUS, JEEP_MAX_STEER, JEEP_WHEEL_RADIUS, ROADSTER_MAX_STEER, ROADSTER_SEATS, ROADSTER_WHEEL_RADIUS, SNOWMOBILE_MAX_STEER, SNOWMOBILE_SEATS, SNOWMOBILE_WHEEL_RADIUS, SNOWRACER_MAX_STEER, SNOWRACER_SEATS, SNOWRACER_WHEEL_RADIUS, SPORTS_MAX_STEER, SPORTS_SEATS,
+  AMV_MAX_STEER, AMV_SEATS, AMV_WHEEL_RADIUS, BUS_MAX_STEER, BUS_SEATS, BUS_WHEEL_RADIUS, EPA_MAX_STEER, EPA_SEATS, EPA_WHEEL_RADIUS, GOLF_CART_MAX_STEER, GOLF_CART_SEATS, GOLF_CART_WHEEL_RADIUS, TECHNICAL_MAX_STEER, TECHNICAL_SEATS, TECHNICAL_WHEEL_RADIUS, JEEP_MAX_STEER, JEEP_WHEEL_RADIUS, ROADSTER_MAX_STEER, ROADSTER_SEATS, ROADSTER_WHEEL_RADIUS, SNOWMOBILE_MAX_STEER, SNOWMOBILE_SEATS, SNOWMOBILE_WHEEL_RADIUS, SNOWRACER_MAX_STEER, SNOWRACER_SEATS, SNOWRACER_WHEEL_RADIUS, SPORTS_MAX_STEER, SPORTS_SEATS,
   SPORTS_WHEEL_RADIUS, CAR_SEATS,
 } from '@/sim/consts'
-import { KIND_AMV, KIND_BUS, KIND_GOLF_CART, KIND_JEEP, KIND_TECHNICAL, KIND_ROADSTER, KIND_SNOWMOBILE, KIND_SNOWRACER, KIND_SPORTS, THRUST_BOOST, THRUST_LIFT } from '@/net/codec'
+import { KIND_AMV, KIND_BUS, KIND_EPA, KIND_GOLF_CART, KIND_JEEP, KIND_TECHNICAL, KIND_ROADSTER, KIND_SNOWMOBILE, KIND_SNOWRACER, KIND_SPORTS, THRUST_BOOST, THRUST_LIFT } from '@/net/codec'
 import type { Arms, Turret } from '@/entities/units'
 import { CarWear } from './carwear'
 import type { Debris } from './debris'
@@ -26,14 +26,14 @@ export interface VehicleModel {
   dispose(): void
 }
 
-export type CarKind = 'jeep' | 'sports' | 'roadster' | 'snowmobile' | 'golf_cart' | 'technical' | 'snowracer' | 'bus' | 'amv'
+export type CarKind = 'jeep' | 'sports' | 'roadster' | 'snowmobile' | 'golf_cart' | 'technical' | 'snowracer' | 'bus' | 'amv' | 'epa'
 
 /**
  * Per-body facts the model needs: its vehicle kind, where its mesh is, how big its wheels are and how far
- * they steer (and how far its second axle steers, for one that steers two), and the colour it is painted
- * when every one of the kind wears the same.
+ * they steer (and how far its second axle steers, for one that steers two), the colour it is painted
+ * when every one of the kind wears the same, and how opaque its glass is when it can be seen through.
  */
-const KINDS: Record<CarKind, { kind: number; url: string; wheelRadius: number; maxSteer: number; seats: number; paint?: number; secondSteer?: number }> = {
+const KINDS: Record<CarKind, { kind: number; url: string; wheelRadius: number; maxSteer: number; seats: number; paint?: number; secondSteer?: number; glass?: number }> = {
   jeep: { kind: KIND_JEEP, url: `${import.meta.env.BASE_URL}models/jeep.glb`, wheelRadius: JEEP_WHEEL_RADIUS, maxSteer: JEEP_MAX_STEER, seats: CAR_SEATS },
   sports: { kind: KIND_SPORTS, url: `${import.meta.env.BASE_URL}models/sports.glb`, wheelRadius: SPORTS_WHEEL_RADIUS, maxSteer: SPORTS_MAX_STEER, seats: SPORTS_SEATS },
   roadster: { kind: KIND_ROADSTER, url: `${import.meta.env.BASE_URL}models/roadster.glb`, wheelRadius: ROADSTER_WHEEL_RADIUS, maxSteer: ROADSTER_MAX_STEER, seats: ROADSTER_SEATS },
@@ -46,6 +46,8 @@ const KINDS: Record<CarKind, { kind: number; url: string; wheelRadius: number; m
   bus: { kind: KIND_BUS, url: `${import.meta.env.BASE_URL}models/bus.glb`, wheelRadius: BUS_WHEEL_RADIUS, maxSteer: BUS_MAX_STEER, seats: BUS_SEATS },
   // Army green, whoever drives it.
   amv: { kind: KIND_AMV, url: `${import.meta.env.BASE_URL}models/amv.glb`, wheelRadius: AMV_WHEEL_RADIUS, maxSteer: AMV_MAX_STEER, seats: AMV_SEATS, paint: 0x5b6440, secondSteer: AMV_STEER_SHARES[1] },
+  // Old white paint, as most of them wear, and clear glass, so the two in its cab are seen.
+  epa: { kind: KIND_EPA, url: `${import.meta.env.BASE_URL}models/epa.glb`, wheelRadius: EPA_WHEEL_RADIUS, maxSteer: EPA_MAX_STEER, seats: EPA_SEATS, paint: 0xe9e6dc, glass: 0.4 },
 }
 
 const BODY_COLORS = [0xff9f1c, 0x2ec4b6, 0xe71d36, 0x5aa9e6, 0xb5e48c, 0xf15bb5, 0xffd23f, 0x9d4edd]
@@ -53,12 +55,20 @@ const BODY_COLORS = [0xff9f1c, 0x2ec4b6, 0xe71d36, 0x5aa9e6, 0xb5e48c, 0xf15bb5,
 const assets = new Map<CarKind, Node>()
 
 /**
- * Parses `jeep.glb`, `sports.glb`, `roadster.glb`, `snowmobile.glb`, `golf_cart.glb`, `technical.glb`, `snowracer.glb`, `bus.glb` or `amv.glb` (built by `tools/vehicles/build_car.py`) for every `CarModel` of
+ * Parses `jeep.glb`, `sports.glb`, `roadster.glb`, `snowmobile.glb`, `golf_cart.glb`, `technical.glb`, `snowracer.glb`, `bus.glb`, `amv.glb` or `epa.glb` (built by `tools/vehicles/build_car.py`) for every `CarModel` of
  * that kind to share. Materials become flat toon ones to match the rest of the scene (`lamp` ones are
- * unlit, like a headlight); `paint` is replaced per car.
+ * unlit, like a headlight); `paint` is replaced per car, and `glass` is see-through where the kind gives it an opacity.
  */
 export async function parseCarModel(kind: CarKind, data: ArrayBuffer) {
-  assets.set(kind, parseToonModel(data, (source) => (source.name === 'lamp' ? unlitMaterial(source) : null)))
+  const { glass } = KINDS[kind]
+  assets.set(
+    kind,
+    parseToonModel(data, (source) => {
+      if (source.name === 'lamp') return unlitMaterial(source)
+      if (source.name === 'glass' && glass !== undefined) return toonMaterial({ color: source.color, name: source.name, blend: 'alpha', opacity: glass, depthWrite: false })
+      return null
+    }),
+  )
 }
 
 export async function loadCarModels() {

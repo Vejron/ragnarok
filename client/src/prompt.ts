@@ -63,7 +63,8 @@ export function prompt(where: Where, lying: readonly Lying[], cars: ReadonlyMap<
     const distance = Math.hypot(x - position[0]!, y - position[1]!, z - position[2]!)
     const free = car.seats.indexOf(0)
     // A drone's seat is boarded by nobody: it is flown by whoever launched it.
-    const board = free < 0 ? undefined : seatView(car.kind, free).board
+    // The server takes a car of the traffic's driver's seat as free: whoever boards it has the wheel.
+    const board = car.manned ? 'E: drag the driver out' : free < 0 ? undefined : seatView(car.kind, free).board
     if (board && distance <= ENTER_RADIUS && (!best || distance < best.distance)) best = { distance, board }
   }
   return best?.board ?? null

@@ -175,6 +175,11 @@ async fn main() -> Result<()> {
     game.build = served_build();
     let scenario_path = Path::new(&world_path()).with_file_name("scenario.json");
     game.scenario = scenario::load(&scenario_path, &game.world.map)?;
+    // `RAGNAROK_TRAFFIC=n` puts `n` cars on each kilometre of driven lane whatever the scenario says, for trying it out.
+    game.world.traffic = env("RAGNAROK_TRAFFIC").and_then(|n| n.parse().ok()).unwrap_or_else(|| game.scenario.as_ref().map_or(0.0, scenario::Scenario::traffic));
+    if game.world.traffic > 0.0 {
+        tracing::info!(per_km = game.world.traffic, "traffic");
+    }
     if let Some(home) = game.scenario.as_ref().and_then(scenario::Scenario::backpack) {
         tracing::info!(?home, "backpack mode");
         game.world.backpack = Some(mechanics::BackpackState::new(home));

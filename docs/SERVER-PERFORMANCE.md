@@ -251,6 +251,17 @@ out. Two numbers were changed:
 | 30th biggest | 15% → 55% | 9% → 40% | 1 → 2 |
 | 150th biggest | 17% → 37% | 9% → 15% | 3 → 2 |
 
+## Traffic
+
+A world with traffic has two cars for every kilometre of lane they drive, of which only those near
+a player are vehicles (TRAFFIC.md). On `worlds/home` that is 1200 cars. The worst room, 64 players
+each beside a road of their own with about 380 cars shown and 34 of them physical, costs 1.5 ms for
+it: 6.1 ms a tick against 4.6 ms without. It cost 2.8 ms before a car on rails was left out of
+`plow_trees`, which asks the physics three times a tick what each moving vehicle is driving through.
+What is left is mostly the physics' broad phase. TRAFFIC.md has the table and the commands.
+
+The worst tick in that room is about 42 ms with traffic or without, 37 ms of it in `Combat`.
+
 ## Buses
 
 A world with public transport runs up to twelve buses (`BUS_MAX`), each a vehicle the physics steps

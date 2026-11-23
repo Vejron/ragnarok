@@ -333,6 +333,8 @@ pub(super) struct Car {
     firing: u8,
     /// Where a ship's gun is fixed (`mount_car`): it is carried there after every step.
     mounted: Option<Mounted>,
+    /// On rails (`set_car_rails`): put where it is told every step, with no wheels or engine of its own.
+    rails: bool,
     /// A giant's fists and feet: kinematic bodies of their own (`limbs`).
     limbs: Option<limbs::Limbs>,
     /// What only rounds meet (its kind's `Role::Hit` solids), each placed in the hull frame. Not in the
@@ -712,7 +714,7 @@ impl Physics {
                 }
             }
         }
-        self.cars.insert(id, Car { spec, body, collider, extra, controller, steer: 0.0, turn: 0.0, spin: 0.0, flight: CarControls::IDLE, air: (0.0, 0.0), condition: CarCondition::NEW, towed_by: None, tank: spec.tank, firing: 0, mounted: None, limbs: None, hits });
+        self.cars.insert(id, Car { spec, body, collider, extra, controller, steer: 0.0, turn: 0.0, spin: 0.0, flight: CarControls::IDLE, air: (0.0, 0.0), condition: CarCondition::NEW, towed_by: None, tank: spec.tank, firing: 0, mounted: None, rails: false, limbs: None, hits });
         self.add_limbs(id);
     }
 
@@ -819,6 +821,40 @@ impl Physics {
         }
     }
 
+    /// Puts car `id` on rails, or takes it off them. On rails it is a moving obstacle: it goes where
+    /// `place_car` puts it each step, whatever is in its way, with no wheels, springs or engine to
+    /// work out, and shots still meet it. Off them it is a car again, moving at `velocity`, m/s.
+    pub fn set_car_rails(&mut self, id: u32, on: bool, velocity: [f32; 3]) {
+        let Some(car) = self.cars.get_mut(&id) else { return };
+        car.rails = on;
+        if let Some(body) = self.bodies.get_mut(car.body) {
+            body.set_body_type(if on { RigidBodyType::KinematicPositionBased } else { RigidBodyType::Dynamic }, true);
+            if !on {
+                body.set_linvel(Vector::from(velocity), true);
+                body.set_angvel(Vector::ZERO, true);
+            }
+        }
+    }
+
+    /// Whether car `id` is on rails (`set_car_rails`).
+    pub fn car_on_rails(&self, id: u32) -> bool {
+        self.cars.get(&id).is_some_and(|car| car.rails)
+    }
+
+    /// Where a car on rails is to be after the next step: its chassis centre, metres, and its
+    /// rotation as a unit quaternion `[x, y, z, w]`. It moves there at whatever speed that takes.
+    pub fn place_car(&mut self, id: u32, position: [f32; 3], rotation: [f32; 4]) {
+        let Some(car) = self.cars.get(&id).filter(|car| car.rails) else { return };
+        if let Some(body) = self.bodies.get_mut(car.body) {
+            body.set_next_kinematic_position(Pose::from_parts(Vector::from(position), Rotation::from_xyzw(rotation[0], rotation[1], rotation[2], rotation[3])));
+        }
+    }
+
+    /// How high over a flat road the chassis centre of a wheeled `kind` rides at rest, metres.
+    pub fn car_ride_height(kind: u8) -> f32 {
+        ride_height(spec(kind))
+    }
+
     /// Puts a tank's turret solid back (`true`) or takes it away (`false`): it comes off when shot off.
     pub fn set_turret(&mut self, id: u32, present: bool) {
         let Some(car) = self.cars.get(&id) else { return };
@@ -888,6 +924,9 @@ impl Physics {
     /// Applies the driver's controls to the wheels for the next [`Physics::step_cars`].
     pub fn drive_car(&mut self, id: u32, controls: CarControls, dt: f32) {
         let Some(car) = self.cars.get_mut(&id) else { return };
+        if car.rails {
+            return;
+        }
         if matches!(car.spec.lift, Lift::Rotor | Lift::Walker | Lift::Drone | Lift::Loiter | Lift::Missile | Lift::Sail | Lift::Dive | Lift::Boat(_) | Lift::Mounted) {
             car.flight = controls;
             return;
@@ -1126,7 +1165,7 @@ impl Physics {
             let water = water_under(&self.waters, waves, body, car.spec);
             boat(body, car.spec, car.flight, car.condition, water.as_ref(), dt);
         }
-        for car in self.cars.values_mut().filter(|car| car.spec.lift.wheeled()) {
+        for car in self.cars.values_mut().filter(|car| car.spec.lift.wheeled() && !car.rails) {
             // Wheel rays must not hit their own chassis, nor a fence, which the hull goes through, nor a
             // tracked hull's the trees and walls it goes through.
             let filter = QueryFilter::default().exclude_rigid_body(car.body).groups(if tracked(car.spec) { super::plows_trees() } else { super::past_fences() });
@@ -1144,7 +1183,7 @@ impl Physics {
         // A car is pressed down or tilted in the air. A tank turns on the spot, but only while some
         // track is on the ground. The wheels' side grip fights any spin every tick, so the rate is
         // kept here and written back each time.
-        for (id, car) in self.cars.iter_mut().filter(|(_, car)| car.spec.lift.wheeled()) {
+        for (id, car) in self.cars.iter_mut().filter(|(_, car)| car.spec.lift.wheeled() && !car.rails) {
             let mut grounded = car.controller.wheels().iter().any(|wheel| wheel.raycast_info().is_in_contact);
             let Some(body) = self.bodies.get_mut(car.body) else { continue };
             if let Some(airframe) = car.spec.airframe.as_ref().filter(|_| car.spec.lift == Lift::Wing) {

@@ -21,6 +21,11 @@ describe('the E prompt', () => {
     expect(prompt(standing(0), [], cars(car(KIND_JEEP, 9, [0, 0, 0, 0])))).toBeNull()
   })
 
+  it('offers to drag the driver out of a car of the traffic, whose wheel the server gives whoever boards it', () => {
+    expect(prompt(standing(0), [], cars({ ...car(KIND_JEEP, 2, [7, 0, 0, 0]), manned: true }))).toBe('E: drag the driver out')
+    expect(prompt(standing(0), [], cars({ ...car(KIND_JEEP, 9, [7, 0, 0, 0]), manned: true }))).toBeNull()
+  })
+
   it('never offers a drone, which is flown from afar, nor a way out of one', () => {
     expect(prompt(standing(0), [], cars(car(KIND_DRONE, 1, [0])))).toBeNull()
     expect(prompt(standing(0, { seat: { kind: KIND_DRONE, index: 0 } }), [], cars())).toBeNull()

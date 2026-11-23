@@ -58,6 +58,8 @@ export interface Placed {
   steer: number
   /** The player in each seat, 0 for an empty one (`Seating`). */
   seats: readonly number[]
+  /** A car of the traffic with its driver at the wheel: boarding it drags them out. */
+  manned?: boolean
   turret: Turret | null
   /** The roof gun, on a tank with one. */
   pintle: Pintle | null
@@ -331,7 +333,7 @@ export class Vehicles implements Presenter<Frame> {
       if (eggs > 0) this.world.sounds.plop([x, y - 1, z])
     }
     const placed: Placed = {
-      kind, x, y, z, yaw: Math.atan2(-forward.x, -forward.z), rotation, steer, seats, turret, pintle, arms, sub: entity.sub ?? null,
+      kind, x, y, z, yaw: Math.atan2(-forward.x, -forward.z), rotation, steer, seats, manned: this.seating.manned(id), turret, pintle, arms, sub: entity.sub ?? null,
       hp: entity.health?.hp ?? 0, damage: entity.damage?.parts ?? UNHURT, jets, air: entity.thrust?.air ?? null, throttle,
     }
     this.placed.set(id, placed)

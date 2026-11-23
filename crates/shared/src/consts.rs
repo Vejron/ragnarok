@@ -3,6 +3,7 @@
 pub use crate::vehicles::air_ambulance::*;
 pub use crate::vehicles::amv::*;
 pub use crate::vehicles::drone::*;
+pub use crate::vehicles::epa::*;
 pub use crate::vehicles::bus::*;
 pub use crate::vehicles::cb90::*;
 pub use crate::vehicles::raft::*;
@@ -33,7 +34,7 @@ pub use crate::vehicles::titan::*;
 pub use crate::vehicles::walker::*;
 
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
-pub const PROTOCOL_VERSION: u8 = 92;
+pub const PROTOCOL_VERSION: u8 = 93;
 
 /// Why a page closes its session (`Bye`): the tab is closing or reloading.
 pub const BYE_LEAVING: u8 = 0;
@@ -127,6 +128,12 @@ pub const KIND_RAFT: u8 = 35;
 pub const KIND_PARCEL: u8 = 36;
 /// The air ambulance: an unarmed helicopter for a pilot and three passengers, with a shrouded tail fan.
 pub const KIND_AIR_AMBULANCE: u8 = 37;
+/// The EPA traktor: an old saloon cut down into a two-seat pickup and held to 30 km/h, a Swedish
+/// teenager's first car.
+pub const KIND_EPA: u8 = 38;
+/// Someone who drives a car of the traffic (TRAFFIC.md): at its wheel, or on foot once they have
+/// left it or been dragged out. Drawn as a soldier with nothing in hand.
+pub const KIND_CIVILIAN: u8 = 39;
 
 /// Fixed simulation rate, in ticks per second.
 pub const TICK_RATE: u32 = 60;

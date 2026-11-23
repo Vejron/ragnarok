@@ -28,6 +28,7 @@ mod spawn;
 mod structure;
 mod submarines;
 mod titans;
+mod traffic;
 mod vehicles;
 mod wildlife;
 mod zombies;
@@ -62,6 +63,7 @@ pub use spawn::{Spawn, usable as spawn_usable};
 pub use structure::Structure;
 pub use submarines::{Sub, Submarines};
 pub use titans::{Head as TitanHead, Titans, held_in as held_in_fist};
+pub use traffic::{Driver, Traffic};
 pub use vehicles::{Vehicles, add_tank, remove_vehicle, seat};
 pub use wildlife::{Wildlife, fell, grazing};
 pub use zombies::{Zombie, Zombies, clawing, is_zombie, rising, start_rising};
@@ -89,6 +91,16 @@ pub trait Mechanic: Send {
     /// After every mechanic's tick and the scenario's: what this tick's events say happened
     /// (`World::happened`), for a mechanic that answers it, before the players are told.
     fn react(&mut self, _world: &mut World) {}
+    /// Itself, for a test that looks inside it (`Game::mechanic`).
+    #[cfg(test)]
+    fn inside(&self) -> Option<&dyn std::any::Any> {
+        None
+    }
+    /// Itself, for a test that reaches into it (`Game::with_mechanic`).
+    #[cfg(test)]
+    fn inside_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        None
+    }
 }
 
 /// Registers the components mechanics own with the room's ECS world (see `entities`).
@@ -103,6 +115,10 @@ pub fn register_components(ecs: &mut bevy_ecs::world::World) {
     ecs.register_component::<crate::game::Wreck>();
     ecs.register_component::<crate::game::Burning>();
     ecs.register_component::<crate::game::Seats>();
+    ecs.register_component::<crate::game::Autopilot>();
+    ecs.register_component::<traffic::TrafficCar>();
+    ecs.register_component::<traffic::Abandoned>();
+    ecs.register_component::<traffic::Driver>();
     ecs.register_component::<crate::game::Player>();
     ecs.register_component::<crate::game::Bot>();
     ecs.register_component::<zombies::Zombie>();
@@ -121,10 +137,11 @@ pub fn register_components(ecs: &mut bevy_ecs::world::World) {
 /// a fist holds boards nothing.
 ///
 /// More on the order: `Bots` and `Zombies` go first: they write their input, which
-/// everything after reads as it reads anyone's, and `Buses` likewise for its drivers. `Life` brings the dead back before `Npcs` and `Wildlife` move them.
+/// everything after reads as it reads anyone's, and `Buses` likewise for its drivers. `Traffic` goes before
+/// `Vehicles`, which steps the cars it places and drives. `Life` brings the dead back before `Npcs` and `Wildlife` move them.
 /// `Ghosts` goes before `Movement`, so that a ghost that starts taking shape is not flown that tick.
 pub fn default_mechanics() -> Vec<Box<dyn Mechanic>> {
-    vec![Box::<Bots>::default(), Box::<Zombies>::default(), Box::<Buses>::default(), Box::new(Spawn), Box::<Titans>::default(), Box::<Lifts>::default(), Box::new(Pickups), Box::new(Submarines), Box::new(Drones), Box::new(Gates::seated()), Box::new(Vehicles), Box::<Gates>::default(), Box::new(Gunnery), Box::new(Ghosts), Box::new(Movement), Box::new(Breath), Box::<Mend>::default(), Box::new(Backpack), Box::new(Deliveries), Box::new(Life), Box::new(Npcs), Box::<Wildlife>::default(), Box::new(Combat), Box::new(Golf), Box::new(Structure), Box::new(Scores)]
+    vec![Box::<Bots>::default(), Box::<Zombies>::default(), Box::<Buses>::default(), Box::new(Spawn), Box::<Titans>::default(), Box::<Lifts>::default(), Box::new(Pickups), Box::new(Submarines), Box::new(Drones), Box::new(Gates::seated()), Box::<Traffic>::default(), Box::new(Vehicles), Box::<Gates>::default(), Box::new(Gunnery), Box::new(Ghosts), Box::new(Movement), Box::new(Breath), Box::<Mend>::default(), Box::new(Backpack), Box::new(Deliveries), Box::new(Life), Box::new(Npcs), Box::<Wildlife>::default(), Box::new(Combat), Box::new(Golf), Box::new(Structure), Box::new(Scores)]
 }
 
 /// What tests outside the mechanics reach in for: setting up a busy room without playing it.

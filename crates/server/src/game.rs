@@ -123,6 +123,7 @@ impl Game {
                 backpack: None,
                 deliveries: None,
                 bus_calls: Vec::new(),
+                traffic: 0.0,
                 map,
                 entities: Default::default(),
                 nav: Default::default(),
@@ -241,6 +242,19 @@ impl Game {
         self.replicas.remove(&id);
         self.broadcast(encode(&Leave { tag: S_LEAVE, id }));
         tracing::info!(id, frames_dropped, underruns, snapshots_skipped, players = self.world.entities.count::<Player>(), "player left");
+    }
+
+    /// The room's mechanic of type `M`, for a test that looks inside it.
+    #[cfg(test)]
+    pub fn mechanic<M: 'static>(&self) -> Option<&M> {
+        self.mechanics.iter().find_map(|mechanic| mechanic.inside()?.downcast_ref::<M>())
+    }
+
+    /// Runs `with` on the room's mechanic of type `M` and its world, for a test that reaches into it.
+    #[cfg(test)]
+    pub fn with_mechanic<M: 'static, R>(&mut self, with: impl FnOnce(&mut M, &mut World) -> R) -> R {
+        let mechanic = self.mechanics.iter_mut().find_map(|mechanic| mechanic.inside_mut()?.downcast_mut::<M>()).expect("the room runs it");
+        with(mechanic, &mut self.world)
     }
 
     /// Adds a bot living at `home` on `team` (`TEAM_BOTS` or above) that walks round `route`
@@ -1122,6 +1136,13 @@ mod tests {
                 player.character.position[0] = sx + if spread { 0.0 } else { (n % 8) as f32 * 0.8 };
                 player.character.position[2] = sz;
             }
+            // `ON_ROADS=1`: each beside a road of its own, spread over the whole world, to have traffic near everyone.
+            if std::env::var_os("ON_ROADS").is_some() && !game.world.map.roads.is_empty() {
+                let roads: Vec<&shared::world::Road> = game.world.map.roads.iter().filter(|road| road.kind <= shared::world::ROAD_MINOR && road.lanes > 0).collect();
+                let at = roads[n * roads.len() / MAX_PLAYERS].points[0];
+                player.character.position[0] = at[0] as f32 / 100.0 + 6.0;
+                player.character.position[2] = at[1] as f32 / 100.0;
+            }
             let (x, z) = (player.character.position[0], player.character.position[2]);
             player.character.position[1] = game.world.map.ground.height_at(x, z) + sim::STANDING_Y + 0.5;
         }
@@ -1154,11 +1175,26 @@ mod tests {
             }
         }
         println!("{} people, {bots} bots, {} tanks", ids.len(), crews.len());
+        // `TRAFFIC=n`: that many cars for each kilometre of driven lane (TRAFFIC.md), run for `SETTLE` seconds first (60
+        // unless given) so that those near the players are shown and driving.
+        game.world.traffic = std::env::var("TRAFFIC").ok().and_then(|n| n.parse().ok()).unwrap_or(0.0);
+        if game.world.traffic > 0.0 {
+            let settle: u32 = std::env::var("SETTLE").ok().and_then(|n| n.parse().ok()).unwrap_or(60);
+            let started = Instant::now();
+            game.step();
+            println!("traffic laid out in {:?}", started.elapsed());
+            for _ in 0..settle * TICK_RATE {
+                game.step();
+            }
+            println!("{}", game.mechanic::<crate::mechanics::Traffic>().map(crate::mechanics::Traffic::report).unwrap_or_default());
+        }
         let (mut step_total, mut step_max, mut snap_total) = (Duration::ZERO, Duration::ZERO, Duration::ZERO);
         let mut after_total = Duration::ZERO;
         let (mut datagram_bytes, mut datagrams) = (0usize, 0usize);
         let ticks = 600u32;
         let mut per_mechanic = vec![Duration::ZERO; game.mechanics.len()];
+        // What each mechanic took in this tick, and in the worst tick so far.
+        let (mut this_tick, mut worst_tick) = (per_mechanic.clone(), per_mechanic.clone());
         for t in 1..=ticks {
             for (n, id) in ids.iter().enumerate() {
                 let fire = if (t as usize + n).is_multiple_of(30) { BUTTON_FIRE } else { 0 };
@@ -1177,7 +1213,8 @@ mod tests {
             for (index, mechanic) in game.mechanics.iter_mut().enumerate() {
                 let at = Instant::now();
                 mechanic.on_tick(&mut game.world, TICK_DT);
-                per_mechanic[index] += at.elapsed();
+                this_tick[index] = at.elapsed();
+                per_mechanic[index] += this_tick[index];
             }
             // What `step` does after the mechanics, but for sending: the reactions, the hits and kills
             // built from the events, and the trails.
@@ -1192,7 +1229,9 @@ mod tests {
             after_total += at.elapsed();
             let took = started.elapsed();
             step_total += took;
-            step_max = step_max.max(took);
+            if took > step_max {
+                (step_max, worst_tick) = (took, this_tick.clone());
+            }
             if t % SNAPSHOT_EVERY == 0 {
                 let started = Instant::now();
                 game.send_snapshots();
@@ -1214,9 +1253,15 @@ mod tests {
         let budget = Duration::from_secs_f64(1.0 / TICK_RATE as f64);
         let names: Vec<&str> = game.mechanics.iter().map(|mechanic| mechanic.name()).collect();
         println!("per mechanic per tick ({}): {:?}", names.join(", "), per_mechanic.iter().map(|d| *d / ticks).collect::<Vec<_>>());
+        let mut worst: Vec<(&str, Duration)> = names.iter().copied().zip(worst_tick).collect();
+        worst.sort_by_key(|&(_, took)| std::cmp::Reverse(took));
+        println!("the worst tick's three dearest mechanics: {:?}", &worst[..3.min(worst.len())]);
         println!("after the mechanics (reactions, feedback, events, trails): {:?}", after_total / ticks);
         println!("tick: avg {:?}, worst {:?}; snapshots for the room: avg {:?} per call (every {SNAPSHOT_EVERY} ticks); budget {budget:?}", step_total / ticks, step_max, snap_total / (ticks / SNAPSHOT_EVERY));
         println!("snapshot bytes: {} a player a snapshot, over {datagrams}", datagram_bytes / datagrams.max(1));
+        if game.world.traffic > 0.0 {
+            println!("{}", game.mechanic::<crate::mechanics::Traffic>().map(crate::mechanics::Traffic::report).unwrap_or_default());
+        }
         // What reading the world for snapshots costs, once per snapshot.
         let runs = 200u32;
         let started = Instant::now();

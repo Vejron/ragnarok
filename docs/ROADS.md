@@ -32,6 +32,8 @@ divided road is therefore as wide as its own lanes, not as a whole road of its c
 - otherwise half the lanes, rounded up;
 - on a one-way road, all of them (none for `oneway=-1`).
 
+`Road::one_way` says whether the road is one-way at all, which `forward` cannot for a road of a single lane: a service road and a slip road both have one lane, `forward`. Traffic drives by it ([TRAFFIC.md](TRAFFIC.md)).
+
 **Knock-on effects.** The ground is graded to the new width (`condition.rs`), and bridges take it too.
 
 ## Paint

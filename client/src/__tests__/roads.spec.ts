@@ -17,7 +17,7 @@ const sidesAt = (positions: Float32Array, z: number) => {
 
 describe('roads', () => {
   it('marks a path worn, with where across it each vertex is', () => {
-    const [path] = buildRoads([{ kind: ROAD_PATH, width: 1.6, carried: false, lanes: 0, forward: 0, marks: 0, along: 0, points: [[50, 10], [50, 90]] }], [0, 0, 100, 100])
+    const [path] = buildRoads([{ kind: ROAD_PATH, width: 1.6, carried: false, lanes: 0, forward: 0, marks: 0, along: 0, oneWay: false, points: [[50, 10], [50, 90]] }], [0, 0, 100, 100])
     const { positions, custom } = path!.buffers
     expect(custom).toBeDefined()
     expect(custom!.length).toBe((positions.length / 3) * 4)
@@ -28,7 +28,7 @@ describe('roads', () => {
   })
 
   it('draws a paved road as asphalt at its own width, on a gravel shoulder', () => {
-    const [shoulder, fill] = buildRoads([{ kind: ROAD_MINOR, width: 6, carried: false, lanes: 0, forward: 0, marks: 0, along: 0, points: [[50, 10], [50, 90]] }], [0, 0, 100, 100])
+    const [shoulder, fill] = buildRoads([{ kind: ROAD_MINOR, width: 6, carried: false, lanes: 0, forward: 0, marks: 0, along: 0, oneWay: false, points: [[50, 10], [50, 90]] }], [0, 0, 100, 100])
     expect(fill!.look).toBe('asphalt')
     const { positions, custom } = fill!.buffers
     expect(custom!.length).toBe((positions.length / 3) * 4)
@@ -46,7 +46,7 @@ describe('roads', () => {
   it('measures across a road by how far from it each vertex is, at its joints too, and places it on the tile’s map', () => {
     // A joint at (50, 50): the disc there must fade its edges as the strips either side do, not in a ring.
     const points: [number, number][] = [[50, 10], [50, 50], [50, 90]]
-    const [, fill] = buildRoads([{ kind: ROAD_MINOR, width: 6, carried: false, lanes: 0, forward: 0, marks: 0, along: 0, points }], [0, 0, 100, 100])
+    const [, fill] = buildRoads([{ kind: ROAD_MINOR, width: 6, carried: false, lanes: 0, forward: 0, marks: 0, along: 0, oneWay: false, points }], [0, 0, 100, 100])
     const { positions, custom, uvs } = fill!.buffers
     const toRoad = (x: number, z: number) =>
       Math.min(
@@ -68,8 +68,8 @@ describe('roads', () => {
   it('draws a road’s edge lying inside another road at a junction as the middle of the road', () => {
     // A side road ending on a main road: its end's edge lies well inside the main road's asphalt.
     const ribbons = buildRoads([
-      { kind: ROAD_MINOR, width: 6, carried: false, lanes: 0, forward: 0, marks: 0, along: 0, points: [[10, 50], [90, 50]] },
-      { kind: ROAD_MINOR, width: 6, carried: false, lanes: 0, forward: 0, marks: 0, along: 0, points: [[50, 50], [50, 90]] },
+      { kind: ROAD_MINOR, width: 6, carried: false, lanes: 0, forward: 0, marks: 0, along: 0, oneWay: false, points: [[10, 50], [90, 50]] },
+      { kind: ROAD_MINOR, width: 6, carried: false, lanes: 0, forward: 0, marks: 0, along: 0, oneWay: false, points: [[50, 50], [50, 90]] },
     ], [0, 0, 100, 100])
     const { positions, custom } = ribbons[1]!.buffers
     for (let v = 0; v < positions.length / 3; v++) {
@@ -81,14 +81,14 @@ describe('roads', () => {
 
   it('varies a path’s width along it, the same on both sides of a tile border', () => {
     const widths = new Set<number>()
-    const [path] = buildRoads([{ kind: ROAD_PATH, width: 1.6, carried: false, lanes: 0, forward: 0, marks: 0, along: 0, points: [[50, 0], [50, 100]] }], [0, 0, 100, 100])
+    const [path] = buildRoads([{ kind: ROAD_PATH, width: 1.6, carried: false, lanes: 0, forward: 0, marks: 0, along: 0, oneWay: false, points: [[50, 0], [50, 100]] }], [0, 0, 100, 100])
     for (let z = 0; z <= 100; z += 10) {
       const [left, right] = sidesAt(path!.buffers.positions, z)
       widths.add(Math.round((right! - left!) * 100))
     }
     expect(widths.size).toBeGreaterThan(3)
     // Where it leaves this tile and where the next tile's piece starts, it is as wide.
-    const [below] = buildRoads([{ kind: ROAD_PATH, width: 1.6, carried: false, lanes: 0, forward: 0, marks: 0, along: 0, points: [[50, 100], [50, 200]] }], [0, 100, 100, 200])
+    const [below] = buildRoads([{ kind: ROAD_PATH, width: 1.6, carried: false, lanes: 0, forward: 0, marks: 0, along: 0, oneWay: false, points: [[50, 100], [50, 200]] }], [0, 100, 100, 200])
     const [a0, a1] = sidesAt(path!.buffers.positions, 100)
     const [b0, b1] = sidesAt(below!.buffers.positions, 100)
     expect(a0).toBeCloseTo(b0!, 1)
@@ -97,7 +97,7 @@ describe('roads', () => {
 
   it('carries where each asphalt vertex is along the road and how far right of its middle', () => {
     // Running north (-z) from z = 90 to z = 10: right of the way it runs is east, +x.
-    const road: Road = { kind: ROAD_MAJOR, width: 8, carried: false, lanes: 2, forward: 1, marks: MARK_EDGE | MARK_CENTRE, along: 500, points: [[50, 90], [50, 10]] }
+    const road: Road = { kind: ROAD_MAJOR, width: 8, carried: false, lanes: 2, forward: 1, marks: MARK_EDGE | MARK_CENTRE, along: 500, oneWay: false, points: [[50, 90], [50, 10]] }
     const [, fill] = buildRoads([road], [0, 0, 100, 100])
     const { positions, custom } = fill!.buffers
     for (let v = 0; v < positions.length / 3; v++) {
@@ -109,7 +109,7 @@ describe('roads', () => {
   })
 
   it('runs a dashed line on unbroken across a tile border', () => {
-    const piece = (points: [number, number][], along: number): Road => ({ kind: ROAD_MAJOR, width: 8, carried: false, lanes: 2, forward: 1, marks: MARK_CENTRE, along, points })
+    const piece = (points: [number, number][], along: number): Road => ({ kind: ROAD_MAJOR, width: 8, carried: false, lanes: 2, forward: 1, marks: MARK_CENTRE, along, oneWay: false, points })
     const [, here] = buildRoads([piece([[50, 10], [50, 100]], 0)], [0, 0, 100, 100])
     const [, there] = buildRoads([piece([[50, 100], [50, 150]], 90)], [0, 100, 100, 200])
     // Both pieces reach a little past the border, and where they lap each says the same distance along.
@@ -127,7 +127,7 @@ describe('roads', () => {
   })
 
   it('lays a paved road’s shoulder along its edges only, not under its middle', () => {
-    const [shoulder] = buildRoads([{ kind: ROAD_MINOR, width: 6, carried: false, lanes: 2, forward: 1, marks: 0, along: 0, points: [[50, 10], [50, 50], [50, 90]] }], [0, 0, 100, 100])
+    const [shoulder] = buildRoads([{ kind: ROAD_MINOR, width: 6, carried: false, lanes: 2, forward: 1, marks: 0, along: 0, oneWay: false, points: [[50, 10], [50, 50], [50, 90]] }], [0, 0, 100, 100])
     const { positions } = shoulder!.buffers
     // No triangle's middle lies within the asphalt, away from its crumbling edge.
     const { indices } = shoulder!.buffers
@@ -140,7 +140,7 @@ describe('roads', () => {
 
   it('mitres a bend, the strips either side meeting edge to edge with nothing drawn over the corner', () => {
     // A 6 m road turning 45 degrees at (50, 50), well inside the tile.
-    const road = { kind: ROAD_MINOR, width: 6, carried: false, lanes: 0, forward: 0, marks: 0, along: 0 }
+    const road = { kind: ROAD_MINOR, width: 6, carried: false, lanes: 0, forward: 0, marks: 0, along: 0, oneWay: false }
     const [, bent] = buildRoads([{ ...road, points: [[50, 10], [50, 50], [80, 80]] }], [0, 0, 100, 100])
     const straight = (points: [number, number][]) => buildRoads([{ ...road, points }], [0, 0, 100, 100])[1]!.buffers.positions.length
     // No more vertices than its two strips have alone, less the round cap each would have at the bend.
@@ -163,7 +163,7 @@ describe('roads', () => {
   })
 
   it('narrows a wide road to a narrower one that carries on, and rounds one that ends alone', () => {
-    const road = { kind: ROAD_MINOR, carried: false, lanes: 0, forward: 0, marks: 0, along: 0 }
+    const road = { kind: ROAD_MINOR, carried: false, lanes: 0, forward: 0, marks: 0, along: 0, oneWay: false }
     const wide = { ...road, width: 10, points: [[50, 10], [50, 50]] as [number, number][] }
     const narrow = { ...road, width: 5, points: [[50, 50], [50, 90]] as [number, number][] }
     const beyond = (roads: Road[]) => {
@@ -186,7 +186,7 @@ describe('roads', () => {
     const border = [0, 0, 100, 100] as const
     // A square with a hole in it, cut by the tile's west border, and a road out of it to the east.
     const lot: Lot = [[[0, 20], [60, 20], [60, 60], [0, 60]], [[30, 30], [40, 30], [40, 40], [30, 40]]]
-    const road = { kind: ROAD_MINOR, width: 6, carried: false, lanes: 0, forward: 0, marks: 0, along: 0, points: [[20, 50], [90, 50]] } as Road
+    const road = { kind: ROAD_MINOR, width: 6, carried: false, lanes: 0, forward: 0, marks: 0, along: 0, oneWay: false, points: [[20, 50], [90, 50]] } as Road
     const ribbons = buildRoads([road], border, [lot])
     const asphalt = ribbons.filter((ribbon) => ribbon.look === 'asphalt')
     /** A ribbon's area, square metres, and its vertices as `[x, z, inside]`. */

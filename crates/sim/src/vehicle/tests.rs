@@ -1,7 +1,7 @@
 use shared::vec3;
 use super::*;
 use shared::consts::TICK_DT;
-use shared::protocol::{KIND_AIR_AMBULANCE, KIND_AMV, KIND_BUS, KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MISSILE, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_SEAPLANE, KIND_SNOWMOBILE, KIND_SNOWRACER, KIND_SPORTS, KIND_STRF, KIND_STRV, KIND_TANK, KIND_TECHNICAL, KIND_TITAN, KIND_WALKER};
+use shared::protocol::{KIND_AIR_AMBULANCE, KIND_AMV, KIND_BUS, KIND_DRONE, KIND_EPA, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MISSILE, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_SEAPLANE, KIND_SNOWMOBILE, KIND_SNOWRACER, KIND_SPORTS, KIND_STRF, KIND_STRV, KIND_TANK, KIND_TECHNICAL, KIND_TITAN, KIND_WALKER};
 use shared::world::{CollisionMesh, WORLD_VERSION, WorldFile};
 
 fn flat() -> WorldFile {
@@ -155,7 +155,7 @@ fn a_car_climbs_a_slope_like_wasm() {
 #[test]
 fn ride_heights_differ_between_cars() {
     let mut heights = vec![];
-    for (kind, ride) in [(KIND_JEEP, JEEP_RIDE_HEIGHT), (KIND_SPORTS, SPORTS_RIDE_HEIGHT), (KIND_GOLF_CART, GOLF_CART_RIDE_HEIGHT), (KIND_TECHNICAL, TECHNICAL_RIDE_HEIGHT), (KIND_SNOWRACER, SNOWRACER_RIDE_HEIGHT), (KIND_BUS, BUS_RIDE_HEIGHT), (KIND_AMV, AMV_RIDE_HEIGHT)] {
+    for (kind, ride) in [(KIND_JEEP, JEEP_RIDE_HEIGHT), (KIND_SPORTS, SPORTS_RIDE_HEIGHT), (KIND_GOLF_CART, GOLF_CART_RIDE_HEIGHT), (KIND_TECHNICAL, TECHNICAL_RIDE_HEIGHT), (KIND_SNOWRACER, SNOWRACER_RIDE_HEIGHT), (KIND_BUS, BUS_RIDE_HEIGHT), (KIND_AMV, AMV_RIDE_HEIGHT), (KIND_EPA, EPA_RIDE_HEIGHT)] {
         let mut physics = Physics::new(&flat()).unwrap();
         physics.add_car(1, kind, [0.0, 1.5, 0.0], 0.0);
         let pose = run(&mut physics, COAST, 240);
@@ -206,6 +206,30 @@ fn a_golf_cart_potters_along_and_stays_on_its_wheels_at_full_lock() {
     let turned = (yaw(&physics.car_pose(1).unwrap()) - start).rem_euclid(std::f32::consts::TAU);
     assert!(worst > 0.8, "flat out at full lock it stays on its wheels: {worst}");
     assert!(turned > 0.5, "and turns: {turned}");
+}
+
+#[test]
+fn an_epa_traktor_is_at_30_km_h_in_two_seconds_goes_no_faster_and_stays_on_its_wheels_at_full_lock() {
+    let mut physics = Physics::new(&flat()).unwrap();
+    physics.add_car(1, KIND_EPA, [0.0, 1.5, 0.0], 0.0);
+    run(&mut physics, COAST, 60);
+    let early = run(&mut physics, FORWARD, 60 * 2);
+    assert!(early.forward_speed > EPA_MAX_SPEED - 1.0, "gets there briskly: {early:?}");
+    let mut fastest = 0.0_f32;
+    for _ in 0..60 * 6 {
+        fastest = fastest.max(run(&mut physics, FORWARD, 1).forward_speed);
+    }
+    // 30 km/h is the law, and the most it does on the flat.
+    assert!(fastest <= EPA_MAX_SPEED + 0.2, "held to 30 km/h: {fastest}");
+    let start = yaw(&physics.car_pose(1).unwrap());
+    let mut worst = 1.0_f32;
+    for _ in 0..60 * 3 {
+        let pose = run(&mut physics, CarControls { throttle: 1.0, steer: -1.0, ..CarControls::IDLE }, 1);
+        worst = worst.min(pose.up_y);
+    }
+    let turned = (yaw(&physics.car_pose(1).unwrap()) - start).rem_euclid(std::f32::consts::TAU);
+    assert!(worst > 0.9, "flat out at full lock it stays on its wheels: {worst}");
+    assert!(turned > 1.0, "and turns: {turned}");
 }
 
 #[test]
@@ -3040,3 +3064,37 @@ fn a_titan_walks_into_a_lake_on_its_bed_at_its_full_speed() {
 }
 
 
+
+#[test]
+fn a_car_on_rails_goes_where_it_is_put_and_is_a_car_again_when_let_off_them() {
+    let mut physics = Physics::new(&flat()).unwrap();
+    for kind in [KIND_JEEP, KIND_SPORTS] {
+        let ride = Physics::car_ride_height(kind);
+        physics.add_car(1, kind, [0.0, ride, 0.0], 0.0);
+        physics.set_car_rails(1, true, [0.0; 3]);
+        assert!(physics.car_on_rails(1));
+        // Put 10 m/s north for a second, with its throttle hard in reverse, which a car on rails has not got.
+        for tick in 1..=TICK_RATE {
+            physics.place_car(1, [0.0, ride, -10.0 * tick as f32 * TICK_DT], [0.0, 0.0, 0.0, 1.0]);
+            physics.drive_car(1, CarControls { throttle: -1.0, ..FORWARD }, TICK_DT);
+            physics.step_cars(TICK_DT);
+        }
+        let pose = physics.car_pose(1).unwrap();
+        assert!((pose.position[2] + 10.0).abs() < 0.01 && (pose.position[1] - ride).abs() < 0.001, "{:?}", pose.position);
+        assert!((pose.forward_speed - 10.0).abs() < 0.1, "it reports the speed it is moved at: {}", pose.forward_speed);
+        // Let off at that speed, it rolls on at the height it rode at: no drop onto its springs, and no hop.
+        physics.set_car_rails(1, false, [0.0, 0.0, -10.0]);
+        let (mut low, mut high) = (f32::MAX, f32::MIN);
+        for _ in 0..TICK_RATE {
+            physics.drive_car(1, CarControls::IDLE, TICK_DT);
+            physics.step_cars(TICK_DT);
+            let y = physics.car_pose(1).unwrap().position[1];
+            (low, high) = (low.min(y), high.max(y));
+        }
+        let pose = physics.car_pose(1).unwrap();
+        assert!(pose.position[2] < -15.0 && pose.forward_speed > 5.0, "it rolls on: {pose:?}");
+        assert!(ride - low < 0.05 && high - ride < 0.05, "kind {kind} rides at {ride}, and went from {low} to {high}");
+        physics.remove_car(1);
+        physics.step_cars(TICK_DT);
+    }
+}

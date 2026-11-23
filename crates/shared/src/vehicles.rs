@@ -13,7 +13,7 @@ use crate::consts::*;
 use crate::mounts::{Aim, Ammo, Dial, Eye, Fire, MountDef, Muzzle, Need, Refill, Show};
 use crate::items::*;
 use crate::protocol::{
-    KIND_AIR_AMBULANCE, KIND_AMV, KIND_BUS, KIND_CB90, KIND_DRONE, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MISSILE, KIND_MORTAR, KIND_PAK, KIND_PBV, KIND_PLANE, KIND_RAFT, KIND_ROADSTER, KIND_SEAPLANE, KIND_SHIP, KIND_SHIP_GUN, KIND_SNOWMOBILE, KIND_SNOWRACER, KIND_SPORTS, KIND_STRF, KIND_STRV, KIND_SUBMARINE, KIND_TANK, KIND_TECHNICAL, KIND_TITAN, KIND_TUPP, KIND_WALKER, PROJECTILE_AMV_BOMB, PROJECTILE_BALL, PROJECTILE_BOMB, PROJECTILE_CANNON, PROJECTILE_CANNON_AP,
+    KIND_AIR_AMBULANCE, KIND_AMV, KIND_BUS, KIND_CB90, KIND_DRONE, KIND_EPA, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MISSILE, KIND_MORTAR, KIND_PAK, KIND_PBV, KIND_PLANE, KIND_RAFT, KIND_ROADSTER, KIND_SEAPLANE, KIND_SHIP, KIND_SHIP_GUN, KIND_SNOWMOBILE, KIND_SNOWRACER, KIND_SPORTS, KIND_STRF, KIND_STRV, KIND_SUBMARINE, KIND_TANK, KIND_TECHNICAL, KIND_TITAN, KIND_TUPP, KIND_WALKER, PROJECTILE_AMV_BOMB, PROJECTILE_BALL, PROJECTILE_BOMB, PROJECTILE_CANNON, PROJECTILE_CANNON_AP,
     PROJECTILE_EGG, PROJECTILE_HE, PROJECTILE_MORTAR, PROJECTILE_ROTARY, PROJECTILE_SHELL, WEAPON_AUTOCANNON, WEAPON_DRONE, WEAPON_LASER, WEAPON_LOITER, WEAPON_MG, WEAPON_MISSILE, WEAPON_ROCKET, WEAPON_SHELL,
 };
 
@@ -22,6 +22,7 @@ pub mod amv;
 pub mod bus;
 pub mod cb90;
 pub mod drone;
+pub mod epa;
 pub mod golf_cart;
 pub mod heli;
 pub mod hen;
@@ -283,6 +284,7 @@ pub static VEHICLES: &[VehicleDef] = &[
     cb90::CB90,
     raft::RAFT,
     air_ambulance::AIR_AMBULANCE,
+    epa::EPA,
 ];
 
 /// Where each kind id's definition is in `VEHICLES`: 0, the jeep's, for ids that are not a vehicle.
@@ -429,7 +431,7 @@ mod tests {
     #[test]
     fn only_the_wheeled_cars_have_a_swept_underside_and_it_leaves_a_flat_floor_between() {
         for def in VEHICLES {
-            let swept = [KIND_JEEP, KIND_SPORTS, KIND_ROADSTER, KIND_GOLF_CART, KIND_TECHNICAL, KIND_BUS].contains(&def.kind);
+            let swept = [KIND_JEEP, KIND_SPORTS, KIND_ROADSTER, KIND_GOLF_CART, KIND_TECHNICAL, KIND_BUS, KIND_EPA].contains(&def.kind);
             assert_eq!(def.spec.sweep > 0.0, swept, "{}", def.name);
             // A hull has one shape: a sweep goes with no outline, bow or nose of its own.
             assert!(!swept || (def.spec.profile.is_empty() && def.spec.bow == 0.0 && def.spec.nose == 0.0), "{}", def.name);

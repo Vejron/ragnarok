@@ -58,6 +58,7 @@ impl Game {
             (id, Replicated { vitals: Some(wire::Vitals { hp, progress: progress(player, one_arm), spent: player.character.spent, winded: player.character.winded.into(), parts, down: player.character.down, strain: player.character.ski_strain, breath: breath_byte(player.breath), ghost, block }), hotbar: Some(wire::Hotbar { slots: player.hands.hotbar }), ..shown })
         }));
         scene.extend(self.creatures());
+        scene.extend(self.drivers());
         scene.extend(self.world.entities.all::<Vehicle>().filter_map(|(id, vehicle)| Some((id, self.vehicle(id, vehicle)?))));
         scene.extend(self.world.in_flight().into_iter().filter(|(_, flying)| flying.kind != PROJECTILE_BULLET).map(|(id, flying)| {
             let [x, y, z] = flying.position.map(to_cm);
@@ -106,6 +107,7 @@ impl Game {
         entities
             .ids::<(With<NetKind>, With<Transform>, With<Health>)>()
             .into_iter()
+            .filter(|&id| !entities.has::<crate::mechanics::Driver>(id))
             .filter(|&id| !entities.dead(id) || crate::mechanics::fell(&self.world, id).is_some())
             .filter_map(|id| {
                 let (NetKind(kind), transform) = (*entities.get::<NetKind>(id)?, entities.get::<Transform>(id)?);
@@ -126,6 +128,47 @@ impl Game {
                         flags: Some(wire::Flags { flags: FLAG_GROUNDED | calling | if entities.dead(id) { FLAG_DEAD } else { 0 }, stance: STANCE_STANDING }),
                         struck: entities.get::<Struck>(id).map(|s| wire::Struck { count: s.count, part: s.part, amount: s.amount, yaw: s.yaw, x: s.at[0], y: s.at[1], z: s.at[2] }),
                         fell: crate::mechanics::fell(&self.world, id).map(|style| wire::Fell { style }),
+                        ..Default::default()
+                    },
+                ))
+            })
+            .collect()
+    }
+
+    /// The drivers of the traffic (TRAFFIC.md): at the wheel one is a rider of their car, looking
+    /// the way it points, and on foot a civilian with nothing in hand, hands up or running, or
+    /// lying where they were shot.
+    fn drivers(&self) -> Vec<(u32, Replicated)> {
+        let entities = &self.world.entities;
+        entities
+            .all::<crate::mechanics::Driver>()
+            .filter_map(|(id, driver)| {
+                let kind = Some(wire::Kind { kind: KIND_CIVILIAN });
+                if let Some(vehicle) = driver.vehicle {
+                    let pose = self.world.physics.car_pose(vehicle)?;
+                    return Some((
+                        id,
+                        Replicated {
+                            kind,
+                            seated: Some(wire::Seated { vehicle, seat: 0 }),
+                            heading: Some(wire::Heading { yaw: to_mrad(pose.yaw()) }),
+                            look: Some(wire::Look { pitch: 0 }),
+                            flags: Some(wire::Flags { flags: FLAG_CROUCHING, stance: STANCE_STANDING }),
+                            ..Default::default()
+                        },
+                    ));
+                }
+                let transform = entities.get::<Transform>(id)?;
+                let [x, y, z] = [transform.position[0], transform.position[1] + sim::STANDING_Y, transform.position[2]].map(to_cm);
+                let stance = if driver.hands_up > 0 { STANCE_SURRENDER } else { STANCE_STANDING };
+                Some((
+                    id,
+                    Replicated {
+                        kind,
+                        place: Some(wire::Place { x, y, z }),
+                        heading: Some(wire::Heading { yaw: to_mrad(transform.yaw) }),
+                        flags: Some(wire::Flags { flags: FLAG_GROUNDED | if entities.dead(id) { FLAG_DEAD } else { 0 }, stance }),
+                        struck: entities.get::<Struck>(id).map(|s| wire::Struck { count: s.count, part: s.part, amount: s.amount, yaw: s.yaw, x: s.at[0], y: s.at[1], z: s.at[2] }),
                         ..Default::default()
                     },
                 ))

@@ -92,12 +92,21 @@ impl Body {
 
 /// The point entity `id`'s body hangs from now, and the vehicle it sits in, if the body is out in the
 /// world: a creature's feet (its `Transform`), a soldier's centre on foot (or standing over a drone's
-/// controls), or their head in a seat whose crew show. A soldier inside armour has none.
+/// controls), or their head in a seat whose crew show, as is that of a driver of the traffic at
+/// their wheel. A soldier inside armour has none.
 fn anchor(world: &World, id: u32, transform: Option<&Transform>, player: Option<&Player>) -> Option<([f32; 3], Option<u32>)> {
     match player {
         Some(player) if player.embodied() => Some((player.character.position, None)),
         Some(_) => world.seated_head(id).map(|(vehicle, head)| (head, Some(vehicle))),
-        None => transform.map(|transform| (transform.position, None)),
+        None => match world.entities.get::<super::Driver>(id).and_then(|driver| driver.vehicle) {
+            // A driver of the traffic at the wheel: where the head of a player in that seat would be.
+            Some(vehicle) => {
+                let kind = world.entities.get::<crate::game::Vehicle>(vehicle)?.kind;
+                let head = shared::vehicles::seat_head(kind, 0, 0.0)?;
+                Some((world.physics.car_pose(vehicle)?.world_point(head), Some(vehicle)))
+            }
+            None => transform.map(|transform| (transform.position, None)),
+        },
     }
 }
 

@@ -527,6 +527,11 @@ impl Vehicle {
     }
 }
 
+/// What a vehicle with nobody at its wheel is driven by: the controls `mechanics::Traffic` asks of a
+/// car of the traffic that is off its rails. A component on the vehicle's entity.
+#[derive(crate::entities::Component, Clone, Copy, Debug)]
+pub struct Autopilot(pub CarControls);
+
 /// A vehicle whose fuel is alight: it loses health until it is a wreck. `ticks` counts how long it has
 /// burnt.
 #[derive(crate::entities::Component, Clone, Copy, Debug, PartialEq)]
@@ -774,6 +779,9 @@ pub struct World {
     pub deliveries: Option<crate::mechanics::DeliveryState>,
     /// What `Buses` asks of the room: drivers to add and to take away. Drained every tick.
     pub bus_calls: Vec<crate::mechanics::BusCall>,
+    /// How many cars of traffic there are for each kilometre of lane that they drive
+    /// (`mechanics::Traffic`); 0 for none.
+    pub traffic: f32,
 }
 
 impl World {
