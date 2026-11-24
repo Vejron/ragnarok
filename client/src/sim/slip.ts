@@ -116,8 +116,10 @@ const SLIDE_SPAN = 5
 const LOCK_DECEL = 8
 const LOCK_SPEED = 5
 /** Acceleration (m/s²) above which a launch spins the wheels, and the speed under which it can. */
-const SPIN_ACCEL = 7
+const SPIN_ACCEL = 8.5
 const SPIN_SPEED = 14
+/** A launch only spins the wheels once it is under way, m/s: a car standing still spins nothing. */
+const SPIN_MOVING = 0.5
 
 /**
  * How hard a tyre is sliding, 0 gripping to 1 flat out: `sideways` is the speed of its contact
@@ -127,6 +129,6 @@ const SPIN_SPEED = 14
 export function tyreSlip(sideways: number, speed: number, accel: number, driven: boolean): number {
   const slide = Math.min(1, Math.max(0, (Math.abs(sideways) - GRIP_SPEED) / SLIDE_SPAN))
   const locked = Math.abs(speed) > LOCK_SPEED && accel * Math.sign(speed) < -LOCK_DECEL ? Math.min(1, (-accel * Math.sign(speed) - LOCK_DECEL) / 6 + 0.4) : 0
-  const spun = driven && Math.abs(speed) < SPIN_SPEED && accel > SPIN_ACCEL ? Math.min(1, (accel - SPIN_ACCEL) / 3 + 0.3) : 0
+  const spun = driven && Math.abs(speed) > SPIN_MOVING && Math.abs(speed) < SPIN_SPEED && accel > SPIN_ACCEL ? Math.min(1, (accel - SPIN_ACCEL) / 3 + 0.3) : 0
   return Math.max(slide, locked, spun)
 }

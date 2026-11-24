@@ -116,6 +116,7 @@ const KEYS: [string, string][] = [
     :seat="stats.seat"
     :can-switch="stats.canSwitchSeat"
     :ammo="stats.ammo !== null"
+    :boost="stats.boost !== null"
     :voice="stats.status === 'CONNECTED' && stats.voice.mic !== 'unavailable'"
   />
   <button

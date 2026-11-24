@@ -15,7 +15,7 @@ export const VOLVO_240: VehicleKind = {
   ride: {
     distance: DRIVING_DISTANCE,
     reload: SHELL_COOLDOWN_TICKS,
-    seats: [{ rig: DRIVE, role: 'driver', board: 'E: drive the Volvo 240', chase: true, enclosed: true }, ...Array.from({ length: VOLVO_240_SEATS - 1 }, () => RIDE_INSIDE)],
+    seats: [{ rig: DRIVE, role: 'driver', board: 'E: drive the Volvo 240', chase: true, gauges: ['boost'], enclosed: true }, ...Array.from({ length: VOLVO_240_SEATS - 1 }, () => RIDE_INSIDE)],
   },
   sound: {
     chop: PLAIN_CHOP,

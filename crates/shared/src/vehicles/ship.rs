@@ -93,6 +93,7 @@ pub(super) const SHIP: VehicleDef = VehicleDef {
         com_drop: 0.35,
         tank: None,
         buttons: Buttons::Drive,
+        boost: Spec::NO_BOOST,
         aims: false,
         solids: &[
             Solid { shape: Shape::Cuboid([SHIP_BULWARK_THICK, SHIP_BULWARK_HEIGHT * 0.5, BULWARK_LENGTH * 0.5]), at: [SHIP_HALF_EXTENTS[0] - SHIP_BULWARK_THICK, BULWARK_Y, SHIP_BOW * 0.5], role: Role::Part },

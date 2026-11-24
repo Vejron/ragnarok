@@ -15,7 +15,7 @@ export const KADETT: VehicleKind = {
   ride: {
     distance: DRIVING_DISTANCE,
     reload: SHELL_COOLDOWN_TICKS,
-    seats: [{ rig: DRIVE, role: 'driver', board: 'E: drive the Opel Kadett', chase: true, enclosed: true }, ...Array.from({ length: KADETT_SEATS - 1 }, () => RIDE_INSIDE)],
+    seats: [{ rig: DRIVE, role: 'driver', board: 'E: drive the Opel Kadett', chase: true, gauges: ['boost'], enclosed: true }, ...Array.from({ length: KADETT_SEATS - 1 }, () => RIDE_INSIDE)],
   },
   sound: {
     chop: PLAIN_CHOP,

@@ -17,7 +17,7 @@ export const RAFT: VehicleKind = {
   ride: {
     distance: DRIVING_DISTANCE,
     reload: null,
-    seats: [{ rig: DRIVE, role: 'driver', board: 'E: take the tiller', chase: true }, RIDE_ALONG],
+    seats: [{ rig: DRIVE, role: 'driver', board: 'E: take the tiller', chase: true, gauges: ['boost'] }, RIDE_ALONG],
   },
   sound: {
     chop: PLAIN_CHOP,

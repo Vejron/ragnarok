@@ -3072,17 +3072,6 @@ export const SNOWMOBILE_MAX_STEER = 0.6
 export const SNOWMOBILE_STEER_FADE = 7.0
 export const SNOWMOBILE_MAX_SPEED = 20.0
 
-/**
- * The boost: holding run opens the engine right up, multiplying its pull and its top speed, while
- * the boost lasts (a share of full, `Spec::tank`). It runs down in about four seconds held and
- * fills again in about six once let go.
- */
-export const SNOWMOBILE_BOOST = 1.0
-export const SNOWMOBILE_BOOST_POWER = 1.8
-export const SNOWMOBILE_BOOST_SPEED = 1.35
-export const SNOWMOBILE_BOOST_DRAIN = 0.25
-export const SNOWMOBILE_BOOST_REFILL = 0.17
-
 /** The driver sits up front, the passenger behind and a little higher on the seat's rise. */
 export const SNOWMOBILE_SEAT_HEADS = [[0.0, 1.05, 0.1], [0.0, 1.15, 0.8]] as const
 
@@ -3144,6 +3133,15 @@ export const SNOWRACER_AIR_FLOAT = 0.45
 
 /** Both riders sit low on the seat, the passenger behind the rider with their legs either side of them. */
 export const SNOWRACER_SEAT_HEADS = [[0.0, 0.85, 0.0], [0.0, 0.85, 0.5]] as const
+
+/** A full boost, the `Spec::tank` of a kind with a `Boost`. */
+export const BOOST_FULL = 1.0
+
+/** What a second of boost held with the throttle open uses, a share of full: about four seconds of it. */
+export const BOOST_DRAIN = 0.25
+
+/** What a second let go gives back, a share of full: it fills again in about six. */
+export const BOOST_REFILL = 0.17
 
 /** The speed at which a car's steering lock has halved, m/s: the usual `Spec::steer_fade`. */
 export const STEER_FADE = 20.0

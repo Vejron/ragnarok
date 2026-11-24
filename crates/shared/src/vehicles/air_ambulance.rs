@@ -119,6 +119,7 @@ pub(super) const AIR_AMBULANCE: VehicleDef = VehicleDef {
         // The rotor's speed: it starts stopped.
         tank: Some(0.0),
         buttons: Buttons::Collective,
+        boost: Spec::NO_BOOST,
         // The pedals turn it towards where its pilot looks.
         aims: true,
         solids: &[

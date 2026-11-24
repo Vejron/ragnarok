@@ -76,6 +76,7 @@ pub(super) const SHIP_GUN: VehicleDef = VehicleDef {
         com_drop: 0.0,
         tank: None,
         buttons: Buttons::Drive,
+        boost: Spec::NO_BOOST,
         aims: false,
         // The barrel and breech over the carriage, a little taller than they are: a soldier's capsule
         // rides up and over anything lower than about 0.7 m, which would make the gun a stair over the side.

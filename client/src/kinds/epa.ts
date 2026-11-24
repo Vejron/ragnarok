@@ -12,7 +12,7 @@ export const EPA: VehicleKind = {
   kind: KIND_EPA,
   model: (id) => new CarModel('epa', id),
   load: loadCarModels,
-  ride: { distance: DRIVING_DISTANCE, reload: SHELL_COOLDOWN_TICKS, seats: [{ rig: DRIVE, role: 'driver', board: 'E: drive the EPA traktor', chase: true, enclosed: true }, { ...RIDE_ALONG, enclosed: true }] },
+  ride: { distance: DRIVING_DISTANCE, reload: SHELL_COOLDOWN_TICKS, seats: [{ rig: DRIVE, role: 'driver', board: 'E: drive the EPA traktor', chase: true, gauges: ['boost'], enclosed: true }, { ...RIDE_ALONG, enclosed: true }] },
   sound: {
     chop: PLAIN_CHOP,
     // Locked into its two lowest gears: the engine screams at 30 km/h, as everyone in town hears.

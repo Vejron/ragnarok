@@ -105,6 +105,36 @@ pub struct Boat {
     pub scrape: f32,
 }
 
+/// A full boost, the `Spec::tank` of a kind with a `Boost`.
+pub const BOOST_FULL: f32 = 1.0;
+/// What a second of boost held with the throttle open uses, a share of full: about four seconds of it.
+pub const BOOST_DRAIN: f32 = 0.25;
+/// What a second let go gives back, a share of full: it fills again in about six.
+pub const BOOST_REFILL: f32 = 0.17;
+
+/// What holding run does to an engine while there is boost left: it pulls much harder, and lets it run
+/// on to its full top speed (`Spec::max_speed`) and a little past. Without it, it tops out short of it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Boost {
+    /// What the engine's pull (or a hull's thrust) is multiplied by on the boost.
+    pub power: f32,
+    /// The share of `Spec::max_speed` it tops out at off the boost.
+    pub cruise: f32,
+    /// The share of `Spec::max_speed` it tops out at on the boost.
+    pub speed: f32,
+}
+
+impl Boost {
+    /// A car's, a light truck's or a jeep's.
+    pub const CAR: Boost = Boost { power: 1.8, cruise: 0.9, speed: 1.05 };
+    /// A heavy vehicle's, on wheels or on tracks: a bus, a tank.
+    pub const HEAVY: Boost = Boost { power: 1.5, cruise: 0.9, speed: 1.05 };
+    /// A boat's waterjets or outboard.
+    /// The EPA traktor's: it pulls harder, but its governor holds it to 30 km/h on the boost or off it.
+    pub const GOVERNED: Boost = Boost { power: 1.5, cruise: 1.0, speed: 1.0 };
+    pub const BOAT: Boost = Boost { power: 1.6, cruise: 0.9, speed: 1.05 };
+}
+
 /// The speed at which a car's steering lock has halved, m/s: the usual `Spec::steer_fade`.
 pub const STEER_FADE: f32 = 20.0;
 
@@ -138,12 +168,15 @@ pub struct Spec {
     /// How far below the box's centre the centre of mass sits, metres. A low one keeps a car on its
     /// wheels through hard corners; zero leaves the box's own.
     pub com_drop: f32,
-    /// A full tank of what its tricks run on: a Roadster's air, or a hen's wings' stamina. `None` for
+    /// A full tank of what its tricks run on: a Roadster's air, a car's boost (`BOOST_FULL`), or a hen's wings' stamina. `None` for
     /// everything else. A walker with one has wings (see `flap`). A helicopter keeps its rotor's speed
     /// here, as a share of the speed its governor holds, and this is the speed it starts at: stopped.
     pub tank: Option<f32>,
     /// What its driver's buttons do (see `CarControls::driven`).
     pub buttons: Buttons,
+    /// What holding run does to its engine while its `tank` has boost left (`Buttons::Boost`), or
+    /// `Spec::NO_BOOST`.
+    pub boost: Option<Boost>,
     /// It flies towards where its pilot looks, which the controls carry as `aim`.
     pub aims: bool,
     /// What it carries beside its hull box.
@@ -209,6 +242,13 @@ impl Spec {
     pub const BOX: &'static [[f32; 2]] = &[];
     /// The `sweep` of a hull whose underside is flat from end to end.
     pub const FLAT: f32 = 0.0;
+    /// The `boost` of a kind whose run does not boost its engine.
+    pub const NO_BOOST: Option<Boost> = None;
+
+    /// The fastest it goes flat out without its boost, m/s: `max_speed`, less for a kind with a `Boost`.
+    pub fn cruise_speed(&self) -> f32 {
+        self.max_speed * self.boost.map_or(1.0, |boost| boost.cruise)
+    }
 
     /// How far axle `index` (front first, as `axles` lists them) is turned, as a share of the front
     /// axle's: 1 for the front one, less for each steered one behind it in proportion to its distance from
@@ -701,8 +741,9 @@ pub enum Buttons {
     Stunt,
     /// A hen's: jump leaps, then flaps or glides. There is no handbrake.
     Leap,
-    /// A snowmobile's: run boosts the engine from its `tank` while it lasts, and jump is the handbrake.
-    Sled,
+    /// A car's, a boat's or a snowmobile's: run boosts the engine (`Spec::boost`) from its `tank` while
+    /// it lasts, and jump is the handbrake (a boat's anchor).
+    Boost,
     /// A Titan's: crouch bends its legs, which brings its fists down to the ground, and jump leaps, then
     /// fires the thrusters in its feet.
     Stride,

@@ -82,6 +82,7 @@ pub(super) const SNOWRACER: VehicleDef = VehicleDef {
         com_drop: 0.2,
         tank: None,
         buttons: Buttons::Drive,
+        boost: Spec::NO_BOOST,
         aims: false,
         solids: &[],
         tongue: 0.0,

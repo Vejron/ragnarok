@@ -25,6 +25,8 @@ export interface TouchContext {
   winter: boolean
   /** A gun with two kinds of round is in hand. */
   ammo: boolean
+  /** The seat drives something that boosts on run. */
+  boost?: boolean
 }
 
 /** Seats that aim down the middle of the screen with a sight or over the shoulder, as right mouse does. */
@@ -40,7 +42,7 @@ const jumpLabel = (seat: Seat) =>
 const fireLabel = (seat: Seat) => (seat === 'drone' || seat === 'loiter' || seat === 'missile' ? 'BOOM' : seat === 'periscope' ? 'LAUNCH' : seat === 'hen' ? 'EGG' : seat === 'tupp' ? 'LASER' : 'FIRE')
 
 /** The buttons for `seat` (null on foot), each in a cell of its own. */
-export function touchButtons(seat: Seat, { canSwitch, winter, ammo }: TouchContext): TouchButton[] {
+export function touchButtons(seat: Seat, { canSwitch, winter, ammo, boost = false }: TouchContext): TouchButton[] {
   const buttons: TouchButton[] = []
   if (!UNARMED.has(seat)) buttons.push({ id: 'fire', label: fireLabel(seat), mode: 'hold', mask: BUTTON_FIRE, col: 0, row: 0, tone: 'fire', big: true })
   // A rider has nothing for jump to work.
@@ -66,8 +68,8 @@ export function touchButtons(seat: Seat, { canSwitch, winter, ammo }: TouchConte
   if (seat === 'loiter') buttons.push({ id: 'cam', label: 'CAM', mode: 'hold', mask: BUTTON_ALT, col: 1, row: 0 })
   if (seat === 'passenger') buttons.push({ id: 'reload', label: canSwitch ? 'RELOAD / SEAT' : 'RELOAD', mode: 'tap', mask: BUTTON_RELOAD, col: 2, row: 0, tone: 'reload' })
   else if (canSwitch) buttons.push({ id: 'seat', label: 'SEAT', mode: 'tap', mask: BUTTON_RELOAD, col: 2, row: 0, tone: 'reload' })
-  if (PILOTS.has(seat) || seat === 'drone' || seat === 'captain' || seat === 'aviator' || seat === 'roadster' || seat === 'sled') {
-    buttons.push({ id: 'sink', label: seat === 'aviator' ? 'SLOWER' : seat === 'roadster' || seat === 'sled' ? 'BOOST' : 'DOWN', mode: 'hold', mask: BUTTON_RUN, col: 1, row: 1 })
+  if (PILOTS.has(seat) || seat === 'drone' || seat === 'captain' || seat === 'aviator' || seat === 'roadster' || boost) {
+    buttons.push({ id: 'sink', label: seat === 'aviator' ? 'SLOWER' : seat === 'roadster' || boost ? 'BOOST' : 'DOWN', mode: 'hold', mask: BUTTON_RUN, col: 1, row: 1 })
   }
   if (seat === 'aviator' || seat === 'roadster') buttons.push({ id: 'crouch', label: seat === 'roadster' ? 'BRAKE' : 'BOMB', mode: 'hold', mask: BUTTON_CROUCH, col: 2, row: 1 })
   if (ammo) buttons.push({ id: 'ammo', label: 'AMMO', mode: 'tap', mask: BUTTON_AMMO, col: 1, row: 2 })

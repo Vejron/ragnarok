@@ -1751,6 +1751,7 @@ export class Game {
       // A Titan's missile tubes, as pips over its gun's heat.
       ...(gauges?.includes('tubes') ? { bombs: ride?.arms?.bombs ?? null } : {}),
       air: gauges?.includes('air') ? (this.driver?.thrust?.air ?? null) : gauges?.includes('wind') && seat ? this.sailing(seat.vehicle, now) : null,
+      boost: gauges?.includes('boost') ? (this.driver?.thrust?.air ?? null) : null,
       stamina: !seated && able ? { left: 1 - local.spent / STAMINA_FULL, winded: local.winded } : null,
       breath: !seated && player.alive && player.breath < 1 ? player.breath : null,
       rotor: gauges?.includes('rotor') && seat ? this.rotorGauge(seat.vehicle) : null,

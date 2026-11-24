@@ -59,7 +59,7 @@ export interface SeatView {
   /** It is inside a closed hull, cabin or cockpit: the world outside is heard muffled from it (`setMuffle`). */
   enclosed?: true
   /** The gauges the HUD shows from it. */
-  gauges?: readonly ('air' | 'eggs' | 'cockpit' | 'range' | 'ammo' | 'pintle' | 'heat' | 'wind' | 'tubes' | 'rotor')[]
+  gauges?: readonly ('air' | 'boost' | 'eggs' | 'cockpit' | 'range' | 'ammo' | 'pintle' | 'heat' | 'wind' | 'tubes' | 'rotor')[]
   /** The arc drawn ahead of what it fires: a mortar's bomb, or where a plane's bomb would land. */
   arc?: 'mortar' | 'bombs'
 }

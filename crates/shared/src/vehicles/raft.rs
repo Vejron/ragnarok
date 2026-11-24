@@ -147,8 +147,9 @@ pub(super) const RAFT: VehicleDef = VehicleDef {
         linear_damping: 0.0,
         // Its weight is its floor and the motor low on the transom: it sits flat.
         com_drop: 0.15,
-        tank: None,
-        buttons: Buttons::Drive,
+        tank: Some(BOOST_FULL),
+        buttons: Buttons::Boost,
+        boost: Some(Boost::BOAT),
         aims: false,
         solids: &[],
         tongue: 0.0,

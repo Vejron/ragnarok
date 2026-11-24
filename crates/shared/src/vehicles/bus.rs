@@ -91,8 +91,9 @@ pub(super) const BUS: VehicleDef = VehicleDef {
         linear_damping: 0.05,
         // Its engine and frame are low under a tall, light body.
         com_drop: 0.3,
-        tank: None,
-        buttons: Buttons::Drive,
+        tank: Some(BOOST_FULL),
+        buttons: Buttons::Boost,
+        boost: Some(Boost::HEAVY),
         aims: false,
         solids: &[Solid { shape: Shape::Cuboid(BUS_BODY_HALF), at: BUS_BODY_CENTRE, role: Role::Part }],
         tongue: 0.0,

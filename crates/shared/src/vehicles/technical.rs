@@ -98,8 +98,9 @@ pub(super) const TECHNICAL: VehicleDef = VehicleDef {
         // Its weight carried low on the frame, under the tall body: otherwise, flat out at full lock, the soft
         // springs let it lean until it goes over.
         com_drop: 0.5,
-        tank: None,
-        buttons: Buttons::Drive,
+        tank: Some(BOOST_FULL),
+        buttons: Buttons::Boost,
+        boost: Some(Boost::CAR),
         aims: false,
         solids: &[],
         tongue: 0.0,

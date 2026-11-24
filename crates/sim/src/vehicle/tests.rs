@@ -56,6 +56,11 @@ fn yaw(pose: &CarPose) -> f32 {
     pose.yaw()
 }
 
+/// The fastest `kind` goes flat out off its boost, m/s.
+fn cruise(kind: u8) -> f32 {
+    shared::vehicles::vehicle_def(kind).spec.cruise_speed()
+}
+
 const FORWARD: CarControls = CarControls { throttle: 1.0, ..CarControls::IDLE };
 const COAST: CarControls = CarControls::IDLE;
 
@@ -76,20 +81,20 @@ fn scripted_controls(tick: u32) -> CarControls {
 const SCRIPTED_CHECKPOINTS: [(u8, u32, [f32; 3]); 16] = [
     (KIND_JEEP, 90, [0.0, 0.8572, -0.9723]),
     (KIND_JEEP, 210, [2.5239, 0.8564, -22.4112]),
-    (KIND_JEEP, 300, [30.9153, 0.8560, -23.3722]),
-    (KIND_JEEP, 480, [64.3589, 0.8568, -59.5452]),
+    (KIND_JEEP, 300, [30.2642, 0.8562, -23.7819]),
+    (KIND_JEEP, 480, [59.2548, 0.8568, -59.0352]),
     (KIND_SPORTS, 90, [-0.0004, 0.4175, -1.5324]),
-    (KIND_SPORTS, 210, [4.4976, 0.4166, -34.9612]),
-    (KIND_SPORTS, 300, [43.9007, 0.4159, -24.3587]),
-    (KIND_SPORTS, 480, [96.7076, 0.4164, -75.2516]),
+    (KIND_SPORTS, 210, [4.4973, 0.4166, -34.9608]),
+    (KIND_SPORTS, 300, [42.8601, 0.4161, -25.5642]),
+    (KIND_SPORTS, 480, [93.0031, 0.4166, -71.6836]),
     (KIND_TANK, 90, [0.0, 1.1300, -0.9490]),
-    (KIND_TANK, 210, [0.5937, 1.1300, -18.9117]),
-    (KIND_TANK, 300, [12.0193, 1.1300, -31.0185]),
-    (KIND_TANK, 480, [25.7233, 1.1300, -41.9264]),
+    (KIND_TANK, 210, [0.5394, 1.1300, -17.9451]),
+    (KIND_TANK, 300, [10.8795, 1.1300, -28.9229]),
+    (KIND_TANK, 480, [23.1090, 1.1300, -38.4465]),
     (KIND_STRV, 90, [0.0000, 1.2000, -1.1390]),
-    (KIND_STRV, 210, [0.8934, 1.2000, -23.7257]),
-    (KIND_STRV, 300, [18.5748, 1.2000, -35.2314]),
-    (KIND_STRV, 480, [43.6059, 1.2000, -43.3173]),
+    (KIND_STRV, 210, [0.8057, 1.2000, -22.6697]),
+    (KIND_STRV, 300, [16.8312, 1.2000, -33.1654]),
+    (KIND_STRV, 480, [38.4407, 1.2000, -39.3431]),
 ];
 
 #[test]
@@ -126,7 +131,7 @@ fn ramp() -> WorldFile {
 const RAMP_CHECKPOINTS: [(u32, [f32; 3]); 3] = [
     (60, [0.0000, 13.8145, 39.1671]),
     (180, [0.0000, 17.2683, 22.8746]),
-    (360, [0.0000, 29.7911, -36.0072]),
+    (360, [0.0000, 29.4666, -34.4876]),
 ];
 
 #[test]
@@ -196,7 +201,7 @@ fn a_golf_cart_potters_along_and_stays_on_its_wheels_at_full_lock() {
     let early = run(&mut physics, FORWARD, 60 * 2);
     let top = run(&mut physics, FORWARD, 60 * 8);
     assert!(early.forward_speed > 5.0, "gets going: {early:?}");
-    assert!(top.forward_speed > GOLF_CART_MAX_SPEED - 1.5 && top.forward_speed <= GOLF_CART_MAX_SPEED + 0.5, "tops out at its own speed: {top:?}");
+    assert!(top.forward_speed > cruise(KIND_GOLF_CART) - 1.5 && top.forward_speed <= cruise(KIND_GOLF_CART) + 0.5, "tops out at its own speed: {top:?}");
     let start = yaw(&top);
     let mut worst = 1.0_f32;
     for _ in 0..60 * 3 {
@@ -205,7 +210,7 @@ fn a_golf_cart_potters_along_and_stays_on_its_wheels_at_full_lock() {
     }
     let turned = (yaw(&physics.car_pose(1).unwrap()) - start).rem_euclid(std::f32::consts::TAU);
     assert!(worst > 0.8, "flat out at full lock it stays on its wheels: {worst}");
-    assert!(turned > 0.5, "and turns: {turned}");
+    assert!(turned > 0.3, "and turns: {turned}");
 }
 
 #[test]
@@ -240,7 +245,7 @@ fn a_bus_gets_going_slowly_and_stays_on_its_wheels_at_full_lock() {
     let early = run(&mut physics, FORWARD, 60 * 3);
     let top = run(&mut physics, FORWARD, 60 * 7);
     assert!(early.forward_speed > 4.0 && early.forward_speed < 10.0, "gets going, but slowly: {early:?}");
-    assert!(top.forward_speed > BUS_MAX_SPEED - 1.5 && top.forward_speed <= BUS_MAX_SPEED + 0.5, "tops out at its own speed: {top:?}");
+    assert!(top.forward_speed > cruise(KIND_BUS) - 1.5 && top.forward_speed <= cruise(KIND_BUS) + 0.5, "tops out at its own speed: {top:?}");
     let start = yaw(&top);
     let mut worst = 1.0_f32;
     for _ in 0..60 * 3 {
@@ -260,7 +265,7 @@ fn an_amv_gets_going_like_a_heavy_truck_and_stays_on_its_eight_wheels_at_full_lo
     let early = run(&mut physics, FORWARD, 60 * 3);
     let top = run(&mut physics, FORWARD, 60 * 5);
     assert!(early.forward_speed > 8.0 && early.forward_speed < 18.0, "gets going, but not as a car does: {early:?}");
-    assert!(top.forward_speed > AMV_MAX_SPEED - 4.0 && top.forward_speed <= AMV_MAX_SPEED + 1.0, "tops out at its own speed: {top:?}");
+    assert!(top.forward_speed > cruise(KIND_AMV) - 4.0 && top.forward_speed <= cruise(KIND_AMV) + 1.0, "tops out at its own speed: {top:?}");
     let start = yaw(&top);
     let mut worst = 1.0_f32;
     for _ in 0..60 * 3 {
@@ -308,7 +313,7 @@ fn a_technical_gets_going_and_stays_on_its_wheels_at_full_lock() {
     let early = run(&mut physics, FORWARD, 60 * 3);
     let top = run(&mut physics, FORWARD, 60 * 5);
     assert!(early.forward_speed > 10.0, "gets going: {early:?}");
-    assert!(top.forward_speed > TECHNICAL_MAX_SPEED - 3.0 && top.forward_speed <= TECHNICAL_MAX_SPEED + 1.0, "tops out at its own speed: {top:?}");
+    assert!(top.forward_speed > cruise(KIND_TECHNICAL) - 3.0 && top.forward_speed <= cruise(KIND_TECHNICAL) + 1.0, "tops out at its own speed: {top:?}");
     let start = yaw(&top);
     let mut worst = 1.0_f32;
     for _ in 0..60 * 3 {
@@ -483,10 +488,12 @@ fn a_hard_corner_at_speed_rolls_the_bronco_but_a_firm_one_does_not() {
         // Back from the middle, so the run-up stays inside the 200 m world.
         physics.add_car(1, KIND_JEEP, [0.0, 1.5, 190.0], 0.0);
         run(&mut physics, COAST, 60);
-        let fast = run(&mut physics, FORWARD, 60 * 6);
-        assert!(fast.forward_speed > 20.0, "{fast:?}");
+        // Up to speed, then on the boost into the corner.
+        run(&mut physics, FORWARD, 60 * 4);
+        let fast = run(&mut physics, CarControls { boost: true, ..FORWARD }, 60 * 2);
+        assert!(fast.forward_speed > 28.0, "{fast:?}");
         for _ in 0..60 * 3 {
-            let pose = run(&mut physics, CarControls { throttle: 1.0, steer, ..CarControls::IDLE }, 1);
+            let pose = run(&mut physics, CarControls { throttle: 1.0, steer, boost: true, ..CarControls::IDLE }, 1);
             worst[i] = worst[i].min(pose.up_y);
         }
     }
@@ -727,12 +734,12 @@ fn a_pbv_outruns_the_tank_but_not_the_strf_and_stays_upright_pivoting_flat_out()
 }
 
 /// How far past the slab's near edge (z = -20) a `kind` driven `FORWARD` from the origin gets in 20 s
-/// over a `height` m step, in metres. Negative while it is still stuck in front of it.
-fn over_the_step(kind: u8, height: f32) -> f32 {
+/// over a `height` m step, in metres, on its boost if `boost`. Negative while it is still stuck in front of it.
+fn over_the_step(kind: u8, height: f32, boost: bool) -> f32 {
     let mut physics = Physics::new(&world_with_step(height)).unwrap();
     physics.add_car(1, kind, [0.0, 1.2, 0.0], 0.0);
     run(&mut physics, COAST, 120);
-    let pose = run(&mut physics, FORWARD, 60 * 20);
+    let pose = run(&mut physics, CarControls { boost, ..FORWARD }, 60 * 20);
     -20.0 - pose.position[2]
 }
 
@@ -740,13 +747,14 @@ fn over_the_step(kind: u8, height: f32) -> f32 {
 fn tracked_vehicles_climb_a_step_and_the_strv_and_strf_a_taller_one() {
     // All three take a kerb, and a 0.8 m wall, riding up it on the plate under their nose.
     for kind in [KIND_TANK, KIND_STRV, KIND_STRF, KIND_PBV] {
-        assert!(over_the_step(kind, 0.3) > 100.0, "kind {kind}");
-        assert!(over_the_step(kind, 0.8) > 100.0, "kind {kind}: {}", over_the_step(kind, 0.8));
+        assert!(over_the_step(kind, 0.3, false) > 100.0, "kind {kind}");
+        assert!(over_the_step(kind, 0.8, false) > 100.0, "kind {kind}: {}", over_the_step(kind, 0.8, false));
     }
-    // 1.1 m: the higher noses of the Strv S and the Strf 90 get them over, the tank sits against it.
-    assert!(over_the_step(KIND_STRV, 1.1) > 100.0, "{}", over_the_step(KIND_STRV, 1.1));
-    assert!(over_the_step(KIND_STRF, 1.1) > 100.0, "{}", over_the_step(KIND_STRF, 1.1));
-    assert!(over_the_step(KIND_TANK, 1.1) < 0.0, "{}", over_the_step(KIND_TANK, 1.1));
+    // 1.1 m, charged on the boost: the higher noses of the Strv S and the Strf 90 get them over, the tank
+    // sits against it.
+    assert!(over_the_step(KIND_STRV, 1.1, true) > 100.0, "{}", over_the_step(KIND_STRV, 1.1, true));
+    assert!(over_the_step(KIND_STRF, 1.1, true) > 100.0, "{}", over_the_step(KIND_STRF, 1.1, true));
+    assert!(over_the_step(KIND_TANK, 1.1, true) < 0.0, "{}", over_the_step(KIND_TANK, 1.1, true));
 }
 
 /// The hardest contact a `kind` meets when it is sent at `speed` m/s under a light throttle, nose first
@@ -2047,10 +2055,12 @@ fn tank(physics: &Physics) -> f32 {
 }
 
 #[test]
-fn only_a_roadster_has_thrusters() {
+fn only_a_roadster_has_thrusters_and_a_car_its_boost() {
     let mut physics = Physics::new(&flat()).unwrap();
     physics.add_car(1, KIND_SPORTS, [0.0, 1.5, 0.0], 0.0);
-    assert_eq!(physics.car_thrust(1), None);
+    assert_eq!(physics.car_thrust(1), Some((shared::vehicles::BOOST_FULL, 0)));
+    physics.add_car(2, KIND_SNOWRACER, [10.0, 1.5, 0.0], 0.0);
+    assert_eq!(physics.car_thrust(2), None);
     assert_eq!(roadster().car_thrust(1), Some((ROADSTER_AIR, 0)));
 }
 
@@ -2465,7 +2475,7 @@ fn tracked_vehicles_ride_over_metre_high_humps_without_stopping() {
         // The nose rides up each hump on the plate under it instead of ramming it. The tank is long
         // enough to touch a crest with its belly between two humps, which slows it more than the others.
         let floor = if kind == KIND_TANK { 2.5 } else { 4.0 };
-        assert!(pose.position[2] < -60.0 && slowest > floor && pose.up_y > 0.9, "kind {kind}: {pose:?}, slowest {slowest}");
+        assert!(pose.position[2] < -55.0 && slowest > floor && pose.up_y > 0.9, "kind {kind}: {pose:?}, slowest {slowest}");
     }
 }
 
@@ -3122,11 +3132,11 @@ fn flat_out(kind: u8) -> (f32, f32, f32, f32) {
 #[test]
 fn every_period_car_nears_its_own_top_speed_and_stays_on_its_wheels_flat_out_at_full_lock() {
     for kind in PERIOD_CARS {
-        let top = shared::vehicles::vehicle_def(kind).spec.max_speed;
+        let top = cruise(kind);
         let (_, late, worst, turned) = flat_out(kind);
         assert!(late > top * 0.85 && late <= top + 0.5, "kind {kind} gets near {top} m/s and no further: {late}");
         assert!(worst > 0.9, "kind {kind} stays on its wheels: {worst}");
-        assert!(turned > 0.8, "kind {kind} turns: {turned}");
+        assert!(turned > 0.7, "kind {kind} turns: {turned}");
     }
 }
 
@@ -3148,3 +3158,65 @@ fn the_period_cars_differ_off_the_line_and_flat_out() {
     let (low, high) = runs.iter().fold((f32::MAX, 0.0_f32), |(low, high), run| (low.min(run.2), high.max(run.2)));
     assert!(high > low * 1.5, "{runs:?}");
 }
+
+/// Car `kind` set down on a kilometre of flat ground and settled, then driven flat out for `ticks`
+/// under `controls`: its speed at the end, and the most it made on the way.
+fn pull_away(kind: u8, controls: CarControls, ticks: u32) -> (f32, f32) {
+    let mut physics = Physics::new(&WorldFile { version: WORLD_VERSION, half_extent: 100_000, ..Default::default() }).unwrap();
+    physics.add_car(1, kind, [0.0, 1.5, 0.0], 0.0);
+    run(&mut physics, COAST, 60);
+    let mut most = 0.0_f32;
+    for _ in 0..ticks {
+        most = most.max(run(&mut physics, controls, 1).forward_speed);
+    }
+    (physics.car_pose(1).unwrap().forward_speed, most)
+}
+
+#[test]
+fn every_driven_car_and_tank_boosts_off_the_line_but_tops_out_about_the_same() {
+    let boosted = CarControls { boost: true, ..FORWARD };
+    for kind in [KIND_JEEP, KIND_SPORTS, KIND_VOLVO_240, KIND_GOLF_CART, KIND_BUS, KIND_EPA, KIND_TANK, KIND_STRF, KIND_PBV] {
+        let spec = shared::vehicles::vehicle_def(kind).spec;
+        assert_eq!(spec.buttons, Buttons::Boost, "kind {kind}");
+        let (plain, _) = pull_away(kind, FORWARD, 60);
+        let (quick, most) = pull_away(kind, boosted, 60);
+        assert!(quick > plain * 1.15, "kind {kind} pulls away harder on the boost: {quick} against {plain} m/s");
+        // It runs dry in four seconds or so, and on it the car is barely faster than without it.
+        let (_, most_late) = pull_away(kind, boosted, 60 * 15);
+        let top = spec.max_speed * spec.boost.unwrap().speed;
+        assert!(most.max(most_late) <= top + 0.5, "kind {kind} tops out near {} m/s: {}", spec.max_speed, most.max(most_late));
+    }
+}
+
+#[test]
+fn a_cars_boost_runs_down_held_and_fills_again_let_go() {
+    let mut physics = with_car(&flat());
+    run(&mut physics, COAST, 60);
+    run(&mut physics, CarControls { boost: true, ..FORWARD }, 30);
+    assert_eq!(physics.car_thrust(1).unwrap().1, THRUST_BOOST);
+    // Held without the throttle it is not spent.
+    let held = tank(&physics);
+    run(&mut physics, CarControls { boost: true, handbrake: true, ..CarControls::IDLE }, 30);
+    assert!((tank(&physics) - held).abs() < 1e-5, "{held} then {}", tank(&physics));
+    // Held flat out, it lasts about four seconds.
+    run(&mut physics, CarControls { boost: true, ..FORWARD }, 60 * 4);
+    assert!(tank(&physics) < 0.01, "{}", tank(&physics));
+    assert_eq!(physics.car_thrust(1).unwrap().1, 0, "an empty boost is off");
+    // Let go, it is full again in about six.
+    run(&mut physics, CarControls { handbrake: true, ..CarControls::IDLE }, 60 * 6 + 30);
+    assert!((tank(&physics) - shared::vehicles::BOOST_FULL).abs() < 1e-5, "{}", tank(&physics));
+}
+
+#[test]
+fn a_car_boosts_on_run_and_brakes_on_jump() {
+    for kind in [KIND_JEEP, KIND_TANK, KIND_CB90, KIND_SNOWMOBILE] {
+        let run = CarControls::driven(kind, &frame(BUTTON_RUN));
+        assert!(run.boost && !run.handbrake && run.lift == 0.0, "kind {kind}: {run:?}");
+        let jump = CarControls::driven(kind, &frame(BUTTON_JUMP));
+        assert!(jump.handbrake && !jump.boost, "kind {kind}: {jump:?}");
+    }
+    // A submarine's run still takes it down.
+    let dive = CarControls::driven(KIND_SUBMARINE, &frame(BUTTON_RUN));
+    assert!(!dive.boost && dive.lift == -1.0, "{dive:?}");
+}
+

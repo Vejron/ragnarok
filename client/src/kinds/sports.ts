@@ -12,7 +12,7 @@ export const SPORTS: VehicleKind = {
   kind: KIND_SPORTS,
   model: (id) => new CarModel('sports', id),
   load: loadCarModels,
-  ride: { distance: DRIVING_DISTANCE, reload: SHELL_COOLDOWN_TICKS, seats: [{ rig: DRIVE, role: 'driver', board: 'E: drive the Opel Manta', chase: true, enclosed: true }, ...Array.from({ length: SPORTS_SEATS - 1 }, () => RIDE_INSIDE)] },
+  ride: { distance: DRIVING_DISTANCE, reload: SHELL_COOLDOWN_TICKS, seats: [{ rig: DRIVE, role: 'driver', board: 'E: drive the Opel Manta', chase: true, gauges: ['boost'], enclosed: true }, ...Array.from({ length: SPORTS_SEATS - 1 }, () => RIDE_INSIDE)] },
   sound: {
     chop: PLAIN_CHOP,
     // The GT/E's injected two-litre four, wound out hard: crackles off the throttle.

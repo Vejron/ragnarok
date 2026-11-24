@@ -60,8 +60,9 @@ pub(super) const SIERRA: VehicleDef = VehicleDef {
         linear_damping: 0.05,
         // Low enough that it stays on its wheels at full lock flat out (measured in vehicle/tests.rs).
         com_drop: 0.3,
-        tank: None,
-        buttons: Buttons::Drive,
+        tank: Some(BOOST_FULL),
+        buttons: Buttons::Boost,
+        boost: Some(Boost::CAR),
         aims: false,
         solids: &[],
         tongue: 0.0,

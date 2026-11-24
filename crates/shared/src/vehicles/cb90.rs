@@ -218,8 +218,9 @@ pub(super) const CB90: VehicleDef = VehicleDef {
         linear_damping: 0.0,
         // Its engines low in the hull: it rolls back upright.
         com_drop: 0.4,
-        tank: None,
-        buttons: Buttons::Drive,
+        tank: Some(BOOST_FULL),
+        buttons: Buttons::Boost,
+        boost: Some(Boost::BOAT),
         aims: false,
         solids: &[
             Solid { shape: Shape::Cylinder { half_height: CB90_RING_HALF_HEIGHT, radius: CB90_RING_RADIUS }, at: CB90_RING_AT, role: Role::Part },

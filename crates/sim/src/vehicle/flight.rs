@@ -3,6 +3,7 @@
 
 use super::limbs::Planted;
 use super::water::smoothstep;
+use shared::vehicles::{BOOST_DRAIN, BOOST_FULL, BOOST_REFILL};
 use super::*;
 
 /// Share of full engine force at `speed` for a top speed of `max`: all of it up to [`FULL_POWER`]
@@ -150,13 +151,13 @@ pub(crate) fn thrust(body: &mut RigidBody, controls: CarControls, tank: &mut f32
     firing
 }
 
-/// One tick of a snowmobile's boost (its push is in `drive_car`): held with the throttle open it runs
+/// One tick of a boost (its push is in `drive_car`, `wade` and `boat`): held with the throttle open it runs
 /// the boost down, let go it fills again. Returns `THRUST_BOOST` while it is on.
 pub(crate) fn boost(controls: CarControls, tank: &mut f32, dt: f32) -> u8 {
     let on = controls.boost && controls.throttle > 0.0 && *tank > 0.0;
     // Holding it with an empty boost keeps it from filling, so it does not stutter on and off.
-    let rate = if on { -SNOWMOBILE_BOOST_DRAIN } else if controls.boost { 0.0 } else { SNOWMOBILE_BOOST_REFILL };
-    *tank = (*tank + rate * dt).clamp(0.0, SNOWMOBILE_BOOST);
+    let rate = if on { -BOOST_DRAIN } else if controls.boost { 0.0 } else { BOOST_REFILL };
+    *tank = (*tank + rate * dt).clamp(0.0, BOOST_FULL);
     if on { THRUST_BOOST } else { 0 }
 }
 

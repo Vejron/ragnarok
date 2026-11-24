@@ -76,6 +76,7 @@ pub(super) const MORTAR: VehicleDef = VehicleDef {
         com_drop: 0.0,
         tank: None,
         buttons: Buttons::Drive,
+        boost: Spec::NO_BOOST,
         aims: false,
         solids: &[],
         tongue: -(MORTAR_HALF_EXTENTS[2] + TOW_BACK),

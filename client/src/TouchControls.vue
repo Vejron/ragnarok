@@ -5,7 +5,7 @@ import type { InputController } from './sim/input'
 import { winter } from './render/season'
 import { touchButtons, type TouchButton } from './touchbuttons'
 
-const props = defineProps<{ input: InputController; seat: HudStats['seat']; canSwitch?: boolean; ammo?: boolean; voice?: boolean }>()
+const props = defineProps<{ input: InputController; seat: HudStats['seat']; canSwitch?: boolean; ammo?: boolean; boost?: boolean; voice?: boolean }>()
 
 /** How far the thumb has to travel for a full push, in CSS pixels. */
 const STICK_RADIUS = 56
@@ -73,7 +73,7 @@ function lookUp(event: PointerEvent) {
   if (event.pointerId === lookPointer) lookPointer = -1
 }
 
-const buttons = computed(() => touchButtons(props.seat, { canSwitch: props.canSwitch ?? false, winter, ammo: props.ammo ?? false }))
+const buttons = computed(() => touchButtons(props.seat, { canSwitch: props.canSwitch ?? false, winter, ammo: props.ammo ?? false, boost: props.boost ?? false }))
 
 /** The buttons under a finger, by pointer, so a lift (or the button going away) lets go of the right one. */
 const pressed = reactive(new Map<number, TouchButton>())

@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import { touchButtons } from '@/touchbuttons'
 import type { HudStats } from '@/hud'
-import { BUTTON_ALT, BUTTON_AMMO } from '@/sim/consts'
+import { BUTTON_ALT, BUTTON_AMMO, BUTTON_RUN } from '@/sim/consts'
 
 const SEATS: HudStats['seat'][] = [null, 'driver', 'roadster', 'sled', 'helm', 'pilot', 'airPilot', 'rider', 'aviator', 'walker', 'hen', 'tupp', 'strv', 'mortar', 'drone', 'loiter', 'passenger', 'gunner', 'roofgunner']
 
 describe('touch buttons', () => {
   it('gives every button a cell of its own, in every seat', () => {
     for (const seat of SEATS) {
-      for (const context of [{ canSwitch: true, winter: true, ammo: true }, { canSwitch: false, winter: false, ammo: false }]) {
+      for (const context of [{ canSwitch: true, winter: true, ammo: true, boost: true }, { canSwitch: false, winter: false, ammo: false }]) {
         const cells = touchButtons(seat, context).map((b) => `${b.col},${b.row}`)
         expect(new Set(cells).size, `${seat}`).toBe(cells.length)
       }
@@ -28,5 +28,14 @@ describe('touch buttons', () => {
     expect(touchButtons(null, { canSwitch: false, winter: false, ammo: false }).some((b) => b.id === 'skis')).toBe(false)
     expect(touchButtons('driver', { canSwitch: true, winter: false, ammo: false }).some((b) => b.id === 'seat')).toBe(true)
     expect(touchButtons('driver', { canSwitch: false, winter: false, ammo: false }).some((b) => b.id === 'seat')).toBe(false)
+  })
+
+  it('gives the driver of anything that boosts a BOOST button on run, and nobody else', () => {
+    const off = { canSwitch: false, winter: false, ammo: false }
+    for (const seat of ['driver', 'strv', 'coxswain', 'sled'] as const) {
+      expect(touchButtons(seat, { ...off, boost: true }).find((b) => b.mask === BUTTON_RUN)?.label, seat).toBe('BOOST')
+    }
+    expect(touchButtons('driver', off).some((b) => b.mask === BUTTON_RUN)).toBe(false)
+    expect(touchButtons('roadster', off).find((b) => b.mask === BUTTON_RUN)?.label).toBe('BOOST')
   })
 })

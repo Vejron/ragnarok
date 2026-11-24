@@ -388,6 +388,7 @@ pub(super) const TITAN: VehicleDef = VehicleDef {
         com_drop: 0.0,
         tank: Some(TITAN_FUEL),
         buttons: Buttons::Stride,
+        boost: Spec::NO_BOOST,
         aims: false,
         solids: &SOLIDS,
         tongue: 0.0,

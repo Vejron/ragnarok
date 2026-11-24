@@ -122,7 +122,7 @@ pub struct CarControls {
     /// Where a plane's pilot points the mouse, `[yaw, pitch]` in radians (yaw 0 faces -Z, + turns left):
     /// the plane turns towards it, banking into the turn. `None` flies on in a straight line.
     pub aim: Option<[f32; 2]>,
-    /// A Roadster's rear nozzles are held open. Only a Roadster has it.
+    /// Run is held: a Roadster's rear nozzles open, and anything with a `Spec::boost` boosts its engine.
     pub boost: bool,
     /// A Roadster hops off the ground, then holds itself up in the air. Only a Roadster has it.
     pub hop: bool,
@@ -225,7 +225,7 @@ impl CarControls {
             Buttons::Collective => CarControls { lift: input.collective(), ..stick },
             Buttons::Stunt => CarControls { handbrake: held(BUTTON_CROUCH), boost: held(BUTTON_RUN), hop: held(BUTTON_JUMP), ..stick },
             Buttons::Leap => CarControls { hop: held(BUTTON_JUMP), ..stick },
-            Buttons::Sled => CarControls { handbrake: held(BUTTON_JUMP), boost: held(BUTTON_RUN), ..stick },
+            Buttons::Boost => CarControls { handbrake: held(BUTTON_JUMP), boost: held(BUTTON_RUN), ..stick },
             Buttons::Stride => CarControls { lift: -f32::from(held(BUTTON_CROUCH)), hop: held(BUTTON_JUMP), ..stick },
         }
     }
@@ -496,9 +496,19 @@ pub(crate) fn extra_solids(kind: u8) -> Vec<ColliderBuilder> {
     }
 }
 
-/// Whether a snowmobile under `controls` has its boost open: held, driving forward, with some left in `tank`.
+/// Whether a vehicle under `controls` has its boost open: held, driving forward, with some left in `tank`.
 fn boosting(controls: CarControls, tank: Option<f32>) -> bool {
     controls.boost && controls.throttle > 0.0 && tank.is_some_and(|tank| tank > 0.0)
+}
+
+/// What a vehicle of `spec`'s engine pull and top speed are multiplied by under `controls` with `tank`
+/// left: its `Boost`'s while that is open, its cruise off it, and nothing for a kind without one.
+fn boosted(spec: &Spec, controls: CarControls, tank: Option<f32>) -> (f32, f32) {
+    match spec.boost {
+        Some(boost) if boosting(controls, tank) => (boost.power, boost.speed),
+        Some(boost) => (1.0, boost.cruise),
+        None => (1.0, 1.0),
+    }
 }
 
 /// How far a car's front wheels can turn at `speed` m/s, radians: the lock narrows at speed.
@@ -961,9 +971,8 @@ impl Physics {
         } else if against {
             (0.0, BRAKE_PER_KG * mass)
         } else {
-            // A snowmobile's boost opens the engine right up while there is any left.
-            let boosted = car.spec.buttons == Buttons::Sled && boosting(controls, car.tank);
-            let (power, top) = if boosted { (SNOWMOBILE_BOOST_POWER, SNOWMOBILE_BOOST_SPEED) } else { (1.0, 1.0) };
+            // The boost opens the engine right up while there is any left.
+            let (power, top) = boosted(car.spec, controls, car.tank);
             let headroom = if controls.throttle > 0.0 { pull(speed, car.spec.max_speed * top * car.condition.speed) } else { 0.5 };
             (controls.throttle * power * car.spec.engine_force / road_wheels(car.spec) as f32 * headroom * car.condition.power, 0.0)
         };
@@ -1163,10 +1172,14 @@ impl Physics {
             dive(body, car.spec, car.flight, car.condition, water.as_ref(), dt);
         }
         // A boat floats, and its waterjets drive it while there is enough water under its keel.
-        for car in self.cars.values().filter(|car| matches!(car.spec.lift, Lift::Boat(_))) {
+        for car in self.cars.values_mut().filter(|car| matches!(car.spec.lift, Lift::Boat(_))) {
             let Some(body) = self.bodies.get_mut(car.body) else { continue };
             let water = water_under(&self.waters, waves, body, car.spec);
-            boat(body, car.spec, car.flight, car.condition, water.as_ref(), dt);
+            let push = boosted(car.spec, car.flight, car.tank);
+            boat(body, car.spec, car.flight, car.condition, push, water.as_ref(), dt);
+            if let Some(tank) = car.tank.as_mut().filter(|_| car.spec.boost.is_some()) {
+                car.firing = boost(car.flight, tank, dt);
+            }
         }
         for car in self.cars.values_mut().filter(|car| car.spec.lift.wheeled() && !car.rails) {
             // Wheel rays must not hit their own chassis, nor a fence, which the hull goes through, nor a
@@ -1206,8 +1219,8 @@ impl Physics {
             let mut floating = false;
             if let Some(water) = water_under(&self.waters, waves, body, car.spec) {
                 floating = car.spec.swim.is_some() && !car.condition.wrecked;
-                let boosted = car.spec.buttons == Buttons::Sled && boosting(car.flight, car.tank);
-                grounded |= wade(body, car.spec, car.flight, car.steer, car.condition, boosted, &water, dt);
+                let boost = boosted(car.spec, car.flight, car.tank);
+                grounded |= wade(body, car.spec, car.flight, car.steer, car.condition, boost, &water, dt);
             }
             // A sled has no downforce to hold it down over a crest, and steers itself in the air.
             if let Some(runners) = &car.spec.runners {
@@ -1222,7 +1235,7 @@ impl Physics {
                 body.set_angvel(spin, true);
             }
             if let Some(tank) = &mut car.tank {
-                if car.spec.buttons == Buttons::Sled {
+                if car.spec.boost.is_some() {
                     car.firing = boost(car.flight, tank, dt);
                 } else {
                     body.reset_forces(false);

@@ -134,6 +134,7 @@ pub(super) const WALKER: VehicleDef = VehicleDef {
         com_drop: 0.0,
         tank: None,
         buttons: Buttons::Drive,
+        boost: Spec::NO_BOOST,
         aims: false,
         solids: &LEG_SOLIDS,
         tongue: 0.0,

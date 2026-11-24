@@ -707,7 +707,7 @@ impl Traffic {
         let car = self.cars[i];
         let left = self.graph.length(car.way) - car.along;
         // No faster than its kind goes: an EPA traktor holds everyone up.
-        let top = vehicle_def(car.kind).spec.max_speed * TOP_SHARE;
+        let top = vehicle_def(car.kind).spec.cruise_speed() * TOP_SHARE;
         let mut limit = (self.graph.edge(car.way).speed * car.pace).min(self.graph.cap(car.way, car.along)).min(top);
         // A driver who has been threatened: stopping to give the car up, going for whoever it was
         // whatever is in the way, or off as fast as the car goes and the bends allow.
@@ -1160,7 +1160,7 @@ impl Traffic {
         let (ours, theirs) = (edge.lanes[usize::from(car.way.back)], edge.lanes[usize::from(!car.way.back)]);
         let (width, speed, no_passing) = (edge.width, edge.speed, edge.no_passing);
         // What it would drive at with nothing ahead: its pace, and no more than its kind goes.
-        let top = vehicle_def(car.kind).spec.max_speed * TOP_SHARE;
+        let top = vehicle_def(car.kind).spec.cruise_speed() * TOP_SHARE;
         // How much it cares who is coming and what the road allows: a driver who flees not at
         // all, and one who hurries half as much as they should.
         let (desired, care) = match car.mood {

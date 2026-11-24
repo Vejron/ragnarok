@@ -157,6 +157,7 @@ pub(super) const PLANE: VehicleDef = VehicleDef {
         com_drop: 0.0,
         tank: None,
         buttons: Buttons::Drive,
+        boost: Spec::NO_BOOST,
         aims: true,
         solids: &[Solid { shape: Shape::Cuboid(PLANE_WING_HALF_EXTENTS), at: PLANE_WING_CENTRE, role: Role::Wings }],
         tongue: 0.0,

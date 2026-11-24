@@ -100,12 +100,17 @@ const rand = (low: number, high: number) => low + Math.random() * (high - low)
  */
 export class VehicleFx {
   private readonly fx: KindFx
-  private readonly last: (Vector3 | null)[] = []
   private readonly slips: number[] = []
   private lastPosition: Vector3 | null = null
   private measured = false
   private speed = 0
   private accel = 0
+  /**
+   * Acceleration along its nose, m/s², as it really is: how fast the smoothed speed changes, smoothed
+   * again. `accel` reads several times higher than this (the lag of the smoothed speed over one frame),
+   * and the engine's sound, the exhaust and the plumes are tuned to that; the tyres go by this.
+   */
+  private surge = 0
   private peakAccel = 0
   private peak = 0
   private surface = SURFACE_GRASS
@@ -135,10 +140,17 @@ export class VehicleFx {
   private landed = 0
   private readonly q = new Quaternion()
   private readonly contact = new Vector3()
+  private readonly offset = new Vector3()
   private readonly side = new Vector3()
   private readonly forward = new Vector3()
   /** How fast it is going, m/s, as drawn. */
   readonly velocity = new Vector3()
+  /**
+   * How fast it is going, m/s, smoothed as `speed` is. A tyre's slide is worked out from this: the drawn
+   * position jitters by a centimetre or so as snapshots and corrections come in, which over one frame
+   * reads as metres a second.
+   */
+  private readonly smoothed = new Vector3()
   private readonly steerTurn = new Quaternion()
   private static readonly UP = new Vector3(0, 1, 0)
 
@@ -229,7 +241,11 @@ export class VehicleFx {
       const blend = Math.min(1, dt * SMOOTHING)
       // The first speed seen is taken as it is: a car that comes into view moving did not just launch.
       if (this.measured) this.accel += ((along - this.speed) / dt - this.accel) * blend
+      const before = this.speed
       this.speed = this.measured ? this.speed + (along - this.speed) * blend : along
+      if (this.measured) this.surge += ((this.speed - before) / dt - this.surge) * blend
+      if (this.measured) this.smoothed.lerp(this.velocity, blend)
+      else this.smoothed.copy(this.velocity)
       const heading = Math.atan2(-this.forward.x, -this.forward.z)
       if (this.heading !== null) {
         let turned = heading - this.heading
@@ -299,12 +315,12 @@ export class VehicleFx {
       this.side.set(1, 0, 0)
       if (steered) this.side.applyQuaternion(this.steerTurn.setFromAxisAngle(VehicleFx.UP, -steer * layout.maxSteer * (layout.shares?.[wheel] ?? 1)))
       this.side.applyQuaternion(this.q)
-      const before = this.last[wheel]
-      const sideways = before ? contact.clone().sub(before).divideScalar(dt).dot(this.side) : 0
-      this.last[wheel] = contact.clone()
+      // The contact patch moves with the body and swings round with its turning (+ is left, about up).
+      const offset = this.offset.copy(contact).sub(this.lastPosition!)
+      const sideways = (this.smoothed.x + this.turning * offset.z) * this.side.x + (this.smoothed.z - this.turning * offset.x) * this.side.z
       // Every wheel of a jeep and a tank is driven; a sports car pushes with its rear pair, and a plane with its propeller.
       const driven = this.fx.drivenFrom !== null && wheel >= this.fx.drivenFrom
-      const wanted = tyreSlip(sideways, this.speed, this.accel, driven)
+      const wanted = tyreSlip(sideways, this.speed, this.surge, driven)
       const slip = (this.slips[wheel] ?? 0) + (wanted - (this.slips[wheel] ?? 0)) * Math.min(1, dt * SMOOTHING)
       this.slips[wheel] = slip
 
@@ -355,8 +371,9 @@ export class VehicleFx {
         if (Math.random() < dt * 40 * fling) this.gravel(world, contact, true)
         return
       }
-      // Dust off the tyres when sliding, and a trail behind any quick car off-road.
-      const kick = slip + Math.max(0, moving - 6) / 25
+      // Dust off the tyres only when they slide in a hard turn, lock or spin pulling away: none off a car
+      // rolling along or standing still.
+      const kick = slip
       if (Math.random() < dt * 22 * kick) this.cloud(world, contact, look.cloud, surface === SURFACE_GRASS ? 0.28 : 0.4, [0.7, 3.6], 2.0)
       if (surface !== SURFACE_GRASS && !winter && slip > 0.2 && Math.random() < dt * 60 * slip) this.gravel(world, contact)
     })
@@ -649,8 +666,7 @@ export class VehicleFx {
 
   /** Ends every mark this vehicle is laying. */
   lift(world: Pick<FxWorld, 'skids'>) {
-    this.last.forEach((_, wheel) => world.skids.lift(`${this.id}:${wheel}`))
-    this.last.length = 0
+    this.fx.wheels?.contacts.forEach((_, wheel) => world.skids.lift(`${this.id}:${wheel}`))
   }
 }
 

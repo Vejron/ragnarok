@@ -15,7 +15,7 @@ export const GTI: VehicleKind = {
   ride: {
     distance: DRIVING_DISTANCE,
     reload: SHELL_COOLDOWN_TICKS,
-    seats: [{ rig: DRIVE, role: 'driver', board: 'E: drive the Golf GTI', chase: true, enclosed: true }, ...Array.from({ length: GTI_SEATS - 1 }, () => RIDE_INSIDE)],
+    seats: [{ rig: DRIVE, role: 'driver', board: 'E: drive the Golf GTI', chase: true, gauges: ['boost'], enclosed: true }, ...Array.from({ length: GTI_SEATS - 1 }, () => RIDE_INSIDE)],
   },
   sound: {
     chop: PLAIN_CHOP,

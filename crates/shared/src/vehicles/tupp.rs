@@ -77,6 +77,7 @@ pub(super) const TUPP: VehicleDef = VehicleDef {
         com_drop: 0.0,
         tank: Some(HEN_STAMINA),
         buttons: Buttons::Leap,
+        boost: Spec::NO_BOOST,
         aims: false,
         solids: &LEG_SOLIDS,
         tongue: 0.0,

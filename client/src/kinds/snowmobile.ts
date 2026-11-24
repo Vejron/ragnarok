@@ -12,7 +12,7 @@ export const SNOWMOBILE: VehicleKind = {
   kind: KIND_SNOWMOBILE,
   model: (id) => new CarModel('snowmobile', id),
   load: loadCarModels,
-  ride: { distance: DRIVING_DISTANCE, reload: SHELL_COOLDOWN_TICKS, seats: [{ rig: DRIVE, role: 'sled', board: 'E: drive the snowmobile', chase: true, gauges: ['air'] }, RIDE_ALONG] },
+  ride: { distance: DRIVING_DISTANCE, reload: SHELL_COOLDOWN_TICKS, seats: [{ rig: DRIVE, role: 'sled', board: 'E: drive the snowmobile', chase: true, gauges: ['boost'] }, RIDE_ALONG] },
   sound: {
     chop: PLAIN_CHOP,
     // A belt drive has no gears: the revs climb once and hold while the speed builds, over the track's clatter.

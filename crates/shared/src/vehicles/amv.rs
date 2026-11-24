@@ -142,8 +142,9 @@ pub(super) const AMV: VehicleDef = VehicleDef {
         linear_damping: 0.05,
         // Its weight is low in the hull, under the turret: otherwise it leans over at full lock.
         com_drop: 0.6,
-        tank: None,
-        buttons: Buttons::Drive,
+        tank: Some(BOOST_FULL),
+        buttons: Buttons::Boost,
+        boost: Some(Boost::HEAVY),
         aims: false,
         solids: &[Solid { shape: Shape::Cylinder { half_height: AMV_TURRET_HALF_HEIGHT, radius: AMV_TURRET_RADIUS }, at: AMV_TURRET_RING, role: Role::Part }],
         tongue: 0.0,

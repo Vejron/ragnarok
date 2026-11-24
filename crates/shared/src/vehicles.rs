@@ -61,7 +61,7 @@ pub mod omega;
 pub mod sierra;
 pub mod escort;
 
-pub use spec::{Airframe, Arms, Boat, Buttons, Feet, Floats, Gait, Jets, Lift, Role, Rotorcraft, Runners, Shape, Skim, Solid, Spec, Springs, Step, Swim, STEER_FADE};
+pub use spec::{Airframe, Arms, Boat, Boost, BOOST_DRAIN, BOOST_FULL, BOOST_REFILL, Buttons, Feet, Floats, Gait, Jets, Lift, Role, Rotorcraft, Runners, Shape, Skim, Solid, Spec, Springs, Step, Swim, STEER_FADE};
 pub use crate::armor::{ALLOY, Armor, Box3, Module, On, Part, Pen, Plate, SHEET, SOFT, Zone};
 
 #[derive(Clone, Copy, Debug)]

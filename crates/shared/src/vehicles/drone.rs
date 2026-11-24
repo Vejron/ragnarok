@@ -78,6 +78,7 @@ pub(super) const DRONE: VehicleDef = VehicleDef {
         com_drop: 0.0,
         tank: None,
         buttons: Buttons::Drive,
+        boost: Spec::NO_BOOST,
         aims: true,
         solids: &[],
         tongue: 0.0,

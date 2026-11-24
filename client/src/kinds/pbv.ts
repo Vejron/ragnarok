@@ -23,7 +23,7 @@ export const PBV: VehicleKind = {
     distance: PBV_DISTANCE,
     reload: PBV_CANNON_COOLDOWN_TICKS,
     seats: [
-      { rig: DRIVE, role: 'driver', board: 'E: drive the Pbv 302', chase: true, enclosed: true },
+      { rig: DRIVE, role: 'driver', board: 'E: drive the Pbv 302', chase: true, gauges: ['boost'], enclosed: true },
       // The turret turns all the way round; the gauge shows the barrel's heat.
       { rig: { name: 'gun', hull: [Math.PI, PBV_BARREL_MIN, PBV_BARREL_MAX] }, role: 'gunner', board: 'E: man the cannon', sight: true, gauges: ['heat'], enclosed: true },
       TROOP,

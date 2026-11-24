@@ -136,11 +136,12 @@ pub(crate) fn smoothstep(low: f32, high: f32, x: f32) -> f32 {
 }
 
 /// One tick of water on a wheeled vehicle whose body is `body`, over `water`: after the wheels have had their say, before the pipeline steps. `steer` is its front
-/// wheels' angle (+ is right) and `boosted` whether a snowmobile's boost is open. Returns whether it is
+/// wheels' angle (+ is right) and `boost` what its engine's pull and its top speed are multiplied by
+/// (its boost, while that is open). Returns whether it is
 /// skimming, which counts as being on the ground. Does nothing to a hull out of the water. Everything
 /// is a function of the body's state and the controls, so the client can replay it.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn wade(body: &mut RigidBody, spec: &Spec, controls: CarControls, steer: f32, condition: CarCondition, boosted: bool, water: &Water, dt: f32) -> bool {
+pub(crate) fn wade(body: &mut RigidBody, spec: &Spec, controls: CarControls, steer: f32, condition: CarCondition, boost: (f32, f32), water: &Water, dt: f32) -> bool {
     let [_, hy, _] = spec.half_extents;
     let rotation = *body.rotation();
     let under = (water.height - (body.translation().y - hy)).clamp(0.0, 2.0 * hy);
@@ -149,7 +150,7 @@ pub(crate) fn wade(body: &mut RigidBody, spec: &Spec, controls: CarControls, ste
     }
     // A hull that floats does so until it is wrecked, when it fills and goes down as any other.
     if let Some(afloat) = spec.swim.filter(|_| !condition.wrecked) {
-        swim(body, &afloat, controls, condition, water, under, dt);
+        swim(body, &afloat, controls, condition, boost, water, under, dt);
         return false;
     }
     let wet = under / (2.0 * hy);
@@ -187,7 +188,7 @@ pub(crate) fn wade(body: &mut RigidBody, spec: &Spec, controls: CarControls, ste
         let throttle = controls.throttle.clamp(-1.0, 1.0);
         let against = throttle * speed < -1.0;
         if throttle > 0.0 && !against {
-            let (power, top) = if boosted { (SNOWMOBILE_BOOST_POWER, SNOWMOBILE_BOOST_SPEED) } else { (1.0, 1.0) };
+            let (power, top) = boost;
             let headroom = pull(speed, spec.max_speed * top * condition.speed);
             flat += forward * (throttle * power * spec.engine_force * skim.thrust * headroom * condition.power / body.mass() * plane * dt);
         }
@@ -229,7 +230,8 @@ pub(crate) fn wade(body: &mut RigidBody, spec: &Spec, controls: CarControls, ste
 /// push it up to `Swim::speed` and turn it at `Swim::turn`, on the spot too; a broken track pushes
 /// nothing. In the shallows its tracks still reach the bed and drive it as on land, against a little
 /// drag. Like `wade`, a function of the body's state and the controls alone.
-fn swim(body: &mut RigidBody, swim: &shared::vehicles::Swim, controls: CarControls, condition: CarCondition, water: &Water, under: f32, dt: f32) {
+#[allow(clippy::too_many_arguments)]
+fn swim(body: &mut RigidBody, swim: &shared::vehicles::Swim, controls: CarControls, condition: CarCondition, boost: (f32, f32), water: &Water, under: f32, dt: f32) {
     let rotation = *body.rotation();
     let up = rotation * Vector::Y;
     let mut forward = rotation * Vector::new(0.0, 0.0, -1.0);
@@ -251,10 +253,12 @@ fn swim(body: &mut RigidBody, swim: &shared::vehicles::Swim, controls: CarContro
     let mut flat = Vector::new(velocity.x, 0.0, velocity.z);
     let throttle = controls.throttle.clamp(-1.0, 1.0);
     let tracks = (condition.sides[0] + condition.sides[1]) / 2.0;
-    let top = swim.speed * condition.speed * if throttle < 0.0 { 0.5 } else { 1.0 };
+    // The boost only ever drives it ahead.
+    let (power, faster) = if throttle > 0.0 { boost } else { (1.0, 1.0) };
+    let top = swim.speed * faster * condition.speed * if throttle < 0.0 { 0.5 } else { 1.0 };
     // Only what pushes it on counts against the top speed: it can always slow down.
     let headroom = if throttle * speed > 0.0 { pull(speed, top) } else { 1.0 };
-    flat += forward * (throttle * swim.thrust * headroom * condition.power * tracks * afloat * dt);
+    flat += forward * (throttle * power * swim.thrust * headroom * condition.power * tracks * afloat * dt);
     let side = flat.dot(right);
     flat -= right * side * (1.0 - (-SWIM_KEEL * afloat * dt).exp());
     let going = flat.length();
@@ -432,6 +436,15 @@ mod tests {
         assert!((underside + PBV_DRAFT).abs() < 0.05 && settled.up_y > 0.99, "its underside is {PBV_DRAFT} m down: {settled:?}");
         let later = drive(&mut physics, CarControls::IDLE, 10 * TICKS_PER_SECOND);
         assert!((later.position[1] - settled.position[1]).abs() < 0.02 && (later.position[2] - settled.position[2]).abs() < 0.1, "{later:?}");
+    }
+
+    #[test]
+    fn a_pbv_afloat_pulls_away_harder_on_the_boost() {
+        let (mut plain, _) = pbv_afloat();
+        let (mut boosted, _) = pbv_afloat();
+        let slow = drive(&mut plain, FORWARD, TICKS_PER_SECOND).forward_speed;
+        let quick = drive(&mut boosted, CarControls { boost: true, ..FORWARD }, TICKS_PER_SECOND).forward_speed;
+        assert!(quick > slow * 1.15, "{quick} against {slow} m/s");
     }
 
     #[test]

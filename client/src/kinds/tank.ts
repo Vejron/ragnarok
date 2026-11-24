@@ -16,7 +16,7 @@ export const TANK: VehicleKind = {
     distance: TANK_DISTANCE,
     reload: SHELL_COOLDOWN_TICKS,
     seats: [
-      { rig: DRIVE, role: 'driver', board: 'E: drive the tank', chase: true, enclosed: true },
+      { rig: DRIVE, role: 'driver', board: 'E: drive the tank', chase: true, gauges: ['boost'], enclosed: true },
       { rig: { name: 'gun', hull: [Math.PI, TANK_BARREL_MIN, TANK_BARREL_MAX] }, role: 'gunner', board: 'E: man the gun', sight: true, gauges: ['ammo'], enclosed: true },
       { rig: { name: 'pintle', limit: TANK_MG_YAW_LIMIT, pitch: [TANK_MG_PITCH_MIN, TANK_MG_PITCH_MAX] }, role: 'roofgunner', board: 'E: man the machine gun', gauges: ['pintle'] },
     ],

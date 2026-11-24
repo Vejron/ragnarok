@@ -114,6 +114,7 @@ pub(super) const SEAPLANE: VehicleDef = VehicleDef {
         com_drop: 0.0,
         tank: None,
         buttons: Buttons::Drive,
+        boost: Spec::NO_BOOST,
         aims: true,
         solids: &[
             Solid { shape: Shape::Cuboid(SEAPLANE_WING_HALF_EXTENTS), at: SEAPLANE_WING_CENTRE, role: Role::Wings },

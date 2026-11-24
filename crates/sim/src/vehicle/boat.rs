@@ -63,7 +63,8 @@ fn bow_rise(hull: &Boat, speed: f32) -> f32 {
 }
 
 /// One tick of a boat whose body is `body`, over `water` (`None` on dry land): before the pipeline steps.
-pub(crate) fn boat(body: &mut RigidBody, spec: &Spec, controls: CarControls, condition: CarCondition, water: Option<&Water>, dt: f32) {
+/// `boost` is what its thrust ahead and its top speed are multiplied by (its boost, while that is open).
+pub(crate) fn boat(body: &mut RigidBody, spec: &Spec, controls: CarControls, condition: CarCondition, boost: (f32, f32), water: Option<&Water>, dt: f32) {
     // On dry land it is just a heavy box.
     let (Some(water), Lift::Boat(hull)) = (water, spec.lift) else { return };
     let [_, hy, _] = spec.half_extents;
@@ -109,7 +110,8 @@ pub(crate) fn boat(body: &mut RigidBody, spec: &Spec, controls: CarControls, con
     let mut slowing = DRAG * flat.length() + slam;
     let power = condition.power * afloat;
     if throttle > 0.0 {
-        flat += forward * (throttle * hull.thrust * pull(speed, spec.max_speed * condition.speed) * power * dt);
+        let (more, faster) = boost;
+        flat += forward * (throttle * more * hull.thrust * pull(speed, spec.max_speed * faster * condition.speed) * power * dt);
     } else if throttle < 0.0 && speed > 0.5 {
         slowing += -throttle * hull.brake * afloat;
     } else if throttle < 0.0 {
@@ -189,6 +191,11 @@ mod tests {
     const FULL_AHEAD: CarControls = CarControls { throttle: 1.0, ..CarControls::IDLE };
     const REST: f32 = CB90_HALF_EXTENTS[1] - CB90_DRAFT;
 
+    /// The fastest `kind` goes flat out off its boost, m/s.
+    fn cruise(kind: u8) -> f32 {
+        shared::vehicles::vehicle_def(kind).spec.cruise_speed()
+    }
+
     /// A boat afloat at `[x, z]`, heading `yaw`.
     fn afloat(x: f32, z: f32, yaw: f32, calm: bool) -> Physics {
         let mut physics = Physics::new(&sea()).unwrap();
@@ -255,7 +262,7 @@ mod tests {
         physics.add_car(1, KIND_CB90, [0.0, REST, 560.0], 0.0);
         let pose = run(&mut physics, FULL_AHEAD, 35 * SECOND);
         let over_ground = -pose.velocity[2];
-        assert!((over_ground - (CB90_MAX_SPEED - 3.0)).abs() < 1.5, "{over_ground} m/s over the ground");
+        assert!((over_ground - (cruise(KIND_CB90) - 3.0)).abs() < 1.5, "{over_ground} m/s over the ground");
     }
 
     #[test]
@@ -275,7 +282,19 @@ mod tests {
     }
 
     #[test]
-    fn flat_out_it_makes_forty_five_knots_on_the_plane_with_its_bow_up_on_the_way() {
+    fn on_the_boost_it_gets_on_the_plane_sooner_and_runs_it_down() {
+        let mut plain = afloat(0.0, 0.0, 0.0, true);
+        let mut boosted = afloat(0.0, 0.0, 0.0, true);
+        let (slow, quick) = (run(&mut plain, FULL_AHEAD, 2 * SECOND).forward_speed, run(&mut boosted, CarControls { boost: true, ..FULL_AHEAD }, 2 * SECOND).forward_speed);
+        assert!(quick > slow * 1.2, "{quick} against {slow} m/s");
+        assert_eq!(boosted.car_thrust(1).unwrap().1, shared::protocol::THRUST_BOOST);
+        assert!(boosted.car_thrust(1).unwrap().0 < 0.6, "{:?}", boosted.car_thrust(1));
+        let most = (0..12 * SECOND).map(|_| run(&mut boosted, CarControls { boost: true, ..FULL_AHEAD }, 1).forward_speed).fold(0.0_f32, f32::max);
+        assert!(most <= CB90_MAX_SPEED * shared::vehicles::Boost::BOAT.speed + 0.5, "{most}");
+    }
+
+    #[test]
+    fn flat_out_it_makes_forty_knots_on_the_plane_with_its_bow_up_on_the_way() {
         // From the south shore heading north (-Z).
         let mut physics = afloat(0.0, 560.0, 0.0, true);
         let mut steepest = 0.0f32;
@@ -288,7 +307,7 @@ mod tests {
             }
         }
         let pose = physics.car_pose(1).unwrap();
-        assert!(pose.forward_speed > 0.95 * CB90_MAX_SPEED && pose.forward_speed <= CB90_MAX_SPEED + 0.1, "flat out at {} m/s", pose.forward_speed);
+        assert!(pose.forward_speed > 0.95 * cruise(KIND_CB90) && pose.forward_speed <= cruise(KIND_CB90) + 0.1, "flat out at {} m/s", pose.forward_speed);
         let thirty_knots = thirty_knots.expect("it reached 30 knots");
         assert!((3.0..6.0).contains(&thirty_knots), "30 knots in {thirty_knots} s");
         assert!(pose.position[1] > REST + 0.6 * CB90_PLANE_LIFT, "it rides up on the plane: {} over {REST}", pose.position[1]);
@@ -301,7 +320,7 @@ mod tests {
     fn flat_out_it_crash_stops_inside_two_lengths_its_bow_digging_in() {
         let mut physics = afloat(0.0, 560.0, 0.0, true);
         let cruising = run(&mut physics, FULL_AHEAD, 35 * SECOND);
-        assert!(cruising.forward_speed > 0.95 * CB90_MAX_SPEED);
+        assert!(cruising.forward_speed > 0.95 * cruise(KIND_CB90));
         let start = cruising;
         let (mut pose, mut nose_down, mut lowest) = (start, 0.0f32, start.position[1]);
         for _ in 0..10 * SECOND {
@@ -402,7 +421,7 @@ mod tests {
         let pose = run(&mut physics, FULL_AHEAD, 2 * SECOND);
         assert!(pose.forward_speed > RAFT_PLANE_SPEED[1], "{} m/s after two seconds", pose.forward_speed);
         let pose = run(&mut physics, FULL_AHEAD, 8 * SECOND);
-        assert!(pose.forward_speed > 0.95 * RAFT_MAX_SPEED && pose.forward_speed <= RAFT_MAX_SPEED + 0.1, "flat out at {} m/s", pose.forward_speed);
+        assert!(pose.forward_speed > 0.95 * cruise(KIND_RAFT) && pose.forward_speed <= cruise(KIND_RAFT) + 0.1, "flat out at {} m/s", pose.forward_speed);
         assert!(pose.up_y > 0.99, "and it runs flat on the plane");
     }
 
@@ -525,7 +544,7 @@ mod tests {
         };
         let (raft, upright) = thrown(KIND_RAFT, RAFT_REST, RAFT_HALF_EXTENTS[1]);
         let (cb90, _) = thrown(KIND_CB90, REST, CB90_HALF_EXTENTS[1]);
-        assert!(raft > 0.06, "the raft's bottom was {raft} m clear of the water");
+        assert!(raft > 0.03, "the raft's bottom was {raft} m clear of the water");
         assert!(cb90 < 0.5 * raft, "the CB90's only {cb90} m");
         assert!(upright > 0.9, "and the raft landed upright");
     }

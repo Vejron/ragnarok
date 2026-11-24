@@ -26,13 +26,8 @@ pub const SNOWMOBILE_MAX_STEER: f32 = 0.6;
 pub const SNOWMOBILE_STEER_FADE: f32 = 7.0;
 pub const SNOWMOBILE_MAX_SPEED: f32 = 20.0;
 /// The boost: holding run opens the engine right up, multiplying its pull and its top speed, while
-/// the boost lasts (a share of full, `Spec::tank`). It runs down in about four seconds held and
-/// fills again in about six once let go.
-pub const SNOWMOBILE_BOOST: f32 = 1.0;
-pub const SNOWMOBILE_BOOST_POWER: f32 = 1.8;
-pub const SNOWMOBILE_BOOST_SPEED: f32 = 1.35;
-pub const SNOWMOBILE_BOOST_DRAIN: f32 = 0.25;
-pub const SNOWMOBILE_BOOST_REFILL: f32 = 0.17;
+/// the boost lasts (`BOOST_DRAIN`, `BOOST_REFILL`). Unlike a car's, it really is faster on it.
+pub const SNOWMOBILE_BOOST: Boost = Boost { power: 1.8, cruise: 1.0, speed: 1.35 };
 /// The driver sits up front, the passenger behind and a little higher on the seat's rise.
 pub const SNOWMOBILE_SEAT_HEADS: [[f32; 3]; 2] = [[0.0, 1.05, 0.1], [0.0, 1.15, 0.8]];
 
@@ -78,8 +73,9 @@ pub(super) const SNOWMOBILE: VehicleDef = VehicleDef {
         // The weight is put right down at the track, as a rider hangs off the uphill side: it holds a
         // steep side slope, and a full-lock turn while the tail slides, without rolling.
         com_drop: 0.5,
-        tank: Some(SNOWMOBILE_BOOST),
-        buttons: Buttons::Sled,
+        tank: Some(BOOST_FULL),
+        buttons: Buttons::Boost,
+        boost: Some(SNOWMOBILE_BOOST),
         aims: false,
         solids: &[],
         tongue: 0.0,

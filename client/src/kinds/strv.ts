@@ -12,7 +12,7 @@ export const STRV: VehicleKind = {
   kind: KIND_STRV,
   model: (id) => new StrvModel(id),
   load: loadStrvModel,
-  ride: { distance: STRV_DISTANCE, reload: SHELL_COOLDOWN_TICKS, seats: [{ rig: { name: 'tanker' }, role: 'strv', board: 'E: drive the Strv S', chase: true, sight: true, gauges: ['ammo'], enclosed: true }] },
+  ride: { distance: STRV_DISTANCE, reload: SHELL_COOLDOWN_TICKS, seats: [{ rig: { name: 'tanker' }, role: 'strv', board: 'E: drive the Strv S', chase: true, sight: true, gauges: ['ammo', 'boost'], enclosed: true }] },
   sound: {
     chop: { type: 'bandpass', hz: 650 },
     // Two forward gears; the turbine is heard over the diesel all the time.

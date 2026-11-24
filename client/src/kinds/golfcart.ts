@@ -12,7 +12,7 @@ export const GOLF_CART: VehicleKind = {
   kind: KIND_GOLF_CART,
   model: (id) => new CarModel('golf_cart', id),
   load: loadCarModels,
-  ride: { distance: DRIVING_DISTANCE, reload: SHELL_COOLDOWN_TICKS, seats: [{ rig: DRIVE, role: 'driver', board: 'E: drive the golf cart', chase: true }, RIDE_ALONG] },
+  ride: { distance: DRIVING_DISTANCE, reload: SHELL_COOLDOWN_TICKS, seats: [{ rig: DRIVE, role: 'driver', board: 'E: drive the golf cart', chase: true, gauges: ['boost'] }, RIDE_ALONG] },
   sound: {
     chop: PLAIN_CHOP,
     // A small DC motor and its reduction gear: a thin whine that climbs with the speed, and soft.

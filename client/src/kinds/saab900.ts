@@ -15,7 +15,7 @@ export const SAAB_900: VehicleKind = {
   ride: {
     distance: DRIVING_DISTANCE,
     reload: SHELL_COOLDOWN_TICKS,
-    seats: [{ rig: DRIVE, role: 'driver', board: 'E: drive the Saab 900 Turbo', chase: true, enclosed: true }, ...Array.from({ length: SAAB_900_SEATS - 1 }, () => RIDE_INSIDE)],
+    seats: [{ rig: DRIVE, role: 'driver', board: 'E: drive the Saab 900 Turbo', chase: true, gauges: ['boost'], enclosed: true }, ...Array.from({ length: SAAB_900_SEATS - 1 }, () => RIDE_INSIDE)],
   },
   sound: {
     chop: PLAIN_CHOP,

@@ -168,6 +168,8 @@ describe('Particles', () => {
 })
 
 describe('VehicleFx', () => {
+  afterEach(() => vi.restoreAllMocks())
+
   function world(surface: number): FxWorld & { smoke: Particles; skids: Skidmarks } {
     return {
       smoke: new Particles(2000),
@@ -179,12 +181,12 @@ describe('VehicleFx', () => {
     }
   }
 
-  /** A jeep at ride height, moving with `velocity` (m/s) while pointing along -Z, for `frames` frames. */
-  function slide(fx: VehicleFx, w: FxWorld, velocity: [number, number], frames: number) {
+  /** A jeep at ride height, moving with `velocity` (m/s) while pointing along -Z, for `frames` frames; unpowered, it puffs no exhaust. */
+  function slide(fx: VehicleFx, w: FxWorld, velocity: [number, number], frames: number, powered = true) {
     const dt = 1 / 60
     const rotation = [0, 0, 0, 1] as const
     for (let i = 0; i < frames; i++) {
-      fx.update(w, [velocity[0] * i * dt, 0.857, velocity[1] * i * dt], rotation, 0, true, dt)
+      fx.update(w, [velocity[0] * i * dt, 0.857, velocity[1] * i * dt], rotation, 0, powered, dt)
       w.smoke.update(dt)
     }
   }
@@ -202,11 +204,58 @@ describe('VehicleFx', () => {
     expect(w.smoke.alive).toBeGreaterThan(10)
   })
 
-  it('ruts soft ground and raises dust even without sliding', () => {
+  it('ruts soft ground but raises no dust rolling straight along it', () => {
     const w = world(SURFACE_DIRT)
-    slide(new VehicleFx(1, KIND_JEEP), w, [0, -15], 120)
+    slide(new VehicleFx(1, KIND_JEEP), w, [0, -15], 120, false)
     expect(w.skids.laid).toBeGreaterThan(10)
-    expect(w.smoke.alive).toBeGreaterThan(0)
+    expect(w.smoke.alive).toBe(0)
+  })
+
+  it('raises no dust or grit off a parked car whose drawn place jitters by a centimetre or two', () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.01)
+    const w = world(SURFACE_DIRT)
+    const fx = new VehicleFx(1, KIND_JEEP)
+    const dt = 1 / 120
+    for (let i = 0; i < 240; i++) {
+      const jitter = ((i * 7) % 5) * 0.005 - 0.01
+      const yaw = ((i * 3) % 4) * 0.002 - 0.003
+      // Nobody in it, so no exhaust: anything in the air would be off its tyres.
+      fx.update(w, [jitter, 0.857, -jitter], [0, Math.sin(yaw / 2), 0, Math.cos(yaw / 2)], 0, false, dt)
+    }
+    expect(fx.slip).toBeLessThan(0.05)
+    expect(w.smoke.alive).toBe(0)
+    expect(w.skids.laid).toBe(0)
+  })
+
+  it('raises no dust coasting down from speed, nor pulling away gently', () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.01)
+    const dt = 1 / 120
+    // Let go at 35 m/s, slowing at 2 m/s² to a stop; then setting off at 5 m/s².
+    for (const [from, accel] of [[35, -2], [0, 5]] as const) {
+      const w = world(SURFACE_DIRT)
+      const fx = new VehicleFx(1, KIND_SPORTS)
+      for (let i = 0; i < 120 * 6; i++) {
+        const t = i * dt
+        const stop = accel < 0 ? Math.min(t, from / -accel) : t
+        fx.update(w, [0, 0.42, -(from * stop + 0.5 * accel * stop * stop)], [0, 0, 0, 1], 0, false, dt)
+      }
+      expect(fx.slip, `${from} m/s at ${accel} m/s²`).toBeLessThan(0.05)
+      expect(w.smoke.alive).toBe(0)
+    }
+  })
+
+  it('throws dust off the dirt in a hard turn and pulling away hard', () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.01)
+    const turning = world(SURFACE_DIRT)
+    slide(new VehicleFx(1, KIND_JEEP), turning, [8, -15], 60, false)
+    expect(turning.smoke.alive).toBeGreaterThan(5)
+
+    const launching = world(SURFACE_DIRT)
+    const fx = new VehicleFx(1, KIND_JEEP)
+    const dt = 1 / 60
+    // From a stop at 12 m/s².
+    for (let i = 0; i < 60; i++) fx.update(launching, [0, 0.857, -6 * (i * dt) ** 2], [0, 0, 0, 1], 0, false, dt)
+    expect(launching.smoke.alive).toBeGreaterThan(5)
   })
 
   it('splashes in water without marking it', () => {

@@ -827,8 +827,8 @@ fn a_roadster_driver_boosts_on_run_hops_on_jump_and_brakes_on_crouch() {
 
     press(&mut game, id, &mut seq, (0, 0), BUTTON_CROUCH, 3);
     assert!(game.world.entities.of::<Vehicle>(vid).controls.handbrake);
-    // Nothing else carries a tank, but a hen's or a tupp's stamina, a drone's battery and a helicopter's rotor speed.
-    assert!(game.seen_vehicles().iter().filter(|(_, v)| !matches!(v.kind.as_ref().unwrap().kind, KIND_ROADSTER | KIND_HEN | KIND_TUPP | KIND_DRONE | KIND_HELI)).all(|(_, v)| v.thrust.is_none()));
+    // Only a kind with a tank carries one (a car's boost, a hen's stamina, a helicopter's rotor speed), and a drone its battery.
+    assert!(game.seen_vehicles().iter().filter(|(_, v)| { let kind = v.kind.as_ref().unwrap().kind; kind != KIND_DRONE && shared::vehicles::vehicle_def(kind).spec.tank.is_none() }).all(|(_, v)| v.thrust.is_none()));
 }
 
 /// A game with one pine just in front of where a vehicle of `kind` is set down facing it, and the

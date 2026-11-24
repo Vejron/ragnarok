@@ -93,6 +93,7 @@ pub(super) const SUBMARINE: VehicleDef = VehicleDef {
         com_drop: 0.5,
         tank: None,
         buttons: Buttons::Drive,
+        boost: Spec::NO_BOOST,
         aims: false,
         solids: &[Solid {
             shape: Shape::Cuboid(SUB_SAIL_HALF),

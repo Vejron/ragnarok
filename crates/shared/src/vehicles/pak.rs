@@ -79,6 +79,7 @@ pub(super) const PAK: VehicleDef = VehicleDef {
         com_drop: 0.0,
         tank: None,
         buttons: Buttons::Drive,
+        boost: Spec::NO_BOOST,
         aims: false,
         solids: &[Solid { shape: Shape::Cuboid(PAK_SHIELD_HALF), at: PAK_SHIELD_CENTRE, role: Role::Part }],
         tongue: PAK_TONGUE_Z,

@@ -17,7 +17,7 @@ export const TECHNICAL: VehicleKind = {
     distance: DRIVING_DISTANCE,
     reload: TECHNICAL_MG_COOLDOWN_TICKS,
     seats: [
-      { rig: DRIVE, role: 'driver', board: 'E: drive the technical', chase: true },
+      { rig: DRIVE, role: 'driver', board: 'E: drive the technical', chase: true, gauges: ['boost'] },
       RIDE_ALONG,
       // The gun turns all the way round on its post.
       { rig: { name: 'gun', hull: [Math.PI, TECHNICAL_MG_PITCH_MIN, TECHNICAL_MG_PITCH_MAX] }, role: 'gunner', board: 'E: man the machine gun', gauges: ['heat'], stand: true },
