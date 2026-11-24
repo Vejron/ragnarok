@@ -123,6 +123,7 @@ impl Game {
                 backpack: None,
                 deliveries: None,
                 bus_calls: Vec::new(),
+                traffic_calls: Vec::new(),
                 traffic: 0.0,
                 map,
                 entities: Default::default(),
@@ -343,6 +344,51 @@ impl Game {
         }
     }
 
+    /// Answers what `Traffic` and `Civilians` asked for this tick: drivers out of their cars made
+    /// civilians, under the same id so that everyone sees the same person get out, and civilians gone.
+    fn street(&mut self) {
+        use crate::entities::Health;
+        use crate::mechanics::{Civilian, TrafficCall, Wounds};
+        for call in std::mem::take(&mut self.world.traffic_calls) {
+            match call {
+                TrafficCall::Afoot { driver: id, feet, yaw, hands_up, threat } => {
+                    // What they took at the wheel goes with them.
+                    let hp = self.world.entities.get::<Health>(id).map_or(PLAYER_MAX_HP, |health| health.hp);
+                    let wounds = self.world.entities.get::<Wounds>(id).copied();
+                    self.world.entities.despawn(id);
+                    let rng = &mut self.world.rng;
+                    let color = (rng.next_u64() % u64::from(PLAYER_COLOR_COUNT)) as u8;
+                    let slant = (rng.next_f64() as f32 * 2.0 - 1.0) * crate::mechanics::CIVILIAN_SLANT;
+                    // A civilian: on no team, with empty hands, and no coming back from the dead.
+                    self.world.entities.spawn(id, Player::new("Civilian".into(), color, TEAM_NONE, vec![[feet[0], feet[2]].map(to_cm)], hotbar_of([shared::items::ITEM_NONE; HOTBAR_SLOTS])));
+                    self.world.entities.insert(id, (soldier_life(), Civilian::new(yaw, threat, hands_up, slant)));
+                    self.world.entities.remove::<crate::entities::Respawn>(id);
+                    for mechanic in &mut self.mechanics {
+                        mechanic.on_join(&mut self.world, id);
+                    }
+                    // Beside the car's door, not at a spawn point.
+                    if let Some(mut player) = self.world.entities.get_mut::<Player>(id) {
+                        player.character.position = [feet[0], feet[1] + sim::STANDING_Y, feet[2]];
+                        player.character.yaw = yaw;
+                        player.surrendered = hands_up > 0;
+                    }
+                    if let Some(mut health) = self.world.entities.get_mut::<Health>(id) {
+                        health.hp = hp;
+                    }
+                    if let Some(wounds) = wounds {
+                        self.world.entities.insert(id, wounds);
+                    }
+                    self.broadcast(encode(&Profiles { tag: S_PROFILES, players: vec![profile_entry(&self.world, id)] }));
+                }
+                TrafficCall::Gone(id) => {
+                    if self.world.entities.has::<Civilian>(id) {
+                        self.leave(id);
+                    }
+                }
+            }
+        }
+    }
+
     /// Takes zombie `id` out of the game, as if it had left. Anyone else is left alone.
     pub fn remove_zombie(&mut self, id: u32) {
         if crate::mechanics::is_zombie(&self.world, id) {
@@ -410,6 +456,7 @@ impl Game {
             mechanic.on_tick(&mut self.world, TICK_DT);
         }
         self.staff_buses();
+        self.street();
         if let Some(mut scenario) = self.scenario.take() {
             scenario.tick(self);
             self.scenario = Some(scenario);

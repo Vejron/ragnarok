@@ -206,9 +206,10 @@ fn burst(world: &mut World, blast: Blast, direct: Option<Direct>, spare: Option<
         }
         tracing::debug!(distance, power, down, "player blasted");
     }
+    // The limb nearest it first: a blast that kills still takes off the limb it used up.
     for (id, amount) in bodies {
-        damage_entity(world, id, Harm::new(amount, blast.attacker, blast.weapon).from(blast.point));
         super::limbs::blasted(world, id, blast.point, amount, blast.attacker);
+        damage_entity(world, id, Harm::new(amount, blast.attacker, blast.weapon).from(blast.point));
     }
     let mut reached = world.physics.blast_cars(blast.point, blast.radius);
     reached.retain(|&(vid, _)| Some(vid) != spare);

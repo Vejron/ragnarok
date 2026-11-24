@@ -1,5 +1,4 @@
 use super::*;
-use crate::entities::Transform;
 use crate::game::{Command, Game, Noise, Profile};
 use shared::world::{ROAD_MINOR, Road, WORLD_VERSION, WorldFile};
 use tokio::sync::{mpsc, oneshot};
@@ -509,8 +508,8 @@ fn look_at(game: &mut Game, id: u32, at: [f32; 3], buttons: u16) {
 }
 
 /// The drivers on foot, each with where they stand.
-fn on_foot(game: &Game) -> Vec<(Driver, [f32; 3])> {
-    game.world.entities.all::<Driver>().filter(|(_, driver)| driver.vehicle.is_none()).map(|(id, driver)| (*driver, game.world.entities.of::<Transform>(id).position)).collect()
+fn on_foot(game: &Game) -> Vec<(crate::mechanics::Civilian, [f32; 3])> {
+    game.world.entities.all::<crate::mechanics::Civilian>().map(|(id, civilian)| (civilian.clone(), game.world.entities.of::<Player>(id).character.position)).collect()
 }
 
 /// Runs the highway with player `id` beside it at `(0, 9)`, a gun aimed down its sights at the nearest car
@@ -551,7 +550,7 @@ fn a_car_near_a_player_has_a_driver_at_its_wheel_and_a_far_one_has_none() {
         match (car.vid, car.driver) {
             (Some(vid), Some(driver)) => {
                 assert!(car.nearest < 190.0, "a driver {} m from anyone", car.nearest);
-                assert_eq!(game.world.entities.of::<Driver>(driver).vehicle, Some(vid), "the driver sits in their own car");
+                assert_eq!(game.world.entities.of::<Driver>(driver).vehicle, vid, "the driver sits in their own car");
                 manned += 1;
             }
             (_, None) => {
@@ -637,7 +636,7 @@ fn a_driver_with_a_gun_on_them_who_gives_up_stops_gets_out_with_their_hands_up_a
     stand(&mut game, id, 0.0, 9.0);
     let gave_up = threaten(&mut game, id, Nerve::GivesUp, 180, |game| !on_foot(game).is_empty());
     assert!(gave_up, "a driver got out");
-    let (driver, at) = on_foot(&game)[0];
+    let (driver, at) = on_foot(&game).swap_remove(0);
     assert!(driver.hands_up > 0, "with their hands up");
     let left: Vec<u32> = game.world.entities.ids::<With<Abandoned>>();
     assert_eq!(left.len(), 1, "the car is left where it stopped");
@@ -720,7 +719,7 @@ fn a_driver_at_the_wheel_is_hit_by_a_round_aimed_at_them_and_panics() {
     run(&mut game, 0.2);
     assert!(matches!(traffic(&game).cars[i].mood, Mood::Panicking { .. }), "{:?}", traffic(&game).cars[i].mood);
     assert!(traffic(&game).cars[i].physical, "and the car is theirs to have it out in");
-    assert!(game.world.entities.alive(driver) && game.world.entities.of::<Driver>(driver).vehicle == Some(vid), "and stay at the wheel");
+    assert!(game.world.entities.alive(driver) && game.world.entities.of::<Driver>(driver).vehicle == vid, "and stay at the wheel");
 }
 
 #[test]
@@ -744,7 +743,7 @@ fn a_driver_shot_dead_at_speed_is_carried_on_by_the_car_until_it_stops_and_then_
     crate::mechanics::damage_entity(&mut game.world, driver, crate::mechanics::Harm::new(PLAYER_MAX_HP, Some(id), shared::protocol::WEAPON_BULLET));
     run(&mut game, 0.3);
     assert!(matches!(traffic(&game).cars[i].mood, Mood::Runaway { .. }), "{:?}", traffic(&game).cars[i].mood);
-    assert!(game.world.entities.dead(driver) && game.world.entities.of::<Driver>(driver).vehicle == Some(vid), "dead, and still in the seat");
+    assert!(game.world.entities.dead(driver) && game.world.entities.of::<Driver>(driver).vehicle == vid, "dead, and still in the seat");
     assert!(on_foot(&game).is_empty());
     // It runs on until it is nobody's, with the player keeping up beside it to see.
     for _ in 0..(12 * TICK_RATE) {
@@ -779,7 +778,7 @@ fn no_driver_is_run_down_by_the_car_they_sit_in() {
     let mut seen = 0;
     for _ in 0..(120 * TICK_RATE) {
         game.step();
-        for (driver, _) in game.world.entities.all::<Driver>().filter(|(_, driver)| driver.vehicle.is_some()) {
+        for (driver, _) in game.world.entities.all::<Driver>() {
             seen += 1;
             assert_eq!(game.world.entities.of::<Health>(driver).hp, PLAYER_MAX_HP, "a driver at the wheel is unhurt");
         }

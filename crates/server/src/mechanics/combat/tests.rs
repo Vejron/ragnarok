@@ -1993,3 +1993,29 @@ fn knocked_down_a_soldier_is_low_and_flat_where_they_lie() {
     assert_eq!(struck_at(&game, floor + 1.0), None, "over them");
     assert_eq!(struck_at(&game, floor + 0.3), Some(id));
 }
+
+/// How the last to die of `id` went down (`DEATH_*`), this tick.
+fn died_as(game: &Game, id: u32) -> Option<u8> {
+    game.world.happened::<Died>().filter(|died| died.victim == id).map(|died| died.style).last()
+}
+
+#[test]
+fn a_blast_that_kills_takes_off_the_limb_nearest_it_and_throws_the_body_rather_than_bursting_it() {
+    let (mut game, shooter, target, _, _) = duel();
+    let feet = game.world.entities.of::<Player>(target).character.position;
+    // At their left foot: enough to kill, not twice over.
+    let point = [feet[0] - 0.3, feet[1] - 0.8, feet[2]];
+    blast(&mut game.world, Blast { point, radius: 4.0, damage: 200.0, knock: 20.0, dir: [0.0, 1.0, 0.0], attacker: Some(shooter), weapon: WEAPON_GRENADE });
+    assert!(game.world.entities.dead(target));
+    assert_ne!(wounds_of(&game, target).lost & LIMB_LEGS, 0, "a leg came off as it killed them");
+    assert_eq!(died_as(&game, target), Some(shared::protocol::DEATH_BLAST));
+}
+
+#[test]
+fn only_a_blast_far_past_what_was_left_bursts_the_body() {
+    let (mut game, shooter, target, _, _) = duel();
+    game.world.entities.get_mut::<crate::entities::Health>(target).unwrap().hp = 40;
+    let feet = game.world.entities.of::<Player>(target).character.position;
+    blast(&mut game.world, Blast { point: feet, radius: 4.0, damage: 200.0, knock: 20.0, dir: [0.0, 1.0, 0.0], attacker: Some(shooter), weapon: shared::protocol::WEAPON_SHELL });
+    assert_eq!(died_as(&game, target), Some(shared::protocol::DEATH_OVERKILL));
+}

@@ -679,8 +679,8 @@ fn severity(kind: u8, impact: &CarImpact) -> f32 {
 fn run_down_creatures(world: &mut World) {
     let mut run_down = Vec::new();
     for id in world.entities.ids::<(With<Transform>, With<Hurtbox>, With<Health>)>() {
-        // A driver of the traffic at the wheel is in a car, not under one.
-        if world.entities.dead(id) || world.entities.get::<super::Driver>(id).is_some_and(|driver| driver.vehicle.is_some()) {
+        // A driver of the traffic is at the wheel of a car, not under one.
+        if world.entities.dead(id) || world.entities.has::<super::Driver>(id) {
             continue;
         }
         let (transform, hurtbox) = (world.entities.of::<Transform>(id), world.entities.of::<Hurtbox>(id));
@@ -703,6 +703,23 @@ fn roadkill_damage(speed: f32) -> u8 {
     (share * share * f32::from(PLAYER_MAX_HP)).round() as u8
 }
 
+/// How a car at `car` going at `velocity` throws someone at `at` it hits: their knock (`[x, z]`, m/s),
+/// how fast up, and the ticks they are knocked down. The direction leans on the car's heading with a
+/// little outward push; hit by a car that is going at all, they are knocked down, as a blast would (KNOCKDOWN.md).
+fn car_throw(car: [f32; 3], velocity: [f32; 3], at: [f32; 3]) -> ([f32; 2], f32, u8) {
+    let speed = velocity[0].hypot(velocity[2]);
+    let unit = |v: [f32; 2]| {
+        let length = v[0].hypot(v[1]);
+        if length < 1e-4 { [0.0, 0.0] } else { [v[0] / length, v[1] / length] }
+    };
+    let (outward, ahead) = (unit([at[0] - car[0], at[2] - car[2]]), unit([velocity[0], velocity[2]]));
+    let direction = if speed > 1.0 { unit([ahead[0] * 0.75 + outward[0] * 0.25, ahead[1] * 0.75 + outward[1] * 0.25]) } else { outward };
+    let power = (speed * KNOCK_SPEED_FACTOR).clamp(KNOCK_MIN_PUSH, KNOCK_MAX_SPEED);
+    let vy = (KNOCK_HOP + KNOCK_HOP_PER_SPEED * speed).min(KNOCK_HOP_MAX);
+    let down = if speed >= CAR_KNOCKDOWN_SPEED { shared::movement::knockdown_ticks(power.max(KNOCKDOWN_POWER)) } else { 0 };
+    ([direction[0] * power, direction[1] * power], vy, down)
+}
+
 /// Throws every standing player a car overlaps. The direction leans on the car's heading with a
 /// little outward push, so a car drives a player ahead of it and off to the side.
 fn knock_players(world: &mut World) {
@@ -723,20 +740,11 @@ fn knock_players(world: &mut World) {
         }
         let mut player = world.entities.of_mut::<Player>(id);
         let speed = hit.velocity[0].hypot(hit.velocity[2]);
-        let outward = [player.character.position[0] - hit.position[0], player.character.position[2] - hit.position[2]];
-        let unit = |v: [f32; 2]| {
-            let length = v[0].hypot(v[1]);
-            if length < 1e-4 { [0.0, 0.0] } else { [v[0] / length, v[1] / length] }
-        };
-        let (outward, ahead) = (unit(outward), unit([hit.velocity[0], hit.velocity[2]]));
-        let direction = if speed > 1.0 { unit([ahead[0] * 0.75 + outward[0] * 0.25, ahead[1] * 0.75 + outward[1] * 0.25]) } else { outward };
-        let power = (speed * KNOCK_SPEED_FACTOR).clamp(KNOCK_MIN_PUSH, KNOCK_MAX_SPEED);
+        let (knock, vy, down) = car_throw(hit.position, hit.velocity, player.character.position);
         let character = &mut player.character;
-        character.knock = [direction[0] * power, direction[1] * power];
-        character.vy = (KNOCK_HOP + KNOCK_HOP_PER_SPEED * speed).min(KNOCK_HOP_MAX);
+        character.knock = knock;
+        character.vy = vy;
         character.grounded = false;
-        // Hit by a car that is going at all, they are knocked down, as a blast would (KNOCKDOWN.md).
-        let down = if speed >= CAR_KNOCKDOWN_SPEED { shared::movement::knockdown_ticks(power.max(KNOCKDOWN_POWER)) } else { 0 };
         if down > 0 {
             world.physics.knock_down(character, down);
             player.interrupt();

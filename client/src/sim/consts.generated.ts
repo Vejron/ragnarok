@@ -517,6 +517,12 @@ export const KNOCKDOWN_POWER = 7.0
 export const KNOCKDOWN_MIN_TICKS = 48
 export const KNOCKDOWN_MAX_TICKS = 150
 
+/**
+ * Ticks getting up off the ground takes once a knockdown is over (the `getup_back` and
+ * `getup_front` clips): a mind that drives a soldier keeps them where they are meanwhile.
+ */
+export const GETUP_TICKS = 66
+
 /** A round that hits above this height over the capsule centre hit the head. */
 export const HEAD_ZONE_Y = 0.45
 

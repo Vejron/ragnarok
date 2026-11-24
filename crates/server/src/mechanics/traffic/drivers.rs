@@ -1,16 +1,16 @@
 //! The people at the wheel of the traffic's cars (TRAFFIC.md).
 //!
-//! A driver is a light entity, not a player: a kind, a place and some health, with no body in the
-//! physics and nobody's input. There is one for every car of the traffic near enough a player to
-//! see into, sitting at its wheel. The car's seat stays empty for all the server's vehicles know,
-//! so a player who boards it takes the wheel, and the driver is put out on the road.
+//! A driver at the wheel is a light entity, not a player: a kind, a place and some health, with no
+//! body in the physics and nobody's input. There is one for every car of the traffic near enough a
+//! player to see into, sitting at its wheel. The car's seat stays empty for all the server's vehicles
+//! know, so a player who boards it takes the wheel, and the driver is put out on the road.
 //!
 //! A driver who has a gun pointed at their car, or whose car is shot, does one of three things by
 //! their nerve: gives the car up, drives off as fast as it goes, or drives at whoever it was.
-//! On foot a driver runs from what frightened them until nobody is near enough to see them go.
+//! Out of the car a driver is a civilian (`civilians`): a soldier's body with a mind that runs.
 
 use super::{LOOK_EVERY, PULL_OVER_FOR, Traffic, sound, ticks};
-use crate::entities::{Component, Health, HurtBy, Hurtbox, NetKind, Transform, With};
+use crate::entities::{Component, Health, HurtBy, Hurtbox, NetKind, Transform};
 use crate::game::{Noise, Player, World};
 use crate::mechanics::bots::HEAR_BLAST;
 use crate::mechanics::bots::clear_line;
@@ -43,18 +43,7 @@ const RAM_FOR: f32 = 4.0;
 const BOXED_IN: f32 = 3.0;
 /// How long a driver who gave the car up stands beside it with their hands up, seconds.
 const HANDS_UP: f32 = 2.0;
-/// How fast a driver runs on foot, m/s.
-const RUN_SPEED: f32 = 5.0;
-/// A driver on foot is gone once no player is within this of them, metres, or after this long,
-/// seconds; a dead one lies this long.
-const AFOOT_UNSEEN: f32 = 150.0;
-const AFOOT_MAX: f32 = 120.0;
-const LIES: f32 = 10.0;
-/// How far ahead a running driver looks for something in their way, metres, and how much they
-/// turn aside for it, radians.
-const WAY_AHEAD: f32 = 2.5;
-const TURN_ASIDE: f32 = 0.6;
-/// How far above the middle of a driver on foot a hit on them is shown, metres: a soldier's chest.
+/// How far above the middle of a driver at the wheel a hit on them is shown, metres: a soldier's chest.
 const CHEST_Y: f32 = 0.9;
 /// How long a driver who heard a blast hurries, seconds, and one who heard a shot.
 const HURRY_BLAST: f32 = 12.0;
@@ -150,20 +139,22 @@ enum Fright {
     NearMiss,
 }
 
-/// A driver of the traffic. A component on their own entity.
-#[derive(Component, Clone, Copy, Debug, Default)]
+/// A driver of the traffic at the wheel. A component on their own entity.
+#[derive(Component, Clone, Copy, Debug)]
 pub struct Driver {
-    /// The vehicle whose wheel they sit at; `None` once they are on foot.
-    pub vehicle: Option<u32>,
-    /// On foot: ticks left of standing with their hands up before they run.
-    pub hands_up: u32,
-    /// Ticks they have been on foot, and ticks they have lain dead.
-    afoot: u32,
-    lain: u32,
-    /// What they run from, `[x, z]`.
-    threat: [f32; 2],
-    /// How far they have turned aside from straight away for what is in their way, radians.
-    turn: f32,
+    /// The vehicle whose wheel they sit at.
+    pub vehicle: u32,
+}
+
+/// What `Traffic` asks of the room, which only it can do: drivers to put on their feet.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum TrafficCall {
+    /// Driver `driver` gets out, onto their feet at `feet` facing `yaw`: a civilian from now on, with
+    /// their hands up for `hands_up` ticks first, running from `threat` (`civilians`). One dead at
+    /// the wheel lies there.
+    Afoot { driver: u32, feet: [f32; 3], yaw: f32, hands_up: u32, threat: [f32; 3] },
+    /// Civilian `id` is out of sight, or has lain dead long enough: they leave the game.
+    Gone(u32),
 }
 
 /// Whether a gun at `eye` pointed along the unit vector `dir` is on the vehicle of `kind` at
@@ -200,7 +191,7 @@ impl Traffic {
         if car.driver.is_none() && car.nearest < DRIVER_WITHIN {
             let (position, d) = self.pose(i);
             let id = world.alloc_id();
-            world.entities.spawn(id, (NetKind(KIND_CIVILIAN), Transform { position, yaw: super::yaw_of(d) }, Health::full(PLAYER_MAX_HP), body(), Driver { vehicle: Some(vid), ..Default::default() }));
+            world.entities.spawn(id, (NetKind(KIND_CIVILIAN), Transform { position, yaw: super::yaw_of(d) }, Health::full(PLAYER_MAX_HP), body(), Driver { vehicle: vid }));
             let car = &mut self.cars[i];
             (car.driver, car.hp, car.hurt) = (Some(id), world.entities.get::<Health>(vid).map_or(0, |health| health.hp), PLAYER_MAX_HP);
         } else if car.driver.is_some() && car.nearest > DRIVER_BEYOND && car.mood == Mood::Calm {
@@ -215,10 +206,10 @@ impl Traffic {
         }
     }
 
-    /// The driver of car `i` gets out and is on foot from now on: with their hands up first if
-    /// they gave the car up, and then running from what frightened them, or from whoever is
-    /// nearest if nothing did. One shot dead at the wheel falls out and lies beside the car. A
-    /// wreck's driver is gone with it.
+    /// The driver of car `i` gets out and is a civilian from now on (`TrafficCall::Afoot`): with
+    /// their hands up first if they gave the car up, and then running from what frightened them, or
+    /// from whoever is nearest if nothing did. One shot dead at the wheel falls out and lies beside
+    /// the car. A wreck's driver is gone with it.
     pub(super) fn put_out(&mut self, i: usize, world: &mut World) {
         let car = self.cars[i];
         let Some(id) = self.cars[i].driver.take() else { return };
@@ -232,7 +223,7 @@ impl Traffic {
         let nearest = self.viewers.iter().copied().min_by(|a, b| (a[0] - spot[0]).hypot(a[2] - spot[2]).total_cmp(&(b[0] - spot[0]).hypot(b[2] - spot[2])));
         let threat = if car.mood == Mood::Calm { nearest.map_or([pose.position[0], pose.position[2]], |v| [v[0], v[2]]) } else { car.threat };
         let hands_up = if car.mood == Mood::GivingUp && world.entities.alive(id) { ticks(HANDS_UP) } else { 0 };
-        world.entities.insert(id, (Transform { position: [spot[0], feet, spot[2]], yaw: pose.yaw() }, Driver { vehicle: None, hands_up, threat, ..Default::default() },));
+        world.traffic_calls.push(TrafficCall::Afoot { driver: id, feet: [spot[0], feet, spot[2]], yaw: pose.yaw(), hands_up, threat: [threat[0], feet, threat[1]] });
     }
 
     /// Whether a driver has been threatened: a player's gun has stayed on their car, or the car or
@@ -460,50 +451,5 @@ impl Traffic {
     /// Where player `at` is, if they are alive and on foot: what a driver who rams steers at.
     pub(super) fn target(&self, world: &World, at: u32) -> Option<[f32; 3]> {
         world.entities.get::<Player>(at).filter(|player| world.entities.alive(at) && player.seat.is_none()).map(|player| player.character.position)
-    }
-}
-
-/// One tick of every driver who is on foot: they stand with their hands up, then run from what
-/// frightened them, round what is in their way, and are gone when nobody is near enough to see.
-pub(super) fn afoot(world: &mut World, viewers: &[[f32; 3]], dt: f32) {
-    for id in world.entities.ids::<With<Driver>>() {
-        let (mut driver, mut transform) = (*world.entities.of::<Driver>(id), *world.entities.of::<Transform>(id));
-        if driver.vehicle.is_some() {
-            continue;
-        }
-        let [x, y, z] = transform.position;
-        let unseen = viewers.iter().all(|v| (v[0] - x).hypot(v[2] - z) > AFOOT_UNSEEN);
-        let inside = world.map.is_inside((x * 100.0) as i32, (z * 100.0) as i32);
-        if world.entities.dead(id) {
-            driver.lain += 1;
-        } else {
-            driver.afoot += 1;
-        }
-        if driver.lain > ticks(LIES) || unseen || !inside || driver.afoot > ticks(AFOOT_MAX) {
-            world.entities.despawn(id);
-            continue;
-        }
-        if world.entities.dead(id) {
-            // Lying where they fell.
-        } else if driver.hands_up > 0 {
-            driver.hands_up -= 1;
-        } else {
-            // Straight away from it, turned aside for as long as something is in the way.
-            let away = [x - driver.threat[0], z - driver.threat[1]];
-            let yaw = (-away[0]).atan2(-away[1]) + driver.turn;
-            let forward = [-yaw.sin(), -yaw.cos()];
-            if world.physics.cast_ray([x, y + 1.0, z], [forward[0], 0.0, forward[1]], WAY_AHEAD, 0).is_some() {
-                driver.turn += if driver.turn < 0.0 { -TURN_ASIDE } else { TURN_ASIDE };
-            } else {
-                driver.turn *= 0.98;
-                let (nx, nz) = (x + forward[0] * RUN_SPEED * dt, z + forward[1] * RUN_SPEED * dt);
-                // On whatever is underfoot: the ground, or a bridge's deck.
-                let floor = world.physics.cast_ray([nx, y + 1.2, nz], [0.0, -1.0, 0.0], 3.0, 0).map_or(world.map.ground.height_at(nx, nz), |fall| y + 1.2 - fall);
-                transform.position = [nx, floor, nz];
-            }
-            transform.yaw = yaw;
-        }
-        *world.entities.of_mut::<Driver>(id) = driver;
-        *world.entities.of_mut::<Transform>(id) = transform;
     }
 }

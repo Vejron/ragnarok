@@ -1,7 +1,7 @@
 import { Animator, Group, Mesh, SkinnedMesh, parseGlb, type AnimationClip, type Geometry, type Material, type Node, Matrix4, Quaternion, Vector3 } from '@ragnarok/engine'
 import { Canopy } from './canopy'
 import { toonMaterial } from './toon'
-import { CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS, PRONE_CENTRE, RUN_SPEED, SKI_BOOST_TOP, STAND_CENTRE, TICK_RATE, WALK_SPEED, ZOMBIE_RISE_TICKS } from '@/sim/consts'
+import { CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS, GETUP_TICKS, PRONE_CENTRE, RUN_SPEED, SKI_BOOST_TOP, STAND_CENTRE, TICK_RATE, WALK_SPEED, ZOMBIE_RISE_TICKS } from '@/sim/consts'
 import { ITEM_AK5, ITEM_AT_RIFLE, ITEM_BANDAGE, ITEM_BRICKS, ITEM_CARL_GUSTAF, ITEM_FLARE, ITEM_GRENADE, ITEM_REVOLVER, ITEM_SHOTGUN, ITEM_SNIPER, fillsHands, itemDef, type ItemDef } from '@/sim/items'
 import { type Limb, poseLimb, splitLimbs } from './gibs'
 import { colorFor } from '@/profile'
@@ -13,8 +13,6 @@ import { POLE_REACH, SOLE_DROP, buildPole, buildSki } from './skigear'
 import { buildClub, swingLength, swingPhase } from './golfclub'
 import { smoothstep } from '@/math'
 
-/** Gravity on a thrown body, m/s². */
-const FLING_GRAVITY = 14
 /** The worn backpack's bottom: this high above the feet standing, this much lower crouched, and this far behind the body's middle. */
 const PACK_Y = 0.85
 const PACK_CROUCH_DROP = 0.3
@@ -182,7 +180,6 @@ const FULL_STEP = 1.4
 /** How quickly blend weights chase their targets, per second. */
 const BLEND_RATE = 12
 const AIR_RATE = 10
-const DEATH_RATE = 9
 const CROUCH_RATE = 10
 /** Getting down onto the belly and back up is slower than a crouch, so it reads as a movement. */
 const LIE_RATE = 5
@@ -411,7 +408,7 @@ const RAGDOLL_BONES: readonly [string, number][] = [
 /** Floats per part in a ragdoll's pose: position, then rotation x, y, z, w. */
 const RAGDOLL_POSE = 7
 /** Seconds getting up takes, and over how many of them it eases out of the pose the ragdoll left. */
-const GETUP_TIME = 1.1
+const GETUP_TIME = GETUP_TICKS / TICK_RATE
 const GETUP_BLEND = 0.3
 
 /** Part `part` of ragdoll pose `pose` as a matrix, into `out`. */
@@ -485,7 +482,6 @@ export class Character {
   private phase = 0
   private idleTime = 0
   private air = 0
-  private death = 0
   private crouch = 0
   /** How far lying down, 0 standing to 1 prone. */
   private lie = 0
@@ -514,15 +510,16 @@ export class Character {
   /** The limbs it has lost (`LIMB_*`), and whether it has been told yet. */
   private lostLimbs = 0
   private limbsKnown = false
-  /** A body thrown by its killing blow: where it has got to, relative to where it died. */
   /** Knocked down: the ragdoll's parts drive these bones, each at its offset from the part it rides on. */
   private ragdoll: { bones: { bone: Node; part: number; offset: Matrix4 }[]; front: Vector3 } | null = null
   /** Getting up after a knockdown: the clip, how long it has played, and where each ragdoll bone was. */
   private rising: { clip: string; time: number; from: Matrix4[] } | null = null
   /** Bones by name. */
   private readonly bones = new Map<string, Node>()
-  private fling: { velocity: Vector3; spin: Vector3; offset: Vector3; groundAt: (x: number, z: number) => number } | null = null
-  private readonly tumble = new Quaternion()
+  /** Dead and lying still: its ragdoll is gone and the bones keep the pose it left them in, until it respawns. */
+  private still = false
+  /** The killing blow's throw, for its ragdoll to take (`takeThrow`): how fast, m/s, and how much faster the head goes. */
+  private thrown: { velocity: [number, number, number]; head: [number, number, number] } | null = null
   private readonly canopy: Canopy
   /** The backpack on its back (BACKPACK.md), made the first time it carries it. */
   private backpack: Group | null = null
@@ -676,8 +673,6 @@ export class Character {
       // Weights and time are driven by hand, so the animator only has to sample.
       action.timeScale = 0
       action.weight = 0
-      // The death clip plays once and holds its last frame.
-      if (name === 'death') action.loop = 'once'
       this.weights.set(name, 0)
     }
     this.weights.set(this.clip('idle'), 1)
@@ -758,16 +753,20 @@ export class Character {
     this.position.set(position[0]!, position[1]!, position[2]!)
     this.pitch = pitch
     this.fadeFlash(dt)
-    if (!this.ragdoll) this.flingStep(dt)
     if (!this.shown || this.gibbed) return
-    // A ragdoll poses it (`driveRagdoll`); nothing here does.
-    if (this.ragdoll) {
+    // A ragdoll poses it (`driveRagdoll`), or a body lies as its ragdoll left it; nothing here does.
+    if (this.ragdoll || this.still) {
       this.canopy.update(false, dt)
       return
     }
     // Far off, the pose waits for a later frame; the body still goes where it is. A turn (`turn`)
     // adds to the bones' pose, so the whole pose is skipped, never just the clips.
-    if (this.placed && !this.fling && this.skipsFrame()) {
+    // Dead, its ragdoll is made from the pose it died in (`ragdollSegments`): it holds that pose until then.
+    if (this.down && this.placed) {
+      this.object.position.copy(this.position).add(this.posedOffset)
+      return
+    }
+    if (this.placed && this.skipsFrame()) {
       this.unposed += dt
       this.object.position.copy(this.position).add(this.posedOffset)
       return
@@ -822,7 +821,6 @@ export class Character {
     const speed = Math.hypot(forward, right)
 
     this.air = chase(this.air, !grounded && !this.down ? 1 : 0, AIR_RATE, dt)
-    this.death = chase(this.death, this.down ? 1 : 0, DEATH_RATE, dt)
     this.crouch = chase(this.crouch, crouching ? 1 : 0, CROUCH_RATE, dt)
     this.lie = chase(this.lie, prone ? 1 : 0, LIE_RATE, dt)
     if (this.backpack) {
@@ -835,9 +833,8 @@ export class Character {
       // Behind the backpack when it wears both.
       this.bag.position.set(0, PACK_Y - PACK_CROUCH_DROP * this.crouch, -PACK_BACK - 0.08 - (this.carrying ? 0.18 : 0))
     }
-    const alive = 1 - this.death
     const dry = 1 - this.wet
-    const ground = alive * (1 - this.air) * (this.handsUp ? 1 - this.hang : 1) * dry
+    const ground = (1 - this.air) * (this.handsUp ? 1 - this.hang : 1) * dry
     this.slide = chase(this.slide, sliding && crouching ? 1 : 0, SLIDE_RATE, dt)
     // Lying down is its own stance: the crouch and slide clips give way to the crawl clips.
     this.frameDt = dt
@@ -884,14 +881,13 @@ export class Character {
     set('crawl_idle', crawl * (1 - moving))
     set('slide', sliding_)
     // In the air: a jump, a freefall, or hanging under the canopy. The falling clips are every stance's.
-    const aloft = alive * this.air * dry
+    const aloft = this.air * dry
     set('jump_air', aloft * walking * (1 - this.fall) * (1 - this.hang))
     const skiing = this.ski + this.skiGun
     if (skiing > 0) this.skiTargets(targets, ground * skiing * (1 - this.lie), aloft * skiing * (1 - this.fall) * (1 - this.hang), speedNow)
     targets.set('freefall', aloft * this.fall * (1 - this.hang))
-    targets.set('chute', (this.handsUp ? alive : aloft) * this.hang)
-    targets.set('death', this.death)
-    this.swimTargets(targets, alive * this.wet, speedNow, vy, dt)
+    targets.set('chute', (this.handsUp ? 1 : aloft) * this.hang)
+    this.swimTargets(targets, this.wet, speedNow, vy, dt)
     if (this.undead) this.zombieTargets(targets, standing, speed, dt)
     // Climbing out of the grave is all there is until it is out; the clip carries the body down into
     // the ground, which hides what is still buried.
@@ -961,11 +957,8 @@ export class Character {
       else if (base === 'zombie_walk') action.time = this.shamble * action.clip.duration
       else if (base === 'zombie_rise') action.time = (Math.max(0, this.graveTime) / ZOMBIE_RISE_TIME) * action.clip.duration
       else if (base === 'zombie_claw') action.time = (Math.max(0, this.clawTime) / ZOMBIE_CLAW_TIME) * action.clip.duration
-      else if (base !== 'death') action.time = this.phase * action.clip.duration
+      else action.time = this.phase * action.clip.duration
     }
-    // The death clip plays out on the animator's clock once it starts.
-    const dying = this.actions.get('death')
-    if (dying) dying.timeScale = this.down ? 1 : 0
 
     this.animator.update(dt)
     this.head?.scale.setScalar(this.headless ? 0.001 : 1)
@@ -976,10 +969,10 @@ export class Character {
     // On skis with a gun the legs go the way the skis do and the torso alone carries it to the look.
     const heading = speedNow > 0.5 ? Math.atan2(-vx, -vz) : body
     const skiTurn = this.skiGun * (1 - this.air) * wrap(yaw + Math.max(-SKI_TWIST, Math.min(SKI_TWIST, wrap(heading - yaw))) - body)
-    const twist = wrap(yaw - body - skiTurn) * alive * (1 - this.lie) * (1 - this.air) * (1 - this.golf) * (1 - this.under) * (this.rising || this.graveTime >= 0 ? 0 : 1)
+    const twist = wrap(yaw - body - skiTurn) * (1 - this.lie) * (1 - this.air) * (1 - this.golf) * (1 - this.under) * (this.rising || this.graveTime >= 0 ? 0 : 1)
     this.turn(this.spine, twist * TWIST_SPINE, AXIS_Y)
     this.turn(this.chest, twist * (1 - TWIST_SPINE), AXIS_Y)
-    this.live(dt, speedNow, standing * (1 - moving), alive)
+    this.live(dt, speedNow, standing * (1 - moving))
     this.react(dt)
     this.lean(dt, vx, vz, body, ground * (1 - this.lie))
     // A slide carries the body along its heading, rifle and all, rather than where the camera looks.
@@ -1126,11 +1119,11 @@ export class Character {
    * The small things that keep it from standing like a statue: breathing hard after a run, and, once it
    * has stood still a while, glancing about and shifting its weight. `idle` is how much it stands idle.
    */
-  private live(dt: number, speed: number, idle: number, alive: number) {
+  private live(dt: number, speed: number, idle: number) {
     // Out of breath after a run, and getting it back slowly.
     this.exertion = Math.min(1, Math.max(0, this.exertion + (speed > WALK_SPEED + 0.5 ? EXERT_UP : -EXERT_DOWN) * dt))
     this.breath = (this.breath + dt * Math.PI * 2 * (0.3 + 0.6 * this.exertion)) % (Math.PI * 2)
-    const heave = Math.sin(this.breath) * BREATH_DEEP * this.exertion * alive * (1 - this.air)
+    const heave = Math.sin(this.breath) * BREATH_DEEP * this.exertion * (1 - this.air)
     this.turn(this.chest, -heave, AXIS_X)
     this.turn(this.neck, heave * 0.6, AXIS_X)
 
@@ -1323,7 +1316,7 @@ export class Character {
     // Lying down, the centre is already lower; the pivot goes back up to the ground the feet stand on.
     this.object.position.set(this.position.x, this.position.y - FOOT_OFFSET + (STAND_CENTRE - PRONE_CENTRE) * this.lie, this.position.z)
     // The model faces +Z; the game's yaw 0 faces -Z.
-    // Set all three: a tumble leaves its pitch and roll in the Euler angles, and `rotation.y` alone
+    // Set all three: a ragdoll leaves its pitch and roll in the Euler angles, and `rotation.y` alone
     // would keep them, leaving a respawned player tilted.
     this.object.rotation.set(0, yaw + Math.PI, 0, 'YXZ')
     // Leaning into a turn or a change of speed, and rocked by a hit, about the feet: the model's +Z is
@@ -1331,57 +1324,33 @@ export class Character {
     // On skis the body goes with the slope. Rising ground tips the model's nose (+Z ahead) up: a negative turn about +X.
     const tipX = this.leanPitch + this.springs.tiltX.x * 0.5 - this.ski * (1 - this.herring) * Math.atan(this.skiRise)
     const tipZ = this.leanRoll + this.springs.tiltZ.x * 0.5
-    if (!this.fling && (tipX !== 0 || tipZ !== 0)) {
+    if (tipX !== 0 || tipZ !== 0) {
       this.object.quaternion.multiply(SCRATCH.turn.setFromAxisAngle(AXIS_X, tipX)).multiply(SCRATCH.q.setFromAxisAngle(AXIS_Z, tipZ))
     }
-    if (this.diveTilt !== 0 && !this.fling) {
+    if (this.diveTilt !== 0) {
       // A diver tips about the middle of the body, where the diving clips hold it, not about the feet.
       const middle = SCRATCH.axis.set(0, FOOT_OFFSET, 0).applyQuaternion(this.object.quaternion)
       this.object.position.add(middle)
       this.object.quaternion.multiply(SCRATCH.turn.setFromAxisAngle(AXIS_X, this.diveTilt))
       this.object.position.sub(middle.set(0, FOOT_OFFSET, 0).applyQuaternion(this.object.quaternion))
     }
-    if (this.fling) {
-      // Tumble about the middle of the body, not the feet.
-      const middle = SCRATCH.axis.set(0, FOOT_OFFSET, 0)
-      this.object.quaternion.premultiply(this.tumble)
-      this.object.position.add(this.fling.offset).add(middle).sub(middle.applyQuaternion(this.tumble))
-    }
     this.placed = true
     this.object.visible = this.shown && !this.gibbed
   }
 
-  /** Flies a thrown body: gravity, a bounce, and a tumble that settles into the death pose. */
-  private flingStep(dt: number) {
-    const fling = this.fling
-    if (!fling) return
-    const { velocity, spin, offset } = fling
-    velocity.y -= FLING_GRAVITY * dt
-    offset.addScaledVector(velocity, dt)
-    const rate = spin.length()
-    const floor = fling.groundAt(this.position.x + offset.x, this.position.z + offset.z) + 0.1 + 0.6 * Math.min(1, rate / 6)
-    if (this.position.y - FOOT_OFFSET + offset.y < floor) {
-      offset.y = floor - (this.position.y - FOOT_OFFSET)
-      velocity.y = Math.abs(velocity.y) > 2 ? Math.abs(velocity.y) * 0.3 : 0
-      velocity.x *= 0.75
-      velocity.z *= 0.75
-      spin.multiplyScalar(0.7)
-    }
-    if (rate > 1e-3) this.tumble.premultiply(SCRATCH.q.setFromAxisAngle(SCRATCH.axis.copy(spin).divideScalar(rate), rate * dt))
-    // Once it has stopped bouncing, lie down the way the death clip lays it.
-    if (velocity.y === 0 && rate < 3) this.tumble.slerp(SCRATCH.q.identity(), 1 - Math.exp(-6 * dt))
-    this.tumble.normalize()
+  /**
+   * The killing blow throws the body at `velocity` (m/s), and its head `head` faster still: its ragdoll
+   * takes the throw when it is made, or at once if it already is (`takeThrow`).
+   */
+  throwBody(velocity: [number, number, number], head: [number, number, number] = [0, 0, 0]) {
+    this.thrown = { velocity, head }
   }
 
-  /**
-   * Throws the body along `velocity`, tumbling with `spin` (rad/s about world axes): the killing blow
-   * carried it off. It lands and lies as a death does.
-   */
-  launch(velocity: Vector3, spin: Vector3, groundAt: (x: number, z: number) => number) {
-    // A ragdoll already carries it.
-    if (this.ragdoll) return
-    this.fling = { velocity: velocity.clone(), spin: spin.clone(), offset: new Vector3(), groundAt }
-    this.tumble.identity()
+  /** The killing blow's throw, if one is waiting for its ragdoll; it is taken only once. */
+  takeThrow(): { velocity: [number, number, number]; head: [number, number, number] } | null {
+    const thrown = this.thrown
+    this.thrown = null
+    return thrown
   }
 
   /**
@@ -1481,8 +1450,22 @@ export class Character {
     const front = new Vector3(0, 0, 1).applyQuaternion(this.worldRotation(this.object)).applyQuaternion(this.worldRotation(chest).invert())
     this.ragdoll = { bones, front }
     this.rising = null
-    this.fling = null
-    this.tumble.identity()
+    this.still = false
+  }
+
+  /** Whether it lies dead as its ragdoll left it (`freezeRagdoll`). */
+  get frozen() {
+    return this.still
+  }
+
+  /**
+   * Dead and lying still: the ragdoll lets go and the bones keep the pose it left, costing nothing,
+   * until it respawns.
+   */
+  freezeRagdoll() {
+    if (!this.ragdoll) return
+    this.ragdoll = null
+    this.still = true
   }
 
   /** Poses it as its ragdoll's parts are now (`ClientSim.ragdollPose`). */
@@ -1583,7 +1566,7 @@ export class Character {
 
   /** Leans the torso (and the rifle it carries) with the camera pitch and the last shot's kick. */
   private aim() {
-    if (this.down || this.death > 0.3) return
+    if (this.down) return
     // Falling flat or hanging in the harness, there is nothing to aim.
     // A golfer's look is down at the ball, which the swing clip already has.
     // A swimmer has nothing in hand, and the strokes hold the body as it swims.
@@ -1874,11 +1857,11 @@ export class Character {
       this.lostLimbs = 0
       this.limbsKnown = false
       this.hideLimbs()
-      this.fling = null
       this.ragdoll = null
+      this.still = false
+      this.thrown = null
       this.rising = null
       this.graveTime = -1
-      this.tumble.identity()
       for (const spring of Object.values(this.springs)) spring.reset()
       this.struckCount = null
       this.bodyYaw = null
@@ -1886,11 +1869,6 @@ export class Character {
       this.head?.scale.setScalar(1)
       this.object.visible = this.shown && this.placed
     }
-    const action = this.actions.get('death')
-    if (!action) return
-    // Dying plays the clip from its start; a respawn winds it back and holds it there.
-    action.time = 0
-    action.timeScale = dead ? 1 : 0
   }
 
   /** Hides the character: it sits inside armour, or its own scope is in the way. */

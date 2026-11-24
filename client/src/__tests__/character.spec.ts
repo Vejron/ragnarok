@@ -152,7 +152,7 @@ describe('Character holding things', () => {
 describe('Character', () => {
   it('has the clips the blend expects', async () => {
     const c = await crowd()
-    for (const name of ['idle', 'jump_air', 'death', 'walk_fwd', 'walk_back', 'walk_left', 'walk_right', 'run_fwd', 'run_back', 'run_left', 'run_right', 'crouch_idle', 'crouch_fwd', 'crouch_back', 'crouch_left', 'crouch_right', 'crawl_idle', 'crawl_fwd', 'crawl_back', 'crawl_left', 'crawl_right', 'slide', 'swim_tread', 'swim_fwd', 'dive_idle', 'dive_fwd', 'zombie_idle', 'zombie_walk', 'zombie_claw', 'zombie_rise']) {
+    for (const name of ['idle', 'jump_air', 'walk_fwd', 'walk_back', 'walk_left', 'walk_right', 'run_fwd', 'run_back', 'run_left', 'run_right', 'crouch_idle', 'crouch_fwd', 'crouch_back', 'crouch_left', 'crouch_right', 'crawl_idle', 'crawl_fwd', 'crawl_back', 'crawl_left', 'crawl_right', 'slide', 'swim_tread', 'swim_fwd', 'dive_idle', 'dive_fwd', 'zombie_idle', 'zombie_walk', 'zombie_claw', 'zombie_rise']) {
       expect(c.asset!.clips.has(name), name).toBe(true)
     }
     expect(c.asset!.scene.getObjectByName('muzzle')).toBeTruthy()
@@ -281,17 +281,19 @@ describe('Character', () => {
     c.dispose()
   })
 
-  it('lays a dead player down, and hides one in a car', async () => {
+  it('holds the pose it died in for its ragdoll to take, and hides one in a car', async () => {
     const c = await crowd()
     const person = new Character(c, 1)
     run(person, 0, 0, 0, 0.2)
-    person.dead = true
-    run(person, 0, 0, 0, 1.5)
     const head = () => {
       c.root.updateMatrixWorld(true)
       return c.root.getObjectByName('head')!.getWorldPosition(new Vector3()).y
     }
-    expect(head()).toBeLessThan(0.5)
+    const standing = head()
+    person.dead = true
+    run(person, 0, 0, 0, 1.5)
+    // No clip lays it down: the ragdoll does (ragdoll.spec.ts).
+    expect(head()).toBeCloseTo(standing, 2)
     person.hidden = true
     expect(person.visible).toBe(false)
     expect(person.muzzle()).toBeNull()

@@ -98,7 +98,7 @@ fn anchor(world: &World, id: u32, transform: Option<&Transform>, player: Option<
     match player {
         Some(player) if player.embodied() => Some((player.character.position, None)),
         Some(_) => world.seated_head(id).map(|(vehicle, head)| (head, Some(vehicle))),
-        None => match world.entities.get::<super::Driver>(id).and_then(|driver| driver.vehicle) {
+        None => match world.entities.get::<super::Driver>(id).map(|driver| driver.vehicle) {
             // A driver of the traffic at the wheel: where the head of a player in that seat would be.
             Some(vehicle) => {
                 let kind = world.entities.get::<crate::game::Vehicle>(vehicle)?.kind;
@@ -326,7 +326,7 @@ pub fn damage_entity(world: &mut World, id: u32, harm: Harm) -> bool {
     }
     let from = from.or_else(|| other.and_then(|by| position_of(world, by)));
     let at = at.unwrap_or_else(|| mark(world, id));
-    let soldier = world.entities.has::<Player>(id);
+    let soldier = super::limbs::bodied(world, id);
     // What a part of a soldier other than the torso lost, and whether that killed them.
     let (part, spent) = match (soldier, head, limb) {
         (true, true, _) => (PART_HEAD, Some(super::limbs::head(world, id, amount))),
@@ -370,9 +370,10 @@ pub fn damage_entity(world: &mut World, id: u32, harm: Harm) -> bool {
     }
     let style = match weapon {
         WEAPON_ROADKILL => DEATH_ROADKILL,
-        _ if BLASTS.contains(&weapon) => DEATH_BLAST,
-        _ if head => DEATH_HEAD,
+        _ if head && !BLASTS.contains(&weapon) => DEATH_HEAD,
+        // Only a blow far past what was left blows the body apart; a blast that just kills throws it.
         _ if amount > before.saturating_mul(2) => DEATH_OVERKILL,
+        _ if BLASTS.contains(&weapon) => DEATH_BLAST,
         _ => DEATH_BODY,
     };
     events::died(world, Died { victim: id, killer: other, weapon, style, from });

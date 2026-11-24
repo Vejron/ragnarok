@@ -7,6 +7,7 @@ import { GHOST_BLOCK_ENEMY, GHOST_FORM_TICKS, STANCE_FORM, STANCE_GHOST, STANCE_
 import { Projectiles, type ProjectileWorld } from '@/entities/presenters/projectiles'
 import { EntityStore } from '@/entities/store'
 import type { Components } from '@/net/components.generated'
+import { FLAG_GROUNDED, KIND_CIVILIAN } from '@/net/codec'
 
 const frame = (tick: number): Frame => ({ tick, dt: 1 / 60, now: tick * 16, localId: null })
 const rocket = (x: number): Components => ({ projectile: { kind: 1 }, place: { x: x * 100, y: 500, z: 0 }, velocity: { vx: 3000, vy: 0, vz: 0 } })
@@ -109,6 +110,18 @@ describe('the soldiers presenter', () => {
     expect(bodies.get(3)!.pose).toEqual([[1, 0.9, 0], 0.5, 0, 0, true, 1 / 60, 0, true, true, true, false, 0])
     expect(bodies.get(4)!.dead).toBe(true)
     expect(shadows).toEqual([[1, 0.9, 0]])
+  })
+})
+
+describe('a driver of the traffic', () => {
+  it('drawn as a civilian is remembered as one, and a soldier is not', () => {
+    const presenters = new Presenters<Frame>()
+    const soldiers = presenters.add(new Soldiers({ avatars: { draw: () => ({ update() {}, takeSteps: () => [] }) } as never, blobFoot: () => {}, rewave: () => 0, current: () => [0, 0], wade: () => {}, skiRun: () => {}, headlamp: () => {}, footfall: () => {}, zombie: () => {} }))
+    const person = (kind: number): Components => ({ kind: { kind }, place: { x: 0, y: 90, z: 0 }, heading: { yaw: 0 }, flags: { flags: FLAG_GROUNDED, stance: 0 } })
+    const store = new EntityStore()
+    store.push(10, new Map([[3, person(KIND_CIVILIAN)], [4, person(0)]]), true)
+    presenters.run(store.sampleAll(10), frame(10))
+    expect([...soldiers.civilians]).toEqual([3])
   })
 })
 

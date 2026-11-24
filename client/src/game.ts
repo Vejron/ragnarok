@@ -935,8 +935,8 @@ export class Game {
       }
       case 'kill': {
         const body = this.avatars.of(message.victim)
-        if (body?.visible) this.gore.die(body, message.style, message.yaw, message.power, (x, z) => this.scene.groundAt(x, z))
-        this.board.kill(message, now, !isZombie(message.victim))
+        if (body?.visible) this.gore.die(body, message.style, message.yaw, message.power)
+        this.board.kill(message, now, !isZombie(message.victim) && !this.soldiers.civilians.has(message.victim))
         break
       }
     }
@@ -1779,7 +1779,7 @@ export class Game {
       deaths: this.board.deaths(this.localId),
       feed: this.board.recent(now, this.localId),
       notices: this.notices.view(now),
-      board: this.input.isHeld('Tab') ? sides(this.board.rows(this.localId, this.soldiers.inView).filter((row) => !isZombie(row.id)), teamFor) : [],
+      board: this.input.isHeld('Tab') ? sides(this.board.rows(this.localId, this.soldiers.inView).filter((row) => !isZombie(row.id) && !this.soldiers.civilians.has(row.id)), teamFor) : [],
       hitMarker: hitView.marker,
       hurt: hitView.vignette,
       hurtArcs: hitView.arcs,

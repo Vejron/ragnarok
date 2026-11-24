@@ -486,6 +486,32 @@ impl ClientSim {
         self.ragdolls.remove(key);
     }
 
+    /// Lets ragdoll `key`'s pelvis go: a dead body flies free.
+    #[wasm_bindgen(js_name = clearRagdollTarget)]
+    pub fn clear_ragdoll_target(&mut self, key: u32) {
+        self.ragdolls.clear_target(key);
+    }
+
+    /// Adds `(vx, vy, vz)` m/s to every part of ragdoll `key`, or to part `part` alone when it is one
+    /// (`0..RAGDOLL_PARTS`; any other number means all).
+    #[wasm_bindgen(js_name = pushRagdoll)]
+    pub fn push_ragdoll(&mut self, key: u32, vx: f32, vy: f32, vz: f32, part: u32) {
+        let part = Some(part as usize).filter(|&part| part < RAGDOLL_PARTS);
+        self.ragdolls.push(key, [vx, vy, vz], part);
+    }
+
+    /// Takes the limbs in `limbs` (`LIMB_*`) off ragdoll `key`.
+    #[wasm_bindgen(js_name = severRagdoll)]
+    pub fn sever_ragdoll(&mut self, key: u32, limbs: u8) {
+        self.ragdolls.sever(key, limbs);
+    }
+
+    /// Whether every part of ragdoll `key` lies still.
+    #[wasm_bindgen(js_name = ragdollAsleep)]
+    pub fn ragdoll_asleep(&self, key: u32) -> bool {
+        self.ragdolls.asleep(key)
+    }
+
     /// Vehicle `id`'s state (`CAR_STATE_LEN` numbers), or nothing when it is not simulated here.
     #[wasm_bindgen(js_name = carState)]
     pub fn car_state(&self, id: u32) -> Vec<f32> {

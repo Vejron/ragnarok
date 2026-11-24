@@ -51,6 +51,20 @@ impl Wounds {
     }
 }
 
+/// Whether entity `id` has a soldier's body, with a head and limbs of their own: a player, or a driver
+/// of the traffic (TRAFFIC.md).
+pub fn bodied(world: &World, id: u32) -> bool {
+    world.entities.has::<Player>(id) || world.entities.has::<super::Driver>(id)
+}
+
+/// Which way the body of entity `id` faces, radians (0 faces -Z), and whether it lies prone.
+fn facing(world: &World, id: u32) -> Option<(f32, bool)> {
+    match world.entities.get::<Player>(id) {
+        Some(player) => Some((player.character.yaw, player.character.prone)),
+        None => world.entities.get::<super::Driver>(id).and(world.entities.get::<crate::entities::Transform>(id)).map(|transform| (transform.yaw, false)),
+    }
+}
+
 /// Where in `Wounds::taken` a `LIMB_*` bit's damage is kept.
 fn slot(limb: u8) -> usize {
     limb.trailing_zeros() as usize
@@ -105,8 +119,8 @@ pub fn limb_struck(world: &World, victim: u32, point: [f32; 3], back: u32) -> Op
     if body.is_head(point) {
         return None;
     }
-    let player = world.entities.get::<Player>(victim)?;
-    let limb = body.limb_at(player.character.yaw, point)?;
+    let (yaw, _) = facing(world, victim)?;
+    let limb = body.limb_at(yaw, point)?;
     // A round goes on through where a limb was (`past_lost_limbs`), so it seldom stops there; when it
     // does, by a hair, it is the body's.
     (lost(world, victim) & limb == 0).then_some(limb)
@@ -116,9 +130,9 @@ pub fn limb_struck(world: &World, victim: u32, point: [f32; 3], back: u32) -> Op
 /// grenade at their feet), an arm otherwise; on the side it is on. None for anyone seated.
 fn limb_near(world: &World, victim: u32, point: [f32; 3]) -> Option<u8> {
     let body = body(world, victim, 0).filter(|body| body.vehicle.is_none())?;
-    let player = world.entities.get::<Player>(victim)?;
-    let [x, y, _] = local(body.zones, player.character.yaw, point);
-    let arm = !player.character.prone && y >= HIP_ZONE_Y;
+    let (yaw, prone) = facing(world, victim)?;
+    let [x, y, _] = local(body.zones, yaw, point);
+    let arm = !prone && y >= HIP_ZONE_Y;
     let lost = lost(world, victim);
     // The one on the blast's side, or the other if that one is gone.
     [side(x < 0.0, arm), side(x >= 0.0, arm)].into_iter().find(|&limb| lost & limb == 0)
@@ -127,7 +141,7 @@ fn limb_near(world: &World, victim: u32, point: [f32; 3]) -> Option<u8> {
 /// Hurts `limb` of player `id` by `amount` from `attacker`, and takes it off once its health has run out.
 /// Losing an arm drops a reload or a bandage half done. Returns how much health the limb lost.
 pub fn wound(world: &mut World, id: u32, limb: u8, amount: u8, attacker: Option<u32>) -> u8 {
-    if !world.entities.has::<Player>(id) {
+    if !bodied(world, id) {
         return 0;
     }
     let mut wounds = world.entities.get::<Wounds>(id).copied().unwrap_or_default();
@@ -145,8 +159,10 @@ pub fn wound(world: &mut World, id: u32, limb: u8, amount: u8, attacker: Option<
     world.entities.insert(id, wounds);
     if off {
         tracing::debug!(id, limb, attacker, "limb off");
-        if limb & LIMB_ARMS != 0 {
-            world.entities.of_mut::<Player>(id).interrupt();
+        if limb & LIMB_ARMS != 0
+            && let Some(mut player) = world.entities.get_mut::<Player>(id)
+        {
+            player.interrupt();
         }
     }
     lost
@@ -155,7 +171,7 @@ pub fn wound(world: &mut World, id: u32, limb: u8, amount: u8, attacker: Option<
 /// Hurts the head of player `id` by `amount`. Returns how much health it lost, and whether that was the
 /// last of it.
 pub fn head(world: &mut World, id: u32, amount: u8) -> (u8, bool) {
-    if !world.entities.has::<Player>(id) {
+    if !bodied(world, id) {
         return (0, false);
     }
     let mut wounds = world.entities.get::<Wounds>(id).copied().unwrap_or_default();
@@ -254,7 +270,7 @@ pub struct Struck {
 /// Notes that player or wild animal `id` was struck in `part` (`PART_*`) for `amount`, from `from` if known, at
 /// `offset` metres from the point they hang from if a round found the spot.
 pub fn struck(world: &mut World, id: u32, part: u8, amount: u8, from: Option<[f32; 3]>, offset: Option<[f32; 3]>) {
-    if !world.entities.has::<Player>(id) && !world.entities.has::<super::wildlife::Wild>(id) {
+    if !bodied(world, id) && !world.entities.has::<super::wildlife::Wild>(id) {
         return;
     }
     let count = world.entities.get::<Struck>(id).map_or(0, |struck| struck.count).wrapping_add(1);

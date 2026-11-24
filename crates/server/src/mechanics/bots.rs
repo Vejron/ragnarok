@@ -287,7 +287,7 @@ fn spot(world: &World, id: u32, eye: [f32; 3], yaw: f32, alert: bool) -> Option<
     let facing = [-yaw.sin(), -yaw.cos()];
     let mut best: Option<(u32, [f32; 3], f32)> = None;
     for (other, player) in world.entities.all::<Player>() {
-        if other == id || !world.entities.alive(other) || !player.embodied() || player.surrendered || same_team(world, id, other) {
+        if other == id || !world.entities.alive(other) || !player.embodied() || player.surrendered || same_team(world, id, other) || super::is_civilian(world, other) {
             continue;
         }
         let at = player.character.position;

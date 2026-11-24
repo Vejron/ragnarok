@@ -65,8 +65,8 @@ pub(super) fn place(world: &mut World, id: u32) {
         let index = (world.rng.next_u64() % nearby as u64) as usize;
         world.map.spawns[index]
     };
-    // Bots, zombies and bus drivers cannot steer a canopy, so they start on the ground.
-    let drop = !world.entities.has::<Bot>(id) && !world.entities.has::<super::Zombie>(id) && !world.entities.has::<super::BusDriver>(id);
+    // Bots, zombies and civilians cannot steer a canopy, so they start on the ground.
+    let drop = !world.entities.has::<Bot>(id) && !world.entities.has::<super::Zombie>(id) && !super::is_civilian(world, id);
     super::limbs::restore(world, id);
     if let Some(mut player) = world.entities.get_mut::<Player>(id) {
         let (x, z) = (from_cm(point[0]), from_cm(point[1]));

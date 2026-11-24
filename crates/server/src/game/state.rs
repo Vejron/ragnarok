@@ -779,6 +779,8 @@ pub struct World {
     pub deliveries: Option<crate::mechanics::DeliveryState>,
     /// What `Buses` asks of the room: drivers to add and to take away. Drained every tick.
     pub bus_calls: Vec<crate::mechanics::BusCall>,
+    /// What `Traffic` asks of the room: drivers to put on their feet as civilians. Drained every tick.
+    pub traffic_calls: Vec<crate::mechanics::TrafficCall>,
     /// How many cars of traffic there are for each kilometre of lane that they drive
     /// (`mechanics::Traffic`); 0 for none.
     pub traffic: f32,

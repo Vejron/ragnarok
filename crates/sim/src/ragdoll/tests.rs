@@ -133,3 +133,74 @@ fn scenery_is_brought_in_near_ragdolls_and_let_go_after() {
     assert!(dolls.scenery.is_empty());
     assert_eq!(dolls.colliders.len(), 0);
 }
+
+/// The angle between the lines of parts `a` and `b`, radians.
+fn bend(pose: &[[f32; 7]], a: usize, b: usize) -> f32 {
+    let axis = |p: &[f32; 7]| Rotation::from_xyzw(p[3], p[4], p[5], p[6]) * Vector::Y;
+    axis(&pose[a]).dot(axis(&pose[b])).clamp(-1.0, 1.0).acos()
+}
+
+#[test]
+fn a_ragdoll_thrown_at_blast_speed_keeps_every_elbow_knee_and_neck_within_its_limits() {
+    let physics = walled();
+    let mut dolls = Ragdolls::new();
+    // As hard as a blast throws anyone, into a wall, spinning.
+    dolls.spawn(&physics, 1, &standing(2.0), [1.0, 0.0, 0.0], [shared::consts::KNOCK_MAX_SPEED, 9.0, 2.0], [3.0, 1.0, -10.0], 0);
+    let mut worst = [0.0f32; PARTS];
+    for _ in 0..(3 * 60) {
+        run(&mut dolls, &physics, 1.0 / 60.0);
+        let pose = pose_of(&dolls, 1);
+        for part in [2, 4, 6, 8, 10] {
+            worst[part] = worst[part].max(bend(&pose, part, PARENT[part]));
+        }
+    }
+    for (part, limit) in [(2, 1.0f32), (4, 2.5), (6, 2.5), (8, 2.5), (10, 2.5)] {
+        assert!(worst[part] < limit + 0.35, "part {part} bent {} rad against its limit of {limit}", worst[part]);
+    }
+}
+
+#[test]
+fn an_untethered_ragdoll_comes_to_rest_and_says_so() {
+    let physics = flat();
+    let mut dolls = Ragdolls::new();
+    dolls.spawn(&physics, 1, &standing(0.0), [1.0, 0.0, 0.0], [6.0, 4.0, 0.0], [0.0, 0.0, -5.0], 0);
+    dolls.set_target(1, [0.0, 0.85, 0.0]);
+    dolls.clear_target(1);
+    run(&mut dolls, &physics, 0.1);
+    assert!(!dolls.asleep(1), "still flying");
+    run(&mut dolls, &physics, 5.0);
+    assert!(dolls.asleep(1), "lying still");
+    assert!(pose_of(&dolls, 1)[PELVIS][0] > 1.5, "where it was thrown, not pulled back");
+}
+
+#[test]
+fn a_push_after_the_ragdoll_is_made_carries_it_and_one_to_the_head_snaps_it_back() {
+    let physics = flat();
+    let mut dolls = Ragdolls::new();
+    dolls.spawn(&physics, 1, &standing(0.0), [1.0, 0.0, 0.0], [0.0; 3], [0.0; 3], 0);
+    dolls.push(1, [0.0, 0.0, 5.0], Some(2));
+    run(&mut dolls, &physics, 0.1);
+    let pose = pose_of(&dolls, 1);
+    assert!(pose[2][2] - pose[PELVIS][2] > 0.05, "the head goes first: {:?}", pose[2]);
+    dolls.push(1, [6.0, 2.0, 0.0], None);
+    run(&mut dolls, &physics, 1.0);
+    assert!(pose_of(&dolls, 1)[PELVIS][0] > 1.0, "the whole body is carried");
+}
+
+#[test]
+fn a_severed_limb_leaves_the_ragdoll_and_the_rest_holds_together() {
+    let physics = flat();
+    let mut dolls = Ragdolls::new();
+    dolls.spawn(&physics, 1, &standing(0.0), [1.0, 0.0, 0.0], [8.0, 5.0, 0.0], [0.0, 0.0, -6.0], 0);
+    run(&mut dolls, &physics, 0.2);
+    let bodies = dolls.bodies.len();
+    dolls.sever(1, LIMB_ARM_L);
+    assert_eq!(dolls.bodies.len(), bodies - 2, "upper arm and forearm go");
+    run(&mut dolls, &physics, 2.0);
+    let pose = pose_of(&dolls, 1);
+    assert_eq!(pose[4], pose[1], "the lost forearm takes the torso's pose");
+    for part in [2, 5, 7, 9] {
+        let gap = Vector::new(pose[part][0] - pose[PARENT[part]][0], pose[part][1] - pose[PARENT[part]][1], pose[part][2] - pose[PARENT[part]][2]).length();
+        assert!(gap < 0.7, "part {part} is still on: {gap}");
+    }
+}

@@ -86,25 +86,30 @@ export class Gore {
   ) {}
 
   /**
-   * `avatar` has been killed in `style` (`DEATH_*`), thrown towards `yaw` (0 faces -Z) at `power` m/s.
-   * `groundAt` is the terrain, for the thrown body to land on.
+   * `avatar` has been killed in `style` (`DEATH_*`), the blow going towards `yaw` (0 faces -Z) at `power`
+   * m/s. Its ragdoll is thrown by it (`Character.throwBody`): a round knocks the body back and a headshot
+   * snaps the head back harder. A blast or a car has thrown the body already, as it moves (`motion`), so
+   * they add nothing; only overkill blows it apart.
    */
-  die(avatar: Character, style: number, yaw: number, power: number, groundAt: (x: number, z: number) => number) {
+  die(avatar: Character, style: number, yaw: number, power: number) {
     const dir = this.direction.set(-Math.sin(yaw), 0, -Math.cos(yaw))
     const centre = avatar.position
     this.effects.impact(centre, 'kill', dir)
-    // It bleeds out where it comes to rest, unless it is in pieces.
-    if (style !== DEATH_BLAST && style !== DEATH_ROADKILL && style !== DEATH_OVERKILL) this.pool(() => avatar.position, 0.75 + Math.random() * 0.3, 7)
+    if (style === DEATH_OVERKILL) {
+      this.burst(avatar, dir, power)
+      return
+    }
+    // It bleeds out where it comes to rest.
+    this.pool(() => avatar.position, 0.75 + Math.random() * 0.3, 7)
     if (style === DEATH_HEAD) {
       this.pop(avatar, dir, power)
-      avatar.launch(dir.clone().multiplyScalar(power * 0.4).setY(1.5), new Vector3(spread(1), 0, spread(1)), groundAt)
-    } else if (style === DEATH_BLAST || style === DEATH_ROADKILL || style === DEATH_OVERKILL) {
-      this.burst(avatar, dir, power, style)
+      avatar.throwBody([dir.x * power * 0.5, 0.6, dir.z * power * 0.5], [dir.x * power * 1.2, 0.8, dir.z * power * 1.2])
+    } else if (style === DEATH_BLAST || style === DEATH_ROADKILL) {
+      this.mist(centre, 16, 4, dir)
+      this.bleed(() => avatar.position, 0.6, 60)
     } else {
-      // A bullet: the body is thrown back, head over heels the harder it was hit.
-      const side = new Vector3(dir.z, 0, -dir.x)
-      const velocity = dir.clone().multiplyScalar(power * 1.1).setY(2 + power * 0.25)
-      avatar.launch(velocity, side.multiplyScalar(power * 0.9).add(new Vector3(spread(1.5), spread(1.5), spread(1.5))), groundAt)
+      // A round: the body is knocked back off its feet, the chest first.
+      avatar.throwBody([dir.x * power * 0.7, 0.8 + power * 0.1, dir.z * power * 0.7])
       this.mist(centre, 8, 3, dir)
       this.bleed(() => avatar.position, 0.5, 40)
     }
@@ -263,9 +268,9 @@ export class Gore {
     this.mist(avatar.position, 14, 4, dir)
   }
 
-  /** The body is torn apart. */
-  private burst(avatar: Character, dir: Vector3, power: number, style: number) {
-    const heavy = style === DEATH_BLAST || style === DEATH_ROADKILL ? 1 : 0.6
+  /** The body is torn apart, by far more than it had left. */
+  private burst(avatar: Character, dir: Vector3, power: number) {
+    const heavy = 0.8
     for (const { key, object } of avatar.shatter()) {
       const away = new Vector3().copy(object.position).sub(avatar.position)
       away.y *= 0.5

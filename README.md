@@ -29,7 +29,7 @@ The docs are in [docs/](docs/).
 - [BOTS.md](docs/BOTS.md): server-run enemy soldiers, tank crews, and scenarios with squads, triggers, waves, objectives and a win or a loss
 - [ARMOR.md](docs/ARMOR.md): armor zones, ricochets, weak spots, turret loss and the Strv S
 - [LIMBS.md](docs/LIMBS.md): limb loss and part health
-- [KNOCKDOWN.md](docs/KNOCKDOWN.md): blasts, cars and ragdolls
+- [KNOCKDOWN.md](docs/KNOCKDOWN.md): blasts, cars and ragdolls; every death a ragdoll thrown by the blow, with joint limits, that loses limbs and freezes where it lies
 - [GHOSTS.md](docs/GHOSTS.md): coming back from death as a flying shadow that takes shape again, never right beside an enemy
 - [SWIMMING.md](docs/SWIMMING.md): swimming, diving where you look, holding your breath and drowning
 - [ZOMBIES.md](docs/ZOMBIES.md): zombies that rise in hordes at night, shamble after you and claw, and can be shot apart limb by limb

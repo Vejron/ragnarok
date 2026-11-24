@@ -3,6 +3,12 @@
 A blast, or a car, that throws a soldier hard enough knocks them down. They fly, land and lie helpless for a
 moment, then get up. Everyone sees them tumble as a physics ragdoll.
 
+Every death is a ragdoll too: there is no death clip. The body is thrown by the blow that killed it and
+by whatever was already moving it, flies tethered to nothing, bends only as far as its joints allow,
+loses the limbs that come off, and is frozen as it lies once it has stopped moving. Civilians
+(TRAFFIC.md) are soldiers' bodies: they are knocked down, thrown and killed as soldiers are, and stand
+still while they get up (`GETUP_TICKS`).
+
 ## When, and for how long
 
 - A blast throws every soldier out to twice the radius it hurts them in (`BLAST_PUSH_REACH`,
@@ -83,8 +89,9 @@ Client only, and only for show. Where a soldier is stays the server's.
   so the ragdoll ends up where they really are and getting up doesn't jump.
 
 **Driving it** (`client/src/sim/ragdoll.ts`, `Character.startRagdoll` / `driveRagdoll` / `endRagdoll`):
-- **Who gets one:** every drawn soldier that goes `STANCE_DOWN`, up to `RAGDOLL_CAP` (8), the nearest
-  first. Any more just lie down in the prone pose.
+- **Who gets one:** every drawn soldier that goes `STANCE_DOWN`, up to `RAGDOLL_CAP` (8) moving at once,
+  the nearest first. Any more just lie down in the prone pose. Every death gets one whatever the cap: the
+  body dead longest is frozen as it lies to make room.
 - **Posing:** each frame the ragdoll's parts pose 13 bones (hips, spine, chest, neck, head, arms and
   legs) at the offsets they had from their parts at the start. Hands, feet and the gun keep the pose
   they had.
@@ -93,10 +100,29 @@ Client only, and only for show. Where a soldier is stays the server's.
   - The soldier gets up with `getup_back` or `getup_front`, whichever side they lie on, facing the way
     the body lies. That takes 1.1 s, easing out of the ragdoll's pose over the first 0.3 s.
   - Then the stance's clips take over again.
-- **Dying:** a soldier who dies while down stays a ragdoll as the body until they respawn, or until a
-  blast blows the body apart.
+- **Dying** (`Ragdolls.update`, `Gore.die`):
+  - A soldier who dies is made a ragdoll from the pose they died in (`Character` holds it until then),
+    with no tether (`Ragdolls::clear_target`). One who dies while down keeps theirs and is let go.
+  - The throw is the body's `motion` (a blast or a car) plus the killing blow's
+    (`Character.throwBody`). A round knocks the body back at 0.7 × the `Kill`'s power. A headshot
+    throws the body less but the head 1.2 × as hard (`Ragdolls::push` on part 2), so it snaps back.
+    The `Kill` and the dead flag arrive in either order, so a throw waits on the avatar for its
+    ragdoll, or is pushed into one already made.
+  - A limb lost while it flies comes off the ragdoll (`Ragdolls::sever`) as its pieces are thrown.
+  - Only overkill (a blow more than twice the health left, `life.rs`) bursts the body into pieces. A
+    blast or a car that just kills throws it whole, less the limb the blast used up (`limbs::blasted`
+    runs before the torso is hurt, so a killing blast still takes it off).
+  - **At rest:** once no part has strayed 4 cm from where it lies for 0.5 s (`Ragdolls::asleep`,
+    which a shiver at the joint limits does not upset), the ragdoll is removed and the bones keep its
+    pose (`Character.freezeRagdoll`) until respawn. A body lying still costs nothing.
+  - A body first seen already dead (a rider shot out of a seat, or one coming into view) is made a
+    ragdoll with no throw, and slumps.
 - **The local player:** they see their own ragdoll. The camera still follows their capsule, with a
   jolt as hard as they were thrown.
+
+**Joint limits:** necks bend up to 0.7 rad each way, waists 0.5, shoulders 1.8 and hips 1.3; elbows
+and knees are hinges that open 0 to 2.5 rad one way only. They hold at `KNOCK_MAX_SPEED` into a wall
+(`ragdoll/tests.rs`).
 
 **Cost:** eight ragdolls tumbling beside a building step and pose in about 0.25 ms a frame (wasm in
 V8, worst frame 0.7 ms).

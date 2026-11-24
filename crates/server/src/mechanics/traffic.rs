@@ -30,7 +30,7 @@ use crate::game::{Autopilot, Bot, Noise, Player, Seats, Vehicle, World};
 use bevy_ecs::message::MessageCursor;
 use crate::rng::Rng;
 pub use graph::{Graph, Way};
-pub use drivers::{DRAG_SPEED, Driver};
+pub use drivers::{DRAG_SPEED, Driver, TrafficCall};
 use drivers::{Mood, Nerve};
 use graph::BRAKING;
 use shared::consts::*;
@@ -413,7 +413,7 @@ fn deck_at(world: &World, x: f32, z: f32) -> f32 {
 }
 
 /// The players traffic is real for: people, not bots, zombies or bus drivers.
-fn viewers(world: &World) -> Vec<[f32; 3]> {
+pub(super) fn viewers(world: &World) -> Vec<[f32; 3]> {
     world.entities.all::<Player>().filter(|&(id, _)| human(world, id)).map(|(_, player)| player.character.position).collect()
 }
 
@@ -425,9 +425,9 @@ fn sound(world: &World, vid: u32) -> bool {
     whole && wheels
 }
 
-/// Whether player `id` is a person: not a bot, a zombie or a bus driver.
+/// Whether player `id` is a person: not a bot, a zombie or a civilian.
 fn human(world: &World, id: u32) -> bool {
-    !world.entities.has::<Bot>(id) && !world.entities.has::<super::BusDriver>(id) && !super::is_zombie(world, id)
+    !world.entities.has::<Bot>(id) && !super::is_civilian(world, id) && !super::is_zombie(world, id)
 }
 
 impl Traffic {
@@ -1546,7 +1546,6 @@ impl Mechanic for Traffic {
             }
         }
 
-        drivers::afoot(world, &self.viewers, dt);
 
         // What was traffic once is taken away: a wreck soon, and a car left empty after a while,
         // sooner where it is in the traffic's way and sooner still where nobody watches it go.

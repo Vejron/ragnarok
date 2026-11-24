@@ -298,6 +298,26 @@ export class SimMotor {
     this.sim.removeRagdoll(key)
   }
 
+  /** Lets ragdoll `key`'s pelvis go: a dead body flies free. */
+  clearRagdollTarget(key: number) {
+    this.sim.clearRagdollTarget(key)
+  }
+
+  /** Adds `velocity` (m/s) to every part of ragdoll `key`, or to `part` alone (`RAGDOLL_HEAD` and so on). */
+  pushRagdoll(key: number, velocity: Vec3, part = -1) {
+    this.sim.pushRagdoll(key, velocity[0], velocity[1], velocity[2], part < 0 ? 0xffffffff : part)
+  }
+
+  /** Takes the limbs in `limbs` (`LIMB_*`) off ragdoll `key`. */
+  severRagdoll(key: number, limbs: number) {
+    this.sim.severRagdoll(key, limbs)
+  }
+
+  /** Whether every part of ragdoll `key` lies still. */
+  ragdollAsleep(key: number): boolean {
+    return this.sim.ragdollAsleep(key)
+  }
+
   /** Starts simulating vehicle `id` of `kind` here in place of its stand-in: the player drives it. */
   startCar(id: number, kind: number, position: Vec3, yaw = 0) {
     this.sim.startCar(id, kind, position[0], position[1], position[2], yaw)

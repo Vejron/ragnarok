@@ -18,9 +18,10 @@ Conventions
   * Stances say how the arms hold things: `rifle` (both hands on the gun), `pistol` (both hands, out in front),
     `hold` (hands low, in front) and `shoulder` (a launcher tube on the right shoulder). Clips are baked per
     stance: the rifle's are named plainly (`idle`, `walk_fwd`, ...), the others carry a `pistol_` / `hold_` /
-    `shoulder_` prefix. `death`, `freefall`, `chute` and the get-ups are shared.
+    `shoulder_` prefix. `freefall`, `chute` and the get-ups are shared. There is no death clip: a body
+    killed is a ragdoll (KNOCKDOWN.md).
   * Clips: idle, walk_fwd/back/left/right, run_fwd/back/left/right, crouch_idle, crouch_fwd/back/left/
-    right, crawl_idle, crawl_fwd/back/left/right, slide, jump_air, sit, death, freefall (a skydiver's box,
+    right, crawl_idle, crawl_fwd/back/left/right, slide, jump_air, sit, freefall (a skydiver's box,
     belly down about `FALL_PIVOT`), chute (hanging under the canopy), and getup_back and getup_front
     (up off the ground after a knockdown, through a squat). The crawl is an army
     crawl lying face down along -Y, resting on the ground at the origin's height. `sit` is a seat in a
@@ -650,27 +651,6 @@ def jump_air(t):
     pose_rot("thigh_R", -0.1 - wob, -0.1, 0)
     pose_rot("shin_R", 0.5, 0, 0)
     pose_rot("foot_R", 0.2, 0, 0)
-
-
-def death(t):
-    # Staggers, then goes over backwards about the feet (the root), ending flat on the back.
-    e = t * t * (3 - 2 * t)
-    pose_rot("root", -e * (math.pi / 2), 0, 0)
-    pose_loc("root", (0, 0, 0.13 * e))
-    kneel = math.sin(min(1.0, t * 1.6) * math.pi * 0.5)
-    for side, s in (("L", 1), ("R", -1)):
-        pose_rot(f"thigh_{side}", -0.25 * kneel, s * 0.12 * e, 0)
-        pose_rot(f"shin_{side}", 0.45 * kneel, 0, 0)
-        pose_rot(f"foot_{side}", 0.3 * e, 0, 0)
-    pose_rot("spine", 0.12 * e, 0, 0)
-    pose_rot("chest", 0.1 * e, 0, 0)
-    pose_rot("head", 0.25 * e, 0, 0.1 * e)
-    # Arms fling out and the gun hand goes limp: blend the carry pose away.
-    for side, s in (("L", 1), ("R", -1)):
-        pose_rot(f"upper_arm_{side}", -0.5 * e, s * -0.2 * e - 0.0, 0)
-        pose_rot(f"forearm_{side}", -0.3 * e, 0, 0)
-        pose_rot(f"hand_{side}", 0, 0, 0)
-        # Replace the carry pose: pose_rot overwrote it only on the bones set above.
 
 
 # Falling with the chute shut: the body pitches belly-down this far (rad) about `FALL_PIVOT` (metres up,
@@ -1748,11 +1728,9 @@ def build_actions():
         bake(f"{prefix}armed_tuck", 120, armed_tuck)
         bake(f"{prefix}armed_plow", 120, armed_plow)
         bake(f"{prefix}armed_air", 60, armed_air)
-    # Dying lets go of everything, so one clip serves every stance.
     CURRENT = "rifle"
     # Both hands on the club: whatever stance a club is held in.
     bake("golf_swing", 150, golf_swing, loop=False)
-    bake("death", 60, death, loop=False)
     # A zombie's own: its hands are empty, whatever stance it would have.
     bake("zombie_idle", 120, zombie_idle)
     bake("zombie_walk", 60, zombie_walk)
@@ -1789,9 +1767,6 @@ anim_action = arm_obj.animation_data.action
 arm_obj.animation_data.action = None
 print(f"crawl: {crawl_stride() / (CRAWL_FRAMES / FPS):.2f} m/s")
 arm_obj.animation_data.action = anim_action
-
-# The death clip should not loop-wrap with a pose change: hold the final pose on its closing key.
-# (It is `t = f / frames`, so the last key at t = 1 equals the lying-down pose and is not wrapped.)
 
 
 # --------------------------------------------------------------------------------------------------
@@ -1972,8 +1947,6 @@ def preview(directory):
     bpy.data.objects.remove(club)
     at("jump_air", 10)
     shoot("jump", "side")
-    at("death", 60)
-    shoot("death", "side")
     for clip in ("freefall", "chute"):
         for view in ("side", "front", "three"):
             at(clip, 10)

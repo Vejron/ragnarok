@@ -59,7 +59,7 @@ describe('Gore on the ground', () => {
       pinned.push(point.clone())
       return (out = new Vector3()) => out.copy(point)
     }
-    const avatar = { position, stump: (_: number, out = new Vector3()) => out.copy(position), launch: () => {}, pin } as unknown as Character
+    const avatar = { position, stump: (_: number, out = new Vector3()) => out.copy(position), throwBody: () => {}, pin } as unknown as Character
     return { stains, gore, avatar, pinned }
   }
 
@@ -73,7 +73,7 @@ describe('Gore on the ground', () => {
 
   it('leaves a pool under a body once it has come to rest', () => {
     const { stains, gore, avatar } = setup()
-    gore.die(avatar, DEATH_BODY, 0, 5, () => 0)
+    gore.die(avatar, DEATH_BODY, 0, 5)
     for (let t = 0; t < 3; t += 1 / 60) gore.update(1 / 60)
     expect(stains.laid).toBeGreaterThan(1)
   })

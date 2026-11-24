@@ -68,6 +68,10 @@ const TETHER_DAMPING: f32 = 10.0;
 /// Scenery within this many metres of a ragdoll's pelvis is copied in, and refreshed this often, seconds.
 const SCENERY_REACH: f32 = 15.0;
 const SCENERY_EVERY: f32 = 0.5;
+/// A body none of whose parts has strayed further than this from where it was, metres, for this long,
+/// seconds, has come to rest.
+const REST_DRIFT: f32 = 0.04;
+const REST_AFTER: f32 = 0.5;
 /// The most substeps one call to `step` runs, so a long stall does not run away.
 const MAX_SUBSTEPS: u32 = 4;
 
@@ -76,6 +80,10 @@ struct Doll {
     /// Where the server has the soldier: the pelvis is pulled towards it.
     target: Option<[f32; 3]>,
     mass: f32,
+    /// Where each part was when it last moved more than `REST_DRIFT`, and how long it has stayed
+    /// within that of there since, seconds: a body that only shivers in place has come to rest.
+    rest: [Vector; PARTS],
+    still: f32,
 }
 
 pub struct Ragdolls {
@@ -231,7 +239,7 @@ impl Ragdolls {
             };
             self.joints.insert(above, child, joint.contacts_enabled(false).build(), true);
         }
-        self.dolls.insert(key, Doll { parts, target: None, mass });
+        self.dolls.insert(key, Doll { parts, target: None, mass, rest: poses.map(|pose| pose.translation), still: 0.0 });
         self.bring_scenery(physics);
         true
     }
@@ -240,6 +248,60 @@ impl Ragdolls {
     pub fn set_target(&mut self, key: u32, target: [f32; 3]) {
         if let Some(doll) = self.dolls.get_mut(&key) {
             doll.target = Some(target);
+        }
+    }
+
+    /// Lets ragdoll `key`'s pelvis go: a dead body flies where it was thrown, tethered to nothing.
+    pub fn clear_target(&mut self, key: u32) {
+        if let Some(doll) = self.dolls.get_mut(&key) {
+            doll.target = None;
+        }
+    }
+
+    /// Adds `velocity` (m/s) to every part of ragdoll `key`, or only to `part` (the head, for a round
+    /// through it): a blow that lands after the ragdoll was made.
+    pub fn push(&mut self, key: u32, velocity: [f32; 3], part: Option<usize>) {
+        let Some(doll) = self.dolls.get(&key) else { return };
+        for (i, handle) in doll.parts.iter().enumerate() {
+            let Some(body) = handle.filter(|_| part.is_none_or(|part| part == i)).and_then(|handle| self.bodies.get_mut(handle)) else { continue };
+            let moving = body.linvel();
+            body.set_linvel(moving + Vector::from(velocity), true);
+        }
+    }
+
+    /// Takes the limbs in `limbs` (`LIMB_*`) off ragdoll `key`: their parts and joints go, and the rest
+    /// carries on without them.
+    pub fn sever(&mut self, key: u32, limbs: u8) {
+        let Some(doll) = self.dolls.get_mut(&key) else { return };
+        for part in 0..PARTS {
+            if LIMB[part] & limbs == 0 {
+                continue;
+            }
+            if let Some(handle) = doll.parts[part].take() {
+                self.bodies.remove(handle, &mut self.islands, &mut self.colliders, &mut self.joints, &mut self.multibody, &mut self.soft, true);
+                doll.mass -= MASS[part];
+            }
+        }
+    }
+
+    /// Whether ragdoll `key` has come to rest: no part of it has strayed from where it lies for a while
+    /// (`REST_AFTER`), shiver as it may. A body that lies still, to be frozen as it is.
+    pub fn asleep(&self, key: u32) -> bool {
+        self.dolls.get(&key).is_some_and(|doll| doll.still >= REST_AFTER)
+    }
+
+    /// Counts how long each ragdoll's parts have stayed where they lie.
+    fn watch_rest(&mut self) {
+        for doll in self.dolls.values_mut() {
+            let mut moved = false;
+            for (part, handle) in doll.parts.iter().enumerate() {
+                let Some(body) = handle.and_then(|handle| self.bodies.get(handle)) else { continue };
+                if (body.translation() - doll.rest[part]).length() > REST_DRIFT {
+                    moved = true;
+                    doll.rest[part] = body.translation();
+                }
+            }
+            doll.still = if moved { 0.0 } else { doll.still + TICK_DT };
         }
     }
 
@@ -301,6 +363,7 @@ impl Ragdolls {
                 &(),
                 &(),
             );
+            self.watch_rest();
         }
     }
 

@@ -49,6 +49,8 @@ export class Soldiers implements Presenter<Frame> {
   readonly nearby: Nearby[] = []
   /** The ids drawn on foot this frame. */
   readonly inView: number[] = []
+  /** Everyone drawn as a civilian so far: nobody's kill, and no one to list on the board. */
+  readonly civilians = new Set<number>()
 
   constructor(private readonly world: PeopleWorld) {}
 
@@ -84,6 +86,7 @@ export class Soldiers implements Presenter<Frame> {
     const swim = stance === STANCE_DIVE ? 2 : stance === STANCE_SWIM ? 1 : 0
     avatar.swim = dead ? 0 : swim
     avatar.dead = dead
+    if (entity.kind!.kind === KIND_CIVILIAN) this.civilians.add(id)
     avatar.held = (flags & FLAG_HELD_MASK) >> FLAG_HELD_SHIFT
     const worn = entity.carry?.what ?? 0
     avatar.pack = (worn & CARRY_BACKPACK) !== 0

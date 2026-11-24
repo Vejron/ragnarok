@@ -20,8 +20,11 @@ agrees with the server. No dice are rolled: the same hit on the same part always
   point-blank shotgun pull (120), a grenade, rocket, bomb, egg or drone at their feet (100–110) and a
   tank's HE shell (125) no longer kill a soldier at full health. Only the mortar (260) still does. They
   throw them instead (KNOCKDOWN.md).
-- A blast hurts the torso, and the limb nearest it as much: a leg when it goes off below the hips, an
-  arm otherwise, on its side (`limbs::blasted`).
+- A blast hurts the limb nearest it, and then the torso as much: a leg when it goes off below the hips,
+  an arm otherwise, on its side (`limbs::blasted`). The limb is hurt first, so a blast that kills still
+  takes it off, and the ragdoll flies without it (KNOCKDOWN.md).
+- A driver of the traffic at the wheel has a head too (`limbs::bodied`). Out of the car they are a
+  civilian, a soldier's body with every part (TRAFFIC.md), and keep what they lost at the wheel.
 - Seated players have no limbs to hit (their legs are inside), but their head can still be hit. Creatures
   have only a torso.
 

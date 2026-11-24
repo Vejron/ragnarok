@@ -370,6 +370,9 @@ pub const KNOCKDOWN_POWER: f32 = 7.0;
 /// `KNOCKDOWN_MAX_TICKS` at `KNOCK_MAX_SPEED`.
 pub const KNOCKDOWN_MIN_TICKS: u8 = 48;
 pub const KNOCKDOWN_MAX_TICKS: u8 = 150;
+/// Ticks getting up off the ground takes once a knockdown is over (the `getup_back` and
+/// `getup_front` clips): a mind that drives a soldier keeps them where they are meanwhile.
+pub const GETUP_TICKS: u32 = 66;
 /// A round that hits above this height over the capsule centre hit the head.
 pub const HEAD_ZONE_Y: f32 = 0.45;
 /// Body-part health. A soldier's torso has `PLAYER_MAX_HP`, its head `HEAD_HP` and each limb `LIMB_HP`.
