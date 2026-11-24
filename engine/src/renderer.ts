@@ -135,6 +135,8 @@ export class RenderStats {
   shadowDraws = 0
   /** CPU time inside `render`, ms. */
   cpuMs = 0
+  /** Bytes of geometry uploaded this frame: new meshes, changed vertices, collapsed ranges. */
+  uploadBytes = 0
   pipelines = 0
   materials = 0
   geometryBytes = 0
@@ -618,6 +620,7 @@ export class Renderer {
   render(scene: Scene, camera: PerspectiveCamera) {
     const start = performance.now()
     const stats = this.stats
+    const uploadedBefore = this.arena.uploaded
     this.frameNumber++
     scene.updateWorld()
     if (!camera.parent) camera.updateWorld()
@@ -755,6 +758,7 @@ export class Renderer {
     stats.lights = this.lightGrid.count
     stats.lightEntries = this.lightGrid.indexCount
     stats.gpuMs = this.timer.ms
+    stats.uploadBytes = this.arena.uploaded - uploadedBefore
     stats.cpuMs = performance.now() - start
   }
 

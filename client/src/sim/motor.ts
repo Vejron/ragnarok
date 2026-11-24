@@ -153,9 +153,30 @@ export class SimMotor {
     return new SimMotor(new ClientSim(manifest))
   }
 
-  /** Adds a streamed tile from its file's bytes. */
+  /** Adds a streamed tile from its file's bytes. Its buildings wait to be made solid (`buildBuildings`). */
   addTile(ref: Pick<TileRef, 'col' | 'row'>, bytes: Uint8Array) {
     timed(() => this.sim.addTile(ref.col, ref.row, bytes))
+  }
+
+  /** What making one streamed building solid has been taking, ms, on average of late. */
+  private msPerBuilding = 0.5
+
+  /**
+   * Makes solid the streamed buildings waiting for it: every one within `near` metres of `(x, z)`,
+   * however long that takes, and as many more as fit in about `budgetMs`, nearest first. Returns how
+   * many it made.
+   */
+  buildBuildings(x: number, z: number, near: number, budgetMs: number): number {
+    return timed(() => {
+      if (this.sim.buildingsPending() === 0) return 0
+      const most = Math.max(1, Math.floor(budgetMs / this.msPerBuilding))
+      const start = performance.now()
+      const built = this.sim.buildPending(x, z, near, most)
+      if (built === 0) return 0
+      this.sim.refresh()
+      this.msPerBuilding = 0.7 * this.msPerBuilding + 0.3 * Math.max(0.01, (performance.now() - start) / built)
+      return built
+    })
   }
 
   /** Gives the tile its ground after a crater: `heights` in whole centimetres, as the tile file has them. */
@@ -167,17 +188,43 @@ export class SimMotor {
     timed(() => this.sim.removeTile(ref.col, ref.row))
   }
 
+  /** Nesting of `batch`es under way, and whether a refresh was put off till they end. */
+  private batching = 0
+  private putOff = false
+
+  /**
+   * Runs `work`, putting off the refresh each change in it would make till it is done, and then
+   * refreshing once: a tile streaming in replays every gate opened, tree felled and fence broken on it.
+   */
+  batch<T>(work: () => T): T {
+    this.batching++
+    try {
+      return work()
+    } finally {
+      if (--this.batching === 0 && this.putOff) {
+        this.putOff = false
+        timed(() => this.sim.refresh())
+      }
+    }
+  }
+
+  /** Brings the queries up to date now, or at the end of the `batch` under way. */
+  private refresh() {
+    if (this.batching > 0) this.putOff = true
+    else this.sim.refresh()
+  }
+
   /** Fells tree `index` of tile `(col, row)`. */
   fellTree(col: number, row: number, index: number) {
     timed(() => {
-      if (this.sim.fellTree(col, row, index)) this.sim.refresh()
+      if (this.sim.fellTree(col, row, index)) this.refresh()
     })
   }
 
   /** Breaks piece `index` of the fences and walls of tile `(col, row)`. */
   breakLine(col: number, row: number, index: number) {
     timed(() => {
-      if (this.sim.breakLine(col, row, index)) this.sim.refresh()
+      if (this.sim.breakLine(col, row, index)) this.refresh()
     })
   }
 
@@ -188,7 +235,7 @@ export class SimMotor {
   setBuildings(col: number, row: number, carved: ReadonlyMap<number, ReadonlySet<number>>) {
     timed(() => {
       for (const [index, cells] of carved) this.sim.carveBuilding(col, row, index, Uint32Array.from(cells))
-      this.sim.refresh()
+      this.refresh()
     })
   }
 
@@ -199,7 +246,7 @@ export class SimMotor {
   setGates(col: number, row: number, index: number, shut: readonly number[]) {
     timed(() => {
       this.sim.setGates(col, row, index, Uint32Array.from(shut))
-      this.sim.refresh()
+      this.refresh()
     })
   }
 

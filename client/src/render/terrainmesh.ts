@@ -29,6 +29,7 @@ import { FLOOR_HEATH, FLOOR_LEAF, FLOOR_MOSS, FOREST_CELL, STAND_FLOORS, WOOD_ST
 import { applyMoves, frayMoves } from './fray'
 import { winter } from './season'
 import { CAVITY_RADIUS, heightSampler, ringMean, toneOf, type HeightSource } from './shade'
+import type { Sphere } from '@ragnarok/engine'
 
 /*
  * A tile's terrain as plain arrays, as part of preparing a tile (`tileprep.ts`): in the tile worker
@@ -401,6 +402,9 @@ export interface TerrainBuffers {
   normals: Float32Array
   uvs: Float32Array
   indices: Uint32Array
+  /** Its vertices in the renderer's layout and its bounds, once the tile worker has packed it (`pack`). */
+  packed?: ArrayBuffer
+  bounds?: Sphere
 }
 
 /** RGBA8 pixels, rows top to bottom (the engine's `PixelData`). */

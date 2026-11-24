@@ -1,10 +1,38 @@
 import type { Renderer } from '@ragnarok/engine'
 import { physicsClock } from '../sim/motor'
+import { benching, frameBegins, frameEnds } from '../spans'
 
 /** Samples kept for the averages: about two seconds at 60 fps. */
 const WINDOW = 120
 /** How often the readout's text is rewritten, ms. Rewriting it every frame would cost what it measures. */
 const REFRESH_MS = 250
+
+/** One frame as the frame-bench reads it back (`window.__frames`, kept under `?bench`): when it began (`performance.now()`, ms) and what it cost, ms. */
+export interface FrameRecord {
+  at: number
+  interval: number
+  /** The frame callback's own time, start to end. */
+  cpu: number
+  update: number
+  render: number
+  physics: number
+  /** Bytes of geometry the renderer uploaded. */
+  upload: number
+  /** Time in each span within the frame, ms. */
+  spans: Record<string, number>
+  /** Time in each span that ran between frames (fetches, worker replies) since the frame before, ms. */
+  between: Record<string, number>
+}
+
+/** The most frame records kept: about five minutes at 60 fps. */
+const MAX_RECORDS = 18000
+
+/** The frame records kept under `?bench`, oldest first, on `window` for the frame-bench to read. */
+function records(): FrameRecord[] {
+  const holder = window as unknown as { __frames?: FrameRecord[] }
+  holder.__frames ??= []
+  return holder.__frames
+}
 
 /** One frame's CPU timings, ms. `physics` is time in Rapier since the previous frame (it includes snapshot handling). */
 interface Sample {
@@ -55,6 +83,7 @@ export class PerfReadout {
   /** Call first thing in each animation frame. Resets the per-frame counters. */
   begin(now: number) {
     this.frameStart = performance.now()
+    frameBegins()
     physicsClock.ms = 0
     physicsClock.calls = 0
     this.lastFrame = this.lastFrame ?? now
@@ -80,6 +109,20 @@ export class PerfReadout {
       ticks,
     })
     if (this.samples.length > WINDOW) this.samples.shift()
+    if (benching) {
+      const kept = records()
+      kept.push({
+        at: this.frameStart,
+        interval: this.pendingInterval,
+        cpu: now - this.frameStart,
+        update: this.update,
+        render: now - this.renderStart,
+        physics: physicsClock.ms,
+        upload: this.renderer()?.stats.uploadBytes ?? 0,
+        ...frameEnds(),
+      })
+      if (kept.length > MAX_RECORDS) kept.splice(0, kept.length - MAX_RECORDS)
+    }
     if (this.visible && now - this.lastRefresh >= REFRESH_MS) {
       this.lastRefresh = now
       this.el.textContent = this.text()

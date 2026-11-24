@@ -6,7 +6,7 @@
  * The module is initialised by `SimMotor.create` before any tile is drawn.
  */
 
-import { carve_baked_faces, carve_cut, carve_faces, carve_furnish, carve_nearest, carve_unpack, windows_of } from './wasm/sim'
+import { carve_baked_faces, carve_cut, carve_faces, carve_furnish, carve_unpack, windows_of } from './wasm/sim'
 import { insideFor, type Furnishable } from './interior'
 
 /** Side of a cell, centimetres, on one lattice for the whole world. Mirrors `CELL`. */
@@ -186,12 +186,35 @@ export class Shell {
 
   /**
    * The standing cell (not in `removed`) nearest the point, metres, if its middle is within a
-   * cell's reach: where a round that landed there struck, as the server's `chip` finds it.
+   * cell's reach: where a round that landed there struck, as the server's `chip` finds it
+   * (`shared::carve::nearest_standing`, in the same whole centimetres). Looked for here rather than in
+   * WebAssembly, which would be handed the whole grid every round.
    */
   nearestCell(x: number, y: number, z: number, removed: ReadonlySet<number> | undefined): number | null {
-    const gone = removed ? Uint32Array.from(removed) : new Uint32Array()
-    const id = carve_nearest(Int32Array.from(this.origin), Uint32Array.from(this.dims), this.solid, gone, Math.round(x * 100), Math.round(y * 100), Math.round(z * 100))
-    return id < 0 ? null : id
+    const at = [Math.round(x * 100), Math.round(y * 100), Math.round(z * 100)] as const
+    const cell = this.cell
+    const solid = this.solid
+    const lo = [0, 0, 0]
+    const hi = [0, 0, 0]
+    for (let a = 0; a < 3; a++) {
+      const top = this.dims[a]! - 1
+      lo[a] = Math.min(top, Math.max(0, Math.floor((at[a]! - cell - this.origin[a]!) / cell)))
+      hi[a] = Math.min(top, Math.max(0, Math.floor((at[a]! + cell - this.origin[a]!) / cell)))
+    }
+    let [best, found] = [Infinity, -1]
+    for (let y = lo[1]!; y <= hi[1]!; y++) {
+      for (let z = lo[2]!; z <= hi[2]!; z++) {
+        for (let x = lo[0]!; x <= hi[0]!; x++) {
+          const id = this.index(x, y, z)
+          if (!solid[id] || removed?.has(id)) continue
+          const half = cell / 2
+          const d = (this.origin[0] + x * cell + half - at[0]) ** 2 + (this.origin[1] + y * cell + half - at[1]) ** 2 + (this.origin[2] + z * cell + half - at[2]) ** 2
+          // The first in cell order wins a tie.
+          if (d < best) [best, found] = [d, id]
+        }
+      }
+    }
+    return found >= 0 && best <= Math.floor((cell * cell * 3) / 2) ? found : null
   }
 
   /**
@@ -210,12 +233,17 @@ export class Shell {
         const x = id % this.dims[0]
         const z = Math.floor(id / this.dims[0]) % this.dims[2]
         const y = Math.floor(id / (this.dims[0] * this.dims[2]))
+        const [w, h, d] = this.dims
         for (let dy = -1; dy <= 1 && piece.length < most; dy++) {
+          const ny = y + dy
+          if (ny < 0 || ny >= h) continue
           for (let dz = -1; dz <= 1 && piece.length < most; dz++) {
+            const nz = z + dz
+            if (nz < 0 || nz >= d) continue
             for (let dx = -1; dx <= 1 && piece.length < most; dx++) {
-              const [nx, ny, nz] = [x + dx, y + dy, z + dz]
-              if (nx < 0 || ny < 0 || nz < 0 || nx >= this.dims[0] || ny >= this.dims[1] || nz >= this.dims[2]) continue
-              const next = this.index(nx, ny, nz)
+              const nx = x + dx
+              if (nx < 0 || nx >= w) continue
+              const next = (ny * d + nz) * w + nx
               if (!left.has(next)) continue
               left.delete(next)
               piece.push(next)

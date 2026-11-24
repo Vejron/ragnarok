@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest'
+import { VERTEX_STRIDE, type Geometry } from '@ragnarok/engine'
 import { bladeGeometry, chunkBlades, cropMask, GRASS_CHUNK, GRASS_FULL, grassMask, keptAt, patchAt, STUBBLE, tierFor, WHEAT, WHEAT_DENSITY } from '@/render/grass'
 import { CROP_HEIGHT } from '@/sim/consts.generated'
 import { COVER_PARK, COVER_URBAN, COVER_WATER, CROP_NONE, CROP_WHEAT, ROAD_MINOR, type Building, type Point2 } from '@/world'
+
+/** Vertex `i` of `geometry`, as the renderer is given it (`bladeGeometry` writes it packed): its position, its `custom` and its colour, 0..1. */
+function vertexOf(geometry: Geometry, i: number): { position: [number, number, number]; custom: [number, number, number, number]; color: [number, number, number, number] } {
+  const f = new Float32Array(geometry.packed!, i * VERTEX_STRIDE, VERTEX_STRIDE / 4)
+  const u = new Uint16Array(geometry.packed!, i * VERTEX_STRIDE, VERTEX_STRIDE / 2)
+  return { position: [f[0]!, f[1]!, f[2]!], custom: [f[10]!, f[11]!, f[12]!, f[13]!], color: [u[16]! / 65535, u[17]! / 65535, u[18]! / 65535, u[19]! / 65535] }
+}
 
 const square = (x0: number, z0: number, x1: number, z1: number): Point2[] => [[x0, z0], [x1, z0], [x1, z1], [x0, z1]]
 
@@ -59,10 +67,10 @@ describe('grass', () => {
     const blades = chunkBlades(0, 0, 1, 1, () => 1, () => 1)
     const geometry = bladeGeometry(blades)
     expect(geometry.vertexCount).toBe(blades.length * 5)
-    const tip = 4
-    expect(geometry.custom![tip * 4]).toBeCloseTo(blades[0]!.x)
-    expect(geometry.custom![tip * 4 + 2]).toBeCloseTo(blades[0]!.height)
-    expect(geometry.positions[tip * 3 + 1]).toBeCloseTo(1 + blades[0]!.height)
+    const tip = vertexOf(geometry, 4)
+    expect(tip.custom[0]).toBeCloseTo(blades[0]!.x)
+    expect(tip.custom[2]).toBeCloseTo(blades[0]!.height)
+    expect(tip.position[1]).toBeCloseTo(1 + blades[0]!.height)
   })
 
   it('grows in patches, with bare ground between', () => {
@@ -91,10 +99,9 @@ describe('grass', () => {
     // Twice as wide as a blade of grass, and the ear is the ear's colour.
     const one = wheat.slice(0, 1)
     const stalk = bladeGeometry(one, false, WHEAT), blade = bladeGeometry(one, false)
-    const width = (g: typeof stalk) => Math.hypot(g.positions[3]! - g.positions[0]!, g.positions[5]! - g.positions[2]!)
+    const width = (g: typeof stalk) => Math.hypot(vertexOf(g, 1).position[0] - vertexOf(g, 0).position[0], vertexOf(g, 1).position[2] - vertexOf(g, 0).position[2])
     expect(width(stalk)).toBeGreaterThan(width(blade) * 1.4)
-    const tip = 4
-    expect(stalk.colors![tip * 4]! / stalk.colors![0]!).toBeGreaterThan(1)
+    expect(vertexOf(stalk, 4).color[0] / vertexOf(stalk, 0).color[0]).toBeGreaterThan(1)
   })
 
   it('leaves a winter field short stubble, thinner than the wheat was', () => {

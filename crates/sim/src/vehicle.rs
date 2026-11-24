@@ -1013,11 +1013,12 @@ impl Physics {
         }
     }
 
-    /// Takes destroyed buildings and trees out of the collider set. With no car the pipeline does
-    /// not run otherwise, and the broad-phase would keep pointing at colliders that are gone.
-    pub(crate) fn apply_removals(&mut self) {
+    /// Takes destroyed buildings and trees out of the collider set and gives reshaped ones their new
+    /// colliders. With no car the pipeline does not run otherwise, and the broad-phase would keep
+    /// pointing at colliders that are gone, so it is stepped here then. Returns whether it was.
+    pub(crate) fn apply_removals(&mut self) -> bool {
         if self.removals.is_empty() && self.replacements.is_empty() && self.construct_shapes.is_empty() && self.terrain_shapes.is_empty() {
-            return;
+            return false;
         }
         for (block, collider) in std::mem::take(&mut self.terrain_shapes) {
             if let Some(old) = self.terrain.remove(&block) {
@@ -1066,7 +1067,9 @@ impl Physics {
         }
         if self.cars.is_empty() {
             self.step_pipeline();
+            return true;
         }
+        false
     }
 
     /// Advances every car and the rigid-body world by one tick.

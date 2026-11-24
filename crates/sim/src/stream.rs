@@ -30,14 +30,31 @@ pub struct Ram {
 
 /// A streamed tile: its colliders, and the tile alone as a world (what collides in it, under the
 /// server's ids), from which its buildings are cut into cells when blasts bite them.
+///
+/// A tile's buildings are made solid a few at a time after it arrives, nearest the player first
+/// (`build_pending`): working out a city tile's every look and collider at once held a frame up for
+/// tens of milliseconds. Until a building is built its look is not worked out and it has no
+/// collider; what is done to it meanwhile (cells carved out, gates opened) is kept and built in.
 pub(crate) struct StreamedTile {
+    /// Its colliders but its buildings': the ground, the trunks, the fences and walls, the tombstones.
     handles: Vec<ColliderHandle>,
     /// The tile's heightfield, one of `handles`; `None` when it has no ground.
     ground: Option<ColliderHandle>,
     world: WorldFile,
+    /// The tile's look, from which each building's (`world.looks`) is worked out when it is built.
+    look: shared::world::Look,
+    /// Each building's middle, metres `[x, z]`, by its number in `world`: what the queue is ordered by.
+    centres: Vec<[f32; 2]>,
+    /// The buildings not built yet, by their number in `world`.
+    pending: std::collections::BTreeSet<usize>,
+    /// The gates of a building not built yet that were opened or shut meanwhile (`set_gates`), by its number in `world`.
+    shut: std::collections::HashMap<usize, Vec<u32>>,
     /// Buildings already cut into cells, by their number in `world`, with their floors: unpacking a
     /// big one is most of the work of a hit, so it is done once. `None` for one that cannot be cut.
     shells: std::collections::HashMap<usize, Option<(shared::carve::Shell, Vec<shared::carve::Tri>)>>,
+    /// The faces as they stand of each building carved here, kept between the server's cuts
+    /// (`building_solid_kept`), by its number in `world`.
+    kept: std::collections::HashMap<usize, Option<shared::facade::Standing>>,
     /// The cells gone from each carved building, by its number in `world`, as `carve_building` was
     /// last told: a gate that is opened or shut reshapes what is left of its building.
     carved: std::collections::HashMap<usize, Vec<u32>>,
@@ -73,6 +90,36 @@ fn tile_ground(manifest: &Manifest, col: u16, row: u16, ground: &[i32]) -> Optio
     Some(ColliderBuilder::heightfield(Array2::new(n, n, heights), Vector::new(width, 1.0, width)).translation(Vector::new(x0 + width / 2.0, 0.0, z0 + width / 2.0)).build())
 }
 
+/// Building `at` of `tile`'s shape with the cells the server says are gone (`StreamedTile::carved`)
+/// taken out, its cells unpacked once and kept: `Some(None)` when nothing of it stands, `None` when
+/// it cannot be cut into cells (or was never carved), and keeps the shape it has.
+fn carved_shape(tile: &mut StreamedTile, at: usize) -> Option<Option<SharedShape>> {
+    let removed = tile.carved.get(&at)?;
+    let world = &tile.world;
+    let (shell, floor) = tile.shells.entry(at).or_insert_with(|| building_shell(world, at)).as_ref()?;
+    let mut gone = shell.untouched();
+    for &cell in removed {
+        if let Some(flag) = gone.get_mut(cell as usize) {
+            *flag = true;
+        }
+    }
+    Some(building_solid_kept(world, at, (shell, &gone), floor, tile.kept.entry(at).or_default()))
+}
+
+/// Works out building `at` of `tile`'s look (`BuildingLook::of`) from the tile's, if it is not yet,
+/// with the gates opened or shut while it waited.
+fn work_out_look(tile: &mut StreamedTile, at: usize) {
+    let range = tile.look.buildings.get(at).copied().unwrap_or([0; 3]);
+    let (Some(look), Some(building)) = (tile.world.looks.get_mut(at), tile.world.buildings.get(at)) else { return };
+    if !look.is_empty() || range[1] + range[2] == 0 {
+        return;
+    }
+    *look = shared::world::BuildingLook::of(&tile.look, range, building);
+    if let Some(shut) = tile.shut.remove(&at) {
+        look.shut = shut;
+    }
+}
+
 impl Physics {
     /// A world of `manifest` whose tiles arrive one by one (`add_tile`): for now only the slab under
     /// everything and the walls round the square.
@@ -93,24 +140,44 @@ impl Physics {
         physics
     }
 
-    /// Adds tile `(col, row)` of `manifest`: its ground, buildings, bridges, trunks and tombstones. A tile already
-    /// there is replaced.
-    pub fn add_tile(&mut self, manifest: &Manifest, col: u16, row: u16, tile: &Tile) -> Result<()> {
+    /// Adds tile `(col, row)` of `manifest`: its ground, bridges, trunks, fences and tombstones at once,
+    /// and its buildings to the queue `build_pending` makes them solid from. A tile already there is replaced.
+    pub fn add_tile(&mut self, manifest: &Manifest, col: u16, row: u16, mut tile: Tile) -> Result<()> {
         self.remove_tile(col, row);
         self.add_ski_trails(&tile.ski);
         let mut handles = Vec::new();
         let ground = tile_ground(manifest, col, row, &tile.ground).map(|ground| self.insert_static(ground, None));
         handles.extend(ground);
-        // The tile alone, as the server's merged world holds it: what collides, under the same ids.
-        let solid = Tile { buildings: tile.buildings.clone(), collision: tile.collision.clone(), trees: tile.trees.clone(), bridges: tile.bridges.clone(), lines: tile.lines.clone(), look: tile.look.clone(), graves: tile.graves.clone(), ..Default::default() };
-        self.stones.set((col, row), tile.stones.clone());
+        self.stones.set((col, row), std::mem::take(&mut tile.stones));
         self.waters.set((col, row), &tile.ground, &tile.water, &tile.reach, &tile.flow);
+        // The look is kept aside, so assembling works out no building's look: each is worked out as it is built.
+        let look = std::mem::take(&mut tile.look);
+        // The tile alone, as the server's merged world holds it: what collides, under the same ids.
+        let solid = Tile {
+            buildings: std::mem::take(&mut tile.buildings),
+            collision: std::mem::take(&mut tile.collision),
+            trees: std::mem::take(&mut tile.trees),
+            bridges: std::mem::take(&mut tile.bridges),
+            lines: std::mem::take(&mut tile.lines),
+            graves: std::mem::take(&mut tile.graves),
+            ..Default::default()
+        };
         let alone = Manifest { ground_cell: 0, tiles: Vec::new(), spawns: Vec::new(), ..manifest.clone() };
         let world = WorldFile::assemble(&alone, [(col, row, solid)]);
-        for (collider, object) in object_colliders(&world)? {
+        for (collider, object) in static_object_colliders(&world)? {
             handles.push(self.insert_static(collider, object));
         }
-        self.tiles.insert((col, row), StreamedTile { handles, ground, world, shells: Default::default(), carved: Default::default(), rammed: Default::default() });
+        let centres = world
+            .buildings
+            .iter()
+            .map(|building| {
+                let n = building.footprint.len().max(1) as f32;
+                let (x, z) = building.footprint.iter().fold((0.0, 0.0), |(x, z), p| (x + from_cm(p[0]) / n, z + from_cm(p[1]) / n));
+                [x, z]
+            })
+            .collect();
+        let pending = (0..world.building_ids.len().min(world.building_triangles.len())).collect();
+        self.tiles.insert((col, row), StreamedTile { handles, ground, world, look, centres, pending, shut: Default::default(), shells: Default::default(), kept: Default::default(), carved: Default::default(), rammed: Default::default() });
         self.refresh();
         Ok(())
     }
@@ -119,8 +186,11 @@ impl Physics {
     pub fn remove_tile(&mut self, col: u16, row: u16) {
         self.stones.remove((col, row));
         self.waters.remove((col, row));
-        let Some(StreamedTile { handles, .. }) = self.tiles.remove(&(col, row)) else { return };
-        for handle in handles {
+        let Some(StreamedTile { handles, world, .. }) = self.tiles.remove(&(col, row)) else { return };
+        // A building's collider is found by what it is, not by the handle it was built with: a cut
+        // gives it a new one (`apply_removals`).
+        let buildings: Vec<ColliderHandle> = world.building_ids.iter().filter_map(|&id| self.handles.get(&Obj::Building(id)).copied()).collect();
+        for handle in handles.into_iter().chain(buildings) {
             if let Some(object) = self.objects.remove(&handle) {
                 self.handles.remove(&object);
             }
@@ -129,6 +199,59 @@ impl Physics {
         self.removals.retain(|object| self.handles.contains_key(object));
         self.replacements.retain(|(object, _)| self.handles.contains_key(object));
         self.refresh();
+    }
+
+    /// Makes solid the buildings waiting for it (`add_tile`) within `near` metres of `(x, z)`, all of
+    /// them, and then up to `most` more, nearest first. Returns how many it made. They collide from
+    /// the next `refresh`.
+    pub fn build_pending(&mut self, x: f32, z: f32, near: f32, most: usize) -> usize {
+        let mut waiting: Vec<(f32, (u16, u16), usize)> = Vec::new();
+        for (&key, tile) in &self.tiles {
+            for &at in &tile.pending {
+                let [cx, cz] = tile.centres[at];
+                waiting.push(((cx - x).hypot(cz - z), key, at));
+            }
+        }
+        waiting.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let mut built = 0;
+        for (distance, key, at) in waiting {
+            if distance > near && built >= most {
+                break;
+            }
+            self.build_building(key, at);
+            built += 1;
+        }
+        built
+    }
+
+    /// How many buildings of the streamed tiles are waiting to be made solid.
+    pub fn buildings_pending(&self) -> usize {
+        self.tiles.values().map(|tile| tile.pending.len()).sum()
+    }
+
+    /// Makes building `at` of streamed tile `key` solid, as what was done to it meanwhile left it.
+    fn build_building(&mut self, key: (u16, u16), at: usize) {
+        let Some(tile) = self.tiles.get_mut(&key) else { return };
+        if !tile.pending.remove(&at) {
+            return;
+        }
+        work_out_look(tile, at);
+        let id = tile.world.building_ids[at];
+        let collider = match carved_shape(tile, at) {
+            Some(shape) => shape.map(|shape| ColliderBuilder::new(shape).build()),
+            None => building_collider(&tile.world, at).ok().flatten(),
+        };
+        if let Some(collider) = collider {
+            self.insert_static(collider, Some(Obj::Building(id)));
+        }
+    }
+
+    /// Whether building `id` is one of a streamed tile's still waiting to be built, which then never
+    /// is: it is gone (`destroy`).
+    pub(crate) fn forget_unbuilt(&mut self, id: shared::world::ObjId) -> bool {
+        let Some(tile) = self.tiles.get_mut(&(id.col, id.row)) else { return false };
+        let Some(at) = tile.world.building_ids.iter().position(|known| known.index == id.index) else { return false };
+        tile.pending.remove(&at)
     }
 
     /// Gives tile `(col, row)` the ground `heights` (centimetres, row-major, `tile_samples` a side): a crater
@@ -156,15 +279,11 @@ impl Physics {
         tile.carved.insert(at, removed.to_vec());
         // The server's word on it replaces what a ram was predicted to break.
         tile.rammed.remove(&at);
-        let world = &tile.world;
-        let Some((shell, floor)) = tile.shells.entry(at).or_insert_with(|| building_shell(world, at)).as_ref() else { return };
-        let mut gone = shell.untouched();
-        for &cell in removed {
-            if let Some(flag) = gone.get_mut(cell as usize) {
-                *flag = true;
-            }
+        // One not built yet is built with these cells gone when its turn comes.
+        if tile.pending.contains(&at) {
+            return;
         }
-        let shape = building_solid(world, at, Some((shell, &gone)), floor);
+        let Some(shape) = carved_shape(tile, at) else { return };
         self.replace_building(Obj::Building(shared::world::ObjId { col, row, index }), shape);
     }
 
@@ -239,6 +358,11 @@ impl Physics {
     pub fn set_gates(&mut self, col: u16, row: u16, index: u32, shut: &[u32]) {
         let Some(tile) = self.tiles.get_mut(&(col, row)) else { return };
         let Some(at) = tile.world.building_ids.iter().position(|id| id.index == index) else { return };
+        // One not built yet has its look worked out, and these gates shut, when its turn comes.
+        if tile.pending.contains(&at) {
+            tile.shut.insert(at, shut.to_vec());
+            return;
+        }
         let Some(look) = tile.world.looks.get_mut(at) else { return };
         if look.shut == shut {
             return;
@@ -259,8 +383,9 @@ impl Physics {
     /// While a vehicle is simulated here (the client's own, predicted) the pipeline is not stepped,
     /// which would move that vehicle on: its next `step_cars` brings the queries up to date instead.
     pub fn refresh(&mut self) {
-        self.apply_removals();
-        if self.cars.is_empty() {
+        // Carrying out what was queued already brings the queries up to date.
+        let stepped = self.apply_removals();
+        if self.cars.is_empty() && !stepped {
             self.step_pipeline();
         }
     }

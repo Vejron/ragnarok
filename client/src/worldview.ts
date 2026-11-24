@@ -30,7 +30,8 @@ import type { ForestFloor } from './render/forestfloor'
 import type { Gardens } from './render/gardens'
 import type { Stones } from './render/stones'
 import { Smoulders } from './render/smoulder'
-import { lineKindDef, TREE_BUSH, TREE_FLAG, type TileData, type TileRef, type WorldData } from './world'
+import { clock, lap, span } from './spans'
+import { lineKindDef, TREE_BUSH, TREE_FLAG, type Point2, type TileData, type TileRef, type WorldData } from './world'
 
 /** Tiles are keyed by `row * 65536 + col`, as the server names the objects in them. */
 export const tileKey = (col: number, row: number) => row * 65536 + col
@@ -89,6 +90,26 @@ const BACKDROP_GAP = 0.05
  * physics to be given its new shape at once; one further off is given it when the viewer comes this near.
  */
 const RESHAPE_NEAR = 60
+/**
+ * Streamed buildings within this many metres of the viewer are made solid in the prediction's physics
+ * at once; further ones as `BUILD_BUDGET_MS` a frame allows, nearest first (`SimMotor.buildBuildings`).
+ */
+const BUILD_NEAR = 80
+const BUILD_BUDGET_MS = 2
+
+/** Each building's footprint's box, `[x0, z0, x1, z1]` metres, worked out once: every round that lands looks at a tile's every building. */
+const footprintBoxes = new WeakMap<object, [number, number, number, number]>()
+
+/** `building`'s footprint's box, `[x0, z0, x1, z1]`, metres. */
+function footprintBox(building: { footprint: readonly Point2[] }): [number, number, number, number] {
+  let box = footprintBoxes.get(building)
+  if (!box) {
+    box = [Infinity, Infinity, -Infinity, -Infinity]
+    for (const [x, z] of building.footprint) box = [Math.min(box[0], x), Math.min(box[1], z), Math.max(box[2], x), Math.max(box[3], z)]
+    footprintBoxes.set(building, box)
+  }
+  return box
+}
 
 export class WorldView {
   world: WorldData | null = null
@@ -196,6 +217,7 @@ export class WorldView {
     this.fallingTrees.update(dt, fx)
     this.damage.update(dt, effects, camera, fx.smoke)
     this.gateView.update(dt)
+    this.buildNear(camera)
     this.reshapeNear(camera)
     this.updateCubes(dt, effects)
     // Marks that have faded out are dropped from the ground's shader.
@@ -203,6 +225,16 @@ export class WorldView {
     if (this.scorch) this.smoulders.update(performance.now() / 1000, fx.smoke)
     else this.smoulders.clear()
     this.focus(camera.x, camera.z)
+  }
+
+  /**
+   * Makes solid in the prediction's physics the streamed buildings near `camera` (all of them within
+   * `BUILD_NEAR`), and a few further off; with `all`, every one waiting, for a world being loaded.
+   * A tile's buildings wait for this rather than being made with the tile: a town's took tens of
+   * milliseconds, all in the frame the tile arrived.
+   */
+  buildNear(camera: { x: number; z: number }, all = false) {
+    span('buildBuildings', () => this.motor?.buildBuildings(camera.x, camera.z, all ? Infinity : BUILD_NEAR, BUILD_BUDGET_MS))
   }
 
   /**
@@ -222,20 +254,18 @@ export class WorldView {
       }
       const now = new Set<number>()
       for (const index of indices) {
-        const footprint = loaded.tile.buildings[index]?.footprint ?? []
-        let [x0, x1, z0, z1] = [Infinity, -Infinity, Infinity, -Infinity]
-        for (const [x, z] of footprint) {
-          x0 = Math.min(x0, x)
-          x1 = Math.max(x1, x)
-          z0 = Math.min(z0, z)
-          z1 = Math.max(z1, z)
+        const building = loaded.tile.buildings[index]
+        if (!building || building.footprint.length === 0) {
+          now.add(index)
+          continue
         }
+        const [x0, z0, x1, z1] = footprintBox(building)
         const dx = Math.max(x0 - camera.x, 0, camera.x - x1)
         const dz = Math.max(z0 - camera.z, 0, camera.z - z1)
-        if (footprint.length === 0 || dx * dx + dz * dz <= RESHAPE_NEAR * RESHAPE_NEAR) now.add(index)
+        if (dx * dx + dz * dz <= RESHAPE_NEAR * RESHAPE_NEAR) now.add(index)
       }
       if (now.size === 0) continue
-      this.reshapeBuildings(key, now)
+      span('reshape', () => this.reshapeBuildings(key, now))
       for (const index of now) indices.delete(index)
       if (indices.size === 0) this.reshape.delete(key)
     }
@@ -432,7 +462,8 @@ export class WorldView {
     const key = tileKey(ref.col, ref.row)
     try {
       this.preparedWith.set(key, this.groundEdits)
-      this.prepared.set(key, await builder.prepare(ref.col, ref.row, this.tileInput(ref, tile, tileParts(tile), terrainLevel(this.tileDistance(key)))))
+      const asked = span('prepare.post', () => builder.prepare(ref.col, ref.row, this.tileInput(ref, tile, tileParts(tile), terrainLevel(this.tileDistance(key)))))
+      this.prepared.set(key, await asked)
     } catch (error) {
       // `attachTile` prepares it on the main thread instead.
       console.warn('tile worker failed', ref, error)
@@ -590,6 +621,7 @@ export class WorldView {
 
   /** Draws a streamed-in tile and makes it solid for both predicted simulations. Returns how to undo it. */
   attachTile(ref: TileRef, tile: TileData) {
+    let t = clock()
     const ground = this.groundFor(ref, tile)
     const salt = tileSalt(ref)
     const key = tileKey(ref.col, ref.row)
@@ -604,19 +636,28 @@ export class WorldView {
       prepared.buildings = buildingBuffers(tile, salt, undrawn)
       prepared.undrawn = [...undrawn]
     }
+    t = lap('attach.prepare', t)
     const group = tileGroup(tile, ground, prepared)
     this.scene.add(group)
+    t = lap('attach.tileGroup', t)
     const water = ground && prepared.draped ? buildWater(tile, ground, this.terrain ?? undefined, prepared.draped.water) : null
     if (water) this.waterRoot.add(water)
+    t = lap('attach.water', t)
     this.terrain?.set(ref, ground)
     if (ground && this.backdrop) this.underTheGround(this.backdrop, ground)
     this.surfaces?.add(ref, tile, ground, prepared.surface)
+    t = lap('attach.surfaces', t)
     this.grass?.addTile(ref, tile, ground, prepared.grass)
+    t = lap('attach.grass', t)
     this.crops?.addTile(ref, tile, ground)
+    t = lap('attach.crops', t)
     this.cropLid?.addTile(ref, tile, ground)
-    this.stones?.addTile(ref, tile, ground)
+    t = lap('attach.cropLid', t)
+    this.stones?.addTile(ref, tile, ground, prepared.shore)
+    t = lap('attach.stones', t)
     this.forestFloor?.addTile(ref, tile)
     this.gardens?.addTile(ref, prepared.gardens)
+    t = lap('attach.floorGardens', t)
     if (ground) {
       for (const crater of this.marked) {
         if (!reaches(ground, crater)) continue
@@ -636,11 +677,13 @@ export class WorldView {
         if (next) restitchTerrain(next, this.terrain)
       }
     }
+    t = lap('attach.misc', t)
     if (tile.bytes) {
       this.motor?.addTile(ref, tile.bytes)
       // The physics has decoded the file for itself: let it go, a few hundred kilobytes a tile.
       delete tile.bytes
     }
+    t = lap('attach.physics', t)
     this.loaded.set(key, { tile, salt })
     // The file's ground is flat of craters: the physics is given the dug one, and so is the worker's copy if the ground changed after it prepared.
     if (ground && (this.dugTiles.has(key) || this.craters.some((crater) => reaches(ground, crater)))) {
@@ -649,20 +692,29 @@ export class WorldView {
     }
     this.preparedWith.delete(key)
     this.damage.attach(key, tile, salt)
+    t = lap('attach.damage', t)
     this.glazing.attach(key, tile, group, this.damage.carved(key))
-    this.gateView.attach(key, tile, group, this.damage.carved(key))
+    t = lap('attach.glazing', t)
+    this.gateView.attach(key, tile, group, this.damage.carved(key), prepared.gates)
+    t = lap('attach.gates', t)
     this.deckTracks.attach(key, tile, group, this.damage.carved(key))
-    // The physics takes every gate as shut until it is told which are open.
-    for (const index of this.gateView.opened(key)) this.motor?.setGates(ref.col, ref.row, index, this.gateView.shut(key, index))
-    if (this.damage.carved(key).size > 0) this.reshapeBuildings(key)
-    // Trees that fell before this tile streamed in (or while it was away) are already down.
-    for (const [index, yaw] of this.fellTrees.get(key) ?? []) this.fellTree(key, index, yaw, false)
-    // So are the pieces of its fences and walls that broke.
-    const broken = this.brokenLines.get(key)
-    if (broken) {
-      for (const index of broken) this.motor?.breakLine(ref.col, ref.row, index)
-      rebuildLines(group, tile, ground, broken)
+    // What was done to the tile while it was away, given to the physics with one refresh at the end.
+    const replay = () => {
+      // The physics takes every gate as shut until it is told which are open.
+      for (const index of this.gateView.opened(key)) this.motor?.setGates(ref.col, ref.row, index, this.gateView.shut(key, index))
+      if (this.damage.carved(key).size > 0) this.reshapeBuildings(key)
+      // Trees that fell before this tile streamed in (or while it was away) are already down.
+      for (const [index, yaw] of this.fellTrees.get(key) ?? []) this.fellTree(key, index, yaw, false)
+      // So are the pieces of its fences and walls that broke.
+      const broken = this.brokenLines.get(key)
+      if (broken) {
+        for (const index of broken) this.motor?.breakLine(ref.col, ref.row, index)
+        rebuildLines(group, tile, ground, broken)
+      }
     }
+    if (this.motor) this.motor.batch(replay)
+    else replay()
+    lap('attach.replay', t)
     return () => {
       this.loaded.delete(key)
       this.damage.detach(key)
@@ -758,10 +810,14 @@ export class WorldView {
       const key = tileKey(b.col, b.row)
       const waiting = this.unconfirmed.get(key)?.get(b.index)
       if (waiting) for (const cell of [...b.blasted, ...b.fell]) waiting.delete(cell)
+      let t = clock()
       const first = this.damage.carve(key, b.index, b.blasted, b.fell, live ? b.point : null, live)
+      t = lap('carved.damage', t)
       this.glazing.holed(key, b.index, this.damage.carved(key).get(b.index) ?? new Set(), live)
+      t = lap('carved.glazing', t)
       this.gateView.holed(key, b.index, this.damage.carved(key).get(b.index) ?? new Set())
       this.deckTracks.holed(key, b.index, this.damage.carved(key).get(b.index) ?? new Set())
+      lap('carved.gatesTracks', t)
       const dirty = this.reshape.get(key) ?? new Set<number>()
       dirty.add(b.index)
       this.reshape.set(key, dirty)
@@ -850,6 +906,11 @@ export class WorldView {
    * Only the player's own rounds do this, and only on their screen.
    */
   chipped(x: number, y: number, z: number, damage: number) {
+    span('chipped', () => this.chip(x, y, z, damage))
+  }
+
+  /** What `chipped` does, timed. */
+  private chip(x: number, y: number, z: number, damage: number) {
     if (this.chippedCube(x, y, z, damage)) return
     const world = this.world
     if (!world) return
@@ -861,10 +922,9 @@ export class WorldView {
     let best: { index: number; cell: number; distance: number } | null = null
     tile.buildings.forEach((building, index) => {
       // Only a building the round ended within a metre or two of is worth cutting into cells.
-      const xs = building.footprint.map((p) => p[0])
-      const zs = building.footprint.map((p) => p[1])
+      const [x0, z0, x1, z1] = footprintBox(building)
       const margin = 1.6
-      if (x < Math.min(...xs) - margin || x > Math.max(...xs) + margin || z < Math.min(...zs) - margin || z > Math.max(...zs) + margin) return
+      if (x < x0 - margin || x > x1 + margin || z < z0 - margin || z > z1 + margin) return
       if (y < building.base - margin || y > building.base + building.height + margin) return
       const shell = shellOf(tile, index)
       const cell = shell?.nearestCell(x, y, z, carved.get(index)) ?? null

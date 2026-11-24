@@ -2,6 +2,7 @@ export { Renderer, RenderStats, type EyeTarget, type MirrorPlane, type RendererO
 export { Node, Group } from './scene/node'
 export { Mesh, InstancedMesh, levelAt, fadingAt, FADE_MARGIN, type DetailLevel } from './scene/mesh'
 export { Geometry, type GeometryData, type Sphere } from './scene/geometry'
+export { packVertices, VERTEX_STRIDE, type VertexArrays } from './gpu/arena'
 export { Material, ShaderMaterial, Ramp, type MaterialParams, type ShaderMaterialParams, type UniformValue, type Blend, type Side } from './scene/material'
 export { Texture, type TextureParams, type TextureSource, type PixelData } from './scene/texture'
 export { PerspectiveCamera } from './scene/camera'

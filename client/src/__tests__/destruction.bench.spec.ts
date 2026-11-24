@@ -14,10 +14,11 @@ import { Glazing } from '@/render/glazing'
 import { Debris } from '@/render/debris'
 import { buildTile } from '@/render/world'
 import { lookFracture } from '@/render/lookfracture'
-import { shellOf } from '@/sim/carve'
+import { Shell, shellOf } from '@/sim/carve'
 import { buildingColors, buildingSurfaces } from '@/render/buildingmesh'
 import { Color } from '@ragnarok/engine'
-import type { LookWorker } from '@/render/lookworker'
+import type { LookAsk, LookSource, LookWorker } from '@/render/lookworker'
+import { drawLook } from '@/render/lookjobs'
 
 const root = resolve(process.cwd(), process.env.BENCH_WORLD ?? 'public/dev')
 const cutsFile = process.env.BENCH_CUTS ?? ''
@@ -31,7 +32,7 @@ interface Cut {
   fell: number[]
 }
 
-it.skipIf(!process.env.BENCH || !existsSync(cutsFile) || !existsSync(resolve(root, 'world.msgpack')))('what shelling a big house costs the main thread', { timeout: 300_000 }, () => {
+it.skipIf(!process.env.BENCH || !existsSync(cutsFile) || !existsSync(resolve(root, 'world.msgpack')))('what shelling a big house costs the main thread', { timeout: 300_000 }, async () => {
   const cuts = JSON.parse(readFileSync(cutsFile, 'utf8')) as Cut[]
   const { col, row, index } = cuts[0]!
   const manifest = new Uint8Array(readFileSync(resolve(root, 'world.msgpack')))
@@ -40,16 +41,11 @@ it.skipIf(!process.env.BENCH || !existsSync(cutsFile) || !existsSync(resolve(roo
   const tile = decodeTile(bytes)
   const sim = new ClientSim(manifest)
   sim.addTile(col, row, bytes)
+  sim.buildPending(0, 0, Infinity, 0)
+  sim.refresh()
   const key = row * 65536 + col
   const group = buildTile(tile, 0)
   const damage = new BuildingDamage()
-  // The look worker is off the main thread: a stand-in that never answers, so only the main thread's share is timed here.
-  damage.looks = { draw: () => new Promise(() => {}), dispose: () => {} } as unknown as LookWorker
-  damage.attach(key, tile)
-  const glazing = new Glazing(new Debris())
-  glazing.attach(key, tile, group, new Map())
-  console.log(`world ${world.halfExtent * 2} m, building ${index} of tile ${col},${row}: ${tile.buildings[index]?.look ? 'with a look' : 'no look'}`)
-
   const stages: Record<string, number[]> = {}
   const time = <T,>(stage: string, run: () => T): T => {
     const start = performance.now()
@@ -57,6 +53,25 @@ it.skipIf(!process.env.BENCH || !existsSync(cutsFile) || !existsSync(resolve(roo
     ;(stages[stage] ??= []).push(performance.now() - start)
     return out
   }
+  // The look worker is off the main thread: a stand-in that does its work at once, timed apart from the main
+  // thread's share (a redraw, and the sections cut out with it), and answers when the main thread next yields.
+  let source: LookSource | null = null
+  let built: Shell | null = null
+  damage.looks = {
+    draw: (_: string, from: () => LookSource, ask: LookAsk) => {
+      source ??= from()
+      built ??= Shell.ofFlags(source.shell)
+      const label = ask.sections.length ? 'look worker: redraw and sections' : 'look worker: redraw alone'
+      return Promise.resolve(time(label, () => drawLook(source!, built!, ask)))
+    },
+    heap: () => new Promise(() => {}),
+    dispose: () => {},
+  } as unknown as LookWorker
+  damage.attach(key, tile)
+  const glazing = new Glazing(new Debris())
+  glazing.attach(key, tile, group, new Map())
+  console.log(`world ${world.halfExtent * 2} m, building ${index} of tile ${col},${row}: ${tile.buildings[index]?.look ? 'with a look' : 'no look'}`)
+
   const removed = new Set<number>()
   const smoke = { spawn: () => {} }
   const effects = { dust: () => {} } as never
@@ -73,6 +88,10 @@ it.skipIf(!process.env.BENCH || !existsSync(cutsFile) || !existsSync(resolve(roo
     // A frame's worth of falling, and the heap once it is due.
     time('BuildingDamage.update (frame)', () => damage.update(1 / 60, effects, near, smoke))
     time('BuildingDamage.update (heap due)', () => damage.update(1.2, effects, near, smoke))
+    // The worker's answer comes back, and the next frame sends what changed meanwhile.
+    await new Promise((r) => setTimeout(r, 0))
+    time('BuildingDamage.update (frame)', () => damage.update(1 / 60, effects, near, smoke))
+    await new Promise((r) => setTimeout(r, 0))
   }
   // What the look worker spends on one redraw, at the end.
   const shell = shellOf(tile, index)!

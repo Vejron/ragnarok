@@ -232,6 +232,49 @@ Not done: the look worker's redraw is still about 80 ms for a ruined block, whic
 hole takes to show. Its time is spread over the corners it writes (outline, shading, the soup), so
 it would take drawing less, not a faster loop.
 
+### Faces kept between cuts, and the first cut
+
+Measured on `worlds/test` (Umeå), on a Windows desktop:
+
+```sh
+HOUSE=10 RAGNAROK_WORLD=$PWD/worlds/test/world.msgpack cargo test --release -p server -- --ignored --nocapture demolition_cost
+RAGNAROK_WORLD=$PWD/worlds/test/world.msgpack cargo test --release -p server -- --ignored --nocapture first_cut_cost
+TICKS=600 RAGNAROK_WORLD=$PWD/worlds/test/world.msgpack cargo test --release -p server -- --ignored --nocapture shelling_tick_cost
+```
+
+`demolition_cost` now also says how the collider's time splits: of 1.7 ms, the faces as they stand
+(`facade::standing`) took 1.4 ms, the windows cut out of the walls only 0.04 ms, and the mesh made of the
+faces the rest. So the faces are kept between cuts (`shared::facade::Standing`, in `Carving::standing`
+and in the client's streamed tiles). What stands of a face depends only on the cells within two of it,
+so a cut works out again only the faces near a cell that changed. The triangles are the same, in the
+same order, as cutting them all afresh (`a_building_cut_face_by_face_is_the_building_cut_afresh`). A
+building lets them go a minute after its last cut (`KEEP_FACES_TICKS`).
+
+| A cut, average (worst) | Before | Kept faces |
+|---|---|---|
+| The long shed (`HOUSE=0`) | 0.65 ms (2.2) | 0.25 ms (1.5) |
+| The house (`HOUSE=10`) | 0.66 ms (2.3) | 0.43 ms (2.0) |
+
+The worst tick of `shelling_tick_cost` (120 shells a second over 300 m round the middle) was 36 ms, of
+which 21 ms was Gunnery. `step_timed` now gives each mechanic's share, and `first_cut_cost` showed the
+cause: the first shell to land on a big block cuts it into cells (`World::cut_building`), taking up to
+37 ms. Most of that was `carve::furnished`, finding the cells a block's floors and stairs pass
+through. It sampled them every 36 cm, three million points for the biggest, and pushed every point's
+cell into a list. It now steps along each row of points from one cell to the next by adding rather than
+dividing, and gives each cell once. The cells are the same
+(`the_cells_a_floor_is_found_in_by_adding_are_those_found_by_dividing`), and the client's first hit of
+a building is quicker the same way.
+
+| | Before | After |
+|---|---|---|
+| The first cut of the dearest block | 37 ms | 15.6 ms |
+| of which its floors' cells (`furnished`) | 25 ms | 4.6 to 9 ms |
+| `shelling_tick_cost`, worst tick | 36 ms (Gunnery 21) | 24 ms (Gunnery 9) |
+| Ticks over budget in 600 (big craters / autocannon) | 11 / 3 | 10 / 1 |
+
+What is left of the worst shelling ticks is snapshots and movement with the room packed in under the
+shells, not the buildings. `hold` (2 to 7 ms on a block's first cut) is the next thing in a first cut.
+
 ### Sturdier houses
 
 Measured with the same bench (`HOUSE=n` picks the n-th biggest house with a look; 60 HE shells, five

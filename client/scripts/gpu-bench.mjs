@@ -137,8 +137,11 @@ if (!url) {
 
 const profile = join(out, 'profile')
 const debugPort = 9334
-const chrome = spawn('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', [
-  '--headless=new', '--enable-unsafe-webgpu', '--use-angle=metal', `--remote-debugging-port=${debugPort}`,
+// On Windows Chrome's WebGPU runs over D3D12, its default; on a Mac over Metal.
+const windows = process.platform === 'win32'
+const chromePath = windows ? 'C:/Program Files/Google/Chrome/Application/chrome.exe' : '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+const chrome = spawn(chromePath, [
+  '--headless=new', '--enable-unsafe-webgpu', ...(windows ? [] : ['--use-angle=metal']), `--remote-debugging-port=${debugPort}`,
   `--user-data-dir=${profile}`, '--window-size=1512,982', `--force-device-scale-factor=${scale}`,
   '--no-first-run', '--mute-audio', '--disable-background-timer-throttling', '--disable-renderer-backgrounding', 'about:blank',
 ], { stdio: 'ignore' })

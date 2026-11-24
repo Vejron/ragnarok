@@ -18,7 +18,16 @@ export interface LookSource {
   shell: ShellFlags
 }
 
-/** What a redraw is asked for: what is gone from the building, and its colours and surfaces. */
+/** A section of wall or roof that lost its hold, to be cut out whole (`lookChunk`): its cells, and where it turns about (metres). */
+export interface SectionAsk {
+  cells: Uint32Array
+  pivot: [number, number, number]
+}
+
+/**
+ * What a redraw is asked for: what is gone from the building, and its colours and surfaces; and the
+ * sections that fell with the cells just gone, cut out to fall in the frame the redraw shows their hole.
+ */
 export interface LookAsk {
   removed: Uint32Array
   /** Cell and damage taken, in pairs. */
@@ -26,23 +35,67 @@ export interface LookAsk {
   wall: RGB
   roof: RGB
   surfaces: Surfaces
+  sections: SectionAsk[]
 }
 
-/** A redrawn building, ready to be a `Geometry`: three numbers a corner, four of `custom`. */
-export interface LookBuffers {
+/** Heights of the ground round a building, metres: `nx` by `nz` samples `step` metres apart from `(x0, z0)`, row by row along x. */
+export interface GroundGrid {
+  x0: number
+  z0: number
+  step: number
+  nx: number
+  nz: number
+  heights: Float32Array
+}
+
+/** What a heap of rubble is asked for: the cells gone from the building, the ground round it, and its colours. */
+export interface HeapAsk {
+  removed: Uint32Array
+  ground: GroundGrid
+  wall: RGB
+  roof: RGB
+}
+
+/**
+ * A mesh made in the worker, ready to be a `Geometry`: three numbers a corner, with its bounds; or, as
+ * the worker hands it over, its vertices packed in the renderer's layout (`pack`) and the arrays empty.
+ */
+export interface PieceBuffers {
   positions: Float32Array
   colors: Float32Array
-  custom: Float32Array
   normals: Float32Array
+  bounds: { x: number; y: number; z: number; radius: number }
+  packed?: ArrayBuffer
 }
 
-export type LookRequest = { kind: 'draw'; id: number; building: string; source: LookSource | null; ask: LookAsk }
+/** A section cut out to fall, about its pivot, with what its fall is measured by (`reach.ts`). */
+export interface SectionBuffers extends PieceBuffers {
+  corners: Float32Array
+  thin: [number, number, number]
+}
 
-export type LookReply = ({ kind: 'drawn'; id: number } & LookBuffers) | { kind: 'failed'; id: number; message: string }
+/** A redrawn building, ready to be a `Geometry`: three numbers a corner, four of `custom`; and the sections asked for, in order. */
+export interface LookBuffers extends PieceBuffers {
+  custom: Float32Array
+  sections: SectionBuffers[]
+}
+
+export type LookRequest = { kind: 'draw'; id: number; building: string; source: LookSource | null; ask: LookAsk } | { kind: 'heap'; id: number; building: string; source: LookSource | null; ask: HeapAsk }
+
+export type LookReply = ({ kind: 'drawn'; id: number } & LookBuffers) | ({ kind: 'heaped'; id: number } & PieceBuffers) | { kind: 'failed'; id: number; message: string }
 
 interface Waiting {
-  resolve: (buffers: LookBuffers) => void
+  resolve: (buffers: LookBuffers | PieceBuffers) => void
   reject: (error: Error) => void
+}
+
+/** The buffers of `buffers` that can be handed over without a copy. */
+export function transferablesOf(buffers: PieceBuffers & { custom?: Float32Array; sections?: SectionBuffers[] }): ArrayBuffer[] {
+  const out = [buffers.positions.buffer, buffers.colors.buffer, buffers.normals.buffer] as ArrayBuffer[]
+  if (buffers.custom) out.push(buffers.custom.buffer as ArrayBuffer)
+  if (buffers.packed) out.push(buffers.packed)
+  for (const section of buffers.sections ?? []) out.push(...(transferablesOf(section) as ArrayBuffer[]), section.corners.buffer as ArrayBuffer)
+  return out
 }
 
 /**
@@ -97,9 +150,21 @@ export class LookWorker {
     const told = this.known.has(building)
     this.known.add(building)
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject })
+      this.pending.set(id, { resolve: resolve as Waiting['resolve'], reject })
       const request: LookRequest = { kind: 'draw', id, building, source: told ? null : source(), ask }
-      this.worker.postMessage(request, [ask.removed.buffer, ask.dents.buffer])
+      this.worker.postMessage(request, [ask.removed.buffer, ask.dents.buffer, ...ask.sections.map((s) => s.cells.buffer)])
+    })
+  }
+
+  /** The rubble heaped round building `building` as `ask` has it (`rubbleSoup`); `source` as for `draw`. */
+  heap(building: string, source: () => LookSource, ask: HeapAsk): Promise<PieceBuffers> {
+    const id = this.nextId++
+    const told = this.known.has(building)
+    this.known.add(building)
+    return new Promise((resolve, reject) => {
+      this.pending.set(id, { resolve: resolve as Waiting['resolve'], reject })
+      const request: LookRequest = { kind: 'heap', id, building, source: told ? null : source(), ask }
+      this.worker.postMessage(request, [ask.removed.buffer, ask.ground.heights.buffer])
     })
   }
 

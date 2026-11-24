@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { Shell, unpack, type Tri } from '@/sim/carve'
+import { carve_nearest } from '@/sim/wasm/sim'
 
 /** A box `w × d × h` metres, walls only, as `boxed` in `crates/shared/src/carve.rs`. */
 function boxed(w: number, d: number, h: number): Tri[] {
@@ -31,6 +32,22 @@ function slanted(): Tri[] {
 }
 
 describe('carve', () => {
+  it('finds the cell a round struck as the server does, without crossing into WebAssembly', () => {
+    const shell = Shell.of(boxed(5, 4, 3), roof(5, 4, 3))!
+    const removed = new Set([shell.cellAt(1, 1, 0), shell.cellAt(2.5, 1, 0), shell.cellAt(4.9, 2, 2)])
+    let found = 0
+    // Rounds ending on and about the walls, inside and out, and on the cells taken out.
+    for (let i = 0; i < 400; i++) {
+      const [x, y, z] = [-1 + ((i * 37) % 71) / 10, -0.5 + ((i * 53) % 41) / 10, -1 + ((i * 29) % 61) / 10]
+      // The server's own search, through WebAssembly, handed the whole grid.
+      const server = carve_nearest(Int32Array.from(shell.origin), Uint32Array.from(shell.dims), (shell as unknown as { solid: Uint8Array }).solid, Uint32Array.from(removed), Math.round(x * 100), Math.round(y * 100), Math.round(z * 100))
+      const here = shell.nearestCell(x, y, z, removed)
+      expect(here, `at ${x}, ${y}, ${z}`).toBe(server < 0 ? null : server)
+      if (here !== null) found++
+    }
+    expect(found).toBeGreaterThan(50)
+  })
+
   it('cuts a building into the same cells as the server', () => {
     // Pinned by `cell_numbers_match_the_fixture` in crates/shared/src/carve.rs.
     const shell = Shell.of(boxed(5, 4, 3), roof(5, 4, 3))!

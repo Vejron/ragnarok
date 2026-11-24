@@ -273,50 +273,66 @@ pub(crate) fn lift_colliders(lifts: &[shared::world::Lift]) -> Vec<Collider> {
 /// The buildings, the rest of the collision mesh (bridges), the tree trunks, the fences and walls, the
 /// power poles and the tombstones of `world`, each building, tree or piece of a fence or wall with the [`Obj`] it is.
 fn object_colliders(world: &WorldFile) -> Result<Vec<(Collider, Option<Obj>)>> {
+    // Making every building's faces is most of the loading: spread over the cores.
+    let buildings: Vec<usize> = (0..world.building_triangles.len().min(world.building_ids.len())).collect();
+    let built = in_parallel(&buildings, |&index| building_collider(world, index));
+    let mut colliders = Vec::new();
+    for (&index, collider) in buildings.iter().zip(built) {
+        if let Some(collider) = collider? {
+            colliders.push((collider, Some(Obj::Building(world.building_ids[index]))));
+        }
+    }
+    colliders.extend(static_object_colliders(world)?);
+    Ok(colliders)
+}
+
+/// Building `index` of `world`'s collider, its own so it can be taken out alone: its walls and roof
+/// with the windows cut out, or its boxes, and its floor (`building_shape`); or a trimesh of its own
+/// triangles of the collision mesh when it has neither. A building can have no triangles left in
+/// the mesh at all (a bridge's section, which has no floor) and still be solid from its look. `None`
+/// when it has nothing to collide with.
+pub(crate) fn building_collider(world: &WorldFile, index: usize) -> Result<Option<Collider>> {
+    if let Some(shape) = building_shape(world, index) {
+        return Ok(Some(ColliderBuilder::new(shape).build()));
+    }
+    let mesh = &world.collision;
+    let Some(&[start, end]) = world.building_triangles.get(index) else { return Ok(None) };
+    let end = (end as usize).min(mesh.triangles.len());
+    let start = (start as usize).min(end);
+    if start >= end {
+        return Ok(None);
+    }
+    let vertex = |&[x, y, z]: &[i32; 3]| Vector::new(from_cm(x), from_cm(y), from_cm(z));
+    // Only this building's vertices, renumbered from zero.
+    let mut renumber: HashMap<u32, u32> = HashMap::new();
+    let mut vertices = Vec::new();
+    let triangles: Vec<[u32; 3]> = mesh.triangles[start..end]
+        .iter()
+        .map(|triangle| {
+            triangle.map(|v| {
+                *renumber.entry(v).or_insert_with(|| {
+                    vertices.push(vertex(&mesh.vertices[v as usize]));
+                    vertices.len() as u32 - 1
+                })
+            })
+        })
+        .collect();
+    Ok(Some(ColliderBuilder::trimesh(vertices, triangles).context("a building's collision mesh is invalid")?.build()))
+}
+
+/// Everything of `world` that collides but its buildings: the rest of the collision mesh (bridges),
+/// the tree trunks, the fences and walls, the power poles and the tombstones, each tree or piece of
+/// a fence or wall with the [`Obj`] it is.
+pub(crate) fn static_object_colliders(world: &WorldFile) -> Result<Vec<(Collider, Option<Obj>)>> {
     let mut colliders = Vec::new();
     let mesh = &world.collision;
     let vertex = |&[x, y, z]: &[i32; 3]| Vector::new(from_cm(x), from_cm(y), from_cm(z));
-    // Each building is its own collider so it can be taken out alone: its boxes and its floor
-    // (`building_shape`), or a trimesh of its own triangles when it has no cubes. A building can have
-    // no triangles left in the mesh at all (a bridge's section, which has no floor) and still be solid
-    // from its look. Whatever no building claims (bridges' steel, hand-built worlds) stays together
-    // in one trimesh.
+    // Whatever no building claims (bridges' steel, hand-built worlds) stays together in one trimesh.
     let mut claimed = vec![false; mesh.triangles.len()];
-    let mut buildings = Vec::new();
-    for (index, &[start, end]) in world.building_triangles.iter().enumerate() {
-        let (end, Some(&id)) = ((end as usize).min(mesh.triangles.len()), world.building_ids.get(index)) else { break };
+    for (&[start, end], _) in world.building_triangles.iter().zip(&world.building_ids) {
+        let end = (end as usize).min(mesh.triangles.len());
         let start = (start as usize).min(end);
         claimed[start..end].iter_mut().for_each(|c| *c = true);
-        buildings.push((index, id, start, end));
-    }
-    // Making every building's faces is most of the loading: spread over the cores.
-    let built = in_parallel(&buildings, |&(index, _, start, end)| -> Result<Option<Collider>> {
-        if let Some(shape) = building_shape(world, index) {
-            return Ok(Some(ColliderBuilder::new(shape).build()));
-        }
-        if start >= end {
-            return Ok(None);
-        }
-        // Only this building's vertices, renumbered from zero.
-        let mut renumber: HashMap<u32, u32> = HashMap::new();
-        let mut vertices = Vec::new();
-        let triangles: Vec<[u32; 3]> = mesh.triangles[start..end]
-            .iter()
-            .map(|triangle| {
-                triangle.map(|v| {
-                    *renumber.entry(v).or_insert_with(|| {
-                        vertices.push(vertex(&mesh.vertices[v as usize]));
-                        vertices.len() as u32 - 1
-                    })
-                })
-            })
-            .collect();
-        Ok(Some(ColliderBuilder::trimesh(vertices, triangles).context("a building's collision mesh is invalid")?.build()))
-    });
-    for (&(_, id, _, _), collider) in buildings.iter().zip(built) {
-        if let Some(collider) = collider? {
-            colliders.push((collider, Some(Obj::Building(id))));
-        }
     }
     let rest: Vec<[u32; 3]> = mesh.triangles.iter().zip(&claimed).filter(|&(_, &taken)| !taken).map(|(&t, _)| t).collect();
     if !rest.is_empty() {
@@ -435,6 +451,22 @@ pub fn building_solid(world: &WorldFile, index: usize, cut: Option<(&Shell, &[bo
             let (shell, removed) = cut?;
             solid_of(&shell.boxes(removed), floor)
         }
+    }
+}
+
+/// `building_solid` for a building being cut again and again: its faces as they stand are kept in
+/// `kept` between cuts (`shared::facade::Standing`, made at its first cut, and again when its gates
+/// change), so only the faces near the cells that changed are cut again. The same shape.
+pub fn building_solid_kept(world: &WorldFile, index: usize, (shell, removed): (&Shell, &[bool]), floor: &[Tri], kept: &mut Option<shared::facade::Standing>) -> Option<SharedShape> {
+    match world.looks.get(index).filter(|look| !look.is_empty()) {
+        Some(look) => {
+            let standing = match kept {
+                Some(standing) if standing.fits(&look.shut) => standing,
+                _ => kept.insert(shared::facade::Standing::new(&look.walls, &look.roof, &look.windows, &look.inside, &look.shut, shell)),
+            };
+            mesh_of(&standing.carve(shell, removed), floor)
+        }
+        None => solid_of(&shell.boxes(removed), floor),
     }
 }
 
@@ -703,6 +735,12 @@ impl Physics {
     /// Takes a building or tree out of the world. It stops colliding at the start of the next
     /// `step_cars`. Returns whether it was there to destroy.
     pub fn destroy(&mut self, object: Obj) -> bool {
+        // A streamed building not built yet is simply never built.
+        if let Obj::Building(id) = object
+            && self.forget_unbuilt(id)
+        {
+            return true;
+        }
         let there = self.handles.contains_key(&object) && !self.removals.contains(&object);
         if there {
             self.removals.push(object);

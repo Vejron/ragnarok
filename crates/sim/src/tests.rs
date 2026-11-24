@@ -68,7 +68,7 @@ fn stony_ground_slows_a_walker_by_its_grade_on_the_server_and_streamed_alike() {
     let tile = Tile { stones, ..Default::default() };
     let server = Physics::new(&WorldFile::assemble(&manifest, [(0, 0, tile.clone())])).unwrap();
     let mut streamed = Physics::streamed(&manifest);
-    streamed.add_tile(&manifest, 0, 0, &tile).unwrap();
+    streamed.add_tile(&manifest, 0, 0, tile).unwrap();
     let forward = InputFrame { seq: 1, strafe: 0, forward: 127, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0, collective: 0 };
     let walked = |physics: &Physics, z: f32| {
         let mut character = Character { position: [0.0, STANDING_Y, z], grounded: true, ..Default::default() };
@@ -206,7 +206,7 @@ fn a_tombstone_stops_a_soldier_and_a_ray_across_its_face_and_not_beside_or_over_
     // The streamed world of the client's prediction has the same stone.
     let manifest = shared::world::Manifest { version: WORLD_VERSION, half_extent: world.half_extent, tile_size: world.half_extent * 2, ..Default::default() };
     let mut streamed = Physics::streamed(&manifest);
-    streamed.add_tile(&manifest, 0, 0, &shared::world::Tile { graves: world.graves.clone(), ..Default::default() }).unwrap();
+    streamed.add_tile(&manifest, 0, 0, shared::world::Tile { graves: world.graves.clone(), ..Default::default() }).unwrap();
     let hit = streamed.cast_ray_static([0.0, 0.5, 0.0], [1.0, 0.0, 0.0], 10.0);
     assert!(hit.is_some_and(|d| (d - (3.0 - def.half_depth)).abs() < 0.02), "{hit:?}");
 }

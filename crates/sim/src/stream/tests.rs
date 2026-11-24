@@ -14,12 +14,129 @@ fn fixture() -> (Manifest, Vec<(u16, u16, Tile)>) {
     (manifest, tiles)
 }
 
+/// The world of `tiles` streamed in, every building made solid.
 fn streamed(manifest: &Manifest, tiles: &[(u16, u16, Tile)]) -> Physics {
     let mut physics = Physics::streamed(manifest);
     for (col, row, tile) in tiles {
-        physics.add_tile(manifest, *col, *row, tile).unwrap();
+        physics.add_tile(manifest, *col, *row, tile.clone()).unwrap();
     }
+    physics.build_pending(0.0, 0.0, f32::INFINITY, usize::MAX);
+    physics.refresh();
     physics
+}
+
+/// The streamed fixture city's buildings: each one's id and middle, metres `[x, z]`.
+fn buildings_of(physics: &Physics) -> Vec<(shared::world::ObjId, [f32; 2])> {
+    physics.tiles.values().flat_map(|tile| tile.world.building_ids.iter().copied().zip(tile.centres.iter().copied())).collect()
+}
+
+#[test]
+fn buildings_near_the_player_are_built_before_far_ones() {
+    let (manifest, tiles) = fixture();
+    let mut physics = Physics::streamed(&manifest);
+    for (col, row, tile) in &tiles {
+        physics.add_tile(&manifest, *col, *row, tile.clone()).unwrap();
+    }
+    let all = buildings_of(&physics);
+    assert!(all.len() > 50, "only {} buildings", all.len());
+    assert!(physics.handles.keys().all(|o| !matches!(o, Obj::Building(_))), "nothing is built before it is asked for");
+    assert_eq!(physics.buildings_pending(), all.len());
+    // From a corner of the city: everything within 40 m at once, then the five nearest past that.
+    let (x, z) = (from_cm(-manifest.half_extent) + 30.0, from_cm(-manifest.half_extent) + 30.0);
+    let near = all.iter().filter(|(_, [cx, cz])| (cx - x).hypot(cz - z) <= 40.0).count();
+    assert_eq!(physics.build_pending(x, z, 40.0, 5), near.max(5));
+    physics.refresh();
+    let built: Vec<f32> = all.iter().filter(|(id, _)| physics.handles.contains_key(&Obj::Building(*id))).map(|(_, [cx, cz])| (cx - x).hypot(cz - z)).collect();
+    let waiting: Vec<f32> = all.iter().filter(|(id, _)| !physics.handles.contains_key(&Obj::Building(*id))).map(|(_, [cx, cz])| (cx - x).hypot(cz - z)).collect();
+    // A building without anything to collide with is built as nothing.
+    assert!(built.len() <= near.max(5) && !built.is_empty());
+    let furthest = built.iter().copied().fold(0.0, f32::max);
+    assert!(waiting.iter().all(|&d| d >= furthest - 1e-3), "a far building was built before a nearer one");
+    assert_eq!(physics.buildings_pending(), all.len() - near.max(5));
+}
+
+#[test]
+fn a_building_carved_before_it_was_built_is_built_carved() {
+    let (manifest, tiles) = fixture();
+    // The same building, carved once it stood and carved before it was built: the same shape.
+    let mut first = streamed(&manifest, &tiles);
+    let mut later = Physics::streamed(&manifest);
+    for (col, row, tile) in &tiles {
+        later.add_tile(&manifest, *col, *row, tile.clone()).unwrap();
+    }
+    let tile = first.tiles.values().find(|t| t.world.buildings.iter().any(|b| b.cells.dims[0] > 0)).unwrap();
+    let at = tile.world.buildings.iter().position(|b| b.cells.dims[0] > 0).unwrap();
+    let id = tile.world.building_ids[at];
+    let [cx, cz] = tile.centres[at];
+    let base = from_cm(tile.world.buildings[at].base);
+    // A slice of cells through its middle, ground to roof.
+    let dims = tile.world.buildings[at].cells.dims;
+    let removed: Vec<u32> = (0..dims[1]).flat_map(|y| (0..dims[2]).map(move |z| (y * dims[2] + z) * dims[0] + dims[0] / 2)).collect();
+    first.carve_building(id.col, id.row, id.index, &removed);
+    first.refresh();
+    later.carve_building(id.col, id.row, id.index, &removed);
+    later.build_pending(0.0, 0.0, f32::INFINITY, usize::MAX);
+    later.refresh();
+    for dz in [-3.0, -1.0, 0.0, 1.0, 3.0] {
+        for y in [0.5, 2.0] {
+            let from = [cx - 30.0, base + y, cz + dz];
+            assert_eq!(first.cast_ray_static(from, [1.0, 0.0, 0.0], 60.0), later.cast_ray_static(from, [1.0, 0.0, 0.0], 60.0), "ray from {from:?}");
+        }
+    }
+}
+
+#[test]
+fn gates_told_before_their_building_was_built_are_as_told_once_it_is() {
+    let (manifest, tiles) = fixture();
+    let mut physics = Physics::streamed(&manifest);
+    for (col, row, tile) in &tiles {
+        physics.add_tile(&manifest, *col, *row, tile.clone()).unwrap();
+    }
+    // Every building with a look told its gates while none is built: the server's word, whatever it was before.
+    let looked: Vec<shared::world::ObjId> = physics.tiles.values().flat_map(|tile| tile.world.building_ids.iter().zip(&tile.look.buildings).filter(|(_, range)| range[1] + range[2] > 0).map(|(&id, _)| id)).collect();
+    assert!(!looked.is_empty(), "the city has no building with a look");
+    for id in &looked {
+        physics.set_gates(id.col, id.row, id.index, &[1, 4]);
+    }
+    physics.build_pending(0.0, 0.0, f32::INFINITY, usize::MAX);
+    for id in &looked {
+        let tile = &physics.tiles[&(id.col, id.row)];
+        let at = tile.world.building_ids.iter().position(|known| known == id).unwrap();
+        assert_eq!(tile.world.looks[at].shut, [1, 4], "building {id:?} lost the gates it was told while it waited");
+    }
+}
+
+#[test]
+fn a_tile_taken_out_drops_its_buildings_waiting_to_be_built() {
+    let (manifest, tiles) = fixture();
+    let mut physics = Physics::streamed(&manifest);
+    for (col, row, tile) in &tiles {
+        physics.add_tile(&manifest, *col, *row, tile.clone()).unwrap();
+    }
+    let total = physics.buildings_pending();
+    let (col, row, _) = &tiles[4];
+    let own = physics.tiles[&(*col, *row)].pending.len();
+    physics.remove_tile(*col, *row);
+    assert_eq!(physics.buildings_pending(), total - own);
+    physics.build_pending(0.0, 0.0, f32::INFINITY, usize::MAX);
+    assert!(physics.handles.keys().all(|o| !matches!(o, Obj::Building(id) if id.col == *col && id.row == *row)));
+}
+
+#[test]
+fn a_carved_building_streamed_out_and_in_leaves_no_old_collider_behind() {
+    let (manifest, tiles) = fixture();
+    let mut physics = streamed(&manifest, &tiles);
+    let colliders = physics.colliders.len();
+    let (col, row, tile) = tiles.iter().find(|(_, _, t)| t.buildings.iter().any(|b| b.cells.dims[0] > 0)).unwrap();
+    let index = tile.buildings.iter().position(|b| b.cells.dims[0] > 0).unwrap() as u32;
+    // A cut gives the building a new collider in place of the one it was built with.
+    physics.carve_building(*col, *row, index, &[0, 1, 2]);
+    physics.refresh();
+    physics.remove_tile(*col, *row);
+    physics.add_tile(&manifest, *col, *row, tile.clone()).unwrap();
+    physics.build_pending(0.0, 0.0, f32::INFINITY, usize::MAX);
+    physics.refresh();
+    assert_eq!(physics.colliders.len(), colliders, "the carved collider was left behind when its tile went");
 }
 
 /// Rays down onto a grid over the city and across it at a few heights.

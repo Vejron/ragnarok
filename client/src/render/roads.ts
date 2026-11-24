@@ -2,6 +2,7 @@ import { ROAD_FAINT, ROAD_MAJOR, ROAD_MINOR, ROAD_PATH, ROAD_PAVED_PATH, ROAD_TR
 import { winter } from './season'
 import { toneOf, type GroundShade } from './shade'
 import { value } from './marshnoise'
+import type { Sphere } from '@ragnarok/engine'
 
 /*
  * Roads as ribbons draped on the ground, as plain arrays: built in the tile worker
@@ -277,6 +278,9 @@ export interface RibbonBuffers {
   custom?: Float32Array
   uvs?: Float32Array
   indices: Uint32Array
+  /** Its vertices in the renderer's layout and its bounds, once the tile worker has packed it (`pack`). */
+  packed?: ArrayBuffer
+  bounds?: Sphere
 }
 
 /**

@@ -17,6 +17,8 @@ import { buildLines } from './lines'
 import { buildGraves } from './graves'
 import { hasRock, stonesTexture } from './stones'
 import { shoreOf, type Shore } from './shore'
+import { vertexCountOf } from './packing'
+import { clock, lap } from '@/spans'
 import { TERRAIN_RAMP } from './groundlight'
 
 export type { HeightSource }
@@ -118,7 +120,7 @@ function buildTerrain(tile: Pick<TileData, 'cover' | 'detail' | 'stones'> & Part
   const size = cell * (side - 1)
   const wet = terrain.wet === undefined ? wetnessPixels(tile, x0, z0, size, terrain.relief.width) : terrain.wet
   const normalMap = reliefTexture(wet ? packMarsh(terrain.relief, wet) : terrain.relief)
-  const stones = stonesTexture(tile, shore, ground)
+  const stones = stonesTexture(tile, shore, ground, terrain.stones)
   const mesh = new Mesh(new Geometry({ ...terrain.buffers, uploadOnce: true }), toonMaterial({ ...(map ? { map } : { color: GRASS_COLOR }), normalMap, normalMapTone: true, ramp: TERRAIN_RAMP, craters: true, snow: winter, marsh: wet !== null, stones, rock: hasRock(tile) }))
   mesh.userData.ownsMaterial = true
   mesh.userData.ground = ground
@@ -170,14 +172,21 @@ export function remeshTerrain(group: Group, buffers: TerrainBuffers) {
  */
 export function tileGroup(tile: Pick<TileData, 'cover' | 'detail' | 'trees' | 'lines' | 'graves' | 'stones' | 'water'>, ground: TileGround | null, prepared: PreparedTile): Group {
   const group = new Group()
-  // Where the ground meets the water, for what is wet there.
-  const shore = ground ? shoreOf(ground, tile.water) : null
+  let t = clock()
+  // Where the ground meets the water, for what is wet there: as the tile worker found it, or found here.
+  const shore = prepared.shore !== undefined ? prepared.shore : ground ? shoreOf(ground, tile.water) : null
+  t = lap('group.shore', t)
   if (ground && prepared.terrain) group.add(buildTerrain(tile, ground, prepared.terrain, prepared.cover, shore))
+  t = lap('group.terrain', t)
   if (prepared.draped) group.add(...ribbonMeshes(prepared.draped.ribbons, groundMap(group)))
   group.add(...mergedMesh(prepared.buildings, new Set(prepared.undrawn)))
+  t = lap('group.ribbonsBuildings', t)
   group.add(...buildTrees(tile.trees, shore))
-  group.add(...buildLines(tile.lines, ground))
+  t = lap('group.trees', t)
+  group.add(...buildLines(tile.lines, ground, undefined, prepared.lines))
+  t = lap('group.lines', t)
   group.add(...buildGraves(tile.graves))
+  lap('group.graves', t)
   return group
 }
 
@@ -199,11 +208,12 @@ const NONE: ReadonlySet<number> = new Set()
 function mergedMesh(buffers: BuildingBuffers | null, destroyed: ReadonlySet<number>): Mesh[] {
   if (!buffers) return []
   const out: Mesh[] = []
-  if (buffers.positions.length > 0) {
-    const { positions, normals, colors, custom, indices, bounds } = buffers
+  if (vertexCountOf(buffers) > 0) {
+    const { positions, normals, colors, custom, indices, bounds, packed } = buffers
     // The biggest mesh of a tile by far, and never read again: a building that goes is collapsed in
-    // the GPU's copy (`rebuildBuildings`), so the arrays are let go once they are uploaded.
-    const mesh = new Mesh(new Geometry({ positions, normals, colors, custom, indices, bounds, uploadOnce: true }), buildingMaterial)
+    // the GPU's copy (`rebuildBuildings`), so the arrays are let go once they are uploaded. Packed by
+    // the tile worker, it is only copied.
+    const mesh = new Mesh(new Geometry({ positions, normals, colors, custom, indices, bounds, ...(packed ? { packed } : {}), uploadOnce: true }), buildingMaterial)
     mesh.castShadow = true
     mesh.receiveShadow = true
     mesh.userData.merged = true

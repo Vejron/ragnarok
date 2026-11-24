@@ -905,6 +905,14 @@ impl World {
     /// looked at again after `STRAIN_DELAY`, until nothing more goes.
     pub fn settle(&mut self) {
         let tick = self.tick;
+        // Now and then, the faces kept of buildings no longer being cut are let go.
+        if tick.is_multiple_of(shared::consts::TICK_RATE) {
+            for carving in self.carves.values_mut() {
+                if tick.wrapping_sub(carving.cut_at) > KEEP_FACES_TICKS {
+                    carving.standing = None;
+                }
+            }
+        }
         let mut due: Vec<(u32, ObjId)> = self.strained.iter().map(|(&id, &at)| (tick.wrapping_sub(at), id)).filter(|&(late, _)| late < u32::MAX / 2).collect();
         due.sort_unstable_by_key(|&(late, id)| (std::cmp::Reverse(late), id));
         for (_, id) in due.into_iter().take(STRAIN_PER_TICK) {
@@ -927,8 +935,9 @@ impl World {
     /// Gives every building cut this tick its new collider: what still stands of it.
     pub fn flush_buildings(&mut self) {
         for id in std::mem::take(&mut self.reshaped) {
-            let (Some(carving), Some(&index)) = (self.carves.get(&id), self.buildings_by_id.get(&id)) else { continue };
-            let standing = sim::building_solid(&self.map, index, Some((&carving.shell, &carving.removed)), &carving.floor);
+            let (Some(carving), Some(&index)) = (self.carves.get_mut(&id), self.buildings_by_id.get(&id)) else { continue };
+            let standing = sim::building_solid_kept(&self.map, index, (&carving.shell, &carving.removed), &carving.floor, &mut carving.standing);
+            carving.cut_at = self.tick;
             self.physics.replace_building(Obj::Building(id), standing);
         }
     }
@@ -950,8 +959,8 @@ impl World {
                 look.shut.sort_unstable();
             }
         }
-        let shape = match self.carves.get(&id) {
-            Some(carving) => sim::building_solid(&self.map, index, Some((&carving.shell, &carving.removed)), &carving.floor),
+        let shape = match self.carves.get_mut(&id) {
+            Some(carving) => sim::building_solid_kept(&self.map, index, (&carving.shell, &carving.removed), &carving.floor, &mut carving.standing),
             None => sim::building_shape(&self.map, index),
         };
         self.physics.replace_building(Obj::Building(id), shape);
@@ -998,7 +1007,7 @@ impl World {
             hp.fill(shared::carve::BRIDGE_CELL_HP);
         }
         let whole = shell.hold(&removed);
-        Some(Carving { shell, removed, hp, floor, whole })
+        Some(Carving { shell, removed, hp, floor, whole, standing: None, cut_at: self.tick })
     }
 
     /// Whether building `id` is a section of a bridge (`BUILDING_BRIDGE`).
@@ -1051,7 +1060,17 @@ pub struct Carving {
     pub floor: Vec<Tri>,
     /// How the building was held up when whole, to measure what is left against (`Shell::strain`).
     pub whole: shared::carve::Hold,
+    /// Its faces as they stand, kept between cuts so a cut works out again only those near it
+    /// (`sim::building_solid_kept`); made at its first cut, and let go once it has gone
+    /// `KEEP_FACES_TICKS` uncut (`settle`), as it is memory a building no longer being shelled does not need.
+    pub standing: Option<shared::facade::Standing>,
+    /// The tick its collider was last made again.
+    pub cut_at: u32,
 }
+
+/// Ticks a carved building keeps its faces as they stand (`Carving::standing`) after its last cut: a
+/// minute, longer than a tank takes to reload or a fight round a house lulls.
+pub const KEEP_FACES_TICKS: u32 = 60 * shared::consts::TICK_RATE;
 
 /// Ticks between a carved building being hurt and its structure being checked: long enough to
 /// groan, short enough to be blamed on the blast.

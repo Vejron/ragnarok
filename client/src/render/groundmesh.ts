@@ -5,6 +5,7 @@ import { skiRibbons } from './skitrails'
 import { roadRibbons, type Ribbon } from './roads'
 import { GroundShade, heightSampler, type HeightSource } from './shade'
 import { streamBuffers, surfaceBuffers, type WaterBuffers } from './watermesh'
+import { packableTransferables } from './packing'
 
 export type { Ribbon, WaterBuffers }
 
@@ -50,7 +51,7 @@ export function waterBuffers(tile: Pick<DrapedTile, 'water' | 'reach' | 'flow' |
 
 /** The arrays of `draped`, so they move to the other thread instead of being copied. */
 export function drapedTransferables(draped: Draped): ArrayBuffer[] {
-  const ribbons = draped.ribbons.flatMap(({ buffers }) => [buffers.positions, buffers.normals, buffers.colors, buffers.indices, ...(buffers.custom ? [buffers.custom] : []), ...(buffers.uvs ? [buffers.uvs] : [])])
-  const water = draped.water.flatMap((buffers) => [buffers.positions, buffers.custom, buffers.indices, ...(buffers.uvs ? [buffers.uvs] : []), ...(buffers.normals ? [buffers.normals] : []), ...(buffers.colors ? [buffers.colors] : [])])
-  return [...ribbons, ...water].map((array) => array.buffer as ArrayBuffer)
+  const ribbons = draped.ribbons.flatMap(({ buffers }) => packableTransferables(buffers))
+  const water = draped.water.flatMap((buffers) => packableTransferables(buffers))
+  return [...ribbons, ...water]
 }

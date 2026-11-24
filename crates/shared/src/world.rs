@@ -409,6 +409,20 @@ impl BuildingLook {
     pub fn is_empty(&self) -> bool {
         self.walls.is_empty() && self.roof.is_empty()
     }
+
+    /// Building `building`'s look, from its triangles `range` (`[first, walls, roof]`) of its tile's
+    /// `look`: its walls and roof, its windows and doors worked out from them, what stands inside it,
+    /// and every gate shut. Empty for a building with no triangles of look.
+    pub fn of(look: &Look, range: [u32; 3], building: &Building) -> Self {
+        if range[1] + range[2] == 0 {
+            return Self::default();
+        }
+        let (walls, roof) = look.parts(range);
+        let windows = crate::windows::openings_of(look, range, building.kind, building.front);
+        let inside = crate::interior::rooms(&building.footprint, &walls, &roof, &windows, building.kind).into_iter().filter(|part| part.collided()).map(|part| part.tri).collect::<Vec<_>>();
+        let shut = if inside.is_empty() { Vec::new() } else { crate::windows::gates(&windows) };
+        BuildingLook { walls, roof, windows, inside, shut }
+    }
 }
 
 /// `Tile::stones`: the share of a cell's ground under stones, out of this.
@@ -1511,15 +1525,7 @@ impl WorldFile {
                 world.building_ids.push(ObjId { col, row, index: index as u32 });
                 world.building_triangles.push([triangle_base + building.first.min(end), triangle_base + end]);
                 let range = tile.look.buildings.get(index).copied().unwrap_or([0; 3]);
-                world.looks.push(if range[1] + range[2] > 0 {
-                    let (walls, roof) = tile.look.parts(range);
-                    let windows = crate::windows::openings_of(&tile.look, range, building.kind, building.front);
-                    let inside = crate::interior::rooms(&building.footprint, &walls, &roof, &windows, building.kind).into_iter().filter(|part| part.collided()).map(|part| part.tri).collect::<Vec<_>>();
-                    let shut = if inside.is_empty() { Vec::new() } else { crate::windows::gates(&windows) };
-                    BuildingLook { walls, roof, windows, inside, shut }
-                } else {
-                    BuildingLook::default()
-                });
+                world.looks.push(BuildingLook::of(&tile.look, range, building));
             }
             world.tree_ids.extend((0..tile.trees.len()).map(|index| ObjId { col, row, index: index as u32 }));
             world.collision.vertices.extend(tile.collision.vertices);

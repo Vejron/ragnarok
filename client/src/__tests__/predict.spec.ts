@@ -241,6 +241,7 @@ describe('cross-language physics', () => {
     const triangles = [[0, 1, 5], [0, 5, 4], [1, 2, 6], [1, 6, 5], [2, 3, 7], [2, 7, 6], [3, 0, 4], [3, 4, 7], [4, 5, 6], [4, 6, 7], [0, 2, 1], [0, 3, 2]]
     const motor = await SimMotor.create(manifestBytes(100, 200))
     motor.addTile({ col: 0, row: 0 }, tileBytes({ vertices, triangles }))
+    motor.buildBuildings(0, 0, Infinity, 0)
     return motor
   }
 

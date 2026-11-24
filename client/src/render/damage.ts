@@ -9,7 +9,9 @@ import { Fracture, shardGeometry } from './fracture'
 import { lookChunk, lookFracture } from './lookfracture'
 import { rubbleSoup, shardSoup, type RubbleMemo } from './shards'
 import { buildingColors, buildingSurfaces } from './buildingmesh'
-import { lookSlice, type LookWorker } from './lookworker'
+import { lookSlice, type GroundGrid, type LookSource, type LookWorker } from './lookworker'
+import { span as timed } from '@/spans'
+import { reachOf, type Reach } from './reach'
 
 /** A small deterministic generator, so every client throws the same pieces the same way. */
 function random(seed: number) {
@@ -133,7 +135,46 @@ interface Drawn {
   falling: Falling[]
   /** Seconds to the next puff of smoke. */
   puff: number
+  /** Sections that lost their hold, to be cut out by the look worker with the next redraw and to fall when it shows their hole. */
+  sections: PendingSection[]
+  /** A heap is out with the look worker; and the state to heap again for once it is back, when more fell meanwhile. */
+  heaping: boolean
+  heapAgain: Hurt | null
 }
+
+/**
+ * A section of wall or roof that lost its hold, waiting to be cut out (`lookChunk`) and to fall: its
+ * cells, where it turns about (metres), and how it goes, drawn when it broke away.
+ */
+interface PendingSection {
+  cells: number[]
+  pivot: Vector3
+  velocity: Vector3
+  spin: Vector3
+}
+
+/** A section's mesh, as the look worker or `lookChunk` made it; with its normals, bounds and reach (and packed) when the worker made it. */
+interface SectionMesh {
+  positions: Float32Array
+  colors: Float32Array
+  packed?: ArrayBuffer
+  normals?: Float32Array
+  bounds?: { x: number; y: number; z: number; radius: number }
+  corners?: Float32Array
+  thin?: [number, number, number]
+}
+
+/** `hex` as linear `[r, g, b]`. */
+function rgbOf(hex: number): readonly [number, number, number] {
+  const c = Color.hex(hex)
+  return [c.r, c.g, c.b] as const
+}
+
+/** Ground sampled round a building for its heap, metres apart at the finest, and at most this many samples. */
+const GROUND_STEP = 0.5
+const GROUND_SAMPLES = 4096
+/** How far past its cells a building's heap can reach, metres: a mound's widest, and its plates. */
+const HEAP_REACH = 4
 
 interface Loaded {
   tile: TileData
@@ -168,29 +209,10 @@ function faceOf([a, b, c]: Corners) {
   return { normal: across.divideScalar(twice || 1), area: twice / 2 }
 }
 
-const cubeWalls = new WeakMap<Shell, Wall[]>()
-
-/** The sides of building `index`'s cubes (`Shell.faces`, wound outwards), or its own wall triangles when it has no cubes. */
+/** Building `index`'s own wall triangles in the collision mesh, for one with no cells (`smokeSpot`). */
 function wallsOf(tile: TileData, index: number): Wall[] {
   const building = tile.buildings[index]
   if (!building) return []
-  const shell = shellOf(tile, index)
-  if (shell) {
-    let walls = cubeWalls.get(shell)
-    if (!walls) {
-      const faces = shell.faces(new Set())
-      walls = []
-      for (let o = 0; o < faces.length; o += 9) {
-        const corners = [0, 3, 6].map((k) => new Vector3(faces[o + k]! / 100, faces[o + k + 1]! / 100, faces[o + k + 2]! / 100)) as unknown as Corners
-        const { normal, area } = faceOf(corners)
-        // Sides only: the tops and bottoms of the cubes are roof and floor.
-        if (Math.abs(normal.y) > 0.5) continue
-        walls.push({ corners, normal, area })
-      }
-      cubeWalls.set(shell, walls)
-    }
-    return walls
-  }
   const { vertices, triangles } = tile.collision
   const walls: Wall[] = []
   for (let t = building.first; t < building.first + building.walls; t++) {
@@ -364,6 +386,11 @@ export class BuildingDamage {
    * see it, easing out over `SMOULDER_SECONDS`.
    */
   update(dt: number, effects: Effects, near: Vector3, smoke?: Pick<Particles, 'spawn'>) {
+    timed('damage.update', () => this.advance(dt, effects, near, smoke))
+  }
+
+  /** What `update` does, timed. */
+  private advance(dt: number, effects: Effects, near: Vector3, smoke?: Pick<Particles, 'spawn'>) {
     for (const puff of this.puffs.splice(0)) {
       if (smoke) dustCloud(smoke, puff.at, puff.size, puff.linger)
       else effects.dust(puff.at, puff.size)
@@ -390,15 +417,9 @@ export class BuildingDamage {
         drawn.puff -= dt
         if (drawn.puff > 0 || !smoke) continue
         drawn.puff = PUFF_SECONDS * (0.7 + this.rand() * 0.6) * (1 + PUFF_STRETCH * (1 - heat))
-        const walls = wallsOf(loaded.tile, index)
-        if (walls.length === 0) continue
         // From the top of the building, where the roof is open or gone.
-        let at = this.pointOn(walls[Math.floor(this.rand() * walls.length)]!)
-        for (let i = 0; i < 2; i++) {
-          const other = this.pointOn(walls[Math.floor(this.rand() * walls.length)]!)
-          if (other.y > at.y) at = other
-        }
-        if (at.distanceToSquared(near) > SMOULDER_RANGE * SMOULDER_RANGE) continue
+        const at = this.smokeSpot(loaded.tile, index, state)
+        if (!at || at.distanceToSquared(near) > SMOULDER_RANGE * SMOULDER_RANGE) continue
         smolder(smoke, at, heat)
       }
     }
@@ -431,10 +452,11 @@ export class BuildingDamage {
     const buildings = this.drawn.get(key) ?? new Map<number, Drawn>()
     this.drawn.set(key, buildings)
     let drawn = buildings.get(index)
-    const walls = wallsOf(loaded.tile, index)
-    if (walls.length === 0) return
+    const building = loaded.tile.buildings[index]
+    // Nothing to draw hurt: neither cells nor walls of its own.
+    if (!building || (!shellOf(loaded.tile, index) && building.walls === 0)) return
     if (!drawn) {
-      drawn = { group: new Group(), fracture: null, bricks: new Map(), look: null, seen: null, asking: false, waiting: false, released: false, rubble: null, rubbleDue: 0, mounds: new Map(), stale: null, dirty: new Set(), falling: [], puff: 0 }
+      drawn = { group: new Group(), fracture: null, bricks: new Map(), look: null, seen: null, asking: false, waiting: false, released: false, rubble: null, rubbleDue: 0, mounds: new Map(), stale: null, dirty: new Set(), falling: [], puff: 0, sections: [], heaping: false, heapAgain: null }
       buildings.set(index, drawn)
       this.root.add(drawn.group)
     }
@@ -445,12 +467,22 @@ export class BuildingDamage {
   private shatter(drawn: Drawn, key: number, index: number, loaded: Loaded, state: Hurt, live: boolean, burst: Burst | null, cells: readonly number[]) {
     const building = loaded.tile.buildings[index]!
     // Cubes: through a hole you see the inner faces of the walls round it, so no room needs drawing.
-    drawn.fracture ??= new Fracture(loaded.tile, index, loaded.salt)
-    if (loaded.tile.look && building.look && drawn.fracture.shell) {
+    drawn.fracture ??= timed('damage.fracture', () => new Fracture(loaded.tile, index, loaded.salt))
+    const fracture = drawn.fracture
+    const shell = fracture.shell
+    const looked = !!(loaded.tile.look && building.look && shell)
+    if (looked) drawn.seen = { key, loaded, index }
+    // Thrown first: the sections that fall whole go to the look worker with the redraw that shows their hole.
+    if (live && burst && shell) {
+      timed('damage.throw', () => {
+        this.throwCells(drawn, fracture, shell, building.base, burst.blasted, burst.point, false, state.removed)
+        this.throwCells(drawn, fracture, shell, building.base, burst.fell, burst.point, true, state.removed)
+      })
+    }
+    if (looked) {
       // Its own walls and roof with the holes cut in them, redrawn whole: the first time now, so the tile's
       // own drawing of the building can stop, and after that at the frame's end, so a barrage or a burst of
       // rounds redraws it once a frame, not once a hit.
-      drawn.seen = { key, loaded, index }
       if (drawn.look) drawn.stale = state
       else this.redraw(drawn, state)
       // What fell lands about a second later; till then the heap stays as it was. A round that only dented
@@ -459,14 +491,10 @@ export class BuildingDamage {
       else if (burst || !drawn.rubble) this.heap(drawn, state)
     } else {
       // The first time it is drawn now, so the tile's own drawing of the building can stop; after that a live hit waits for the frame's end.
-      for (const brick of drawn.fracture.bricksNear(cells)) drawn.dirty.add(brick)
+      for (const brick of fracture.bricksNear(cells)) drawn.dirty.add(brick)
       if (drawn.bricks.size > 0 && live) drawn.stale = state
       else this.redraw(drawn, state)
     }
-    const shell = drawn.fracture.shell
-    if (!live || !burst || !shell) return
-    this.throwCells(drawn, drawn.fracture, shell, building.base, burst.blasted, burst.point, false, state.removed)
-    this.throwCells(drawn, drawn.fracture, shell, building.base, burst.fell, burst.point, true, state.removed)
   }
 
   /** Draws the bricks of `drawn` that changed, as `state` has the cells; all of them the first time. */
@@ -505,32 +533,118 @@ export class BuildingDamage {
     drawn.dirty.clear()
   }
 
-  /** Heaps the rubble of what is gone from a building with a look round its foot. */
+  /**
+   * Heaps the rubble of what is gone from a building with a look round its foot: in the look worker
+   * when there is one (a frame or two late, under the dust), else here.
+   */
   private heap(drawn: Drawn, state: Hurt) {
     const seen = drawn.seen
     const shell = drawn.fracture?.shell
+    const looks = this.looks
     if (!seen || !shell || state.removed.size === 0) return
     const { tile, salt } = seen.loaded
     const building = tile.buildings[seen.index]
     if (!building) return
-    const ids = [...state.removed].filter((id) => shell.isSolid(id)).sort((a, b) => a - b)
-    const centres = ids.map((id) => shell.centre(id).map((v) => v / 100) as unknown as [number, number, number])
     const { wall, roof } = buildingColors(tile, seen.index, salt)
-    const rgb = (hex: number) => {
-      const c = Color.hex(hex)
-      return [c.r, c.g, c.b] as const
-    }
-    const soup = rubbleSoup(centres, ids.map((id) => shell.isRoof(id)), (x, z) => this.groundUnder(x, z, building.base), rgb(wall), rgb(roof), drawn.mounds)
-    if (drawn.rubble) {
-      drawn.rubble.geometry.dispose()
-      drawn.rubble.geometry = shardGeometry(soup.positions, soup.colors)
+    if (!looks) {
+      timed('damage.heap', () => {
+        const ids = [...state.removed].filter((id) => shell.isSolid(id)).sort((a, b) => a - b)
+        const centres = ids.map((id) => shell.centre(id).map((v) => v / 100) as unknown as [number, number, number])
+        const soup = rubbleSoup(centres, ids.map((id) => shell.isRoof(id)), (x, z) => this.groundUnder(x, z, building.base), rgbOf(wall), rgbOf(roof), drawn.mounds)
+        this.showHeap(drawn, shardGeometry(soup.positions, soup.colors))
+      })
       return
     }
-    const mesh = new Mesh(shardGeometry(soup.positions, soup.colors), pieceMaterial)
+    // One heap out at a time: what falls meanwhile is heaped by the next, once this one is back.
+    if (drawn.heaping) {
+      drawn.heapAgain = state
+      return
+    }
+    drawn.heaping = true
+    const ask = timed('damage.heapAsk', () => ({ removed: Uint32Array.from(state.removed), ground: this.groundGrid(shell, building.base), wall: rgbOf(wall), roof: rgbOf(roof) }))
+    looks.heap(this.lookName(drawn), () => this.lookSource(drawn), ask).then(
+      ({ positions, colors, normals, bounds, packed }) => {
+        drawn.heaping = false
+        if (drawn.released) return
+        timed('damage.showHeap', () => this.showHeap(drawn, new Geometry({ positions, colors, normals, bounds, ...(packed ? { packed } : {}) })))
+        const again = drawn.heapAgain
+        drawn.heapAgain = null
+        if (again) this.heap(drawn, again)
+      },
+      (error: unknown) => {
+        drawn.heaping = false
+        console.warn('heaping rubble on the main thread:', error)
+        this.looks = null
+        drawn.heapAgain = null
+        if (!drawn.released) this.heap(drawn, state)
+      },
+    )
+  }
+
+  /** Shows `geometry` as `drawn`'s heap of rubble, in place of the one before. */
+  private showHeap(drawn: Drawn, geometry: Geometry) {
+    if (drawn.rubble) {
+      drawn.rubble.geometry.dispose()
+      drawn.rubble.geometry = geometry
+      return
+    }
+    const mesh = new Mesh(geometry, pieceMaterial)
     mesh.castShadow = true
     mesh.receiveShadow = true
     drawn.group.add(mesh)
     drawn.rubble = mesh
+  }
+
+  /**
+   * The ground round `shell`'s cells as far as a heap can reach, for the look worker: as `groundUnder`
+   * has it, `floor` where nothing is known, `GROUND_STEP` apart or wider on a big building.
+   */
+  private groundGrid(shell: Shell, floor: number): GroundGrid {
+    const [w, d] = [(shell.dims[0] * shell.cell) / 100 + 2 * HEAP_REACH, (shell.dims[2] * shell.cell) / 100 + 2 * HEAP_REACH]
+    const step = Math.max(GROUND_STEP, Math.sqrt((w * d) / GROUND_SAMPLES))
+    const [nx, nz] = [Math.ceil(w / step) + 1, Math.ceil(d / step) + 1]
+    const [x0, z0] = [shell.origin[0] / 100 - HEAP_REACH, shell.origin[2] / 100 - HEAP_REACH]
+    const heights = new Float32Array(nx * nz)
+    for (let j = 0; j < nz; j++) for (let i = 0; i < nx; i++) heights[j * nx + i] = this.groundUnder(x0 + i * step, z0 + j * step, floor)
+    return { x0, z0, step, nx, nz, heights }
+  }
+
+  /** The name `drawn`'s building goes by with the look worker. */
+  private lookName(drawn: Drawn): string {
+    return `${drawn.seen?.key}:${drawn.seen?.index}`
+  }
+
+  /** What the look worker is told of `drawn`'s building the first time: its own look and its cells. */
+  private lookSource(drawn: Drawn): LookSource {
+    const seen = drawn.seen!
+    const look = seen.loaded.tile.look!
+    const range = seen.loaded.tile.buildings[seen.index]!.look!
+    return { ...lookSlice(look, range), shell: drawn.fracture!.shell!.flags }
+  }
+
+  /**
+   * Starts section `pending` of `drawn` falling, as `mesh` (from the look worker, or `lookChunk` here):
+   * nothing when no wall or roof passed through its cells.
+   */
+  private launchSection(drawn: Drawn, mesh: SectionMesh | null, pending: PendingSection) {
+    if (!mesh || (mesh.positions.length === 0 && !mesh.packed?.byteLength)) return
+    const geometry = mesh.normals ? new Geometry({ positions: mesh.positions, colors: mesh.colors, normals: mesh.normals, ...(mesh.bounds ? { bounds: mesh.bounds } : {}), ...(mesh.packed ? { packed: mesh.packed } : {}) }) : shardGeometry(mesh.positions, mesh.colors)
+    if (mesh.corners && mesh.thin) reaches.set(geometry, { corners: mesh.corners, thin: mesh.thin })
+    const piece = new Mesh(geometry, pieceMaterial)
+    piece.position.copy(pending.pivot)
+    piece.castShadow = true
+    drawn.group.add(piece)
+    drawn.falling.push({ mesh: piece, velocity: pending.velocity, spin: pending.spin, age: 0, resting: false, section: true })
+  }
+
+  /** Section `pending` of `drawn`'s building cut out here, on the main thread (`lookChunk`). */
+  private cutHere(drawn: Drawn, pending: PendingSection): SectionMesh | null {
+    const seen = drawn.seen
+    const shell = drawn.fracture?.shell
+    const range = seen?.loaded.tile.buildings[seen.index]?.look
+    if (!seen || !shell || !seen.loaded.tile.look || !range) return null
+    const { wall, roof } = buildingColors(seen.loaded.tile, seen.index, seen.loaded.salt)
+    return timed('damage.cut', () => lookChunk(seen.loaded.tile.look!, range, shell, new Set(pending.cells), [pending.pivot.x, pending.pivot.y, pending.pivot.z], rgbOf(wall), rgbOf(roof)))
   }
 
   /**
@@ -550,15 +664,13 @@ export class BuildingDamage {
     const look = tile.look
     if (!look || !range || !shell) return
     const { wall, roof } = buildingColors(tile, index, salt)
-    const rgb = (hex: number) => {
-      const c = Color.hex(hex)
-      return [c.r, c.g, c.b] as const
-    }
     const surfaces = buildingSurfaces(tile, index, salt)
     const looks = this.looks
     if (!looks) {
-      const soup = lookFracture(look, range, shell, state.removed, state.dents, rgb(wall), rgb(roof), surfaces)
+      const soup = lookFracture(look, range, shell, state.removed, state.dents, rgbOf(wall), rgbOf(roof), surfaces)
       this.showLook(drawn, index, shardGeometry(soup.positions, soup.colors, soup.custom))
+      // Sections left waiting when the worker failed are cut out here.
+      for (const pending of drawn.sections.splice(0)) this.launchSection(drawn, this.cutHere(drawn, pending), pending)
       return
     }
     // One redraw out at a time: what changes meanwhile is drawn by the next, asked for by `update` once this one is back.
@@ -573,17 +685,31 @@ export class BuildingDamage {
       dents[at++] = cell
       dents[at++] = damage
     }
-    const ask = { removed: Uint32Array.from(state.removed), dents, wall: rgb(wall), roof: rgb(roof), surfaces }
-    looks.draw(`${drawn.seen?.key}:${index}`, () => ({ ...lookSlice(look, range), shell: shell.flags }), ask).then(
-      ({ positions, colors, custom, normals }) => {
+    const sections = drawn.sections.splice(0)
+    const ask = {
+      removed: Uint32Array.from(state.removed),
+      dents,
+      wall: rgbOf(wall),
+      roof: rgbOf(roof),
+      surfaces,
+      sections: sections.map((s) => ({ cells: Uint32Array.from(s.cells), pivot: [s.pivot.x, s.pivot.y, s.pivot.z] as [number, number, number] })),
+    }
+    looks.draw(this.lookName(drawn), () => this.lookSource(drawn), ask).then(
+      ({ positions, colors, custom, normals, bounds, packed, sections: cut }) => {
         drawn.asking = false
-        if (!drawn.released) this.showLook(drawn, index, new Geometry({ positions, colors, custom, normals }))
+        if (drawn.released) return
+        timed('damage.showLook', () => {
+          this.showLook(drawn, index, new Geometry({ positions, colors, custom, normals, bounds, ...(packed ? { packed } : {}) }))
+          // The sections fall now that the hole they leave shows.
+          sections.forEach((pending, i) => this.launchSection(drawn, cut[i] ?? null, pending))
+        })
       },
       (error: unknown) => {
         drawn.asking = false
-        // The worker failed: this and every redraw after it are drawn here, from the next `update`.
+        // The worker failed: this and every redraw after it are drawn here, from the next `update`, and its sections cut out with it.
         console.warn('drawing hurt buildings on the main thread:', error)
         this.looks = null
+        drawn.sections.unshift(...sections)
         if (!drawn.released) drawn.stale = state
       },
     )
@@ -696,33 +822,23 @@ export class BuildingDamage {
     const lean = falls ? leanOf(shell, group, removed) : null
     let first = 0
     if (falls) {
-      // The section of wall or roof that lost its hold falls whole, its edge the hole's edge, and tips over towards the gap.
-      const { tile, salt } = seen.loaded
-      const range = tile.buildings[seen.index]?.look
-      const { wall, roof } = buildingColors(tile, seen.index, salt)
-      const rgb = (hex: number) => {
-        const c = Color.hex(hex)
-        return [c.r, c.g, c.b] as const
+      // The section of wall or roof that lost its hold falls whole, its edge the hole's edge, and tips
+      // over towards the gap. It always falls, however much is already falling: without it its part of
+      // the building would just be gone. With a look worker it is cut out there with the next redraw, and
+      // falls when that shows its hole; how it goes is drawn now.
+      const velocity = new Vector3()
+      const spin = new Vector3((this.rand() - 0.5) * 0.4, (this.rand() - 0.5) * 0.2, (this.rand() - 0.5) * 0.4)
+      if (lean) {
+        const rate = 0.5 + this.rand() * 0.5
+        spin.x += lean[1] * rate
+        spin.z -= lean[0] * rate
+        velocity.x += lean[0] * LEAN_SPEED * (0.6 + this.rand() * 0.8)
+        velocity.z += lean[1] * LEAN_SPEED * (0.6 + this.rand() * 0.8)
       }
-      const soup = tile.look && range ? lookChunk(tile.look, range, shell, new Set(group), [pivot.x, pivot.y, pivot.z], rgb(wall), rgb(roof)) : null
-      // The section always falls, however much is already falling: without it its part of the building would just be gone.
-      if (soup && soup.positions.length > 0) {
-        const mesh = new Mesh(shardGeometry(soup.positions, soup.colors), pieceMaterial)
-        mesh.position.copy(pivot)
-        mesh.castShadow = true
-        drawn.group.add(mesh)
-        const velocity = new Vector3()
-        const spin = new Vector3((this.rand() - 0.5) * 0.4, (this.rand() - 0.5) * 0.2, (this.rand() - 0.5) * 0.4)
-        if (lean) {
-          const rate = 0.5 + this.rand() * 0.5
-          spin.x += lean[1] * rate
-          spin.z -= lean[0] * rate
-          velocity.x += lean[0] * LEAN_SPEED * (0.6 + this.rand() * 0.8)
-          velocity.z += lean[1] * LEAN_SPEED * (0.6 + this.rand() * 0.8)
-        }
-        drawn.falling.push({ mesh, velocity, spin, age: 0, resting: false, section: true })
-        first = 1
-      }
+      const pending: PendingSection = { cells: [...group], pivot: pivot.clone(), velocity, spin }
+      if (this.looks) drawn.sections.push(pending)
+      else this.launchSection(drawn, this.cutHere(drawn, pending), pending)
+      first = 1
     }
     for (let i = first; i < count; i++) {
       if (this.moving(drawn) >= MAX_FALLING * 2) return
@@ -916,6 +1032,36 @@ export class BuildingDamage {
   private pointOn(wall: Wall) {
     return pointInTriangle(wall.corners, this.rand(), this.rand())
   }
+
+  /**
+   * Where a puff of smoke rises from building `index` of `tile`: the highest of three of its cells still
+   * standing, picked at random, at its top; or of three points of its walls where it has no cells.
+   * Null when nothing of it stands.
+   */
+  private smokeSpot(tile: TileData, index: number, state: Hurt): Vector3 | null {
+    const shell = shellOf(tile, index)
+    if (!shell) {
+      const walls = wallsOf(tile, index)
+      if (walls.length === 0) return null
+      let at = this.pointOn(walls[Math.floor(this.rand() * walls.length)]!)
+      for (let i = 0; i < 2; i++) {
+        const other = this.pointOn(walls[Math.floor(this.rand() * walls.length)]!)
+        if (other.y > at.y) at = other
+      }
+      return at
+    }
+    const cells = shell.cells
+    if (cells.length === 0) return null
+    let best = -1
+    for (let i = 0; i < 3; i++) {
+      const id = cells[Math.floor(this.rand() * cells.length)]!
+      if (state.removed.has(id)) continue
+      if (best < 0 || shell.coords(id)[1] > shell.coords(best)[1]) best = id
+    }
+    if (best < 0) return null
+    const [x, y, z] = shell.centre(best)
+    return new Vector3(x / 100, (y + shell.cell / 2) / 100, z / 100)
+  }
 }
 
 /**
@@ -986,7 +1132,7 @@ const FLAT_ENOUGH = 0.3
  * taking longer the taller it stands. Null when it lies about flat already.
  */
 export function toppleOf(mesh: Mesh): Falling['topple'] | null {
-  const thin = thinnest(mesh.geometry.positions)
+  const { thin, corners } = reach(mesh.geometry)
   const across = new Vector3(thin[0], thin[1], thin[2]).applyQuaternion(mesh.quaternion)
   const up = new Vector3(0, across.y >= 0 ? 1 : -1, 0)
   const angle = Math.acos(Math.min(1, Math.abs(across.y)))
@@ -994,7 +1140,7 @@ export function toppleOf(mesh: Mesh): Falling['topple'] | null {
   const from = new Quaternion().copy(mesh.quaternion)
   const to = new Quaternion().setFromUnitVectors(across, up).multiply(from)
   // Its lowest corner, in its own frame.
-  const p = mesh.geometry.positions
+  const p = corners
   const at = new Vector3()
   let [low, foot] = [Infinity, new Vector3()]
   for (let i = 0; i < p.length; i += 3) {
@@ -1008,49 +1154,41 @@ export function toppleOf(mesh: Mesh): Falling['topple'] | null {
   return { from, to, time: (0.35 + 0.45 * Math.sqrt(height)) * Math.sqrt(angle / (Math.PI / 2)), spent: 0, foot }
 }
 
-/** The unit direction across `positions` (x, y, z a corner) that they spread least along: a slab's face normal. */
-function thinnest(positions: ArrayLike<number>): [number, number, number] {
-  const n = positions.length / 3
-  if (n < 3) return [0, 1, 0]
-  const m = [0, 0, 0]
-  for (let i = 0; i < positions.length; i += 3) for (let a = 0; a < 3; a++) m[a]! += positions[i + a]! / n
-  // Their spread: the covariance matrix.
-  const c = [0, 0, 0, 0, 0, 0, 0, 0, 0]
-  for (let i = 0; i < positions.length; i += 3) {
-    const d = [positions[i]! - m[0]!, positions[i + 1]! - m[1]!, positions[i + 2]! - m[2]!]
-    for (let a = 0; a < 3; a++) for (let b = 0; b < 3; b++) c[a * 3 + b]! += d[a]! * d[b]!
+/** Each piece's geometry's corners and thinnest way, worked out once, or sent with it by the look worker. */
+const reaches = new WeakMap<Geometry, Reach>()
+
+/** The `Reach` of `geometry`: kept from the look worker, or worked out the first time it is asked for. */
+function reach(geometry: Geometry): Reach {
+  let found = reaches.get(geometry)
+  if (!found) {
+    found = reachOf(geometry.positions)
+    reaches.set(geometry, found)
   }
-  // The least spread is the greatest of (trace - C): found by repeated multiplying.
-  const trace = c[0]! + c[4]! + c[8]!
-  const k = c.map((v, i) => (i % 4 === 0 ? trace - v : -v))
-  let v = [0.3, 0.5, 0.8]
-  for (let it = 0; it < 32; it++) {
-    const w = [0, 1, 2].map((a) => k[a * 3]! * v[0]! + k[a * 3 + 1]! * v[1]! + k[a * 3 + 2]! * v[2]!)
-    const l = Math.hypot(w[0]!, w[1]!, w[2]!) || 1
-    v = w.map((x) => x / l)
-  }
-  return [v[0]!, v[1]!, v[2]!]
+  return found
 }
 
 /**
  * Where `mesh`'s corners reach, in world metres: the lowest, how tall it stands, and how wide it is
- * across, from its geometry turned and scaled as it is now.
+ * across, from its geometry turned and scaled as it is now. Measured from the corners `reach` keeps,
+ * not every vertex, as it is asked every frame of every piece's fall.
  */
 export function span(mesh: Mesh): { low: number; height: number; wide: number } {
   const q = mesh.quaternion
   const [qx, qy, qz, qw] = [q.x, q.y, q.z, q.w]
   const [sx, sy, sz] = [mesh.scale.x, mesh.scale.y, mesh.scale.z]
-  // The rows of the rotation matrix that give a turned vector's y and x.
-  const ry = [2 * (qx * qy + qw * qz), 1 - 2 * (qx * qx + qz * qz), 2 * (qy * qz - qw * qx)]
-  const rx = [1 - 2 * (qy * qy + qz * qz), 2 * (qx * qy - qw * qz), 2 * (qx * qz + qw * qy)]
-  const rz = [2 * (qx * qz - qw * qy), 2 * (qy * qz + qw * qx), 1 - 2 * (qx * qx + qy * qy)]
-  const p = mesh.geometry.positions
+  // The rows of the rotation matrix that give a turned vector's y, x and z.
+  const [ry0, ry1, ry2] = [2 * (qx * qy + qw * qz), 1 - 2 * (qx * qx + qz * qz), 2 * (qy * qz - qw * qx)]
+  const [rx0, rx1, rx2] = [1 - 2 * (qy * qy + qz * qz), 2 * (qx * qy - qw * qz), 2 * (qx * qz + qw * qy)]
+  const [rz0, rz1, rz2] = [2 * (qx * qz - qw * qy), 2 * (qy * qz + qw * qx), 1 - 2 * (qx * qx + qy * qy)]
+  const p = reach(mesh.geometry).corners
   let [low, high, x0, x1, z0, z1] = [Infinity, -Infinity, Infinity, -Infinity, Infinity, -Infinity]
   for (let i = 0; i < p.length; i += 3) {
-    const [x, y, z] = [p[i]! * sx, p[i + 1]! * sy, p[i + 2]! * sz]
-    const wy = ry[0]! * x + ry[1]! * y + ry[2]! * z
-    const wx = rx[0]! * x + rx[1]! * y + rx[2]! * z
-    const wz = rz[0]! * x + rz[1]! * y + rz[2]! * z
+    const x = p[i]! * sx
+    const y = p[i + 1]! * sy
+    const z = p[i + 2]! * sz
+    const wy = ry0 * x + ry1 * y + ry2 * z
+    const wx = rx0 * x + rx1 * y + rx2 * z
+    const wz = rz0 * x + rz1 * y + rz2 * z
     if (wy < low) low = wy
     if (wy > high) high = wy
     if (wx < x0) x0 = wx

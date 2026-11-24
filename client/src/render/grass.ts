@@ -1,4 +1,4 @@
-import { Color, Geometry, Group, Mesh, ShaderMaterial } from '@ragnarok/engine'
+import { Color, Geometry, Group, Mesh, ShaderMaterial, VERTEX_STRIDE } from '@ragnarok/engine'
 import { COVER_GARDEN, COVER_PARK, COVER_WOOD, CROP_NONE, STONES_DENSITY, type TileData, type TileRef } from '@/world'
 import { CROP_HEIGHT } from '@/sim/consts.generated'
 import { WIND_HEADING } from '@/sim/wind'
@@ -41,8 +41,11 @@ const BENDERS = 8
 const BLASTS = 4
 /** Seconds a blast moves the grass for. */
 const BLAST_LIFE = 3
-/** Chunks built a frame, at most, so walking into a meadow does not hitch. */
-const BUILDS_PER_FRAME = 3
+/**
+ * About how long a frame spends building chunks, ms, at least one a frame: so walking into a meadow, or
+ * driving through miles of it, does not hitch. A chunk takes a fraction of a millisecond.
+ */
+const BUILD_MS = 1.5
 /** The camera moves this far, metres, before the chunks round it are looked over again. */
 const RESCAN_DISTANCE = 0.5
 /** Metres ahead of need a chunk is given more blades, so they are there before they show. */
@@ -345,52 +348,88 @@ const MAX_BEND = 1.35
  * a single triangle, which from there looks the same. Each vertex carries its root, its height above
  * it and the blade's rank in `custom`, and the blade's full height (over `MAX_BLADE`) in the colour's alpha, for the
  * vertex shader to bend, thin and widen it about its root.
+ *
+ * Written straight in the renderer's vertex layout (`GeometryData.packed`, as `packVertices` lays it
+ * out), so the frame a chunk is built in neither fills four arrays nor has them interleaved again.
  */
 export function bladeGeometry(blades: readonly Blade[], simple = false, growth: Growth = MEADOW): Geometry {
   const perBlade = simple ? 3 : 5
-  const positions = new Float32Array(blades.length * perBlade * 3)
-  const normals = new Float32Array(blades.length * perBlade * 3)
-  const colors = new Float32Array(blades.length * perBlade * 4)
-  const custom = new Float32Array(blades.length * perBlade * 4)
+  const packed = new ArrayBuffer(blades.length * perBlade * VERTEX_STRIDE)
+  const f32 = new Float32Array(packed)
+  const u16 = new Uint16Array(packed)
   const triangles = simple ? 1 : 3
   const indices = new Uint32Array(blades.length * triangles * 3)
   // Base width and how much of it is left at each level up the blade.
   const width = growth.width
   const levels = simple ? growth.simpleLevels : growth.levels
   const headLevels = simple ? growth.simpleHeadLevels : growth.headLevels
+  let [x0, y0, z0, x1, y1, z1] = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity]
   let v = 0
   let n = 0
+  /** One vertex of blade `b`, `along` up it in `light`: position, normal, colour (alpha its height), and its root, height and rank in `custom`. */
+  const put = (b: Blade, stem: Color, x: number, y: number, z: number, along: number, light: number) => {
+    const f = v * (VERTEX_STRIDE / 4)
+    f32[f] = x
+    f32[f + 1] = y
+    f32[f + 2] = z
+    f32[f + 3] = b.normal[0]
+    f32[f + 4] = b.normal[1]
+    f32[f + 5] = b.normal[2]
+    f32[f + 10] = b.x
+    f32[f + 11] = b.z
+    f32[f + 12] = along
+    f32[f + 13] = b.rank
+    // Darker at the root, where it meets the ground's own colour, lighter toward the tip.
+    const head = b.head === true && along > b.height * 0.7
+    const color = head ? growth.head : stem
+    const k = head ? (growth.headToned ? b.tone : 1) : b.tone * light
+    const c = v * (VERTEX_STRIDE / 2) + 16
+    u16[c] = unorm16(color.r * k)
+    u16[c + 1] = unorm16(color.g * k)
+    u16[c + 2] = unorm16(color.b * k)
+    u16[c + 3] = unorm16(Math.min(1, b.height / MAX_BLADE))
+    if (x < x0) x0 = x
+    if (x > x1) x1 = x
+    if (y < y0) y0 = y
+    if (y > y1) y1 = y
+    if (z < z0) z0 = z
+    if (z > z1) z1 = z
+    v++
+  }
   for (const b of blades) {
     const sx = Math.cos(b.turn) * width * 0.5
     const sz = Math.sin(b.turn) * width * 0.5
     const stem = growth.palette[b.shade]!
     const first = v
-    const put = (x: number, y: number, z: number, along: number, light: number) => {
-      positions.set([x, y, z], v * 3)
-      normals.set(b.normal, v * 3)
-      // Darker at the root, where it meets the ground's own colour, lighter toward the tip.
-      const head = b.head === true && along > b.height * 0.7
-      const color = head ? growth.head : stem
-      const k = head ? (growth.headToned ? b.tone : 1) : b.tone * light
-      colors.set([color.r * k, color.g * k, color.b * k, Math.min(1, b.height / MAX_BLADE)], v * 4)
-      custom.set([b.x, b.z, along, b.rank], v * 4)
-      v++
-    }
     for (const [at, keep] of b.head ? headLevels : levels) {
       const y = b.y + at * b.height
       const light = 0.92 + at * 0.35
-      put(b.x - sx * keep, y, b.z - sz * keep, at * b.height, light)
-      put(b.x + sx * keep, y, b.z + sz * keep, at * b.height, light)
+      put(b, stem, b.x - sx * keep, y, b.z - sz * keep, at * b.height, light)
+      put(b, stem, b.x + sx * keep, y, b.z + sz * keep, at * b.height, light)
     }
-    put(b.x, b.y + b.height, b.z, b.height, 1.3)
-    if (simple) indices.set([first, first + 1, first + 2], n)
-    else indices.set([first, first + 1, first + 2, first + 1, first + 3, first + 2, first + 2, first + 3, first + 4], n)
+    put(b, stem, b.x, b.y + b.height, b.z, b.height, 1.3)
+    indices[n] = first
+    indices[n + 1] = first + 1
+    indices[n + 2] = first + 2
+    if (!simple) {
+      indices[n + 3] = first + 1
+      indices[n + 4] = first + 3
+      indices[n + 5] = first + 2
+      indices[n + 6] = first + 2
+      indices[n + 7] = first + 3
+      indices[n + 8] = first + 4
+    }
     n += triangles * 3
   }
-  const geometry = new Geometry({ positions, normals, colors, custom, indices })
-  // The blades bend outside where they stand: grow the bounds so the chunk is not culled too soon.
-  geometry.bounds = { ...geometry.bounds, radius: geometry.bounds.radius + MAX_BEND }
-  return geometry
+  // About the box the blades stand in, out to its corners; they bend outside where they stand, so the
+  // bounds are grown by as far as they bend, and the chunk is not culled too soon.
+  const bounds = v === 0 ? { x: 0, y: 0, z: 0, radius: 0 } : { x: (x0 + x1) / 2, y: (y0 + y1) / 2, z: (z0 + z1) / 2, radius: Math.hypot(x1 - x0, y1 - y0, z1 - z0) / 2 + MAX_BEND }
+  return new Geometry({ packed, indices, bounds })
+}
+
+/** `v` (0..1) as an unsigned 16-bit fraction, as the renderer stores a colour. */
+function unorm16(v: number) {
+  return Math.round(Math.min(1, Math.max(0, v)) * 65535)
 }
 
 /**
@@ -798,7 +837,11 @@ export class Grass {
       }
     }
     wanted.sort((a, b) => a.d - b.d)
-    for (const { cx, cz, share } of wanted.slice(0, BUILDS_PER_FRAME)) {
+    const start = performance.now()
+    let built = 0
+    for (const { cx, cz, share } of wanted) {
+      if (built > 0 && performance.now() - start >= BUILD_MS) break
+      built++
       const key = chunkKey(cx, cz)
       const blades = chunkBlades(cx, cz, density.perMetre, share, (bx, bz) => this.growsAt(bx, bz), this.heightAt, this.growth)
       const geometry = bladeGeometry(blades, share <= this.growth.simpleShare, this.growth)
@@ -813,7 +856,7 @@ export class Grass {
       this.root.add(mesh)
       this.chunks.set(key, { mesh, share, stale: false })
     }
-    return wanted.length > BUILDS_PER_FRAME
+    return wanted.length > built
   }
 
   /** Hands the shader this frame's benders and blasts. */

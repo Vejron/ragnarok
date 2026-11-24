@@ -2,7 +2,7 @@
 
 How the client brings a tile of the world in and out around the player, and which thread does what. The rule: the main thread only does what has to happen in step with the frame (input, prediction, colliders, the scene, the GPU upload). Everything else a tile turns into is made by one pure function, `prepareTile`, in one Web Worker, and the arrays are transferred back without copying. Rust compiled to WASM is used where the client must compute exactly what the server does.
 
-On the 1 m dev world, attaching a tile costs the main thread about 0.3 ms to wrap its arrays in meshes (p95 1.1 ms), plus about 1.4 ms for its colliders (see [Costs](#costs)).
+On the 1 m dev world, attaching a tile costs the main thread about 0.3 ms to wrap its arrays in meshes (p95 1.1 ms), plus about 1.4 ms for its colliders (see [Costs](#costs)). On a town of `worlds/test` today, the whole of a tile's frame is at most about 4 ms, with its buildings made solid a few a frame afterwards; [FRAME-PERFORMANCE.md](FRAME-PERFORMANCE.md) has how that is measured and what was taken out of the frame.
 
 ## Threads
 
@@ -60,7 +60,8 @@ sequenceDiagram
   St->>WV: attach(ref, tile)
   WV->>WV: tileGroup: terrain, ribbons, buildings, trees as meshes
   WV->>WV: buildWater · keep the surface and grass rasters
-  WV->>Sim: addTile(bytes): Rust decodes them, builds the colliders
+  WV->>Sim: addTile(bytes): Rust decodes them, builds the ground, trunks, fences
+  Note over WV,Sim: each frame after, buildPending: its buildings, nearest first
   Note over WV,TW: while attached, moving away or nearer
   WV->>TW: remesh(level)
   TW-->>WV: meshed: terrain buffers
@@ -95,9 +96,9 @@ The worker answers with a `PreparedTile`, which `WorldView` keeps in `prepared` 
 
 **Attach** (`WorldView.attachTile`) is the frame's work:
 - **Damage check:** if more buildings came down while the tile was being prepared, the buildings alone are rebuilt here (`buildingBuffers`).
-- **Meshes:** `tileGroup` wraps the terrain, ribbons and building buffers in meshes with shared materials, and adds the trees. `buildWater` does the same for the water.
+- **Meshes:** `tileGroup` wraps the terrain, ribbons and building buffers in meshes with shared materials, and adds the trees. `buildWater` does the same for the water. The worker has packed their vertices in the renderer's layout (`packPrepared`), so the renderer only copies them to the GPU; the water keeps its arrays as well, for its refinement.
 - **Lookups:** `Surfaces.add` and `Grass.addTile` keep the prepared rasters for what the main thread asks about the ground under a point.
-- **Colliders:** `ClientSim.addTile` decodes the tile's bytes again in Rust and builds its Rapier colliders. It stays on the main thread because the predictor steps the simulation with every input and replays it on correction.
+- **Colliders:** `ClientSim.addTile` decodes the tile's bytes again in Rust and builds its ground, trunks, fences and tombstones. It stays on the main thread because the predictor steps the simulation with every input and replays it on correction. Its buildings wait in a queue (`Physics::build_pending`): every frame `WorldView.buildNear` makes solid those within 80 m of the camera, and as many more as about 2 ms allows, nearest first, each with what was done to it meanwhile (cells carved out, gates opened). Working out a town tile's every look and collider at once held its frame up by as much as 12 ms.
 - **Damage first:** buildings that fell, or were hurt, while the tile was away are taken out at once.
 
 **Level of detail.** The terrain is simplified to one of three error levels (`TERRAIN_LOD_ERRORS`, 4, 15 and 50 cm) by distance: up to 150 m, up to 320 m, beyond, with 20 m of hysteresis. When the viewer has moved 8 m, `WorldView.focus` asks the worker to `remesh` tiles whose level changed, from the ground it kept. Ribbons and water are draped on the true ground and are not remeshed.
@@ -126,6 +127,8 @@ flowchart LR
 - **Water** (`render/watermesh.ts`): the lake and river surface, and stream ribbons.
 - **Buildings** (`render/buildingmesh.ts`): each building's faces in one WASM call straight from its packed cells, written into arrays of their final size with the bounds as they go, and each building's vertex range.
 - **Rasters:** `rasterSurface` (`sim/surface.ts`) and `grassMask` (`render/grassmask.ts`), which reuses the same raster instead of working it out again.
+- **For the main thread's layers:** the shore (`shoreOf`), the stony ground and bare rock (`stonesPixels`, `render/groundmaps.ts`), the fences, walls and power lines (`lineBuffers`), and where the gates are (`gatesOfTile`), so `tileGroup`, `Stones` and `GateView` do not work them out again.
+- **Packing** (tile worker only): the terrain, ribbons and buildings in the renderer's vertex layout with their bounds (`packPrepared`, `render/packing.ts`).
 
 None of these modules import the engine or touch the DOM. `render/world.ts` turns the result into meshes (`tileGroup`, `ribbonMeshes`, `mergedMesh`), and `render/water.ts` does the water (`buildWater`).
 
@@ -155,7 +158,7 @@ flowchart LR
   C --> COL
 ```
 
-All damage is handled on the main thread, from the client's carve state:
+All damage is handled on the main thread, from the client's carve state, but for what the look worker draws (FRAME-PERFORMANCE.md): a hurt building's redraw, the sections that fall from it (cut out with the redraw that shows their hole), and its rubble heap:
 - **The carve state:** `goneBuildings`, `BuildingDamage`, and `Shell` in `sim/carve.ts`, which unpacks a building's cells only once something asks after single cells.
 - **What the worker knows:** nothing about damage. It only builds a tile as it was when it was prepared.
 - **Taking a building out:** when a building's first dent hands it to the shards, the merged mesh collapses that building's vertices onto one point and re-sends only that range. A full rebuild happens only if a building comes back.
@@ -169,7 +172,7 @@ The 1 m dev world (`client/public/dev`, 121 tiles of 256 m). Times are in ms per
 | `tileGroup` + `buildWater` | main (Chrome) | 0.30 / 1.10 / 4.3 | 22.4 / 38.2 / 52.8, everything built on the main thread |
 | Posting `prepare` | main (Chrome) | 0.10 / 0.20 / 0.30 | — |
 | Hash + decode | main (Chrome) | 0.40 / 0.60 / 0.90 | about 4.5 median (Node) |
-| `ClientSim.addTile` | main, WASM (Node) | 1.41 / 3.14 / 5.21 | same |
+| `ClientSim.addTile` | main, WASM (Node) | 1.41 / 3.14 / 5.21 | same; its buildings are now made a few a frame after it |
 | A building falling | main (Node) | 0.03 / 0.09 / 0.16 | 0.29 / 7.43 / 11.87 |
 | `prepareTile`, the whole tile | worker (Node) | 26.2 / 35.0 / 61.0 | — |
 | of which roads + rails | worker (Node) | 5.7 / 13.2 / 20.4 | 24.7 / 55.2 / 101.4, on the main thread |
@@ -217,7 +220,7 @@ BENCH=1 npx vitest run tiles.bench --silent=false
 
 ## Decided against
 
-- **Moving `ClientSim` into a worker.** Every prediction step would be a message away: a frame of input latency and an asynchronous reconcile. `addTile` is 1.4 ms median, which doesn't justify that.
+- **Moving `ClientSim` into a worker.** Every prediction step would be a message away: a frame of input latency and an asynchronous reconcile. A tile's buildings are made solid a few a frame instead (`build_pending`).
 - **A worker per kind of mesh** (as it was: a terrain worker and a buildings worker). It ran a tile's buildings alongside its terrain, but cost two protocols, two prepared maps and a fallback per mesh. The tile worker is one of each. It adds a few milliseconds of latency to preparing a tile, but no frame time.
 - **A pool of workers that each prepare whole tiles.** Draping needs the neighbours' ground in one place.
 - **Shared WASM memory across threads.** It needs cross-origin isolation headers and WASM threads. That is far more than this calls for.

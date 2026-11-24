@@ -953,7 +953,13 @@ struct Picture {
   hit: vec3f,
 }
 
-fn picture(cell: vec2f, weight: f32, q: vec3f, sight: vec3f, fit: vec4f, lod: f32) -> Picture {
+/**
+ * Picture \`cell\` as seen along \`sight\` from \`q\`, weighted by \`weight\` and its coverage there. \`whole\`
+ * reads it wherever the line of sight falls and weighs it by \`weight\` alone: a texel off the tree holds
+ * the colour, normal and depth of the nearest on it, so a pixel whose middle misses the tree but some of
+ * whose samples are the tree's still finds the tree's surface (\`blend\`).
+ */
+fn picture(cell: vec2f, weight: f32, q: vec3f, sight: vec3f, fit: vec4f, lod: f32, whole: bool) -> Picture {
   var out: Picture;
   let v = frameView(cell);
   var right = vec3f(1.0, 0.0, 0.0);
@@ -968,7 +974,7 @@ fn picture(cell: vec2f, weight: f32, q: vec3f, sight: vec3f, fit: vec4f, lod: f3
   // The picture is stretched over the outline, from there, of the cylinder that holds the tree (\`frameExtent\`).
   let span = vec2f(fit.z, fit.z * v.y + fit.w * length(v.xz)) * MARGIN;
   let local = vec2f(dot(onPlane, right), dot(onPlane, up)) / span;
-  if (weight <= 0.0 || abs(local.x) > 1.0 || abs(local.y) > 1.0) {
+  if (weight <= 0.0 || (!whole && (abs(local.x) > 1.0 || abs(local.y) > 1.0))) {
     return out;
   }
   let inside = clamp(vec2f(local.x, -local.y) * 0.5 + 0.5, vec2f(0.5 / FRAME_PX), vec2f(1.0 - 0.5 / FRAME_PX));
@@ -979,10 +985,10 @@ fn picture(cell: vec2f, weight: f32, q: vec3f, sight: vec3f, fit: vec4f, lod: f3
   let uv = (tileAt + cell + inside) * (FRAME_PX / ATLAS_PX);
   let albedo = textureSampleLevel(impostorAlbedo, materialSampler, uv, lod);
   // Well off the tree: nothing more to read. Most of the quad is.
-  if (albedo.a <= 0.0) {
+  if (albedo.a <= 0.0 && !whole) {
     return out;
   }
-  let share = weight * albedo.a;
+  let share = select(weight * albedo.a, weight, whole);
   // The depth pre-pass needs only the coverage.
   if (PREPASS == 1u) {
     out.albedo = vec4f(0.0, 0.0, 0.0, share);
@@ -992,6 +998,32 @@ fn picture(cell: vec2f, weight: f32, q: vec3f, sight: vec3f, fit: vec4f, lod: f3
   out.albedo = vec4f(albedo.rgb * share, share);
   out.normal = (nd.rgb * 2.0 - 1.0) * share;
   out.hit = (onPlane + v * ((nd.a * 2.0 - 1.0) * fit.x)) * share;
+  return out;
+}
+
+/**
+ * The three pictures around the direction to the camera (\`g\`, where it falls on their grid), each
+ * weighted by how near the direction is to it, added up: the albedo's alpha is the coverage.
+ */
+fn blend(g: vec2f, q: vec3f, sight: vec3f, fit: vec4f, lod: f32, whole: bool) -> Picture {
+  let cell = clamp(floor(g), vec2f(0.0), vec2f(FRAMES - 2.0));
+  let f = g - cell;
+  var a: Picture;
+  var b: Picture;
+  var c: Picture;
+  if (f.x + f.y < 1.0) {
+    a = picture(cell, 1.0 - f.x - f.y, q, sight, fit, lod, whole);
+    b = picture(cell + vec2f(1.0, 0.0), f.x, q, sight, fit, lod, whole);
+    c = picture(cell + vec2f(0.0, 1.0), f.y, q, sight, fit, lod, whole);
+  } else {
+    a = picture(cell + vec2f(1.0, 1.0), f.x + f.y - 1.0, q, sight, fit, lod, whole);
+    b = picture(cell + vec2f(0.0, 1.0), 1.0 - f.x, q, sight, fit, lod, whole);
+    c = picture(cell + vec2f(1.0, 0.0), 1.0 - f.y, q, sight, fit, lod, whole);
+  }
+  var out: Picture;
+  out.albedo = a.albedo + b.albedo + c.albedo;
+  out.normal = a.normal + b.normal + c.normal;
+  out.hit = a.hit + b.hit + c.hit;
   return out;
 }
 
@@ -1028,21 +1060,8 @@ fn surface(given: Surface) -> vec4f {
     let sight = normalize(worldToTree(frame.cameraPos.xyz - given.world, e));
     // The three pictures around the direction to the camera: where it falls on their grid.
     let g = s.extra[1].xy;
-    let cell = clamp(floor(g), vec2f(0.0), vec2f(FRAMES - 2.0));
-    let f = g - cell;
-    var a: Picture;
-    var b: Picture;
-    var c: Picture;
-    if (f.x + f.y < 1.0) {
-      a = picture(cell, 1.0 - f.x - f.y, q, sight, s.custom, lod);
-      b = picture(cell + vec2f(1.0, 0.0), f.x, q, sight, s.custom, lod);
-      c = picture(cell + vec2f(0.0, 1.0), f.y, q, sight, s.custom, lod);
-    } else {
-      a = picture(cell + vec2f(1.0, 1.0), f.x + f.y - 1.0, q, sight, s.custom, lod);
-      b = picture(cell + vec2f(0.0, 1.0), 1.0 - f.x, q, sight, s.custom, lod);
-      c = picture(cell + vec2f(1.0, 0.0), 1.0 - f.y, q, sight, s.custom, lod);
-    }
-    let cover = a.albedo.a + b.albedo.a + c.albedo.a;
+    var p = blend(g, q, sight, s.custom, lod, false);
+    let cover = p.albedo.a;
     // The coverage is a distance to the silhouette, a half on it and \`SPREAD\` texels from none to whole:
     // how much of the pixel is inside the outline, and so which of its samples are the tree's.
     var mine = theirs;
@@ -1066,10 +1085,20 @@ fn surface(given: Surface) -> vec4f {
     if (PREPASS == 1u) {
       return vec4f(0.0);
     }
-    let n = (a.normal + b.normal + c.normal) / max(cover, 1e-4);
-    s.normal = normalize(treeToWorld(n / vec3f(e.w * e.w, e.z * e.z, e.w * e.w), e));
-    s.world = given.world + treeToWorld((a.hit + b.hit + c.hit) / max(cover, 1e-4) - q, e);
-    s.color = vec4f(s.color.rgb * (a.albedo.rgb + b.albedo.rgb + c.albedo.rgb) / max(cover, 1e-4), s.color.a);
+    // A small far tree spans many texels of its picture in a pixel, so the outline's distance can give it
+    // samples of a pixel whose middle is off it, where every picture's coverage is nothing. Lit from
+    // nothing, its normal would be no direction at all and its colour not a number (black on NVIDIA's
+    // GPUs, a speck along every far treeline and blots in the water's mirror): it takes the nearest of the
+    // tree instead.
+    if (cover <= 0.0) {
+      p = blend(g, q, sight, s.custom, lod, true);
+    }
+    let weight = max(p.albedo.a, 1e-4);
+    let n = treeToWorld(p.normal / weight / vec3f(e.w * e.w, e.z * e.z, e.w * e.w), e);
+    // Normals that cancel out face the camera rather than nowhere.
+    s.normal = select(normalize(frame.cameraPos.xyz - given.world), normalize(n), dot(n, n) > 1e-12);
+    s.world = given.world + treeToWorld(p.hit / weight - q, e);
+    s.color = vec4f(s.color.rgb * p.albedo.rgb / weight, s.color.a);
   } else {
     if (!keep) {
       let mine = ~theirs & ((1u << SAMPLES) - 1u);

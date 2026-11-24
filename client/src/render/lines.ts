@@ -1,4 +1,4 @@
-import { Color, Geometry, Mesh, ShaderMaterial, boxGeometry, cylinderGeometry } from '@ragnarok/engine'
+import { Color, Geometry, Mesh, ShaderMaterial, boxGeometry, cylinderGeometry, type GeometryData } from '@ragnarok/engine'
 import { heightIn, type TileGround } from '@/sim/terrain'
 import { LINE_FENCE_HIGH, LINE_GUARDRAIL, LINE_POWER, LINE_POWER_MAJOR, lineKindDef, linePieceIndex, type Line, type Point2 } from '@/world'
 import { winter } from './season'
@@ -346,13 +346,55 @@ function groundAt(ground: TileGround | null, x: number, z: number, base: number)
   return base > under + ON_DECK ? base : under
 }
 
+/** A tile's fences, walls and power lines as arrays (`lineBuffers`): its posts, poles and walls, its wires, its netting; each null where there is none. */
+export interface LineBuffers {
+  solid: GeometryData | null
+  wire: GeometryData | null
+  net: GeometryData | null
+}
+
 /**
  * The meshes of a tile's fences, walls and power lines: one of posts, poles and walls, one of wires
  * and one of netting, each only if there is any. The materials are shared by every tile. The pieces
- * in `gone` (`linePieceIndex`) are broken and not drawn.
+ * in `gone` (`linePieceIndex`) are broken and not drawn. `made` is their arrays when the tile worker
+ * made them (`lineBuffers`); without, they are made here.
  */
-export function buildLines(lines: readonly Line[] | undefined, ground: TileGround | null, gone: ReadonlySet<number> = WHOLE): Mesh[] {
-  if (!lines || lines.length === 0) return []
+export function buildLines(lines: readonly Line[] | undefined, ground: TileGround | null, gone: ReadonlySet<number> = WHOLE, made?: LineBuffers | null): Mesh[] {
+  const buffers = made !== undefined ? made : lineBuffers(lines, ground, gone)
+  if (!buffers) return []
+  const { solid, wire, net: netting } = lineMaterials()
+  const meshes: Mesh[] = []
+  if (buffers.solid) {
+    const mesh = new Mesh(new Geometry(buffers.solid), solid)
+    mesh.castShadow = true
+    mesh.receiveShadow = true
+    meshes.push(mesh)
+  }
+  if (buffers.wire) meshes.push(new Mesh(new Geometry(buffers.wire), wire))
+  if (buffers.net) meshes.push(new Mesh(new Geometry(buffers.net), netting))
+  // So that the tile's lines can be drawn again without the pieces that break (`rebuildLines`).
+  for (const mesh of meshes) mesh.userData.lines = true
+  return meshes
+}
+
+/** The arrays of `geometry`, and its bounds, to make it again from (on another thread). */
+function dataOf(geometry: Geometry | null): GeometryData | null {
+  if (!geometry) return null
+  const { positions, normals, uvs, colors, custom, indices, bounds } = geometry
+  return { positions, bounds, ...(normals ? { normals } : {}), ...(uvs ? { uvs } : {}), ...(colors ? { colors } : {}), ...(custom ? { custom } : {}), ...(indices ? { indices } : {}) }
+}
+
+/** The arrays of `buffers`, so they move to the other thread instead of being copied. */
+export function lineTransferables(buffers: LineBuffers): ArrayBuffer[] {
+  return [buffers.solid, buffers.wire, buffers.net].flatMap((data) => (data ? [data.positions, data.normals, data.uvs, data.colors, data.custom, data.indices] : [])).flatMap((array) => (array ? [array.buffer as ArrayBuffer] : []))
+}
+
+/**
+ * A tile's fences, walls and power lines as arrays, as `buildLines` draws them: pure, so the tile
+ * worker makes them. Null when it has none.
+ */
+export function lineBuffers(lines: readonly Line[] | undefined, ground: TileGround | null, gone: ReadonlySet<number> = WHOLE): LineBuffers | null {
+  if (!lines || lines.length === 0) return null
   const parts: Geometry[] = []
   const wires = new Wires()
   const net = new Netting()
@@ -401,19 +443,5 @@ export function buildLines(lines: readonly Line[] | undefined, ground: TileGroun
       }
     }
   })
-  const { solid, wire, net: netting } = lineMaterials()
-  const meshes: Mesh[] = []
-  if (parts.length > 0) {
-    const mesh = new Mesh(Geometry.merge(parts), solid)
-    mesh.castShadow = true
-    mesh.receiveShadow = true
-    meshes.push(mesh)
-  }
-  const wireGeometry = wires.geometry()
-  if (wireGeometry) meshes.push(new Mesh(wireGeometry, wire))
-  const netGeometry = net.geometry()
-  if (netGeometry) meshes.push(new Mesh(netGeometry, netting))
-  // So that the tile's lines can be drawn again without the pieces that break (`rebuildLines`).
-  for (const mesh of meshes) mesh.userData.lines = true
-  return meshes
+  return { solid: parts.length > 0 ? dataOf(Geometry.merge(parts)) : null, wire: dataOf(wires.geometry()), net: dataOf(net.geometry()) }
 }

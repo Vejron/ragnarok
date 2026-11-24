@@ -3,7 +3,8 @@ import init from '@/sim/wasm/sim'
 import { Terrain } from '@/sim/terrain'
 import { coverPixels, paintCover, reliefPixels, terrainBuffers, TERRAIN_LOD_ERRORS, type Pixels } from './terrainmesh'
 import { ribbonsOf } from './groundmesh'
-import { prepareTile, preparedTransferables, terrainTransferables, type CoverPainter, type TileParts } from './tileprep'
+import { packPrepared, prepareTile, preparedTransferables, terrainTransferables, type CoverPainter, type TileParts } from './tileprep'
+import { pack, packableTransferables } from './packing'
 import { setWinter } from './season'
 import { COVER_ASPHALT } from '@/world'
 import type { TileReply, TileRequest } from './tileworker'
@@ -75,11 +76,12 @@ self.onmessage = async (event: MessageEvent<TileRequest>) => {
       return
     }
     ground.heights = heights
-    const buffers = terrainBuffers(ground, errorOf(level))
+    const buffers = pack(terrainBuffers(ground, errorOf(level)))
     kept.relief = reliefPixels(ground, terrain, kept.detail)
     const relief = copy(kept.relief)
     const ribbons = ribbonsOf(tile, ground, terrain)
-    const transfer = [...terrainTransferables(buffers), relief.data.buffer as ArrayBuffer, ...ribbons.flatMap(({ buffers }) => [buffers.positions, buffers.normals, buffers.colors, buffers.indices].map((array) => array.buffer as ArrayBuffer))]
+    for (const ribbon of ribbons) pack(ribbon.buffers)
+    const transfer = [...terrainTransferables(buffers), relief.data.buffer as ArrayBuffer, ...ribbons.flatMap(({ buffers }) => packableTransferables(buffers))]
     reply({ kind: 'regrounded', id, buffers, relief, ribbons }, transfer)
     // The tiles beside it see its new heights along the seam.
     for (const [dc, dr] of NEIGHBOURS) {
@@ -96,7 +98,7 @@ self.onmessage = async (event: MessageEvent<TileRequest>) => {
       reply({ kind: 'failed', id: request.id, message: 'tile not prepared' })
       return
     }
-    const buffers = terrainBuffers(ground, errorOf(request.level))
+    const buffers = pack(terrainBuffers(ground, errorOf(request.level)))
     reply({ kind: 'meshed', id: request.id, buffers }, terrainTransferables(buffers))
   } else if (terrain) {
     const { id, col, row, input } = request
@@ -109,6 +111,8 @@ self.onmessage = async (event: MessageEvent<TileRequest>) => {
         reliefs.set(key(col, row), { relief: prepared.terrain.relief, detail: input.tile.detail })
         prepared.terrain.relief = copy(prepared.terrain.relief)
       }
+      // Packed here, so the frame that draws it only copies it to the GPU.
+      packPrepared(prepared)
       reply({ kind: 'prepared', id, prepared }, preparedTransferables(prepared))
       if (!input.ground) return
       // The tiles already here were shaded without this one beside them: close the seams.

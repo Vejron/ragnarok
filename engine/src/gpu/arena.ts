@@ -64,6 +64,8 @@ export class GeometryArena {
   indexBuffer: GPUBuffer
   /** Bumped when the buffers are replaced by growth, so recorded bundles know to re-record. */
   generation = 0
+  /** Bytes of vertices and indices uploaded since the arena was made: the renderer reports each frame's share. */
+  uploaded = 0
   private readonly vertices = new RangeAllocator(INITIAL_VERTICES)
   private readonly indices = new RangeAllocator(INITIAL_INDICES)
   /** Geometries holding a slot here, so disposed ones are freed even when nothing draws them again. */
@@ -135,6 +137,8 @@ export class GeometryArena {
     }
     slot.version = geometry.version
     if (!geometry.released) this.write(geometry, slot)
+    // Packed alongside arrays it keeps: the packed copy has done its work.
+    geometry.dropStalePacked()
     if (geometry.uploadOnce) geometry.release()
     return slot
   }
@@ -204,7 +208,8 @@ export class GeometryArena {
   }
 
   /**
-   * Finds room for an upload of `bytes`, zeroed, and returns where in `stagedRange` it starts: the
+   * Finds room for an upload of `bytes`, zeroed unless `zero` is false (it is all to be written over),
+   * and returns where in `stagedRange` it starts: the
    * scratch array for a small one, the staging ring for a bigger one, and a mapped buffer of its own
    * for one too big for the ring. `send` then takes it to the arena.
    *
@@ -212,9 +217,10 @@ export class GeometryArena {
    * `flush`, small uploads go through the ring as well: one sent later would otherwise land first, and
    * a waiting copy to the same place (a slot freed and given again) would write over it.
    */
-  private stage(bytes: number): number {
+  private stage(bytes: number, zero = true): number {
+    this.uploaded += bytes
     if (bytes <= SMALL_UPLOAD_BYTES && !this.encoder) {
-      new Uint8Array(this.scratch, 0, bytes).fill(0)
+      if (zero) new Uint8Array(this.scratch, 0, bytes).fill(0)
       this.stagedIn = null
       this.stagedRange = this.scratch
       return 0
@@ -240,7 +246,7 @@ export class GeometryArena {
     }
     const at = this.cursor
     this.cursor += bytes
-    new Uint8Array(this.currentRange!, at, bytes).fill(0)
+    if (zero) new Uint8Array(this.currentRange!, at, bytes).fill(0)
     this.stagedIn = this.current
     this.stagedRange = this.currentRange!
     return at
@@ -269,58 +275,16 @@ export class GeometryArena {
     this.send(this.vertexBuffer, (slot.baseVertex + first) * VERTEX_STRIDE, this.stage(bytes), bytes)
   }
 
-  /** Interleaves and uploads vertices `first` to `first + count - 1`. */
+  /** Interleaves (or, packed already, copies) and uploads vertices `first` to `first + count - 1`. */
   private writeVertices(geometry: Geometry, slot: GeometrySlot, first: number, count: number) {
     first = Math.max(0, first)
     count = Math.min(count, slot.vertexCount - first)
     if (count <= 0) return
     const bytes = count * VERTEX_STRIDE
-    const at = this.stage(bytes)
-    const f32 = new Float32Array(this.stagedRange, at, count * 16)
-    const u16 = new Uint16Array(this.stagedRange, at, count * 32)
-    const u8 = new Uint8Array(this.stagedRange, at, bytes)
-    const { positions, normals, uvs, colors, custom, joints, weights } = geometry
-    const colorSize = colors ? colors.length / slot.vertexCount : 0
-    for (let k = 0; k < count; k++) {
-      const i = first + k
-      const f = k * 16
-      f32[f] = positions[i * 3]!
-      f32[f + 1] = positions[i * 3 + 1]!
-      f32[f + 2] = positions[i * 3 + 2]!
-      if (normals) {
-        f32[f + 3] = normals[i * 3]!
-        f32[f + 4] = normals[i * 3 + 1]!
-        f32[f + 5] = normals[i * 3 + 2]!
-      } else {
-        f32[f + 4] = 1
-      }
-      if (uvs) {
-        f32[f + 6] = uvs[i * 2]!
-        f32[f + 7] = uvs[i * 2 + 1]!
-      }
-      if (custom) {
-        f32[f + 10] = custom[i * 4]!
-        f32[f + 11] = custom[i * 4 + 1]!
-        f32[f + 12] = custom[i * 4 + 2]!
-        f32[f + 13] = custom[i * 4 + 3]!
-      }
-      if (joints && weights) {
-        const b = k * 64 + 56
-        for (let j = 0; j < 4; j++) {
-          u8[b + j] = joints[i * 4 + j]!
-          u8[b + 4 + j] = Math.round(Math.min(1, Math.max(0, weights[i * 4 + j]!)) * 255)
-        }
-      }
-      const c = k * 32 + 16
-      if (colors) {
-        u16[c] = unorm16(colors[i * colorSize]!)
-        u16[c + 1] = unorm16(colors[i * colorSize + 1]!)
-        u16[c + 2] = unorm16(colors[i * colorSize + 2]!)
-        u16[c + 3] = colorSize === 4 ? unorm16(colors[i * 4 + 3]!) : 65535
-      } else {
-        u16[c] = u16[c + 1] = u16[c + 2] = u16[c + 3] = 65535
-      }
-    }
+    const packed = geometry.packed
+    const at = this.stage(bytes, !packed)
+    if (packed) new Uint8Array(this.stagedRange, at, bytes).set(new Uint8Array(packed, first * VERTEX_STRIDE, bytes))
+    else interleave(geometry, slot.vertexCount, first, count, this.stagedRange, at)
     this.send(this.vertexBuffer, (slot.baseVertex + first) * VERTEX_STRIDE, at, bytes)
   }
 
@@ -386,4 +350,81 @@ function unorm16(v: number) {
 /** The capacity a buffer of `capacity` grows to, to take `count` more: half as much again, `most` more at most, and `count` more at least. */
 function grown(capacity: number, count: number, most: number): number {
   return capacity + Math.max(count, Math.min(capacity >> 1, most))
+}
+
+/** A geometry's vertex arrays, as `interleave` reads them (`GeometryData`'s). */
+export interface VertexArrays {
+  positions: Float32Array
+  normals?: Float32Array | undefined
+  uvs?: Float32Array | undefined
+  colors?: Float32Array | undefined
+  custom?: Float32Array | undefined
+  joints?: Uint8Array | Uint16Array | undefined
+  weights?: Float32Array | undefined
+}
+
+/**
+ * `arrays`' vertices in the arena's layout (`VERTEX_LAYOUT`), `VERTEX_STRIDE` bytes each: what the
+ * arena would make of them when it uploads them, made beforehand (in a worker, say) so that it only
+ * copies them (`GeometryData.packed`).
+ */
+export function packVertices(arrays: VertexArrays): ArrayBuffer {
+  const count = arrays.positions.length / 3
+  const out = new ArrayBuffer(count * VERTEX_STRIDE)
+  interleave(arrays, count, 0, count, out, 0)
+  return out
+}
+
+/**
+ * Writes vertices `first` to `first + count - 1` of `arrays` (which hold `vertexCount`) into `target`
+ * from byte `at`, in the arena's layout. `target` must be zeroed there: what an array leaves out stays
+ * its default.
+ */
+function interleave(arrays: VertexArrays, vertexCount: number, first: number, count: number, target: ArrayBuffer, at: number) {
+  const bytes = count * VERTEX_STRIDE
+  const f32 = new Float32Array(target, at, count * 16)
+  const u16 = new Uint16Array(target, at, count * 32)
+  const u8 = new Uint8Array(target, at, bytes)
+  const { positions, normals, uvs, colors, custom, joints, weights } = arrays
+  const colorSize = colors ? colors.length / vertexCount : 0
+  for (let k = 0; k < count; k++) {
+    const i = first + k
+    const f = k * 16
+    f32[f] = positions[i * 3]!
+    f32[f + 1] = positions[i * 3 + 1]!
+    f32[f + 2] = positions[i * 3 + 2]!
+    if (normals) {
+      f32[f + 3] = normals[i * 3]!
+      f32[f + 4] = normals[i * 3 + 1]!
+      f32[f + 5] = normals[i * 3 + 2]!
+    } else {
+      f32[f + 4] = 1
+    }
+    if (uvs) {
+      f32[f + 6] = uvs[i * 2]!
+      f32[f + 7] = uvs[i * 2 + 1]!
+    }
+    if (custom) {
+      f32[f + 10] = custom[i * 4]!
+      f32[f + 11] = custom[i * 4 + 1]!
+      f32[f + 12] = custom[i * 4 + 2]!
+      f32[f + 13] = custom[i * 4 + 3]!
+    }
+    if (joints && weights) {
+      const b = k * 64 + 56
+      for (let j = 0; j < 4; j++) {
+        u8[b + j] = joints[i * 4 + j]!
+        u8[b + 4 + j] = Math.round(Math.min(1, Math.max(0, weights[i * 4 + j]!)) * 255)
+      }
+    }
+    const c = k * 32 + 16
+    if (colors) {
+      u16[c] = unorm16(colors[i * colorSize]!)
+      u16[c + 1] = unorm16(colors[i * colorSize + 1]!)
+      u16[c + 2] = unorm16(colors[i * colorSize + 2]!)
+      u16[c + 3] = colorSize === 4 ? unorm16(colors[i * 4 + 3]!) : 65535
+    } else {
+      u16[c] = u16[c + 1] = u16[c + 2] = u16[c + 3] = 65535
+    }
+  }
 }

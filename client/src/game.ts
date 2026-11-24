@@ -76,6 +76,7 @@ import { AIM_DISTANCE_SCALE, DEFAULT_FOV, ON_FOOT_DISTANCE, ON_FOOT_HEIGHT, ON_F
 import { BallCam } from './render/ballcam'
 import { ChaseCam } from './render/chase'
 import { PerfReadout } from './render/perf'
+import { clock, lap } from './spans'
 import { Screenshots, type TiledBuilding } from './screenshot'
 import { LookWorker } from './render/lookworker'
 import { encodeHands, encodePhone, encodeRtc, KIND_AMV, KIND_CB90, KIND_MISSILE, KIND_PBV, KIND_STRF, KIND_STRV, KIND_SUBMARINE, KIND_TANK, LIMB_ALL, LIMB_ARMS, LIMB_LEGS, THRUST_LOW_ROTOR, TURRET_ALT, TURRET_EMPTY } from './net/codec'
@@ -712,6 +713,8 @@ export class Game {
     const [x, z] = world.spawns[0] ?? [0, 0]
     this.view.focus(x, z)
     await this.tiles.prime(x, z)
+    // Nothing is drawn yet: every building of the first tiles is made solid now, not a few a frame.
+    this.view.buildNear({ x, z }, true)
     this.predictor = new Predictor(motor.stepper, { position: [x, this.terrain.heightAt(x, z) + STANDING_Y, z], yaw: 0, vy: 0, grounded: true, knock: [0, 0], ride: 0, prone: false, chute: false, spent: 0, winded: false, lost: 0, down: 0, skis: false, skiStrain: 0, swimming: false, ghost: false })
     this.predictor.speedScale = (input) => aimSpeedScale(this.player.slot(input.slot).item, input.buttons) * (this.player.carrying ? BACKPACK_SPEED : 1)
     this.predictor.armed = (input) => fillsHands(this.player.slot(input.slot).item)
@@ -1245,6 +1248,8 @@ export class Game {
       const [x, , z] = this.predictor.state.position
       this.tiles.reload()
       await this.tiles.prime(x, z)
+      // The game is holding still meanwhile: every building is made solid now, not a few a frame.
+      this.view.buildNear({ x, z }, true)
     } finally {
       this.redrawing = false
       this.lastFrame = performance.now()
@@ -1290,10 +1295,14 @@ export class Game {
       setWaterTime(this.waveClock)
     }
     const eye = this.scene.camera.position
+    let t = clock()
     this.waves.update(dt, eye)
     this.waterRefine.update(eye, this.surroundings.mirrored?.y ?? null)
+    t = lap('frame.water', t)
     this.view.update(dt, this.effects, this.cameraAt.set(eye.x, eye.y, eye.z), this.fxWorld)
+    t = lap('frame.view', t)
     const ticks = this.runTicks(dt)
+    t = lap('frame.ticks', t)
     const renderTick = this.clock.tickAt(now) - this.clock.interpDelay
     this.followClock(renderTick)
     this.liftView?.update(this.liftTick(now), eye, this.scene.scene.fog?.far ?? Infinity)
@@ -1311,9 +1320,11 @@ export class Game {
     const moment = this.momentOf(now, dt, renderTick, seat, view)
     this.poseLocal(moment)
     this.aimCamera(moment)
+    t = lap('frame.entities', t)
     // Streaming follows what the camera is on: the car when seated, else the soldier.
     const { ride, position } = moment
     this.tiles?.update(ride ? ride.x : position[0], ride ? ride.z : position[2])
+    t = lap('frame.tiles', t)
     this.events.play(renderTick)
     this.flying.run(sampled, entityFrame)
     this.events.drawBullets(renderTick)
@@ -1321,6 +1332,7 @@ export class Game {
     this.drawAims(moment)
     this.updateEffects(dt)
     this.hearSurroundings(dt, renderTick, view, moment.seated, position)
+    t = lap('frame.effects', t)
 
     const cars = this.vehicles.placed
     const standing = !moment.seated && this.player.alive
@@ -1334,10 +1346,13 @@ export class Game {
       const at = this.scene.camera.position
       this.bodies.knockdowns(this.ragdolls, sampled, { id: this.localId, state: this.predictor?.state, at: this.localAt, seated: moment.seated, dead: !this.player.alive }, [at.x, at.y, at.z], dt)
     }
+    t = lap('frame.people', t)
     this.surroundings.bendGrass(standing ? position : null, this.soldiers.nearby, cars)
+    t = lap('frame.grass', t)
     this.stones?.update(this.scene.camera.position.x, this.scene.camera.position.z)
     this.forestFloor?.update(this.scene.camera.position.x, this.scene.camera.position.z)
     this.gardens?.update(this.scene.camera.position.x, this.scene.camera.position.z)
+    t = lap('frame.layers', t)
     const nearby = [...this.soldiers.nearby, ...this.riders.seated, ...this.liftRiders.seated]
     this.avatars.sweep((key) => this.surroundings.dry(key))
     this.zombieVoices.sweep()
@@ -1348,6 +1363,7 @@ export class Game {
     const stats = this.report(moment)
     this.holdPhone(stats, moment)
     this.drawHud(stats, now)
+    lap('frame.hud', t)
     this.perf.beforeRender()
     this.scene.render()
     this.screenshots.afterRender()

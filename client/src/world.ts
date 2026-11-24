@@ -1,5 +1,6 @@
 import { decode } from '@msgpack/msgpack'
 import tables from './sim/tables.generated.json'
+import { span } from './spans'
 
 /** Mirrors `crates/shared/src/world.rs`. Coordinates are metres: +X east, +Z south, +Y up. */
 
@@ -804,6 +805,6 @@ export async function fetchTile(ref: TileRef, base = WORLD_BASE): Promise<TileDa
   const response = await fetch(`${url}?h=${(ref.hash >>> 0).toString(16)}`)
   if (!response.ok) throw new Error(`${url}: ${response.status}`)
   const bytes = new Uint8Array(await response.arrayBuffer())
-  if (worldHash(bytes) !== ref.hash) throw new Error(`${url} does not match the manifest; reload`)
-  return decodeTile(bytes)
+  if (span('tile.hash', () => worldHash(bytes)) !== ref.hash) throw new Error(`${url} does not match the manifest; reload`)
+  return span('tile.decode', () => decodeTile(bytes))
 }

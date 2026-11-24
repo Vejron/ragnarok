@@ -1,10 +1,10 @@
 import { Geometry, Mesh, type Group } from '@ragnarok/engine'
 import { BUILDING_BARN, type TileData } from '@/world'
 import { shellOf } from '@/sim/carve'
-import { insideFor } from '@/sim/interior'
 import { Surface } from './buildingmesh'
 import { openingStands } from './lookfracture'
-import { isGate, openingsFor, type Opening } from './windows'
+import type { Opening } from './windows'
+import { gatesOfTile, type GateSpot } from './gatespots'
 import { buildingMaterial } from './world'
 
 /*
@@ -46,6 +46,8 @@ interface Leaf {
 interface LoadedTile {
   tile: TileData
   leaves: Leaf[]
+  /** Each building's gates, by its number: their numbers among its openings. */
+  gates: Map<number, number[]>
 }
 
 /** The width and height of opening `o`, metres, and the unit along its wall from its first corner. */
@@ -88,30 +90,31 @@ export class GateView {
 
   /**
    * Tile `key` is drawn in `group` now: its gates are hung, open or shut as the server last said, and
-   * not at all where the wall round one is gone (`carved`).
+   * not at all where the wall round one is gone (`carved`). `spots` are where its gates are, as the
+   * tile worker found them (`gatesOfTile`); without them they are found here.
    */
-  attach(key: number, tile: TileData, group: Group, carved: ReadonlyMap<number, ReadonlySet<number>>) {
+  attach(key: number, tile: TileData, group: Group, carved: ReadonlyMap<number, ReadonlySet<number>>, spots: readonly GateSpot[] = gatesOfTile(tile)) {
     const leaves: Leaf[] = []
-    tile.buildings.forEach((building, index) => {
-      if (!building.look || !tile.look) return
-      for (const opening of this.gatesOf(tile, index)) {
-        const o = openingsFor(tile.look, building.look)[opening]!
-        const slides = building.kind === BUILDING_BARN
-        const { width, height, ux, uz } = frame(o)
-        const mesh = new Mesh(leafGeometry(width, height + OVER + 0.1, slides ? LAP : 0, slides ? SLIDE_RGB : ROLL_RGB, slides ? Surface.Upright : Surface.Lap), buildingMaterial)
-        mesh.castShadow = true
-        mesh.receiveShadow = true
-        mesh.userData.gate = true
-        // Its own z out from the wall, and its x back along it.
-        mesh.rotation.set(0, Math.atan2(uz, -ux), 0)
-        const at = this.isOpen(key, index, opening) ? 1 : 0
-        const leaf: Leaf = { mesh, index, opening, o, slides, at, to: at }
-        this.place(leaf)
-        group.add(mesh)
-        leaves.push(leaf)
-      }
-    })
-    this.loaded.set(key, { tile, leaves })
+    const gates = new Map<number, number[]>()
+    for (const { index, opening, o } of spots) {
+      const building = tile.buildings[index]
+      if (!building) continue
+      gates.set(index, [...(gates.get(index) ?? []), opening])
+      const slides = building.kind === BUILDING_BARN
+      const { width, height, ux, uz } = frame(o)
+      const mesh = new Mesh(leafGeometry(width, height + OVER + 0.1, slides ? LAP : 0, slides ? SLIDE_RGB : ROLL_RGB, slides ? Surface.Upright : Surface.Lap), buildingMaterial)
+      mesh.castShadow = true
+      mesh.receiveShadow = true
+      mesh.userData.gate = true
+      // Its own z out from the wall, and its x back along it.
+      mesh.rotation.set(0, Math.atan2(uz, -ux), 0)
+      const at = this.isOpen(key, index, opening) ? 1 : 0
+      const leaf: Leaf = { mesh, index, opening, o, slides, at, to: at }
+      this.place(leaf)
+      group.add(mesh)
+      leaves.push(leaf)
+    }
+    this.loaded.set(key, { tile, leaves, gates })
     for (const [index, cells] of carved) this.holed(key, index, cells)
   }
 
@@ -156,7 +159,7 @@ export class GateView {
   shut(key: number, index: number): number[] {
     const loaded = this.loaded.get(key)
     if (!loaded) return []
-    return this.gatesOf(loaded.tile, index).filter((opening) => !this.isOpen(key, index, opening))
+    return (loaded.gates.get(index) ?? []).filter((opening) => !this.isOpen(key, index, opening))
   }
 
   /** The cells `removed` are gone from building `index` of tile `key`: a gate whose wall no longer stands round it goes with it. */
@@ -196,14 +199,6 @@ export class GateView {
     this.open.clear()
   }
 
-  /** The gates of building `index` of `tile`, by their number among its openings: its wide doors, where it has a floor to drive in on. */
-  private gatesOf(tile: TileData, index: number): number[] {
-    const building = tile.buildings[index]
-    if (!building?.look || !tile.look) return []
-    const openings = openingsFor(tile.look, building.look)
-    if (!openings.some(isGate) || insideFor(tile.look, building.look).pieces.length === 0) return []
-    return openings.flatMap((o, opening) => (isGate(o) ? [opening] : []))
-  }
 
   /** Puts `leaf` where it is when it is `leaf.at` of the way open, eased at both ends. */
   private place(leaf: Leaf) {

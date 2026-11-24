@@ -1,9 +1,10 @@
 import { Group, InstancedMesh, ShaderMaterial, Texture, mat4, type Geometry } from '@ragnarok/engine'
-import { COVER_ROCK, STONES_ANGULAR, STONES_DENSITY, type TileData, type TileRef } from '@/world'
+import { STONES_ANGULAR, STONES_DENSITY, type TileData, type TileRef } from '@/world'
 import type { TileGround } from '@/sim/terrain'
-import { coverMask } from './marshnoise'
 import { carveRock, rockWgsl, type Carving } from './rocks'
 import { shoreLevelAt, shoreOf, WET_HEIGHT, type Shore } from './shore'
+import { stonesPixels } from './groundmaps'
+import type { Pixels } from './terrainmesh'
 
 /*
  * Stony ground. The tile's `stones` grid goes to the terrain's shader as a texture, and the shader lays
@@ -14,57 +15,15 @@ import { shoreLevelAt, shoreOf, WET_HEIGHT, type Shore } from './shore'
  * swells out of its picture unseen as you come. The painted stone under each one is its foot and its shadow.
  */
 
-/**
- * The range of heights above the water near it that the stones texture's blue channel spans, metres
- * (`stonesTexture`; the terrain's shader reads it back in `engine/src/materials/standard.wgsl.ts`).
- * Wider than the wet band, so the texture's filtering interpolates the height between texels rather
- * than a value clamped at both: a bank rises a metre and more across a texel.
- */
-export const SHORE_ABOVE: readonly [number, number] = [-1, 3]
-
-/** Texels along the stones texture of a tile with bare rock and neither stones nor a shore. */
-const ROCK_TEXELS = 128
-
-/** Whether a tile has bare rock for the terrain's shader to draw (`stonesTexture`'s alpha). */
-export const hasRock = (tile: Pick<TileData, 'cover'>): boolean => tile.cover.some((cover) => cover.kind === COVER_ROCK)
+export { SHORE_ABOVE, hasRock } from './groundmaps'
 
 /**
- * The tile's stony ground, shore and bare rock as a texture for the terrain's shader: how stony in red,
- * a boulder field's blocks in green, in blue how far above the water near it the ground is (over
- * `SHORE_ABOVE`, all of it where it is higher or there is none), for the wet band along the shore, and
- * in alpha how much of the ground is bare rock (`COVER_ROCK`). Null when the tile has none of them.
+ * The tile's stony ground, shore and bare rock as a texture for the terrain's shader (`stonesPixels`),
+ * from `pixels` when the tile worker made them, else made here. Null when the tile has none of them.
  */
-export function stonesTexture(tile: Pick<TileData, 'stones' | 'cover'>, shore: Shore | null, ground: TileGround): Texture | null {
-  const { stones } = tile
-  const n = stones ? Math.round(Math.sqrt(stones.length)) : (shore?.n ?? ROCK_TEXELS)
-  const { x0, z0, cell, side, heights } = ground
-  const size = cell * (side - 1)
-  const rock = coverMask(tile, x0, z0, size, n, (kind) => (kind === COVER_ROCK ? 1 : 0))
-  if (!stones && !shore && !rock) return null
-  const data = new Uint8Array(n * n * 4)
-  for (let j = 0; j < n; j++) {
-    for (let i = 0; i < n; i++) {
-      const k = j * n + i
-      const value = stones?.[k] ?? 0
-      data[k * 4] = Math.round(((value & STONES_DENSITY) / STONES_DENSITY) * 255)
-      data[k * 4 + 1] = value & STONES_ANGULAR ? 255 : 0
-      let above = 1
-      if (shore) {
-        const x = x0 + ((i + 0.5) / n) * size, z = z0 + ((j + 0.5) / n) * size
-        const level = shoreLevelAt(shore, x, z)
-        // The ground at the texel's centre as the terrain draws it, between its samples.
-        const u = Math.min(side - 1, Math.max(0, (x - x0) / cell)), v = Math.min(side - 1, Math.max(0, (z - z0) / cell))
-        const c = Math.min(side - 2, Math.floor(u)), r = Math.min(side - 2, Math.floor(v))
-        const [fu, fv] = [u - c, v - r]
-        const at = (dc: number, dr: number) => heights[(r + dr) * side + c + dc]!
-        const ground = (at(0, 0) * (1 - fu) + at(1, 0) * fu) * (1 - fv) + (at(0, 1) * (1 - fu) + at(1, 1) * fu) * fv
-        if (!Number.isNaN(level)) above = Math.min(1, Math.max(0, (ground - level - SHORE_ABOVE[0]) / (SHORE_ABOVE[1] - SHORE_ABOVE[0])))
-      }
-      data[k * 4 + 2] = Math.round(above * 255)
-      data[k * 4 + 3] = rock?.[k] ?? 0
-    }
-  }
-  return new Texture({ data, width: n, height: n }, { srgb: false, wrap: 'clamp' })
+export function stonesTexture(tile: Pick<TileData, 'stones' | 'cover'>, shore: Shore | null, ground: TileGround, pixels?: Pixels | null): Texture | null {
+  const made = pixels === undefined ? stonesPixels(tile, shore, ground) : pixels
+  return made ? new Texture({ data: made.data, width: made.width, height: made.height }, { srgb: false, wrap: 'clamp' }) : null
 }
 
 /** The shader's cells, metres across (`STONE_COBBLE`, `STONE_BLOCK` in stones.wgsl). */
@@ -219,11 +178,12 @@ export class Stones {
     return row * 65536 + col
   }
 
-  addTile(ref: Pick<TileRef, 'col' | 'row'>, tile: Pick<TileData, 'stones' | 'water'>, ground: TileGround | null) {
+  addTile(ref: Pick<TileRef, 'col' | 'row'>, tile: Pick<TileData, 'stones' | 'water'>, ground: TileGround | null, known?: Shore | null) {
     const key = this.tileKey(ref.col, ref.row)
     if (tile.stones) this.tiles.set(key, tile.stones)
     else this.tiles.delete(key)
-    const shore = tile.stones && ground ? shoreOf(ground, tile.water) : null
+    // The shore the tile worker worked out, when it did.
+    const shore = tile.stones && ground ? (known === undefined ? shoreOf(ground, tile.water) : known) : null
     if (shore) this.shores.set(key, shore)
     else this.shores.delete(key)
     this.dropOver(ref)

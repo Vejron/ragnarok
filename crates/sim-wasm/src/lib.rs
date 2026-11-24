@@ -126,11 +126,26 @@ impl ClientSim {
         Ok(ClientSim { physics: Physics::streamed(&manifest), manifest, cars: Default::default(), ragdolls: Ragdolls::new() })
     }
 
-    /// Adds tile `(col, row)` from its file's bytes, replacing it if it is already there.
+    /// Adds tile `(col, row)` from its file's bytes, replacing it if it is already there. Its buildings
+    /// wait to be made solid (`buildPending`).
     #[wasm_bindgen(js_name = addTile)]
     pub fn add_tile(&mut self, col: u16, row: u16, bytes: &[u8]) -> Result<(), JsError> {
         let tile = Tile::decode(bytes).map_err(|e| error("decoding a tile", e))?;
-        self.physics.add_tile(&self.manifest, col, row, &tile).map_err(|e| error("building a tile's colliders", e))
+        self.physics.add_tile(&self.manifest, col, row, tile).map_err(|e| error("building a tile's colliders", e))
+    }
+
+    /// Makes solid the streamed buildings waiting for it within `near` metres of `(x, z)`, and up to
+    /// `most` more, nearest first (`Physics::build_pending`). Returns how many; they collide from the
+    /// next `refresh`.
+    #[wasm_bindgen(js_name = buildPending)]
+    pub fn build_pending(&mut self, x: f32, z: f32, near: f32, most: u32) -> u32 {
+        self.physics.build_pending(x, z, near, most as usize) as u32
+    }
+
+    /// How many streamed buildings are waiting to be made solid.
+    #[wasm_bindgen(js_name = buildingsPending)]
+    pub fn buildings_pending(&self) -> u32 {
+        self.physics.buildings_pending() as u32
     }
 
     /// Gives tile `(col, row)` the ground `heights` (whole centimetres, row-major): a crater dented it.

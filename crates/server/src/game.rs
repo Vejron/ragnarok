@@ -444,6 +444,13 @@ impl Game {
 
     /// One fixed simulation step.
     pub fn step(&mut self) {
+        self.step_timed(None);
+    }
+
+    /// `step`, adding to `timed` when given (for the benches) what each mechanic's `on_tick` took, one
+    /// entry a mechanic in order, then what came after them up to the snapshots, then the snapshots.
+    pub(crate) fn step_timed(&mut self, mut timed: Option<&mut [std::time::Duration]>) {
+        let count = self.mechanics.len();
         for id in self.world.entities.ids::<With<Player>>() {
             let mut player = self.world.entities.of_mut::<Player>(id);
             let consumed = player.inputs.pop();
@@ -452,9 +459,14 @@ impl Game {
                 player.ack = consumed.input.seq();
             }
         }
-        for mechanic in &mut self.mechanics {
+        for (index, mechanic) in self.mechanics.iter_mut().enumerate() {
+            let started = timed.is_some().then(std::time::Instant::now);
             mechanic.on_tick(&mut self.world, TICK_DT);
+            if let (Some(timed), Some(started)) = (timed.as_deref_mut(), started) {
+                timed[index] += started.elapsed();
+            }
         }
+        let after = timed.is_some().then(std::time::Instant::now);
         self.staff_buses();
         self.street();
         if let Some(mut scenario) = self.scenario.take() {
@@ -482,8 +494,15 @@ impl Game {
         crate::events::update(&mut self.world.entities.ecs);
         self.world.tick = self.world.tick.wrapping_add(1);
         crate::mechanics::record_trails(&mut self.world);
+        if let (Some(timed), Some(after)) = (timed.as_deref_mut(), after) {
+            timed[count] += after.elapsed();
+        }
         if self.world.tick.is_multiple_of(SNAPSHOT_EVERY) {
+            let started = timed.is_some().then(std::time::Instant::now);
             self.send_snapshots();
+            if let (Some(timed), Some(started)) = (timed, started) {
+                timed[count + 1] += started.elapsed();
+            }
         }
     }
 
@@ -1054,6 +1073,12 @@ mod tests {
             let mut spikes = Vec::new();
             let (mut bytes, mut crater_bytes) = (0usize, 0usize);
             let mut per_tick = Vec::with_capacity(ticks);
+            // What each part of the tick took, by mechanic and then after them and the snapshots: in the worst ticks, summed.
+            let mut names: Vec<String> = game.mechanics.iter().map(|mechanic| mechanic.name().to_string()).collect();
+            names.extend(["after the mechanics".to_string(), "snapshots".to_string()]);
+            let mut in_spikes = vec![Duration::ZERO; names.len()];
+            let mut parts = vec![Duration::ZERO; names.len()];
+            let mut worst_parts = parts.clone();
             for t in 0..ticks {
                 for _ in 0..shells {
                     let (x, z) = (centre[0] + (random() - 0.5) * 300.0, centre[1] + (random() - 0.5) * 300.0);
@@ -1062,13 +1087,18 @@ mod tests {
                     game.world.launch(Flying::new(kind, ids[fired % ids.len()], [x, y, z], [(random() - 0.5) * 10.0, -30.0, (random() - 0.5) * 10.0], 600));
                     fired += 1;
                 }
+                parts.iter_mut().for_each(|part| *part = Duration::ZERO);
                 let started = Instant::now();
-                game.step();
+                game.step_timed(Some(&mut parts));
                 let took = started.elapsed();
                 per_tick.push(took);
+                if took > budget / 2 {
+                    in_spikes.iter_mut().zip(&parts).for_each(|(sum, part)| *sum += *part);
+                }
                 total += took;
                 if took > worst {
                     worst = took;
+                    worst_parts.clone_from(&parts);
                 }
                 if took > budget {
                     over += 1;
@@ -1090,6 +1120,12 @@ mod tests {
             let pick = |q: f64| per_tick[((per_tick.len() - 1) as f64 * q) as usize];
             println!("--- {label}: {fired} shots in {ticks} ticks, {} craters dug", game.world.craters.len());
             println!("tick: avg {:?}, p50 {:?}, p99 {:?}, worst {:?}; over the {budget:?} budget: {over}; over half of it: {}", total / ticks as u32, pick(0.5), pick(0.99), worst, spikes.len());
+            let mut dearest: Vec<(&String, Duration)> = names.iter().zip(in_spikes.iter().copied()).filter(|(_, took)| !took.is_zero()).collect();
+            dearest.sort_by_key(|&(_, took)| std::cmp::Reverse(took));
+            println!("in the ticks over half the budget, summed: {:?}", &dearest[..5.min(dearest.len())]);
+            let mut worst_of: Vec<(&String, Duration)> = names.iter().zip(worst_parts.iter().copied()).collect();
+            worst_of.sort_by_key(|&(_, took)| std::cmp::Reverse(took));
+            println!("the worst tick: {:?}", &worst_of[..5.min(worst_of.len())]);
             println!("sent to the room: {} KiB, {} B a player a second, of which {} B a player a second are `cratered`", bytes / 1024, bytes / ids.len() / (ticks / TICK_RATE as usize).max(1), crater_bytes / ids.len() / (ticks / TICK_RATE as usize).max(1));
             if label.starts_with("craters") {
                 let started = Instant::now();
@@ -1318,6 +1354,49 @@ mod tests {
         println!("reading the world as components: {:?}", started.elapsed() / runs);
     }
 
+    /// Not a regression test: what the first bite of each building costs, which cuts it into cells
+    /// (`World::cut_building`: unpacking them, the anchors, the inside, how it is held up), and the
+    /// dearest ones with their grids.
+    /// `RAGNAROK_WORLD=$PWD/worlds/home/world.msgpack cargo test --release -p server -- --ignored --nocapture first_cut_cost`
+    #[test]
+    #[ignore]
+    fn first_cut_cost() {
+        use std::time::Instant;
+        let path = std::env::var_os("RAGNAROK_WORLD")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/world/world.msgpack"));
+        let (map, _) = crate::read_world(&path).expect("a world");
+        let game = Game::new(map, 0).unwrap();
+        let world = &game.world;
+        let mut costs: Vec<(Duration, usize, [usize; 3])> = Vec::new();
+        for (index, &id) in world.map.building_ids.iter().enumerate() {
+            let started = Instant::now();
+            let Some(carving) = std::hint::black_box(world.cut_building(id)) else { continue };
+            costs.push((started.elapsed(), index, carving.shell.dims));
+        }
+        costs.sort_by_key(|&(took, _, _)| std::cmp::Reverse(took));
+        let total: Duration = costs.iter().map(|&(took, _, _)| took).sum();
+        println!("{} buildings: avg {:?}, worst {:?}", costs.len(), total / costs.len().max(1) as u32, costs.first().map(|c| c.0));
+        for (took, index, dims) in costs.iter().take(8) {
+            // Its cells unpacked, then what stands in its rooms added, and then how it is held up.
+            let started = Instant::now();
+            let bare = Shell::from_cells(&world.map.buildings[*index].cells);
+            let cells = started.elapsed();
+            let inside = &world.map.looks[*index].inside;
+            let started = Instant::now();
+            let found = shared::carve::furnished(world.map.buildings[*index].cells.origin, *dims, inside).len();
+            let rooms = started.elapsed();
+            println!("    unpacked {cells:?} ({}); {} inside triangles found {found} times in {rooms:?}", bare.is_some(), inside.len());
+            let started = Instant::now();
+            let (shell, _) = sim::building_shell(&world.map, *index).expect("cut once already");
+            let unpacked = started.elapsed();
+            let started = Instant::now();
+            std::hint::black_box(shell.hold(&shell.untouched()));
+            let held = started.elapsed();
+            println!("  building {index}: {took:?} (cells {unpacked:?}, held {held:?}), {dims:?} cells ({} in its grid, {} standing)", dims[0] * dims[1] * dims[2], shell.standing(&shell.untouched()));
+        }
+    }
+
     /// Not a regression test: what shelling one big house costs the server, shot by shot, to aim
     /// optimisation at. The house with the most look triangles takes 40 bites the size a tank's
     /// shell takes, 20 ticks of structure checks between them.
@@ -1353,6 +1432,7 @@ mod tests {
         // The bite a tank's HE shell takes of the wall it lands on.
         let bite = shared::consts::EXPLOSION_RADIUS * crate::mechanics::CARVE_REACH;
         let (mut carve_total, mut carve_max, mut settle_total, mut settle_max, mut solid_total) = (Duration::ZERO, Duration::ZERO, Duration::ZERO, Duration::ZERO, Duration::ZERO);
+        let (mut standing_total, mut windows_total) = (Duration::ZERO, Duration::ZERO);
         // Cells the shells took out, cells left with nothing under them at once, cells the structure checks let go, and checks that let go of 100 or more.
         let (mut blasted, mut dropped, mut crumbled, mut big) = (0usize, 0usize, 0usize, 0usize);
         let whole = world.carving(id).map_or(0, |c| c.shell.standing(&c.removed));
@@ -1375,6 +1455,13 @@ mod tests {
                 let started = Instant::now();
                 std::hint::black_box(sim::building_solid(&world.map, index, Some((&carving.shell, &carving.removed)), &carving.floor));
                 solid_total += started.elapsed();
+                // Of which the faces as they stand (the rest is the mesh made of them), and of those the windows cut out.
+                let started = Instant::now();
+                std::hint::black_box(shared::facade::standing(&look.walls, &look.roof, &look.windows, &look.inside, &look.shut, Some((&carving.shell, &carving.removed))));
+                standing_total += started.elapsed();
+                let started = Instant::now();
+                std::hint::black_box(shared::facade::cut_windows(look.walls.iter().map(shared::facade::poly_of).collect(), &look.windows, !look.inside.is_empty(), &look.shut));
+                windows_total += started.elapsed();
             }
             let mut worst = Duration::ZERO;
             // Five seconds between shots, about a tank's reload.
@@ -1403,7 +1490,13 @@ mod tests {
                 println!("after {:2} shots: {:3}% standing; blasted {blasted}, dropped {dropped}, crumbled {crumbled} in checks ({big} of 100+); carve {:?}, settle worst tick {settle_max:?}", shot + 1, standing * 100 / whole.max(1), carve_total / (shot + 1));
             }
         }
-        println!("bite {bite:.1} m; carve avg {:?}, worst {carve_max:?}; collider alone {:?}; settle worst tick {settle_max:?}", carve_total / shots, solid_total / shots);
+        println!(
+            "bite {bite:.1} m; carve avg {:?}, worst {carve_max:?}; collider alone {:?} (its faces {:?}, of which the windows cut out {:?}); settle worst tick {settle_max:?}",
+            carve_total / shots,
+            solid_total / shots,
+            standing_total / shots,
+            windows_total / shots
+        );
         if let Some(out) = std::env::var_os("DEMOLITION_OUT") {
             std::fs::write(out, serde_json::to_string(&cuts).unwrap()).unwrap();
         }

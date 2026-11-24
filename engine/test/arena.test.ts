@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { GeometryArena } from '../src/gpu/arena'
+import { GeometryArena, packVertices } from '../src/gpu/arena'
 import { Geometry } from '../src/scene/geometry'
 
 vi.stubGlobal('GPUBufferUsage', { VERTEX: 1, INDEX: 2, COPY_DST: 4, COPY_SRC: 8, MAP_WRITE: 16 })
@@ -219,5 +219,41 @@ describe('GeometryArena', () => {
   it('throws rather than growing past the device limit', () => {
     const arena = new GeometryArena(fakeDevice((1 << 18) * 64))
     expect(() => arena.sync(new Geometry({ positions: new Float32Array(3 * ((1 << 18) + 1)) }))).toThrow(/over the GPU/)
+  })
+})
+
+describe('packed vertices', () => {
+  /** The bytes of the first upload an arena makes of `geometry`, small enough to be written straight. */
+  const uploaded = (geometry: Geometry): Uint8Array => {
+    const device = fakeDevice()
+    const bytes: Uint8Array[] = []
+    device.queue.writeBuffer = ((_buffer: GPUBuffer, _offset: number, data: ArrayBuffer, from = 0, size?: number) => {
+      bytes.push(new Uint8Array(data, from, size ?? data.byteLength).slice())
+    }) as GPUQueue['writeBuffer']
+    new GeometryArena(device).sync(geometry)
+    return bytes[0]!
+  }
+  const arrays = () => ({
+    positions: Float32Array.from([0, 1, 2, 3, 4, 5, 6, 7, 8.5]),
+    normals: Float32Array.from([0, 1, 0, 1, 0, 0, 0, 0, 1]),
+    uvs: Float32Array.from([0, 0, 1, 0, 0.5, 1]),
+    colors: Float32Array.from([1, 0.5, 0.25, 0.1, 0.2, 0.3, 2, -1, 0]),
+    custom: Float32Array.from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]),
+  })
+
+  it('uploads a packed geometry as the same bytes as its arrays', () => {
+    const plain = new Geometry(arrays())
+    const packed = new Geometry({ packed: packVertices(arrays()) })
+    expect(packed.vertexCount).toBe(plain.vertexCount)
+    expect(packed.bounds).toEqual(plain.bounds)
+    expect(Array.from(uploaded(packed))).toEqual(Array.from(uploaded(plain)))
+  })
+
+  it('collapses a range of a packed geometry before it is uploaded as the arena collapses one after', () => {
+    const packed = new Geometry({ packed: packVertices(arrays()) })
+    packed.collapseRange(1, 1)
+    const bytes = uploaded(packed)
+    expect(Array.from(bytes.slice(64, 128)).every((b) => b === 0)).toBe(true)
+    expect(Array.from(bytes.slice(0, 64)).some((b) => b !== 0)).toBe(true)
   })
 })

@@ -139,19 +139,85 @@ fn sample(tri: &Tri, mut visit: impl FnMut([i64; 3])) {
 }
 
 /// The cells of the grid at `origin` with `dims` cells a side that the triangles `inside` pass
-/// through (`Shell::furnish`), each as often as it is found: sampled and placed as walls are.
+/// through (`Shell::furnish`), each once, in the order first found: sampled and placed as walls are.
 pub fn furnished(origin: [i32; 3], dims: [usize; 3], inside: &[Tri]) -> Vec<u32> {
     let mut cells = Vec::new();
     if dims.contains(&0) {
         return cells;
     }
+    let mut found = vec![false; dims[0] * dims[1] * dims[2]];
     for tri in inside {
-        sample(tri, |p| {
-            let at = |axis: usize| ((p[axis] - 1 - origin[axis] as i64).div_euclid(CELL as i64)).clamp(0, dims[axis] as i64 - 1) as usize;
-            cells.push(((at(1) * dims[2] + at(2)) * dims[0] + at(0)) as u32);
+        sampled_cells(tri, origin, dims, |id| {
+            if !std::mem::replace(&mut found[id], true) {
+                cells.push(id as u32);
+            }
         });
     }
     cells
+}
+
+/// Calls `visit` with the cell of the grid at `origin` with `dims` cells of each point `sample` puts on
+/// `tri`, placed as `furnished` places a point: `(p - 1 - origin).div_euclid(CELL)` on each axis,
+/// clamped to the grid; once for each run of points in a row that fall in the same cell. Worked out a
+/// row of points at a time, from one cell to the next, as a big block's floors are millions of points.
+/// The same cells as dividing: point `j` of row `i` is `a + (i ab + j ac) / n` rounded down, so its
+/// cell on an axis is `(a n + i ab + j ac - (1 + origin) n)` over `n CELL`, rounded down, and that
+/// numerator grows by `ac` from one point to the next, so the point at which it next reaches another
+/// cell is a division away.
+fn sampled_cells(tri: &Tri, origin: [i32; 3], dims: [usize; 3], mut visit: impl FnMut(usize)) {
+    let p = |k: usize| [tri[k * 3] as i64, tri[k * 3 + 1] as i64, tri[k * 3 + 2] as i64];
+    let corners = [p(0), p(1), p(2)];
+    let length = |k: usize| (0..3).map(|i| (corners[k][i] - corners[(k + 1) % 3][i]).pow(2)).sum::<i64>();
+    let (mut edge, mut longest) = (0, length(0));
+    for k in 1..3 {
+        if length(k) > longest {
+            (edge, longest) = (k, length(k));
+        }
+    }
+    let (a, b, c) = (corners[(edge + 2) % 3], corners[edge], corners[(edge + 1) % 3]);
+    let mut n = 1i64;
+    while (n * SAMPLE).pow(2) < longest {
+        n += 1;
+    }
+    let (ab, ac) = ([0, 1, 2].map(|i| b[i] - a[i]), [0, 1, 2].map(|i| c[i] - a[i]));
+    let span = n * CELL as i64;
+    let top = dims.map(|d| d as i64 - 1);
+    for i in 0..=n {
+        let mut num = [0i64; 3];
+        let mut cell = [0i64; 3];
+        for k in 0..3 {
+            num[k] = a[k] * n + i * ab[k] - (1 + origin[k] as i64) * n;
+            cell[k] = num[k].div_euclid(span);
+        }
+        let last = n - i;
+        let mut j = 0;
+        loop {
+            let at = |k: usize| cell[k].clamp(0, top[k]) as usize;
+            visit((at(1) * dims[2] + at(2)) * dims[0] + at(0));
+            // How many points on the next one reaching another cell on some axis is.
+            let mut step = last - j + 1;
+            for k in 0..3 {
+                if ac[k] > 0 {
+                    step = step.min(((cell[k] + 1) * span - num[k] + ac[k] - 1) / ac[k]);
+                } else if ac[k] < 0 {
+                    step = step.min((num[k] - cell[k] * span) / -ac[k] + 1);
+                }
+            }
+            if j + step > last {
+                break;
+            }
+            j += step;
+            for k in 0..3 {
+                num[k] += step * ac[k];
+                while num[k] >= (cell[k] + 1) * span {
+                    cell[k] += 1;
+                }
+                while num[k] < cell[k] * span {
+                    cell[k] -= 1;
+                }
+            }
+        }
+    }
 }
 
 impl Shell {
@@ -1403,6 +1469,38 @@ mod tests {
         }
         assert!(fell > 0, "the top should have come down");
         assert!(shell.standing(&removed) < shell.solid_count() / 2);
+    }
+
+    #[test]
+    fn the_cells_a_floor_is_found_in_by_adding_are_those_found_by_dividing() {
+        let mut seed = 0x2545_f491u32;
+        let mut next = |lo: i32, hi: i32| {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            lo + (seed % (hi - lo) as u32) as i32
+        };
+        for t in 0..600 {
+            // Floors, stairs and slivers, any way round, about a grid that may start below zero.
+            let y = next(-300, 900);
+            let mut corner = || [next(-2500, 4000), if t % 3 == 0 { y } else { next(-300, 900) }, next(-2500, 4000)];
+            let (a, b, c) = (corner(), corner(), if t % 7 == 0 { [0; 3] } else { corner() });
+            let tri: Tri = [a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2]];
+            let origin = [next(-30, 0) * CELL, next(-5, 0) * CELL, next(-30, 0) * CELL];
+            let dims = [next(20, 90) as usize, next(5, 25) as usize, next(20, 90) as usize];
+            let mut added = Vec::new();
+            sampled_cells(&tri, origin, dims, |id| added.push(id));
+            // Each point's cell, by dividing.
+            let mut divided = Vec::new();
+            sample(&tri, |p| {
+                let at = |axis: usize| ((p[axis] - 1 - origin[axis] as i64).div_euclid(CELL as i64)).clamp(0, dims[axis] as i64 - 1) as usize;
+                divided.push((at(1) * dims[2] + at(2)) * dims[0] + at(0));
+            });
+            // The same cells in the same order, a run of points in one cell taken once.
+            added.dedup();
+            divided.dedup();
+            assert_eq!(added, divided, "triangle {t}: {tri:?} on a grid at {origin:?} of {dims:?}");
+        }
     }
 
     #[test]

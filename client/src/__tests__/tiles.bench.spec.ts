@@ -55,6 +55,15 @@ it.skipIf(!process.env.BENCH || !existsSync(resolve(root, 'world.msgpack')))('wh
     time('decode', () => decodeTile(bytes))
     const { tile, ground } = decoded.get(row * 65536 + col)!
     time('ClientSim.addTile', () => sim.addTile(col, row, bytes))
+    // Its buildings are made solid a few a frame after it arrives (`SimMotor.buildBuildings`): all of them, timed apart.
+    if (tile.buildings.length > 0) {
+      const built = sim.buildingsPending()
+      time('ClientSim buildings (all of a tile)', () => {
+        sim.buildPending(0, 0, Infinity, 0)
+        sim.refresh()
+      })
+      ;(stages['ClientSim one building'] ??= []).push(stages['ClientSim buildings (all of a tile)']!.slice(-1)[0]! / Math.max(1, built))
+    }
     time('buildings', () => buildingBuffers(tile, 0, new Set()))
     if (tile.buildings.length > 0) {
       const group = buildTile(tile, 0)

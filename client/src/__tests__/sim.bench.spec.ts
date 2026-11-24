@@ -18,6 +18,7 @@ it.skipIf(!process.env.BENCH)('sim hot paths', { timeout: 300_000 }, async () =>
     const [col, row] = name.replace('.msgpack', '').split('_').map(Number) as [number, number]
     motor.addTile({ col, row }, new Uint8Array(readFileSync(resolve(root, 'tiles', name))))
   }
+  motor.buildBuildings(0, 0, Infinity, 0)
   const kinds = [KIND_JEEP, KIND_SPORTS, KIND_TANK, KIND_STRV, KIND_HELI, KIND_JEEP, KIND_TANK, KIND_SPORTS]
   const controls = (tick: number): CarControls => ({ throttle: Math.floor(tick / 90) % 3 === 2 ? -1 : 1, steer: Math.sin(tick / 40), handbrake: false, lift: 0.6, powered: true })
   const results: Record<string, number> = {}

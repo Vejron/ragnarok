@@ -1,3 +1,4 @@
+import type { Sphere } from '@ragnarok/engine'
 import type { TileGround } from '@/sim/terrain'
 import { NO_WATER, type Stream } from '@/world'
 import { FLOW_STEP, REACH_STEP } from '@/sim/waves'
@@ -53,6 +54,9 @@ export const LANE_WRAP = 65536 / LANE_STEPS
  * river the open water's reach in metres in y and its current in zw, `FLOW_BIAS` off in w), and indices.
  */
 export interface WaterBuffers {
+  /** Its vertices in the renderer's layout and its bounds too, once the tile worker has packed it (`packAlongside`). */
+  packed?: ArrayBuffer
+  bounds?: Sphere
   positions: Float32Array
   custom: Float32Array
   /**

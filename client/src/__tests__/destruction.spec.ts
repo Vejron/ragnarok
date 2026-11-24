@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { Group, InstancedMesh, Mesh, Vector3 } from '@ragnarok/engine'
+import { Geometry, Group, InstancedMesh, Mesh, Vector3 } from '@ragnarok/engine'
 import { encode } from '@msgpack/msgpack'
 import { decodeServer, OBJ_TREE } from '@/net/codec'
 import { BuildingDamage, span } from '@/render/damage'
@@ -94,8 +94,13 @@ import { Particles } from '@/render/particles'
 import { buildTile, rebuildBuildings } from '@/render/world'
 import type { SimMotor } from '@/sim/motor'
 import { flatMotor, tileBytes } from './worlds'
-import { shellOf } from '@/sim/carve'
+import { Shell, shellOf } from '@/sim/carve'
 import { Fracture } from '@/render/fracture'
+import { drawLook, heapRubble } from '@/render/lookjobs'
+import type { LookSource, LookWorker } from '@/render/lookworker'
+import { lookChunk } from '@/render/lookfracture'
+import type { RubbleMemo } from '@/render/shards'
+import { toonMaterial } from '@/render/toon'
 import { buildingTriangleRanges, ROOF_FLAT, type Building } from '@/world'
 
 /** A closed box mesh from `x0` to `x0 + 10` metres, 6 m tall: 12 triangles, 8 of them walls. */
@@ -199,6 +204,7 @@ describe('the building collider', () => {
         buildings: tile.buildings,
       }),
     )
+    motor.buildBuildings(0, 0, Infinity, 0)
     return motor
   }
   const along = (motor: SimMotor, x: number, y = 1, z = 0) => motor.castRay([x, y, z], [1, 0, 0], 5)
@@ -250,8 +256,9 @@ describe('damaged message', () => {
 describe('a hurt building', () => {
   const key = 5
   const tileWith = () => twoHouses()
+  // The building as it stands: it receives shadows, which the pieces thrown from it do not.
   const bodyOf = (damage: BuildingDamage) =>
-    damage.root.children[0]!.children.find((c) => c instanceof Mesh && c.castShadow && c.geometry.colors) as Mesh | undefined
+    damage.root.children[0]!.children.find((c) => c instanceof Mesh && c.receiveShadow && c.geometry.colors) as Mesh | undefined
   const cellAt = (index: number, x: number, y: number, z: number) => shellOf(tileWith(), index)!.cellAt(x, y, z)
 
   it('keeps the tile drawing a building that is only hurt', () => {
@@ -383,6 +390,129 @@ describe('a hurt building', () => {
       const { height, wide } = span(mesh)
       expect(height).toBeLessThan(wide * 0.5)
       expect(span(mesh).low).toBeCloseTo(0, 1)
+    }
+  })
+
+  /** A house with a look whose front wall's top half, 4 m along, is about to lose its hold: the tile, and that slab's cells. */
+  const slabHouse = () => {
+    const tile = tileWith()
+    tile.look = tile.collision
+    tile.buildings[0]!.look = { first: 0, walls: 8, roof: 2 }
+    const shell = shellOf(tile, 0)!
+    const slab: number[] = []
+    for (let x = 1; x < 5; x++) for (let y = 3; y < 6; y++) {
+      const id = cellAt(0, x + 0.3, y + 0.3, -4.9)
+      if (shell.isSolid(id) && !slab.includes(id)) slab.push(id)
+    }
+    return { tile, slab }
+  }
+
+  /**
+   * A look worker that does what the real one does (`drawLook`, `heapRubble`), but only when the test
+   * lets each request through (`answer`), as the real one answers a frame or two later.
+   */
+  const heldWorker = () => {
+    const waiting: (() => void)[] = []
+    const known = new Map<string, { source: LookSource; shell: Shell; mounds: RubbleMemo }>()
+    const told = (name: string, source: () => LookSource) => {
+      if (!known.has(name)) {
+        const s = source()
+        known.set(name, { source: s, shell: Shell.ofFlags(s.shell), mounds: new Map() })
+      }
+      return known.get(name)!
+    }
+    const worker = {
+      draw: (name: string, source: () => LookSource, ask: Parameters<LookWorker['draw']>[2]) => new Promise((resolve) => waiting.push(() => resolve(drawLook(told(name, source).source, told(name, source).shell, ask)))),
+      heap: (name: string, source: () => LookSource, ask: Parameters<LookWorker['heap']>[2]) => new Promise((resolve) => waiting.push(() => resolve(heapRubble(told(name, source).shell, ask, told(name, source).mounds)))),
+      dispose: () => {},
+    }
+    const answer = async () => {
+      for (const reply of waiting.splice(0)) reply()
+      await new Promise((r) => setTimeout(r, 0))
+    }
+    return { worker: worker as unknown as LookWorker, waiting, answer }
+  }
+
+  type Inside = { drawn: Map<number, Map<number, { falling: { mesh: Mesh; section?: boolean }[]; rubble: Mesh | null }>> }
+
+  it('throws a falling section with the redraw that shows its hole', async () => {
+    const { tile, slab } = slabHouse()
+    const damage = new BuildingDamage()
+    damage.groundAt = () => 0
+    const { worker, waiting, answer } = heldWorker()
+    damage.looks = worker
+    damage.attach(key, tile)
+    damage.carve(key, 0, [], slab, [3, 4, -5], true)
+    const drawn = () => (damage as unknown as Inside).drawn.get(key)!.get(0)!
+    // Asked for, with its hole: nothing of the wall falls before the hole it leaves shows.
+    expect(waiting.length).toBe(1)
+    expect(drawn().falling.filter((f) => f.section)).toHaveLength(0)
+    expect(bodyOf(damage)).toBeUndefined()
+    await answer()
+    expect(bodyOf(damage)).toBeDefined()
+    expect(drawn().falling.filter((f) => f.section).length).toBeGreaterThan(0)
+  })
+
+  it('cuts out the same falling section in the worker as on the main thread', async () => {
+    const sections = async (worker: boolean) => {
+      const { tile, slab } = slabHouse()
+      const damage = new BuildingDamage()
+      damage.groundAt = () => 0
+      const held = heldWorker()
+      if (worker) damage.looks = held.worker
+      damage.attach(key, tile)
+      damage.carve(key, 0, [], slab, [3, 4, -5], true)
+      await held.answer()
+      return (damage as unknown as Inside).drawn.get(key)!.get(0)!.falling.filter((f) => f.section).map((f) => [f.mesh.position.toArray(), Array.from(f.mesh.geometry.positions)])
+    }
+    expect(await sections(true)).toEqual(await sections(false))
+  })
+
+  it('heaps the rubble the worker made once what fell has landed, as the main thread heaps it', async () => {
+    const heap = async (worker: boolean) => {
+      const { tile, slab } = slabHouse()
+      const damage = new BuildingDamage()
+      damage.groundAt = () => 0
+      const held = heldWorker()
+      if (worker) damage.looks = held.worker
+      damage.attach(key, tile)
+      damage.carve(key, 0, [], slab, [3, 4, -5], true)
+      await held.answer()
+      const rubble = () => (damage as unknown as Inside).drawn.get(key)!.get(0)!.rubble
+      expect(rubble()).toBeNull()
+      // About a second later what fell has landed, and the heap is asked for.
+      for (let i = 0; i < 60; i++) damage.update(0.02, { dust() {} } as never, new Vector3(1e6, 0, 0))
+      if (worker) {
+        expect(rubble()).toBeNull()
+        expect(held.waiting.length).toBe(1)
+        await held.answer()
+      }
+      return Array.from(rubble()!.geometry.positions)
+    }
+    const made = await heap(true)
+    expect(made.length).toBeGreaterThan(0)
+    expect(made).toEqual(await heap(false))
+  })
+
+  it('measures a falling piece’s reach from its corners as from every vertex', () => {
+    const { tile, slab } = slabHouse()
+    const shell = shellOf(tile, 0)!
+    const soup = lookChunk(tile.look!, tile.buildings[0]!.look!, shell, new Set(slab), [3, 4, -5], [1, 1, 1], [1, 1, 1])
+    const mesh = new Mesh(new Geometry({ positions: soup.positions }), toonMaterial({}))
+    for (const [x, y, z] of [[0, 0, 0], [0.7, 0.2, -1.1], [1.9, -0.4, 0.3], [-2.2, 1.3, 2.8]] as const) {
+      mesh.rotation.set(x, y, z)
+      // Every vertex, turned as the piece is.
+      const p = soup.positions
+      let [low, high, x0, x1, z0, z1] = [Infinity, -Infinity, Infinity, -Infinity, Infinity, -Infinity]
+      for (let i = 0; i < p.length; i += 3) {
+        const v = new Vector3(p[i]!, p[i + 1]!, p[i + 2]!).applyQuaternion(mesh.quaternion)
+        ;[low, high] = [Math.min(low, v.y), Math.max(high, v.y)]
+        ;[x0, x1, z0, z1] = [Math.min(x0, v.x), Math.max(x1, v.x), Math.min(z0, v.z), Math.max(z1, v.z)]
+      }
+      const reach = span(mesh)
+      expect(reach.low).toBeCloseTo(low, 1)
+      expect(reach.height).toBeCloseTo(high - low, 1)
+      expect(reach.wide).toBeCloseTo(Math.max(x1 - x0, z1 - z0), 1)
     }
   })
 

@@ -156,8 +156,28 @@ struct Grid<'a> {
     origin: [f64; 3],
 }
 
+impl<'a> Grid<'a> {
+    /// `shell`'s grid.
+    fn of(shell: &'a Shell) -> Self {
+        Grid { shell, cell: shell.cell as f64 / 100.0, origin: shell.origin.map(|v| v as f64 / 100.0) }
+    }
+
+    /// The cells `poly` reaches into, lowest and highest on each axis: a hair in from its edges, so a
+    /// face on a grid plane lies in one.
+    fn box_of(&self, poly: &[P]) -> ([i64; 3], [i64; 3]) {
+        let mut lo = [0i64; 3];
+        let mut hi = [0i64; 3];
+        for a in 0..3 {
+            let (min, max) = poly.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(l, h), p| (l.min(p[a]), h.max(p[a])));
+            lo[a] = self.cell_of(min + EPS, a);
+            hi[a] = self.cell_of(max - EPS, a).max(lo[a]);
+        }
+        (lo, hi)
+    }
+}
+
 impl Grid<'_> {
-    fn of(&self, v: f64, axis: usize) -> i64 {
+    fn cell_of(&self, v: f64, axis: usize) -> i64 {
         ((v - self.origin[axis]) / self.cell).floor() as i64
     }
     fn has(&self, c: [i64; 3]) -> bool {
@@ -203,33 +223,132 @@ fn orphan(grid: &Grid, removed: &[bool], c: [i64; 3]) -> bool {
 /// goes with its cells as the walls do; a house with any has its door open, but for the gates that
 /// are `shut` (`BuildingLook::shut`).
 pub fn standing(walls: &[Tri], roof: &[Tri], windows: &[Window], inside: &[Tri], shut: &[u32], cut: Option<(&Shell, &[bool])>) -> Vec<[f32; 3]> {
-    let wall_polys = cut_windows(walls.iter().map(poly_of).collect(), windows, !inside.is_empty(), shut);
-    let polys: Vec<Poly> = wall_polys.into_iter().chain(roof.iter().map(poly_of)).chain(inside.iter().map(poly_of)).collect();
+    let polys = faces_of(walls, roof, windows, inside, shut);
     let mut out = Vec::new();
-    let mut emit = |poly: &[P]| {
-        for i in 1..poly.len() - 1 {
-            let (a, b, c) = (poly[0], poly[i], poly[i + 1]);
-            let (e, f) = (sub(b, a), sub(c, a));
-            let n = [e[1] * f[2] - e[2] * f[1], e[2] * f[0] - e[0] * f[2], e[0] * f[1] - e[1] * f[0]];
-            if dot(n, n) < 1e-10 {
-                continue;
-            }
-            out.extend([a, b, c].map(|p| p.map(|v| v as f32)));
-        }
-    };
     let Some((shell, removed)) = cut else {
         for poly in &polys {
-            emit(poly);
+            triangles_into(&mut out, poly);
         }
         return out;
     };
-    let grid = Grid { shell, cell: shell.cell as f64 / 100.0, origin: shell.origin.map(|v| v as f64 / 100.0) };
+    let grid = Grid::of(shell);
     let gone = Gone::new(shell, removed);
     for poly in &polys {
         let normal = normal_of(poly);
-        carve_poly(&grid, &gone, removed, poly.clone(), normal, &mut emit);
+        carve_poly(&grid, &gone, removed, poly.clone(), normal, &mut |piece: &[P]| triangles_into(&mut out, piece));
     }
     out
+}
+
+/// A building's faces as `standing` cuts them: its walls with the windows (and with rooms the doors) cut
+/// out, its roof, and what stands in its rooms.
+fn faces_of(walls: &[Tri], roof: &[Tri], windows: &[Window], inside: &[Tri], shut: &[u32]) -> Vec<Poly> {
+    let wall_polys = cut_windows(walls.iter().map(poly_of).collect(), windows, !inside.is_empty(), shut);
+    wall_polys.into_iter().chain(roof.iter().map(poly_of)).chain(inside.iter().map(poly_of)).collect()
+}
+
+/// Adds `poly` to `out` as a fan of triangles, three corners each in metres, leaving out any with no area.
+fn triangles_into(out: &mut Vec<[f32; 3]>, poly: &[P]) {
+    for i in 1..poly.len() - 1 {
+        let (a, b, c) = (poly[0], poly[i], poly[i + 1]);
+        let (e, f) = (sub(b, a), sub(c, a));
+        let n = [e[1] * f[2] - e[2] * f[1], e[2] * f[0] - e[0] * f[2], e[0] * f[1] - e[1] * f[0]];
+        if dot(n, n) < 1e-10 {
+            continue;
+        }
+        out.extend([a, b, c].map(|p| p.map(|v| v as f32)));
+    }
+}
+
+/// How many cells beyond its own box what stands of a face depends on: `carve_poly` looks one cell
+/// round a piece, a piece of one cell is judged by the cell a hair behind it (one further when the face
+/// lies on a grid plane), and `orphan` looks one round that.
+const FACE_REACH: i64 = 2;
+
+/// A face of a building as `Standing` keeps it: the polygon, its outward normal, and the box of cells
+/// it reaches into.
+struct Face {
+    poly: Poly,
+    normal: P,
+    lo: [i64; 3],
+    hi: [i64; 3],
+}
+
+/// A building's faces as they stand, kept a face at a time between cuts (`standing` works them all out
+/// afresh): what stands of a face depends only on the cells within `FACE_REACH` of it, so a cut works
+/// out again only the faces near a cell that went (or came back), and the rest are as they were. A
+/// big house shelled to ruin is mostly faces near some hole, each sliced to the cell, and slicing them
+/// all again at every shell was most of what a hit cost. The same triangles as `standing`, in the same
+/// order, so the server and every client still collide with the same building.
+pub struct Standing {
+    /// The gates standing shut when its walls were cut (`BuildingLook::shut`): a gate opened or shut cuts them anew.
+    shut: Vec<u32>,
+    faces: Vec<Face>,
+    /// The cells gone when its faces were last cut, one flag a cell.
+    removed: Vec<bool>,
+    /// What stands of each face, as triangles: three corners each, metres.
+    pieces: Vec<Vec<[f32; 3]>>,
+    /// The faces the last cut worked out again, by their number.
+    recut: Vec<usize>,
+}
+
+impl Standing {
+    /// The faces of a building whose look is `walls`, `roof`, `windows` and `inside` with the gates `shut`,
+    /// on the cells of `shell`, whole.
+    pub fn new(walls: &[Tri], roof: &[Tri], windows: &[Window], inside: &[Tri], shut: &[u32], shell: &Shell) -> Self {
+        let grid = Grid::of(shell);
+        let faces: Vec<Face> = faces_of(walls, roof, windows, inside, shut)
+            .into_iter()
+            .map(|poly| {
+                let (lo, hi) = grid.box_of(&poly);
+                Face { normal: normal_of(&poly), poly, lo, hi }
+            })
+            .collect();
+        let pieces = faces
+            .iter()
+            .map(|face| {
+                let mut out = Vec::new();
+                triangles_into(&mut out, &face.poly);
+                out
+            })
+            .collect();
+        let cells = shell.dims[0] * shell.dims[1] * shell.dims[2];
+        Self { shut: shut.to_vec(), faces, removed: vec![false; cells], pieces, recut: Vec::new() }
+    }
+
+    /// How many faces the last cut worked out again, and how many there are.
+    pub fn recut(&self) -> (usize, usize) {
+        (self.recut.len(), self.faces.len())
+    }
+
+    /// Whether its walls were cut with the gates `shut`, as they are now.
+    pub fn fits(&self, shut: &[u32]) -> bool {
+        self.shut == shut
+    }
+
+    /// What stands of the building with the cells `removed` gone (one flag a cell of `shell`, which it
+    /// was made on): the faces near a cell that changed since the last cut are cut again. As `standing`.
+    pub fn carve(&mut self, shell: &Shell, removed: &[bool]) -> Vec<[f32; 3]> {
+        let changed: Vec<bool> = (0..self.removed.len()).map(|i| removed.get(i).copied().unwrap_or(false) != self.removed[i]).collect();
+        self.recut.clear();
+        if changed.iter().any(|&c| c) {
+            let grid = Grid::of(shell);
+            let gone = Gone::new(shell, removed);
+            let moved = Gone::new(shell, &changed);
+            for (n, (face, out)) in self.faces.iter().zip(&mut self.pieces).enumerate() {
+                if !moved.any(face.lo.map(|v| v - FACE_REACH), face.hi.map(|v| v + FACE_REACH)) {
+                    continue;
+                }
+                self.recut.push(n);
+                out.clear();
+                carve_poly(&grid, &gone, removed, face.poly.clone(), face.normal, &mut |piece: &[P]| triangles_into(out, piece));
+            }
+            for (kept, &now) in self.removed.iter_mut().zip(removed) {
+                *kept = now;
+            }
+        }
+        self.pieces.concat()
+    }
 }
 
 /// The cells taken out of a building, summed over boxes of its grid, so whether any lies in a box is
@@ -284,13 +403,7 @@ impl Gone {
 /// or go with their cell. The work and the triangles grow with the holes' edges, not with the face.
 fn carve_poly(grid: &Grid, gone: &Gone, removed: &[bool], poly: Poly, normal: P, emit: &mut impl FnMut(&[P])) {
     // The cells the piece reaches into, a hair in from its edges so a face on a grid plane lies in one.
-    let mut lo = [0i64; 3];
-    let mut hi = [0i64; 3];
-    for a in 0..3 {
-        let (min, max) = poly.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(l, h), p| (l.min(p[a]), h.max(p[a])));
-        lo[a] = grid.of(min + EPS, a);
-        hi[a] = grid.of(max - EPS, a).max(lo[a]);
-    }
+    let (lo, hi) = grid.box_of(&poly);
     if !gone.any(lo.map(|v| v - 1), hi.map(|v| v + 1)) {
         emit(&poly);
         return;
@@ -300,7 +413,7 @@ fn carve_poly(grid: &Grid, gone: &Gone, removed: &[bool], poly: Poly, normal: P,
         // One cell: it goes with it, or when it is left with nothing to hang from.
         let c = centre_of(&poly);
         // A hair inside the wall, so a wall on a cell boundary is judged by the cell it is cut into.
-        let at: [i64; 3] = std::array::from_fn(|a| grid.of(c[a] - normal[a] * 0.01, a));
+        let at: [i64; 3] = std::array::from_fn(|a| grid.cell_of(c[a] - normal[a] * 0.01, a));
         let lost = grid.has(at) && removed.get(grid.index(at) as usize).copied().unwrap_or(false);
         if !lost && !orphan(grid, removed, at) {
             emit(&poly);
@@ -410,7 +523,7 @@ mod tests {
     /// What `standing` drew before it only cut where holes are: every face near a hole sliced on the
     /// whole grid, each piece judged by its cell.
     fn sliced_on_the_whole_grid(polys: &[Poly], shell: &Shell, removed: &[bool]) -> Vec<[f32; 3]> {
-        let grid = Grid { shell, cell: shell.cell as f64 / 100.0, origin: shell.origin.map(|v| v as f64 / 100.0) };
+        let grid = Grid::of(shell);
         let mut out = Vec::new();
         for poly in polys {
             let normal = normal_of(poly);
@@ -427,7 +540,7 @@ mod tests {
             }
             for piece in pieces {
                 let c = centre_of(&piece);
-                let at: [i64; 3] = std::array::from_fn(|a| grid.of(c[a] - normal[a] * 0.01, a));
+                let at: [i64; 3] = std::array::from_fn(|a| grid.cell_of(c[a] - normal[a] * 0.01, a));
                 let gone = grid.has(at) && removed[grid.index(at) as usize];
                 if gone || orphan(&grid, removed, at) {
                     continue;
@@ -459,5 +572,53 @@ mod tests {
                 assert!((area - then[side]).abs() < 1e-3, "after blast {n}, side {side:?}: {area} m² against {}", then[side]);
             }
         }
+    }
+
+    #[test]
+    fn a_building_cut_face_by_face_is_the_building_cut_afresh() {
+        // A two-storey house with a floor inside, shelled again and again, and once given cells back
+        // (a ram the server never confirmed): every time the same triangles in the same order.
+        let (w, d, h) = (1300, 900, 700);
+        let walls: Vec<Tri> = [quad([0, 0, 0], [w, 0, 0], [w, h, 0], [0, h, 0]), quad([w, 0, 0], [w, 0, d], [w, h, d], [w, h, 0]), quad([w, 0, d], [0, 0, d], [0, h, d], [w, h, d]), quad([0, 0, d], [0, 0, 0], [0, h, 0], [0, h, d])].concat();
+        let roof = quad([0, h, 0], [w, h, 0], [w, h, d], [0, h, d]).to_vec();
+        let inside = quad([0, 350, 0], [w, 350, 0], [w, 350, d], [0, 350, d]).to_vec();
+        let look = look_of(&walls, &roof);
+        let windows = openings_of(&look, look.buildings[0], 0, [0, 0]);
+        let shell = Shell::new(&walls, &roof).unwrap();
+        let mut kept = Standing::new(&walls, &roof, &windows, &inside, &[], &shell);
+        let mut removed = shell.untouched();
+        assert_eq!(kept.carve(&shell, &removed), standing(&walls, &roof, &windows, &inside, &[], Some((&shell, &removed))), "whole");
+        let blasts = [[300, 150, 0], [1300, 400, 500], [700, 700, 450], [0, 200, 800], [650, 100, 900], [1000, 650, 0], [650, 350, 450], [320, 160, 0]];
+        for (n, at) in blasts.into_iter().enumerate() {
+            let before = removed.clone();
+            shell.blast(&mut removed, at, 120 + 40 * n as i32);
+            assert_eq!(kept.carve(&shell, &removed), standing(&walls, &roof, &windows, &inside, &[], Some((&shell, &removed))), "after blast {n}");
+            if n == 3 {
+                // The cells this blast took come back.
+                removed = before;
+                assert_eq!(kept.carve(&shell, &removed), standing(&walls, &roof, &windows, &inside, &[], Some((&shell, &removed))), "after putting blast {n} back");
+            }
+        }
+    }
+
+    #[test]
+    fn a_face_far_from_a_cut_is_not_cut_again() {
+        let (w, d, h) = (2900, 900, 700);
+        let walls: Vec<Tri> = [quad([0, 0, 0], [w, 0, 0], [w, h, 0], [0, h, 0]), quad([w, 0, 0], [w, 0, d], [w, h, d], [w, h, 0]), quad([w, 0, d], [0, 0, d], [0, h, d], [w, h, d]), quad([0, 0, d], [0, 0, 0], [0, h, 0], [0, h, d])].concat();
+        let roof = quad([0, h, 0], [w, h, 0], [w, h, d], [0, h, d]).to_vec();
+        let shell = Shell::new(&walls, &roof).unwrap();
+        let mut kept = Standing::new(&walls, &roof, &[], &[], &[], &shell);
+        let mut removed = shell.untouched();
+        // A hole in the far end wall: the near one, 29 m off, is not cut again, nor is anything but what is near the hole.
+        shell.blast(&mut removed, [w, 300, 450], 150);
+        kept.carve(&shell, &removed);
+        let near: Vec<usize> = kept.faces.iter().enumerate().filter(|(_, face)| face.hi[0] <= 2).map(|(n, _)| n).collect();
+        assert!(!near.is_empty());
+        assert!(kept.recut.iter().all(|n| !near.contains(n)), "a face 29 m from the cut was cut again");
+        let (recut, faces) = kept.recut();
+        assert!(recut > 0 && recut < faces, "{recut} of {faces} faces cut again");
+        // Nothing changed: nothing is cut again.
+        kept.carve(&shell, &removed);
+        assert_eq!(kept.recut().0, 0);
     }
 }

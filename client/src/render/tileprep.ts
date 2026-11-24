@@ -9,6 +9,11 @@ import { grassMask, type GrassMask } from './grassmask'
 import { wetnessPixels } from './marshnoise'
 import type { HeightSource } from './shade'
 import { reliefPixels, terrainBuffers, TERRAIN_LOD_ERRORS, type CoverSource, type Pixels, type TerrainBuffers } from './terrainmesh'
+import { pack, packAlongside, packableTransferables } from './packing'
+import { gatesOfTile, type GateSpot } from './gatespots'
+import { stonesPixels } from './groundmaps'
+import { shoreOf, type Shore } from './shore'
+import { lineBuffers, lineTransferables, type LineBuffers } from './lines'
 
 /*
  * Everything a streamed-in tile is turned into before it is attached, as plain arrays: its terrain,
@@ -19,7 +24,7 @@ import { reliefPixels, terrainBuffers, TERRAIN_LOD_ERRORS, type CoverSource, typ
  */
 
 /** What of a tile `prepareTile` reads: small enough to send to the worker (`tileParts`). */
-export type TileParts = Pick<TileData, 'cover' | 'crops' | 'detail' | 'roads' | 'rails' | 'ski' | 'water' | 'reach' | 'flow' | 'foam' | 'stir' | 'lane' | 'streams' | 'bridges' | 'collision' | 'look'> & {
+export type TileParts = Pick<TileData, 'cover' | 'crops' | 'detail' | 'stones' | 'lines' | 'roads' | 'rails' | 'ski' | 'water' | 'reach' | 'flow' | 'foam' | 'stir' | 'lane' | 'streams' | 'bridges' | 'collision' | 'look'> & {
   buildings: readonly Pick<Building, 'first' | 'walls' | 'roof' | 'roofKind' | 'kind' | 'cells' | 'footprint' | 'paint' | 'look' | 'front'>[]
   /** The tile's trees as the forest's floor reads them (`woodsOf`). */
   woods: Float32Array
@@ -34,9 +39,9 @@ export function gravesOf(graves: TileData['graves']): Float32Array {
 
 /** The parts of `tile` `prepareTile` reads, leaving out what the worker has no use for (all of a tree but where it stands and what it is, the file's bytes). */
 export function tileParts(tile: TileData): TileParts {
-  const { cover, crops, detail, roads, rails, ski, water, reach, flow, foam, stir, lane, streams, bridges, collision, look } = tile
+  const { cover, crops, detail, stones, lines, roads, rails, ski, water, reach, flow, foam, stir, lane, streams, bridges, collision, look } = tile
   const buildings = tile.buildings.map(({ first, walls, roof, roofKind, kind, cells, footprint, paint, look, front }) => ({ first, walls, roof, roofKind, kind, cells, footprint, paint, look: look ?? null, front }))
-  return { cover, ...(crops ? { crops } : {}), ...(detail ? { detail } : {}), roads, rails, ski, water, ...(reach ? { reach } : {}), ...(flow ? { flow } : {}), ...(foam ? { foam } : {}), ...(stir ? { stir } : {}), ...(lane ? { lane } : {}), streams, bridges, collision, ...(look ? { look } : {}), buildings, woods: woodsOf(tile.trees), graves: gravesOf(tile.graves) }
+  return { cover, ...(crops ? { crops } : {}), ...(detail ? { detail } : {}), ...(stones ? { stones } : {}), ...(lines ? { lines } : {}), roads, rails, ski, water, ...(reach ? { reach } : {}), ...(flow ? { flow } : {}), ...(foam ? { foam } : {}), ...(stir ? { stir } : {}), ...(lane ? { lane } : {}), streams, bridges, collision, ...(look ? { look } : {}), buildings, woods: woodsOf(tile.trees), graves: gravesOf(tile.graves) }
 }
 
 /** What `prepareTile` makes a tile from. */
@@ -60,8 +65,13 @@ export interface PreparedTile {
   level: number
   /** The buildings `buildings` leaves out. */
   undrawn: number[]
-  /** The terrain mesh at `level`, its relief map and how wet each of its texels is (`wetnessPixels`); null on a flat world. */
-  terrain: { buffers: TerrainBuffers; relief: Pixels; wet: Uint8Array | null } | null
+  /**
+   * The terrain mesh at `level`, its relief map, how wet each of its texels is (`wetnessPixels`), and its
+   * stony ground, shore and rock (`stonesPixels`, null where it has none); null on a flat world.
+   */
+  terrain: { buffers: TerrainBuffers; relief: Pixels; wet: Uint8Array | null; stones?: Pixels | null } | null
+  /** Where its ground meets the water (`shoreOf`), null where it does not; absent when not worked out. */
+  shore?: Shore | null
   /** The painted cover. Absent where nothing could paint it (`paint`), for the main thread to bake. */
   cover?: ImageBitmap | null
   /** Roads, rails and water; null on a flat world. */
@@ -73,6 +83,10 @@ export interface PreparedTile {
   grass: GrassMask | null
   /** What grows in its houses' gardens (`gardenPlan`); null without `place`. */
   gardens: GardenPlan | null
+  /** Where its gates are (`gatesOfTile`), for `GateView` to hang them without looking at every house. */
+  gates: GateSpot[]
+  /** Its fences, walls and power lines, whole (`lineBuffers`); null where it has none. Absent when not made. */
+  lines?: LineBuffers | null
 }
 
 /** Paints a tile's cover, seen from above, into a bitmap, or null when there is no canvas. */
@@ -90,16 +104,20 @@ export function prepareTile(input: TileInput, around?: HeightSource, paint?: Cov
   const forest = place ? forestOf(woods, place.x0, place.z0, place.size) : null
   const graves = tile.graves instanceof Float32Array ? tile.graves : gravesOf(tile.graves)
   const gardens = surface ? gardenPlan(tile, surface, woods, graves) : null
+  const shore = ground ? shoreOf(ground, tile.water) : null
   return {
     level: input.level,
     undrawn: [...input.undrawn],
-    terrain: ground ? terrainOf(tile, ground, error, around) : null,
+    terrain: ground ? { ...terrainOf(tile, ground, error, around), stones: stonesPixels(tile, shore, ground) } : null,
+    shore,
     ...(paint && ground ? { cover: paint({ ...tile, woods, ...(gardens ? { beds: gardens.beds } : {}) }, ground) } : {}),
     draped: ground ? drapedMeshes(tile, ground, around) : null,
     buildings: buildingBuffers(tile, input.salt, new Set(input.undrawn)),
     surface,
     grass: place && surface ? grassMask(tile, place.x0, place.z0, place.size, ground, surface, forest, gardens?.beds) : null,
     gardens,
+    gates: gatesOfTile(tile),
+    lines: lineBuffers(tile.lines, ground),
   }
 }
 
@@ -111,7 +129,20 @@ function terrainOf(tile: TileInput['tile'], ground: TileGround, error: number, a
 
 /** The arrays of a terrain mesh, so they move to the other thread instead of being copied. */
 export function terrainTransferables(buffers: TerrainBuffers): ArrayBuffer[] {
-  return Object.values(buffers).map((array: Float32Array | Uint32Array) => array.buffer as ArrayBuffer)
+  return packableTransferables(buffers)
+}
+
+/**
+ * Packs `prepared`'s big meshes into the renderer's layout (`pack`), as the tile worker does before it
+ * hands a tile over: its terrain, its roads and rails, and its buildings. Its water keeps its arrays
+ * as well, which the water's refinement reads. Returns it.
+ */
+export function packPrepared(prepared: PreparedTile): PreparedTile {
+  if (prepared.terrain) pack(prepared.terrain.buffers)
+  for (const ribbon of prepared.draped?.ribbons ?? []) pack(ribbon.buffers)
+  for (const water of prepared.draped?.water ?? []) packAlongside(water)
+  if (prepared.buildings && prepared.buildings.positions.length > 0) pack(prepared.buildings)
+  return prepared
 }
 
 /** Everything in `prepared` that can move to the other thread instead of being copied. */
@@ -119,6 +150,9 @@ export function preparedTransferables(prepared: PreparedTile): Transferable[] {
   const out: Transferable[] = []
   if (prepared.terrain) out.push(...terrainTransferables(prepared.terrain.buffers), prepared.terrain.relief.data.buffer as ArrayBuffer)
   if (prepared.terrain?.wet) out.push(prepared.terrain.wet.buffer as ArrayBuffer)
+  if (prepared.terrain?.stones) out.push(prepared.terrain.stones.data.buffer as ArrayBuffer)
+  if (prepared.shore) out.push(prepared.shore.levels.buffer as ArrayBuffer)
+  if (prepared.lines) out.push(...lineTransferables(prepared.lines))
   if (prepared.cover) out.push(prepared.cover)
   if (prepared.draped) out.push(...drapedTransferables(prepared.draped))
   if (prepared.buildings) out.push(...buildingTransferables(prepared.buildings))

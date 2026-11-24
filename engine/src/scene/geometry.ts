@@ -1,3 +1,5 @@
+import { VERTEX_STRIDE } from '../gpu/arena'
+
 let nextId = 1
 
 /** A bounding sphere in the geometry's own space. */
@@ -9,7 +11,8 @@ export interface Sphere {
 }
 
 export interface GeometryData {
-  positions: Float32Array
+  /** Three numbers a vertex; may be left out when the vertices come `packed`. */
+  positions?: Float32Array
   normals?: Float32Array
   uvs?: Float32Array
   /** Linear RGB (3 per vertex) or RGBA (4 per vertex) colours. */
@@ -25,6 +28,13 @@ export interface GeometryData {
   bounds?: Sphere
   /** Lets the arrays go once the renderer holds a copy (`Geometry.uploadOnce`). */
   uploadOnce?: boolean
+  /**
+   * The vertices already in the renderer's layout (`packVertices`, `VERTEX_STRIDE` bytes each), made
+   * off the main thread, which the renderer copies as they are rather than interleaving the arrays:
+   * for a big mesh nobody reads again (`uploadOnce`). Its arrays are then usually left out, and
+   * `bounds` should be given.
+   */
+  packed?: ArrayBuffer
 }
 
 const NO_FLOATS = new Float32Array(0)
@@ -48,6 +58,8 @@ export class Geometry {
   joints: Uint8Array | Uint16Array | undefined
   weights: Float32Array | undefined
   indices: Uint16Array | Uint32Array | undefined
+  /** The vertices in the renderer's layout, when they came so (`GeometryData.packed`). */
+  packed: ArrayBuffer | undefined
   bounds: Sphere = { x: 0, y: 0, z: 0, radius: 0 }
   /** Bumped by `needsUpdate`; the renderer re-uploads when it differs from what it has. */
   version = 0
@@ -75,7 +87,8 @@ export class Geometry {
   private releasedIndices = -1
 
   constructor(data: GeometryData) {
-    this.positions = data.positions
+    this.positions = data.positions ?? NO_FLOATS
+    this.packed = data.packed
     this.normals = data.normals
     this.uvs = data.uvs
     this.colors = data.colors
@@ -89,7 +102,8 @@ export class Geometry {
   }
 
   get vertexCount() {
-    return this.releasedVertices >= 0 ? this.releasedVertices : this.positions.length / 3
+    if (this.releasedVertices >= 0) return this.releasedVertices
+    return this.packed ? this.packed.byteLength / VERTEX_STRIDE : this.positions.length / 3
   }
 
   get indexCount() {
@@ -108,6 +122,7 @@ export class Geometry {
     this.releasedVertices = this.vertexCount
     this.positions = NO_FLOATS
     this.normals = this.uvs = this.colors = this.custom = this.joints = this.weights = this.indices = undefined
+    this.packed = undefined
   }
 
   /**
@@ -117,6 +132,8 @@ export class Geometry {
    */
   collapseRange(first: number, count: number) {
     if (!this.released) this.positions.fill(0, first * 3, (first + count) * 3)
+    // As the renderer collapses a range: every byte of those vertices nought.
+    if (this.packed) new Uint8Array(this.packed, first * VERTEX_STRIDE, count * VERTEX_STRIDE).fill(0)
     this.collapsedRanges.push(first, count)
   }
 
@@ -126,16 +143,26 @@ export class Geometry {
    */
   needsUpdateRange(first: number, count: number) {
     this.mustHold()
+    this.dropStalePacked()
     this.dirtyRanges.push(first, count)
   }
 
   /** Call after changing any of the arrays (in place or by replacing them). */
   needsUpdate() {
     this.mustHold()
+    this.dropStalePacked()
     this.dirtyRanges.length = 0
     this.collapsedRanges.length = 0
     this.version++
     this.computeBounds()
+  }
+
+  /**
+   * @internal Lets the packed vertices go when the arrays are kept as well: once the renderer has them,
+   * or once the arrays changed and they no longer match. Later uploads interleave the arrays.
+   */
+  dropStalePacked() {
+    if (this.packed && this.positions.length > 0) this.packed = undefined
   }
 
   /** A geometry that let its arrays go has nothing to send again: changing it is a mistake, said at once. */
@@ -145,7 +172,8 @@ export class Geometry {
 
   computeBounds() {
     if (this.released) return
-    const p = this.positions
+    // Packed with no arrays: the positions are the first three floats of each vertex.
+    const p = this.packed && this.positions.length === 0 ? packedPositions(this.packed) : this.positions
     let minX = Infinity, minY = Infinity, minZ = Infinity
     let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity
     for (let i = 0; i < p.length; i += 3) {
@@ -335,4 +363,17 @@ export class Geometry {
     this.disposed = true
     this.version++
   }
+}
+
+/** The positions of vertices packed in the renderer's layout (`GeometryData.packed`), three numbers a vertex. */
+function packedPositions(packed: ArrayBuffer): Float32Array {
+  const all = new Float32Array(packed)
+  const count = packed.byteLength / VERTEX_STRIDE
+  const out = new Float32Array(count * 3)
+  for (let i = 0; i < count; i++) {
+    out[i * 3] = all[i * 16]!
+    out[i * 3 + 1] = all[i * 16 + 1]!
+    out[i * 3 + 2] = all[i * 16 + 2]!
+  }
+  return out
 }

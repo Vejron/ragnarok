@@ -649,6 +649,11 @@ Its own README gives the benchmark against three's two renderers, from when a co
   - A `discard` anywhere in a shader costs every pixel drawn with it a tiled GPU's hidden-surface
     removal, even behind a test that is never true, or a false `override` constant. Keep it out of
     the text of the main view's shaders ([GPU-PERFORMANCE.md](GPU-PERFORMANCE.md), step 8).
+  - A NaN that the Mac never shows can still be black on another GPU. `normalize` of a zero vector,
+    and a share divided by a coverage of nothing, drew black specks along every far treeline and blots
+    in the water's mirror on an NVIDIA card (Windows, D3D12): a far tree impostor kept samples of
+    pixels whose middle missed it. To find one, mark the HDR image's non-finite pixels magenta in
+    `passes/output.wgsl.ts` (test the bits as `finite` does), then hide meshes until they go.
   - `from` is a reserved word.
   - A variable named `length` (or another builtin's name) shadows the builtin for the rest of its
     scope.

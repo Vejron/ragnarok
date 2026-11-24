@@ -9,6 +9,7 @@ import { detailColour, detailTriangles, detailsOf, type DetailQuad } from './det
 import { glassBuffers, type GlassBuffers } from './glass'
 import { FLOOR_RGB, INSIDE_RGB, facadeFor, innerOf, type Facade } from './facade'
 import { normalOf, type Poly } from './geom'
+import { packableTransferables } from './packing'
 
 /*
  * A tile's buildings and bridges as one flat-shaded triangle soup with a colour a vertex, as plain
@@ -84,13 +85,15 @@ export interface BuildingBuffers {
   ranges?: Uint32Array
   /** The glass in the windows of the buildings drawn from their looks, drawn apart and translucent (`glass.ts`); absent when there is none. */
   glass?: GlassBuffers
+  /** Its vertices in the renderer's layout, once the tile worker has packed it (`pack`). */
+  packed?: ArrayBuffer
 }
 
 /** The arrays of `buffers`, so they move to the other thread instead of being copied. */
 export function buildingTransferables(buffers: BuildingBuffers): ArrayBuffer[] {
   const glass = buffers.glass ? [buffers.glass.positions, buffers.glass.normals, buffers.glass.panes] : []
-  const arrays = [buffers.positions, buffers.normals, buffers.colors, buffers.custom, buffers.indices, ...(buffers.ranges ? [buffers.ranges] : []), ...glass]
-  return arrays.map((array) => array.buffer as ArrayBuffer)
+  const arrays = [...(buffers.ranges ? [buffers.ranges] : []), ...glass]
+  return [...packableTransferables(buffers), ...arrays.map((array) => array.buffer as ArrayBuffer)]
 }
 
 /** An outbuilding is painted as the house within this of it, metres between their middles. */
