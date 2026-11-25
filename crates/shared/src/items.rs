@@ -188,8 +188,6 @@ pub struct ItemDef {
     pub stack: u8,
     /// How it is named in shot and kill events.
     pub weapon: u8,
-    /// How likely it is to be picked when pickups are scattered; relative weights.
-    pub weight: u32,
 }
 
 const REVOLVER: ItemDef = ItemDef {
@@ -214,7 +212,6 @@ const REVOLVER: ItemDef = ItemDef {
     scope: false,
     stack: 1,
     weapon: WEAPON_REVOLVER,
-    weight: 3,
 };
 
 const AK5: ItemDef = ItemDef {
@@ -238,7 +235,6 @@ const AK5: ItemDef = ItemDef {
     scope: false,
     stack: 1,
     weapon: WEAPON_RIFLE,
-    weight: 2,
 };
 
 const SNIPER: ItemDef = ItemDef {
@@ -263,7 +259,6 @@ const SNIPER: ItemDef = ItemDef {
     scope: true,
     stack: 1,
     weapon: WEAPON_SNIPER,
-    weight: 3,
 };
 
 const SHOTGUN: ItemDef = ItemDef {
@@ -288,7 +283,6 @@ const SHOTGUN: ItemDef = ItemDef {
     scope: false,
     stack: 1,
     weapon: WEAPON_SHOTGUN,
-    weight: 3,
 };
 
 const GRENADE: ItemDef = ItemDef {
@@ -311,7 +305,6 @@ const GRENADE: ItemDef = ItemDef {
     scope: false,
     stack: 3,
     weapon: WEAPON_GRENADE,
-    weight: 4,
 };
 
 const BANDAGE: ItemDef = ItemDef {
@@ -334,7 +327,6 @@ const BANDAGE: ItemDef = ItemDef {
     scope: false,
     stack: 5,
     weapon: WEAPON_RIFLE,
-    weight: 5,
 };
 
 const GOLDEN_EGG: ItemDef = ItemDef {
@@ -358,8 +350,6 @@ const GOLDEN_EGG: ItemDef = ItemDef {
     scope: false,
     stack: 1,
     weapon: WEAPON_RIFLE,
-    // Only roosters drop it.
-    weight: 0,
 };
 
 const DRONE: ItemDef = ItemDef {
@@ -383,7 +373,6 @@ const DRONE: ItemDef = ItemDef {
     scope: false,
     stack: 1,
     weapon: WEAPON_DRONE,
-    weight: 2,
 };
 
 const LOITER: ItemDef = ItemDef {
@@ -407,7 +396,6 @@ const LOITER: ItemDef = ItemDef {
     scope: false,
     stack: 1,
     weapon: WEAPON_LOITER,
-    weight: 1,
 };
 
 const FLARE: ItemDef = ItemDef {
@@ -431,7 +419,6 @@ const FLARE: ItemDef = ItemDef {
     // Flares left; the gun goes when the last is fired.
     stack: 3,
     weapon: WEAPON_FLARE,
-    weight: 2,
 };
 
 const BRICKS: ItemDef = ItemDef {
@@ -455,8 +442,6 @@ const BRICKS: ItemDef = ItemDef {
     scope: false,
     stack: 1,
     weapon: WEAPON_RIFLE,
-    // Everyone starts with it; it is never scattered.
-    weight: 0,
 };
 
 const CARL_GUSTAF: ItemDef = ItemDef {
@@ -485,7 +470,6 @@ const CARL_GUSTAF: ItemDef = ItemDef {
     // Rounds left; the tube goes when the last is fired.
     stack: 3,
     weapon: WEAPON_LAUNCHER,
-    weight: 1,
 };
 
 const AT_RIFLE: ItemDef = ItemDef {
@@ -512,7 +496,6 @@ const AT_RIFLE: ItemDef = ItemDef {
     stack: 1,
     // Shown and credited as a sniper's shot: a heavy round that lands where it was aimed.
     weapon: WEAPON_SNIPER,
-    weight: 1,
 };
 
 const fn golf_club(name: &'static str) -> ItemDef {
@@ -536,8 +519,6 @@ const fn golf_club(name: &'static str) -> ItemDef {
         scope: false,
         stack: 1,
         weapon: WEAPON_GOLF,
-        // Laid out by the course, never scattered.
-        weight: 0,
     }
 }
 
@@ -679,8 +660,7 @@ pub const LOITER_FALL_TICKS: u32 = 8 * TICK_RATE;
 
 /// Ground pickups. A player in `PICKUP_RADIUS` of one who presses use takes it.
 pub const PICKUP_RADIUS: f32 = 2.0;
-/// Pickups in the world, and how long a taken one stays away.
-pub const PICKUP_COUNT: usize = 40;
+/// How long a taken pickup stays away.
 pub const PICKUP_RESPAWN_TICKS: u32 = 30 * TICK_RATE;
 /// Most pickups one snapshot lists: they are static, so the rest arrive as the player nears them.
 pub const MAX_PICKUPS_PER_SNAPSHOT: usize = 24;
@@ -879,7 +859,6 @@ mod tests {
         for item in 1..ITEM_COUNT {
             let d = def(item).unwrap_or_else(|| panic!("item {item} has no definition"));
             assert!(d.stack >= 1);
-            assert!(d.weight > 0 || matches!(item, ITEM_GOLDEN_EGG | ITEM_BRICKS | ITEM_DRIVER | ITEM_PUTTER));
             assert!(d.aim_speed > 0.0 && d.aim_speed <= 1.0);
         }
         assert!(def(ITEM_COUNT).is_none());

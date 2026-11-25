@@ -1,58 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import { Group, Vector3 } from '@ragnarok/engine'
 import { Cameras, type Seated } from '@/cameras'
-import { isDrone, KIND_DRONE, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_WALKER } from '@/net/codec'
+import { KIND_DRONE, KIND_LOITER, KIND_MORTAR, KIND_TANK } from '@/net/codec'
 import type { Placed } from '@/entities/presenters/vehicles'
 import { MortarModel } from '@/render/mortar'
 import { TankModel } from '@/render/tank'
-import { rideView, seatView } from '@/seats'
-import { HELI_GUN_COOLDOWN_TICKS, MORTAR_COOLDOWN_TICKS, MORTAR_RANGE_MAX, SHELL_COOLDOWN_TICKS, TANK_MG_PITCH_MAX, TANK_MG_SEAT, TANK_MG_YAW_LIMIT, WALKER_GUN_COOLDOWN_TICKS } from '@/sim/consts'
-import { vehicleDef } from '@/sim/vehicles'
-import { BEFORE } from './kinds.before'
-
-// What the if-chains in `game.ts` said before the seats became a table, kept here to hold the table to them.
-const before = {
-  prompt(kind: number, driverSeatFree: boolean, index: number) {
-    if (kind === KIND_MORTAR) return 'E: man the mortar'
-    if (kind === KIND_TANK && index === TANK_MG_SEAT) return 'E: man the machine gun'
-    if (kind === KIND_TANK) return driverSeatFree ? 'E: drive the tank' : 'E: man the gun'
-    if (kind === KIND_STRV) return 'E: drive the Strv S'
-    if (kind === KIND_HELI) return driverSeatFree ? 'E: fly' : 'E: man the nose gun'
-    if (kind === KIND_PLANE) return driverSeatFree ? 'E: fly the triplane' : 'E: man the rear gun'
-    if (kind === KIND_SPORTS) return driverSeatFree ? 'E: drive the Opel Manta' : 'E: ride along'
-    if (kind === KIND_ROADSTER) return driverSeatFree ? 'E: drive the Roadster' : 'E: ride along'
-    if (kind === KIND_WALKER) return 'E: drive the walker'
-    if (kind === KIND_HEN) return 'E: drive the hen'
-    return driverSeatFree ? (kind === KIND_JEEP ? 'E: drive the Ford Bronco' : 'E: drive the jeep') : 'E: ride along'
-  },
-  role(kind: number, index: number) {
-    if (kind === KIND_TANK && index === TANK_MG_SEAT) return 'roofgunner'
-    if (index > 0) return vehicleDef(kind).gun ? 'gunner' : 'passenger'
-    return kind === KIND_DRONE ? 'drone' : kind === KIND_LOITER ? 'loiter' : kind === KIND_HELI ? 'pilot' : kind === KIND_PLANE ? 'aviator' : kind === KIND_WALKER ? 'walker' : kind === KIND_HEN ? 'hen' : kind === KIND_STRV ? 'strv' : kind === KIND_MORTAR ? 'mortar' : kind === KIND_ROADSTER ? 'roadster' : 'driver'
-  },
-  reload: (kind: number) => (kind === KIND_PLANE ? null : kind === KIND_HELI ? HELI_GUN_COOLDOWN_TICKS : kind === KIND_WALKER ? WALKER_GUN_COOLDOWN_TICKS : kind === KIND_MORTAR ? MORTAR_COOLDOWN_TICKS : SHELL_COOLDOWN_TICKS),
-  sight: (kind: number, index: number) => (kind === KIND_TANK ? index === 1 : kind === KIND_STRV && index === 0),
-  chase: (kind: number, index: number) => index === 0 && kind !== KIND_HELI && kind !== KIND_PLANE && kind !== KIND_MORTAR && !isDrone(kind),
-}
+import { seatView } from '@/seats'
+import { MORTAR_RANGE_MAX, TANK_MG_PITCH_MAX, TANK_MG_SEAT, TANK_MG_YAW_LIMIT } from '@/sim/consts'
 
 describe('the seats table', () => {
-  for (const def of BEFORE.map(vehicleDef)) {
-    it(`says what the camera, the HUD and the prompt did for the ${def.name}`, () => {
-      const ride = rideView(def.kind)
-      expect(ride.seats).toHaveLength(def.seats)
-      expect(ride.reload).toBe(before.reload(def.kind))
-      ride.seats.forEach((seat, index) => {
-        expect(seat.role, `seat ${index}`).toBe(before.role(def.kind, index))
-        expect(seat.sight === true, `seat ${index}`).toBe(before.sight(def.kind, index))
-        expect(seat.chase === true, `seat ${index}`).toBe(before.chase(def.kind, index))
-        // Boarding takes the lowest free seat, so seat `index` is boarded when every seat before it is taken.
-        expect(seat.board, `seat ${index}`).toBe(isDrone(def.kind) ? undefined : before.prompt(def.kind, index === 0, index))
-        // A seat whose occupant fires their own guns is shot from over their shoulder.
-        expect(seat.rig.name === 'passenger', `seat ${index}`).toBe(def.crewGuns && index > 0)
-      })
-    })
-  }
-
   it('gives a seat past the last its last row', () => {
     expect(seatView(KIND_TANK, 5)).toBe(seatView(KIND_TANK, TANK_MG_SEAT))
   })

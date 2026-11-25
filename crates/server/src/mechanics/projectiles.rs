@@ -828,9 +828,8 @@ mod tests {
 
     fn game() -> Game {
         let map = WorldFile { version: WORLD_VERSION, half_extent: 20_000, spawns: vec![[0, 0]], ..Default::default() };
-        let mut game = Game::new(map, 0).unwrap();
-        game.world.clear_pickups();
-        game
+        
+        Game::new(map, 0).unwrap()
     }
 
     fn launch(game: &mut Game, kind: u8, position: [f32; 3], velocity: [f32; 3]) -> u32 {

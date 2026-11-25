@@ -13,8 +13,7 @@ fn lift() -> Lift {
 
 fn game() -> (Game, Vec<mpsc::Receiver<crate::game::Outgoing>>) {
     let map = WorldFile { version: WORLD_VERSION, half_extent: 40_000, spawns: vec![[2_000, 2_000]], lifts: vec![lift()], ..Default::default() };
-    let mut game = Game::new(map, 0).unwrap();
-    game.world.clear_pickups();
+    let game = Game::new(map, 0).unwrap();
     (game, Vec::new())
 }
 

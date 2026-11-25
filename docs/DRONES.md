@@ -4,7 +4,7 @@ An FPV drone is a hotbar item. Using it launches a small quadcopter loaded with 
 
 ## What you get
 
-- **The item** (`ITEM_DRONE` = 8, "FPV drone"). One per slot. It is scattered with the other pickups (weight 2) and can be placed in the map editor. It is not in the starting loadout.
+- **The item** (`ITEM_DRONE` = 8, "FPV drone"). One per slot. It is found only where the map editor places it. It is not in the starting loadout.
 - **Launch.** Click or F with the drone in hand. It lifts off a metre in front of the eye and half a metre above it, and the view switches to its camera. A launch fails if there is no room in front of the player or the room is at `MAX_VEHICLES`.
 - **Flying.**
   - The mouse is the look, and the drone turns to follow it.
@@ -108,7 +108,7 @@ A `WEAPON_DRONE` shot is drawn as a grenade-sized blast.
 
 A loitering drone is the FPV drone's big sibling: a Shahed-sized delta wing (about 2.5 m across and 3.5 m long) with a 12 m warhead. It is a second drone kind, and the same `Drones` mechanic, remote seat, battery, HUD and prediction handle it. Each kind's gameplay numbers are a `DroneDef` (`drone_def(kind)` in `crates/shared/src/items.rs`).
 
-- **The item** (`ITEM_LOITER` = 9, "Loitering drone"). One per slot. It is scattered with the pickups (weight 1, rarer than the FPV drone) and can be placed and put in loadouts in the editor.
+- **The item** (`ITEM_LOITER` = 9, "Loitering drone"). One per slot. It is found only where the map editor places it, and can be put in loadouts there.
 - **Launch.** Click or F with it in hand. It appears 100 m above the eye and 50 m behind it (`LOITER_LAUNCH_UP`, `LOITER_LAUNCH_BACK`), nose along the look, and already flying at 35 m/s. A launch fails only if it doesn't fit there, or the room is at `MAX_VEHICLES`.
 - **Flying.** It flies like a simplified, nimble version of the triplane:
   - It always flies at 35 m/s (`LOITER_SPEED`) along its nose. There is no throttle, no stall and no sideways slide.

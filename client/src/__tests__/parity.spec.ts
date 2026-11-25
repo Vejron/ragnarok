@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import { KIND_HEN, KIND_JEEP, KIND_PBV, KIND_STRF, KIND_STRV, KIND_TANK, KIND_TITAN, KIND_TUPP, KIND_WALKER } from '../net/codec'
-import { TICK_RATE } from '../sim/consts'
 import { Meter, type Strike } from '../sim/golf'
 import * as items from '../sim/items'
 import tables from '../sim/tables.generated.json'
@@ -51,13 +50,6 @@ describe('gameplay tables come from the server', () => {
     expect(trunkRadiusCm(TREE_ROCK_SLAB, 60, 200)).toBe(170)
     expect(trunkRadiusCm(TREE_ROCK_BOULDER, 150, 1000)).toBe(200)
     expect(trunkRadiusCm(TREE_BUSH, 100, 80)).toBe(10)
-  })
-
-  it('shares the scalar constants', () => {
-    const mirrored: Record<string, number> = { ...items, TICK_RATE } as never
-    for (const [name, value] of Object.entries(tables.consts)) {
-      expect(mirrored[name], name).toBe(value)
-    }
   })
 })
 

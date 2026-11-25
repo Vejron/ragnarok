@@ -31,9 +31,8 @@ fn sea() -> Game {
         placed_vehicles: vec![PlacedVehicle { kind: KIND_SUBMARINE, at: [0, 0], yaw: 0.0 }],
         ..Default::default()
     };
-    let mut game = Game::new(map, 0).unwrap();
-    game.world.clear_pickups();
-    game
+    
+    Game::new(map, 0).unwrap()
 }
 
 fn join(game: &mut Game) -> u32 {

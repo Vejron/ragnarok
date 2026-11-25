@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { Mesh } from '@ragnarok/engine'
 import { FLOOR_HEATH, FLOOR_LEAF, FLOOR_MIXED, FLOOR_MOSS, floorAt, forestOf, standAt, woodsOf } from '@/render/forest'
 import { FLOOR_FULL, FLOOR_LITE, FloorBuilder, ForestFloor, addFern, addStone, addStump, driftsAt } from '@/render/forestfloor'
-import { chunkBlades, GRASS_CHUNK, random } from '@/render/grass'
+import { chunkBlades, random } from '@/render/grass'
 import { FLOOR_SHADES, grassMask } from '@/render/grassmask'
 import { COVER_WOOD, TREE_BIRCH, TREE_BUSH, TREE_PINE, TREE_ROCK_BOULDER, TREE_SPRUCE, type Point2, type Tree } from '@/world'
 
@@ -75,7 +75,6 @@ describe('the forest floor', () => {
     expect(blades(FLOOR_HEATH)).toBeLessThan(blades(FLOOR_MIXED))
     expect(blades(FLOOR_MIXED)).toBeLessThan(blades(FLOOR_LEAF))
     expect(blades(FLOOR_MOSS) * 5).toBeLessThan(blades(FLOOR_LEAF))
-    expect(GRASS_CHUNK).toBe(16)
   })
 
   it('builds each thing about a root under it, which it shrinks into far off', () => {

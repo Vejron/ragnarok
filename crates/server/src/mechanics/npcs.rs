@@ -324,7 +324,6 @@ mod tests {
     fn a_shot_rooster_drops_a_golden_egg_and_comes_back() {
         let mut game = game();
         let r = rooster(&game);
-        game.world.clear_pickups();
         // A ray through the middle of it.
         let p = r.transform.position;
         let centre = [p[0], p[1] + ROOSTER_CAPSULE_CENTRE, p[2]];
@@ -430,17 +429,11 @@ mod tests {
     fn killed_again_it_leaves_only_one_egg_lying_about() {
         let mut game = game();
         let id = rooster(&game).id;
-        game.world.clear_pickups();
         for _ in 0..3 {
             assert!(damage_entity(&mut game.world, id, Harm::new(ROOSTER_HP, None, 0)));
             crate::mechanics::life::place_at_home(&mut game.world, id);
         }
         let eggs = game.world.pickup_ids().into_iter().filter(|&pid| game.world.pickup(pid).is_some_and(|p| p.item == ITEM_GOLDEN_EGG)).count();
         assert_eq!(eggs, 1);
-    }
-
-    #[test]
-    fn the_egg_is_never_scattered() {
-        assert!(def(ITEM_GOLDEN_EGG).is_some_and(|d| d.weight == 0));
     }
 }

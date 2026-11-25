@@ -2695,9 +2695,6 @@ export const PLANE_CEILING = 160.0
 /** Within this many metres of the edge of the world the plane is steered back towards the middle. */
 export const PLANE_EDGE_MARGIN = 120.0
 
-/** A plane is parked where a straight, flat, clear run of at least this many metres lies ahead. */
-export const PLANE_RUNWAY = 80.0
-
 /**
  * The two forward guns on the cowling, which fire in turn along the nose. `PLANE_GUN_COOLDOWN_TICKS`
  * between rounds makes twelve a second between them. A round is a hitscan out to `PLANE_GUN_RANGE`.

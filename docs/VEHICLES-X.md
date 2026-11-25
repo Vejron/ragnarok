@@ -4,7 +4,7 @@ The submarine is a small diesel-electric boat that can go under. Its captain ste
 
 ## In play
 
-- **The submarine** (`KIND_SUBMARINE` = 25) has 250 hp and two seats, both sealed in its hull. It is never placed on its own. It appears only where it is placed in the map editor (**Submarine**, B in the palette), on open water. Like the ship, it starts floating, and is skipped over dry land.
+- **The submarine** (`KIND_SUBMARINE` = 25) has 250 hp and two seats, both sealed in its hull. It appears only where it is placed in the map editor (**Submarine**, B in the palette), on open water. Like the ship, it starts floating, and is skipped over dry land.
 - **Seat 0 is the captain.** W and S drive it ahead and astern, up to 8 m/s. A and D work the rudder, which bites only while it makes way. Run (Shift) dives it and jump (Space) brings it up, both at `SUB_DIVE_RATE` (2 m/s). With neither held, it holds whatever depth it is at.
   - On the surface it floats with its middle `SUB_SURFACE_DEPTH` (0.6 m) under and heaves with the waves.
   - It cannot rise higher than that, and the bed stops it going lower.

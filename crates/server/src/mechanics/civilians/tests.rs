@@ -12,7 +12,6 @@ fn game() -> Game {
     let triangles = vec![[0, 1, 5], [0, 5, 4], [1, 2, 6], [1, 6, 5], [2, 3, 7], [2, 7, 6], [3, 0, 4], [3, 4, 7], [4, 5, 6], [4, 6, 7], [0, 2, 1], [0, 3, 2]];
     let map = WorldFile { version: WORLD_VERSION, half_extent: 10_000, spawns: vec![[-8_000, -8_000]], collision: CollisionMesh { vertices, triangles }, ..Default::default() };
     let mut game = Game::new(map, 0).unwrap();
-    game.world.clear_pickups();
     game.world.rng = crate::rng::Rng::from_seed(7);
     game
 }

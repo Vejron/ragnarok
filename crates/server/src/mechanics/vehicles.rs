@@ -6,17 +6,16 @@ use sim::{CarCondition, CarControls, CarImpact, CarPose, Character, Obj, half_ex
 use shared::consts::*;
 use shared::vehicles::vehicle_def;
 use shared::protocol::{
-    DAMAGE_FRONT, DAMAGE_LEFT, DAMAGE_REAR, DAMAGE_RIGHT, DAMAGE_WHEELS, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_SPORTS, KIND_STRV, KIND_TANK, KIND_TUPP, KIND_WALKER, ShotEvent, WEAPON_CRASH, is_drone,
+    DAMAGE_FRONT, DAMAGE_LEFT, DAMAGE_REAR, DAMAGE_RIGHT, DAMAGE_WHEELS, KIND_JEEP, KIND_TANK, ShotEvent, WEAPON_CRASH, is_drone,
     WEAPON_ROADKILL, WEAPON_SCRAPE, vehicle_hp,
 };
 use shared::quant::{to_cm, wrap_angle};
-use shared::world::{THEME_WINTER, WorldFile};
 use std::collections::BTreeMap;
 
 pub mod doors;
 pub use doors::{Stepping, step_byte, stepped_out, stepping};
 
-/// Cars parked around the map, seats, and driving them.
+/// Vehicles the map editor placed, seats, and driving them.
 ///
 /// `BUTTON_USE` is one press per input frame: it boards the nearest vehicle with a free seat, or
 /// leaves the one the player sits in. A driver's axes and `BUTTON_JUMP` (handbrake) steer the car;
@@ -25,29 +24,6 @@ pub use doors::{Stepping, step_byte, stepped_out, stepping};
 /// is in. `BUTTON_RELOAD` moves a seated player to a free seat of the same vehicle.
 pub struct Vehicles;
 
-/// Cars (half jeeps, half sports cars, or snowmobiles in a winter world), tanks and helicopters placed at start. Fewer appear when the world has too few clear spawn points.
-const CAR_COUNT: usize = 6;
-const TANK_COUNT: usize = 2;
-const HELI_COUNT: usize = 1;
-/// Roadsters, placed right after the other cars.
-const ROADSTER_COUNT: usize = 1;
-/// Strv S tanks, placed with the other tanks.
-const STRV_COUNT: usize = 1;
-/// Walkers, placed with the tanks and the helicopter on the road's spawn points.
-const WALKER_COUNT: usize = 1;
-/// Hens, placed after the mortars and the Paks on whichever spawn points are left.
-const HEN_COUNT: usize = 1;
-const TUPP_COUNT: usize = 1;
-/// Field mortars, placed after the planes on whichever spawn points are left. A car hitches one (see `hitch`).
-const MORTAR_COUNT: usize = 1;
-/// Pak 38 guns, placed after the mortars the same way, and hitched the same way.
-const PAK_COUNT: usize = 1;
-/// Planes, placed after everything else where they have room to take off.
-const PLANE_COUNT: usize = 2;
-/// The longest runway worth looking for, metres: a plane is off the ground in about 40.
-const RUNWAY_SEARCH: f32 = 150.0;
-/// Spawn points `Spawn` hands to players first; cars prefer the others.
-const PLAYER_SPAWNS: usize = 6;
 /// Cars at least this fast (or any overlap at all) hurl a standing player away.
 /// Knockback speed is the car's speed times this, within the limits below.
 const KNOCK_SPEED_FACTOR: f32 = 1.1;
@@ -72,86 +48,6 @@ const SHIP_KNOCK_SPEED: f32 = 4.0;
 /// How high above the ground a fresh vehicle of `kind` starts, at its chassis centre.
 pub(super) fn drop_height(kind: u8) -> f32 {
     vehicle_def(kind).body.drop_y
-}
-
-/// Heading of the nearest road segment to `(x, z)`, in the soldier yaw convention, or 0.
-fn road_heading(map: &WorldFile, x: f32, z: f32) -> f32 {
-    let mut best = (f32::MAX, 0.0);
-    for road in &map.roads {
-        for pair in road.points.windows(2) {
-            let [ax, az] = pair[0].map(|v| v as f32 / 100.0);
-            let [bx, bz] = pair[1].map(|v| v as f32 / 100.0);
-            let (dx, dz) = (bx - ax, bz - az);
-            let length_sq = dx * dx + dz * dz;
-            if length_sq < 1e-6 {
-                continue;
-            }
-            let t = (((x - ax) * dx + (z - az) * dz) / length_sq).clamp(0.0, 1.0);
-            let distance = (x - (ax + dx * t)).hypot(z - (az + dz * t));
-            if distance < best.0 {
-                best = (distance, (-dx).atan2(-dz));
-            }
-        }
-    }
-    best.1
-}
-
-/// Whether `point` (`[x, z]`) lies on the strip a plane at `start` facing `yaw` would take off along.
-fn on_runway(start: [f32; 3], yaw: f32, length: f32, point: [f32; 3]) -> bool {
-    let (sin, cos) = yaw.sin_cos();
-    let (dx, dz) = (point[0] - start[0], point[2] - start[2]);
-    let along = -sin * dx - cos * dz;
-    let across = cos * dx - sin * dz;
-    along > -PLANE_HALF_EXTENTS[2] && along < length && across.abs() < PLANE_WING_HALF_EXTENTS[0] + 2.0
-}
-
-/// Parks the planes at the spawn points nothing else took, facing along the road whichever way
-/// has the longer clear run, longest first. A plane is never parked on another one's runway. If no
-/// spot has a full `PLANE_RUNWAY`, the best there is will do. Returns how many were placed.
-fn place_planes(world: &mut World, candidates: &[[i32; 2]], used: &[bool]) -> usize {
-    // Vehicles already parked are in the way as much as walls are.
-    let parked_vehicles: Vec<[f32; 3]> = world.entities.ids::<With<Vehicle>>().into_iter().filter_map(|vid| world.physics.car_pose(vid)).map(|pose| pose.position).collect();
-    let clear_of_vehicles = |position: [f32; 3], yaw: f32, run: f32| {
-        let (sin, cos) = yaw.sin_cos();
-        parked_vehicles
-            .iter()
-            .filter(|&&other| on_runway(position, yaw, run, other))
-            .map(|other| (-sin * (other[0] - position[0]) - cos * (other[2] - position[2]) - 3.0).max(0.0))
-            .fold(run, f32::min)
-    };
-    let mut spots: Vec<(f32, [f32; 3], f32)> = Vec::new();
-    for (&[cx, cz], _) in candidates.iter().zip(used).filter(|(_, used)| !**used) {
-        let (x, z) = (cx as f32 / 100.0, cz as f32 / 100.0);
-        let road = road_heading(&world.map, x, z);
-        let position = [x, world.map.ground.height_at(x, z) + drop_height(KIND_PLANE), z];
-        let best = [road, wrap_angle(road + std::f32::consts::PI)]
-            .into_iter()
-            .filter(|&yaw| world.physics.car_fits(KIND_PLANE, position, yaw))
-            .map(|yaw| (clear_of_vehicles(position, yaw, world.physics.runway(&world.map.ground, position, yaw, RUNWAY_SEARCH)), yaw))
-            .max_by(|a, b| a.0.total_cmp(&b.0));
-        if let Some((run, yaw)) = best {
-            spots.push((run, position, yaw));
-        }
-    }
-    spots.sort_by(|a, b| b.0.total_cmp(&a.0));
-    let mut parked: Vec<([f32; 3], f32, f32)> = Vec::new();
-    for (run, position, yaw) in spots {
-        if parked.len() == PLANE_COUNT || world.entities.count::<Vehicle>() >= MAX_VEHICLES {
-            break;
-        }
-        // Only the stretch each needs to get off the ground has to be clear of the other.
-        let need = |run: f32| run.min(PLANE_RUNWAY);
-        let crossing = parked.iter().any(|&(other, other_yaw, other_run)| on_runway(other, other_yaw, need(other_run), position) || on_runway(position, yaw, need(run), other));
-        if crossing {
-            continue;
-        }
-        if run < PLANE_RUNWAY {
-            tracing::warn!(run, "no full runway for a plane; parking it on the best there is");
-        }
-        add_vehicle(world, KIND_PLANE, position, yaw);
-        parked.push((position, yaw, run));
-    }
-    parked.len()
 }
 
 /// Vehicle `vid` put back as new: whole, restocked and, once its wreck has burnt out, `HurtBy` no one.
@@ -824,87 +720,24 @@ impl Mechanic for Vehicles {
     }
 
     fn on_start(&mut self, world: &mut World) {
-        // Vehicles placed in the map editor replace the scatter over the spawn points.
-        if !world.map.placed_vehicles.is_empty() {
-            let mut placed = 0;
-            for spot in world.map.placed_vehicles.clone() {
-                let (x, z) = (spot.at[0] as f32 / 100.0, spot.at[1] as f32 / 100.0);
-                // A ship needs open water: none on land, nor on a frozen lake.
-                let Some(position) = start_position(world, spot.kind, x, z) else {
-                    tracing::info!(kind = spot.kind, x, z, "placed ship is not on open water; skipped");
-                    continue;
-                };
-                if world.entities.count::<Vehicle>() + 1 + vehicle_def(spot.kind).fittings.len() > MAX_VEHICLES {
-                    tracing::warn!(kind = spot.kind, x, z, max = MAX_VEHICLES, "too many placed vehicles; skipped");
-                } else if world.physics.car_fits(spot.kind, position, spot.yaw) {
-                    add_vehicle(world, spot.kind, position, spot.yaw);
-                    placed += 1;
-                } else {
-                    tracing::warn!(kind = spot.kind, x, z, "placed vehicle does not fit; skipped");
-                }
-            }
-            tracing::info!(vehicles = placed, "vehicles placed from the editor");
-            return;
-        }
-        let spawns = world.map.spawns.clone();
-        // Prefer spawn points players do not start on, then fall back to those.
-        let split = PLAYER_SPAWNS.min(spawns.len());
-        let candidates: Vec<[i32; 2]> = spawns[split..].iter().chain(spawns[..split].iter().rev()).copied().collect();
-        let mut used = vec![false; candidates.len()];
         let mut placed = 0;
-        // A sports car has no business in the snow: a winter world gets snowmobiles instead.
-        let second_car = if world.map.theme == THEME_WINTER { KIND_SNOWMOBILE } else { KIND_SPORTS };
-        for (index, &[cx, cz]) in candidates.iter().enumerate() {
-            const CARS: usize = CAR_COUNT + ROADSTER_COUNT;
-            if placed == CARS + TANK_COUNT + STRV_COUNT + HELI_COUNT + WALKER_COUNT {
-                break;
-            }
-            // Cars first (jeeps and sports cars or snowmobiles take turns, then the Roadster), then the tanks, then the helicopter.
-            let kind = match placed {
-                0..CAR_COUNT if placed % 2 == 0 => KIND_JEEP,
-                0..CAR_COUNT => second_car,
-                _ if placed < CARS => KIND_ROADSTER,
-                _ if placed < CARS + TANK_COUNT => KIND_TANK,
-                _ if placed < CARS + TANK_COUNT + STRV_COUNT => KIND_STRV,
-                _ if placed < CARS + TANK_COUNT + STRV_COUNT + HELI_COUNT => KIND_HELI,
-                _ => KIND_WALKER,
+        for spot in world.map.placed_vehicles.clone() {
+            let (x, z) = (spot.at[0] as f32 / 100.0, spot.at[1] as f32 / 100.0);
+            // A ship needs open water: none on land, nor on a frozen lake.
+            let Some(position) = start_position(world, spot.kind, x, z) else {
+                tracing::info!(kind = spot.kind, x, z, "placed ship is not on open water; skipped");
+                continue;
             };
-            let (x, z) = (cx as f32 / 100.0, cz as f32 / 100.0);
-            let yaw = road_heading(&world.map, x, z);
-            let position = [x, world.map.ground.height_at(x, z) + drop_height(kind), z];
-            if world.physics.car_fits(kind, position, yaw) && world.entities.count::<Vehicle>() < MAX_VEHICLES {
-                add_vehicle(world, kind, position, yaw);
-                used[index] = true;
+            if world.entities.count::<Vehicle>() + 1 + vehicle_def(spot.kind).fittings.len() > MAX_VEHICLES {
+                tracing::warn!(kind = spot.kind, x, z, max = MAX_VEHICLES, "too many placed vehicles; skipped");
+            } else if world.physics.car_fits(spot.kind, position, spot.yaw) {
+                add_vehicle(world, spot.kind, position, spot.yaw);
                 placed += 1;
+            } else {
+                tracing::warn!(kind = spot.kind, x, z, "placed vehicle does not fit; skipped");
             }
         }
-        placed += place_planes(world, &candidates, &used);
-        // The mortars, the Paks, then the hen and the tupp, take whichever spawn points the planes left, so they never push a
-        // plane off one.
-        let runways: Vec<CarPose> = world.entities.all::<Vehicle>().filter(|(_, v)| v.kind == KIND_PLANE).filter_map(|(id, _)| world.physics.car_pose(id)).collect();
-        for (kind, count) in [(KIND_MORTAR, MORTAR_COUNT), (KIND_PAK, PAK_COUNT), (KIND_HEN, HEN_COUNT), (KIND_TUPP, TUPP_COUNT)] {
-            let mut added = 0;
-            for (index, &[cx, cz]) in candidates.iter().enumerate() {
-                if added == count {
-                    break;
-                }
-                if used[index] {
-                    continue;
-                }
-                let (x, z) = (cx as f32 / 100.0, cz as f32 / 100.0);
-                let yaw = road_heading(&world.map, x, z);
-                let position = [x, world.map.ground.height_at(x, z) + drop_height(kind), z];
-                // Not on a plane's runway either: a plane needs the strip clear to take off.
-                let on_a_runway = runways.iter().any(|plane| on_runway(plane.position, plane.yaw(), PLANE_RUNWAY, position));
-                if !on_a_runway && world.physics.car_fits(kind, position, yaw) && world.entities.count::<Vehicle>() < MAX_VEHICLES {
-                    add_vehicle(world, kind, position, yaw);
-                    used[index] = true;
-                    added += 1;
-                    placed += 1;
-                }
-            }
-        }
-        tracing::info!(vehicles = placed, "vehicles placed");
+        tracing::info!(vehicles = placed, "vehicles placed from the editor");
     }
 
     fn on_leave(&mut self, world: &mut World, id: u32) {

@@ -4,7 +4,7 @@ The technical is a long-bonnet pickup in the style of a Land Cruiser 70, with a 
 
 ## In play
 
-- **The technical** (`KIND_TECHNICAL` = 23) has 130 hp and three seats. It is never placed on its own: it appears only where it is placed in the map editor (**Technical**, Q in the palette).
+- **The technical** (`KIND_TECHNICAL` = 23) has 130 hp and three seats. It appears only where it is placed in the map editor (**Technical**, Q in the palette).
 - **Seat 0 is the driver**, on the left of the cab. It tops out at 30 m/s, a little slower than the jeep.
 - **Seat 1 is the passenger**, on the right. Like a jeep's passengers, they fire the guns in their own hotbar.
 - **Seat 2 is the gunner**, standing in the bed behind the gun (drawn standing, not sitting: `stand` on its `SeatView`). The gun follows their look all the way round, from 0.3 rad down to 0.9 rad up, which is steep enough for aircraft. It is a heavy, slow 14.5 mm gun: 4 rounds a second, 40 to a soldier (four put one down), 10 to a hull and 20 to a plane, out to 300 m. That is the tank's roof gun's damage a second in fewer, bigger blows, and through more plate. Its post puts it above the cab's roof, so it fires forward over the cab. The gunner's hands are on the gun, so they cannot fire their own (`crew_gun` leaves out a `mount_seat`).

@@ -4,24 +4,24 @@ use crate::entities::{Health, HurtBy};
 use crate::game::{Command, Game, Outgoing};
 use sim::STANDING_Y;
 use shared::protocol::{FLAG_LAMP, InputFrame, KIND_AIR_AMBULANCE, KIND_DRONE, THRUST_AIR, THRUST_BOOST, THRUST_LIFT};
-use shared::world::{Road, WORLD_VERSION};
+use shared::world::{Road, WORLD_VERSION, WorldFile};
 use tokio::sync::{mpsc, oneshot};
 
 /// A flat world with one road along X, and spawn points on it.
 fn game() -> Game {
+    let spawns: Vec<[i32; 2]> = [[-25_000, 0], [25_000, 0]].into_iter().chain((0..12).map(|i| [i * 2500 - 13_750, 0])).collect();
     let map = WorldFile {
         version: WORLD_VERSION,
         half_extent: 30_000,
         // Twelve spots in the middle for the cars, tanks, helicopter and walker, and one far out at each end
-        // for the planes. Players start on the first six.
-        spawns: [[-25_000, 0], [25_000, 0]].into_iter().chain((0..12).map(|i| [i * 2500 - 13_750, 0])).collect(),
+        // for the planes, all placed the way the editor would. Players start on the first six.
+        placed_vehicles: crate::mechanics::for_tests::parked(&spawns, &[KIND_JEEP, KIND_SPORTS, KIND_JEEP, KIND_SPORTS, KIND_JEEP, KIND_SPORTS, KIND_ROADSTER, KIND_TANK, KIND_TANK, KIND_STRV, KIND_HELI, KIND_WALKER, KIND_PLANE, KIND_PLANE]),
+        spawns,
         roads: vec![Road { width: 800, kind: 0, carried: false, points: vec![[-30_000, 0], [30_000, 0]], ..Default::default() }],
         ..Default::default()
     };
-    // Loose items would take a test's use button.
-    let mut game = Game::new(map, 0).unwrap();
-    game.world.clear_pickups();
-    game
+    
+    Game::new(map, 0).unwrap()
 }
 
 fn join(game: &mut Game) -> (u32, mpsc::Receiver<Outgoing>) {
@@ -61,37 +61,6 @@ fn move_player_next_to_a_car(game: &mut Game, id: u32) -> u32 {
     let mut player = game.world.entities.get_mut::<Player>(id).unwrap();
     player.character.position = [pose.position[0] + 2.0, STANDING_Y, pose.position[2]];
     vid
-}
-
-#[test]
-fn cars_are_placed_along_the_road() {
-    let game = game();
-    let towed = game.world.entities.all::<Vehicle>().map(|(_, vehicle)| vehicle).filter(|vehicle| vehicle_def(vehicle.kind).body.towed).count();
-    assert_eq!(game.world.entities.count::<Vehicle>(), CAR_COUNT + ROADSTER_COUNT + TANK_COUNT + STRV_COUNT + HELI_COUNT + WALKER_COUNT + PLANE_COUNT + towed);
-    // The mortar and the Pak only take spawns the others left, and this world has at most one spare.
-    let mortars = game.world.entities.all::<Vehicle>().map(|(_, vehicle)| vehicle).filter(|vehicle| vehicle.kind == KIND_MORTAR).count();
-    assert!(mortars <= MORTAR_COUNT, "{mortars} mortars");
-    let paks = game.world.entities.all::<Vehicle>().map(|(_, vehicle)| vehicle).filter(|vehicle| vehicle.kind == KIND_PAK).count();
-    assert!(paks <= PAK_COUNT, "{paks} paks");
-    let planes = game.world.entities.all::<Vehicle>().map(|(_, vehicle)| vehicle).filter(|vehicle| vehicle.kind == KIND_PLANE).count();
-    assert_eq!(planes, PLANE_COUNT);
-    let tanks = game.world.entities.all::<Vehicle>().map(|(_, vehicle)| vehicle).filter(|vehicle| vehicle.kind == KIND_TANK).count();
-    assert_eq!(tanks, TANK_COUNT);
-    let strvs = game.world.entities.all::<Vehicle>().map(|(_, vehicle)| vehicle).filter(|vehicle| vehicle.kind == KIND_STRV).count();
-    assert_eq!(strvs, STRV_COUNT);
-    let helis = game.world.entities.all::<Vehicle>().map(|(_, vehicle)| vehicle).filter(|vehicle| vehicle.kind == KIND_HELI).count();
-    assert_eq!(helis, HELI_COUNT);
-    let walkers = game.world.entities.all::<Vehicle>().map(|(_, vehicle)| vehicle).filter(|vehicle| vehicle.kind == KIND_WALKER).count();
-    assert_eq!(walkers, WALKER_COUNT);
-    let count = |kind| game.world.entities.all::<Vehicle>().map(|(_, vehicle)| vehicle).filter(|vehicle| vehicle.kind == kind).count();
-    assert_eq!(count(KIND_JEEP), CAR_COUNT / 2, "half the cars are jeeps");
-    assert_eq!(count(KIND_SPORTS), CAR_COUNT / 2, "and half are sports cars");
-    assert_eq!(count(KIND_ROADSTER), ROADSTER_COUNT);
-    for vid in game.world.entities.ids::<With<Vehicle>>() {
-        let pose = game.world.physics.car_pose(vid).unwrap();
-        // The road runs along X, so the car faces +X or -X: |yaw| is a quarter turn.
-        assert!((pose.yaw().abs() - std::f32::consts::FRAC_PI_2).abs() < 0.05, "{}", pose.yaw());
-    }
 }
 
 #[test]
@@ -512,39 +481,6 @@ fn jumping_off_a_moving_car_keeps_its_speed() {
 }
 
 #[test]
-fn parked_cars_in_the_fixture_world_settle_and_stay_put() {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/world/world.msgpack");
-    let (world, hash) = crate::read_world(&path).unwrap();
-    let mut game = Game::new(world, hash).unwrap();
-    assert!(game.world.entities.count::<Vehicle>() >= 3, "only {} cars fit", game.world.entities.count::<Vehicle>());
-    let start: Vec<_> = game.world.entities.ids::<With<Vehicle>>().into_iter().map(|id| (id, game.world.physics.car_pose(id).unwrap())).collect();
-    for _ in 0..5 * TICK_RATE {
-        game.step();
-    }
-    for (id, before) in start {
-        let after = game.world.physics.car_pose(id).unwrap();
-        let moved = (after.position[0] - before.position[0]).hypot(after.position[2] - before.position[2]);
-        let ground = game.world.map.ground.height_at(after.position[0], after.position[2]);
-        // A plane stands taller on its undercarriage than any car, and a walker's, a hen's or a tupp's hull is up on its legs.
-        let ride = match game.world.entities.of::<Vehicle>(id).kind {
-            KIND_PLANE => 1.3,
-            // The tracked kinds stand with their bellies half a metre clear.
-            KIND_TANK | KIND_STRV | KIND_STRF | KIND_PBV => 1.25,
-            KIND_WALKER | KIND_HEN | KIND_TUPP => WALKER_LEG_LENGTH + WALKER_HALF_EXTENTS[1],
-            _ => 1.0,
-        };
-        assert!(after.up_y > 0.99 && after.position[1] < ground + ride && moved < 0.5, "car {id}: {before:?} -> {after:?}");
-    }
-    let planes = game.world.entities.all::<Vehicle>().map(|(_, vehicle)| vehicle).filter(|vehicle| vehicle.kind == KIND_PLANE).count();
-    assert_eq!(planes, PLANE_COUNT, "both planes find somewhere to stand");
-    for (id, _) in game.world.entities.all::<Vehicle>().filter(|(_, vehicle)| vehicle.kind == KIND_PLANE) {
-        let pose = game.world.physics.car_pose(id).unwrap();
-        let runway = game.world.physics.runway(&game.world.map.ground, pose.position, pose.yaw(), RUNWAY_SEARCH);
-        assert!(runway >= PLANE_RUNWAY, "plane {id} has {runway} m to take off in");
-    }
-}
-
-#[test]
 fn a_tank_has_a_driver_a_gunner_and_a_machine_gunner_and_no_fourth_seat() {
     let mut game = game();
     let vid = game.world.entities.all::<Vehicle>().find(|(_, vehicle)| vehicle.kind == KIND_TANK).unwrap().0;
@@ -719,26 +655,6 @@ fn gunfire_at_a_wheel_bends_it_and_a_second_round_takes_it_off_but_the_middle_is
 }
 
 #[test]
-fn a_plane_is_never_parked_on_another_ones_runway() {
-    let game = game();
-    let planes: Vec<CarPose> = game.world.entities.all::<Vehicle>().filter(|(_, v)| v.kind == KIND_PLANE).map(|(id, _)| game.world.physics.car_pose(id).unwrap()).collect();
-    let [a, b] = &planes[..] else { panic!("two planes: {planes:?}") };
-    assert!(!on_runway(a.position, a.yaw(), PLANE_RUNWAY, b.position) && !on_runway(b.position, b.yaw(), PLANE_RUNWAY, a.position), "{a:?} {b:?}");
-    // Each faces in along the road, towards the middle, where it has room.
-    assert!(a.position[0] * b.position[0] < 0.0, "one at each end: {a:?} {b:?}");
-    for pose in [a, b] {
-        let inward = -pose.position[0].signum();
-        let (sin, _) = pose.yaw().sin_cos();
-        assert!(-sin * inward > 0.99, "{pose:?}");
-    }
-    // Nothing parked in the way either.
-    for (vid, _) in game.world.entities.all::<Vehicle>().filter(|(_, v)| v.kind != KIND_PLANE) {
-        let other = game.world.physics.car_pose(vid).unwrap().position;
-        assert!(!on_runway(a.position, a.yaw(), PLANE_RUNWAY, other) && !on_runway(b.position, b.yaw(), PLANE_RUNWAY, other), "{other:?}");
-    }
-}
-
-#[test]
 fn a_pilot_and_a_gunner_take_a_plane_off_and_a_third_stays_behind() {
     let mut game = game();
     let (vid, _) = game.world.entities.all::<Vehicle>().find(|(_, vehicle)| vehicle.kind == KIND_PLANE).expect("a plane is placed");
@@ -840,12 +756,12 @@ fn drive_into_a_pine(kind: u8, speed: f32) -> Option<(f32, f32, f32)> {
         version: WORLD_VERSION,
         half_extent: 30_000,
         spawns: (0..14).map(|i| [i * 2500 - 15_000, 20_000]).collect(),
+        placed_vehicles: vec![shared::world::PlacedVehicle { kind, at: [0, 20_000], yaw: 0.0 }],
         trees: vec![Tree { x: 1500, z: 100, base: 0, height: 1600, crown: 300, kind: TREE_PINE, solid: true }],
         tree_ids: vec![ObjId { col: 2, row: 3, index: 0 }],
         ..Default::default()
     };
     let mut game = Game::new(map, 0).unwrap();
-    game.world.clear_pickups();
     let vid = game.world.entities.all::<Vehicle>().find(|(_, vehicle)| vehicle.kind == kind).unwrap().0;
     game.world.physics.reset_car(vid, [15.0, 1.3, 3.55 + sim::half_extents(kind)[2]], 0.0);
     for _ in 0..60 {
@@ -888,11 +804,11 @@ fn drive_into_a_line(kind: u8, speed: f32, line: u8) -> Option<(f32, f32, f32)> 
         version: WORLD_VERSION,
         half_extent: 30_000,
         spawns: (0..14).map(|i| [i * 2500 - 15_000, 20_000]).collect(),
+        placed_vehicles: vec![shared::world::PlacedVehicle { kind, at: [0, 20_000], yaw: 0.0 }],
         lines: vec![(2, 3, shared::world::Line { kind: line, base: vec![0; points.len()], points, end: true })],
         ..Default::default()
     };
     let mut game = Game::new(map, 0).unwrap();
-    game.world.clear_pickups();
     let vid = game.world.entities.all::<Vehicle>().find(|(_, vehicle)| vehicle.kind == kind).unwrap().0;
     game.world.physics.reset_car(vid, [15.0, 1.3, 3.55 + sim::half_extents(kind)[2]], 0.0);
     for _ in 0..60 {
@@ -1080,11 +996,11 @@ fn a_low_car_driven_fast_over_a_kerb_is_unhurt() {
             version: WORLD_VERSION,
             half_extent: 30_000,
             spawns: (0..14).map(|i| [i * 2500 - 15_000, 20_000]).collect(),
+        placed_vehicles: vec![shared::world::PlacedVehicle { kind, at: [0, 20_000], yaw: 0.0 }],
             collision: CollisionMesh { vertices: vertices.clone(), triangles: triangles.clone() },
             ..Default::default()
         };
         let mut game = Game::new(map, 0).unwrap();
-        game.world.clear_pickups();
         let vid = add_vehicle(&mut game.world, kind, [15.0, 1.0, 5.0], 0.0);
         crash_events(&mut game, 60);
         // Up onto it, where with nobody at the wheel it brakes to a stop.
@@ -1112,7 +1028,6 @@ fn graze_a_guard_rail(speed: f32, angle: f32) -> (bool, f32, u8) {
         ..Default::default()
     };
     let mut game = Game::new(map, 0).unwrap();
-    game.world.clear_pickups();
     let [hx, _, _] = sim::half_extents(KIND_SPORTS);
     // Heading along +x, turned `angle` towards the rail (towards -z), about a metre clear of it.
     let vid = add_vehicle(&mut game.world, KIND_SPORTS, [10.0, 1.0, 1.0 + 0.1 + hx + 1.0], -std::f32::consts::FRAC_PI_2 + angle);
@@ -1161,8 +1076,7 @@ fn game_with_a_house() -> (Game, shared::world::ObjId) {
         collision: CollisionMesh { vertices, triangles },
         ..Default::default()
     };
-    let mut game = Game::new(map, 0).unwrap();
-    game.world.clear_pickups();
+    let game = Game::new(map, 0).unwrap();
     (game, id)
 }
 

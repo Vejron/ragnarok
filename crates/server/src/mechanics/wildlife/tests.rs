@@ -15,9 +15,8 @@ fn game(kind: u8, count: u8) -> Game {
         placed_animals: vec![PlacedAnimal { kind, at: [5_000, 0], count }],
         ..Default::default()
     };
-    let mut game = Game::new(map, 0).unwrap();
-    game.world.clear_pickups();
-    game
+    
+    Game::new(map, 0).unwrap()
 }
 
 fn join(game: &mut Game) -> u32 {

@@ -689,10 +689,10 @@ pub struct WorldFile {
     /// `trees[i]`'s identity. Filled by `assemble`; empty for a world built by hand.
     #[serde(skip)]
     pub tree_ids: Vec<ObjId>,
-    /// Vehicles the map editor placed by hand. Empty means the server scatters its own.
+    /// Vehicles the map editor placed by hand. Empty means none: nothing is placed automatically.
     #[serde(skip)]
     pub placed_vehicles: Vec<PlacedVehicle>,
-    /// Items the map editor placed by hand. Empty means the server scatters its own.
+    /// Items the map editor placed by hand. Empty means none: nothing lies about unless placed.
     #[serde(skip)]
     pub placed_items: Vec<PlacedItem>,
     /// Bots the map editor placed by hand. Empty means none (bar `RAGNAROK_BOTS`).

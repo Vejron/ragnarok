@@ -20,9 +20,8 @@ fn game(wall: bool) -> Game {
         ];
         map.collision = CollisionMesh { vertices, triangles };
     }
-    let mut game = Game::new(map, 0).unwrap();
-    game.world.clear_pickups();
-    game
+    
+    Game::new(map, 0).unwrap()
 }
 
 fn join(game: &mut Game) -> u32 {
@@ -894,9 +893,8 @@ fn it_takes_someone_in_slower_the_harder_they_are_to_see() {
 fn game_with_a_field(theme: u8) -> Game {
     let wheat = (0..100 * 100).map(|cell| if cell / 100 < 40 { shared::world::CROP_WHEAT } else { shared::world::CROP_NONE }).collect();
     let map = WorldFile { version: WORLD_VERSION, half_extent: 10_000, tile_size: 20_000, spawns: vec![[-5_000, -5_000]], theme, crops: vec![(0, 0, wheat)], ..Default::default() };
-    let mut game = Game::new(map, 0).unwrap();
-    game.world.clear_pickups();
-    game
+    
+    Game::new(map, 0).unwrap()
 }
 
 /// How many seconds a calm bot at `[0, from]`, facing -Z, takes to see someone at `[0, z]` holding

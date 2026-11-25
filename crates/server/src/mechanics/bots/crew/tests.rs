@@ -19,9 +19,8 @@ fn game(wall: bool, roads: Vec<Road>) -> Game {
         ];
         map.collision = CollisionMesh { vertices, triangles };
     }
-    let mut game = Game::new(map, 0).unwrap();
-    game.world.clear_pickups();
-    game
+    
+    Game::new(map, 0).unwrap()
 }
 
 fn crew(game: &mut Game, at: [f32; 2], route: Vec<[f32; 2]>) -> (u32, [u32; 2]) {
@@ -335,7 +334,6 @@ fn a_tank_on_its_route_goes_round_a_house_in_its_way_instead_of_into_it() {
     let triangles = vec![[0, 1, 5], [0, 5, 4], [1, 2, 6], [1, 6, 5], [2, 3, 7], [2, 7, 6], [3, 0, 4], [3, 4, 7], [4, 5, 6], [4, 6, 7], [0, 2, 1], [0, 3, 2]];
     let map = WorldFile { version: WORLD_VERSION, half_extent: 30_000, spawns: vec![[-25_000, -25_000]], collision: CollisionMesh { vertices, triangles }, ..Default::default() };
     let mut game = Game::new(map, 0).unwrap();
-    game.world.clear_pickups();
     let (vid, [driver, _]) = crew(&mut game, [0.0, 0.0], vec![[0.0, 0.0], [45.0, 0.0]]);
     let mut reversed = false;
     for _ in 0..(40 * TICK_RATE) {

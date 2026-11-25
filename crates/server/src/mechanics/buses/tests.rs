@@ -15,9 +15,8 @@ fn line() -> BusLine {
 fn game(lines: Vec<BusLine>) -> Game {
     let roads = lines.iter().map(|line| Road { width: 1000, kind: 0, carried: false, points: line.points.clone(), ..Default::default() }).collect();
     let map = WorldFile { version: WORLD_VERSION, half_extent: 30_000, spawns: vec![[-25_000, -25_000]], roads, bus_lines: lines, ..Default::default() };
-    let mut game = Game::new(map, 0).unwrap();
-    game.world.clear_pickups();
-    game
+    
+    Game::new(map, 0).unwrap()
 }
 
 fn join(game: &mut Game) -> u32 {

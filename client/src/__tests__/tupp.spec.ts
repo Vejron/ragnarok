@@ -7,7 +7,6 @@ import { parseTuppModel, TuppModel } from '@/render/tupp'
 import { kindView } from '@/kinds'
 import { KIND_TUPP } from '@/net/codec'
 import { TUPP_HEAD_PIVOT } from '@/sim/consts'
-import { aimsReticle } from '@/seathints'
 import type { Turret } from '@/entities/units'
 
 const IDENTITY: [number, number, number, number] = [0, 0, 0, 1]
@@ -61,9 +60,5 @@ describe('TuppModel', () => {
     const [left, right] = tupp.eyes()
     expect(left!.x).toBeLessThan(right!.x)
     tupp.dispose()
-  })
-
-  it('aims with a reticle', () => {
-    expect(aimsReticle('tupp')).toBe(true)
   })
 })

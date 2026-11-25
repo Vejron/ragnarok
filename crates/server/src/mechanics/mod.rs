@@ -165,4 +165,25 @@ pub(crate) mod for_tests {
     pub fn add_vehicle(world: &mut crate::game::World, kind: u8, position: [f32; 3], yaw: f32) -> u32 {
         super::vehicles::add_vehicle(world, kind, position, yaw)
     }
+
+    /// What the map editor would place for a test world with one road along X: `kinds` parked on its
+    /// `spawns`, facing along the road, in the order given. The first two spawns are the far ends of the
+    /// road, where planes stand with the whole road to take off along; every other kind takes the spawns
+    /// from the seventh on (players start on the first six), then the third to the sixth.
+    pub fn parked(spawns: &[[i32; 2]], kinds: &[u8]) -> Vec<shared::world::PlacedVehicle> {
+        let mut ends = spawns[..2].iter().zip([-std::f32::consts::FRAC_PI_2, std::f32::consts::FRAC_PI_2]);
+        let mut middle = spawns[6..].iter().chain(spawns[2..6].iter().rev());
+        kinds
+            .iter()
+            .map(|&kind| {
+                if kind == shared::protocol::KIND_PLANE {
+                    let (&at, yaw) = ends.next().expect("two planes at most");
+                    shared::world::PlacedVehicle { kind, at, yaw }
+                } else {
+                    let &at = middle.next().expect("a spawn for every vehicle");
+                    shared::world::PlacedVehicle { kind, at, yaw: -std::f32::consts::FRAC_PI_2 }
+                }
+            })
+            .collect()
+    }
 }

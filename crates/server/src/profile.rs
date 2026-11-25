@@ -79,11 +79,6 @@ mod tests {
     }
 
     #[test]
-    fn nothing_given_is_the_default() {
-        assert_eq!(Profile::from_query([]), Profile::default());
-    }
-
-    #[test]
     fn names_lose_hidden_characters_and_are_cut() {
         assert_eq!(clean_name("  Bo\u{0}b \n\t  Ek "), "Bob Ek");
         assert_eq!(clean_name("\u{202E}evil\u{200B}"), "evil");

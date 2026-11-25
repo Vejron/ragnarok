@@ -1161,7 +1161,6 @@ mod tests {
         for (label, kinds) in [("craters (shell, mortar, bomb)", [PROJECTILE_SHELL, PROJECTILE_MORTAR, PROJECTILE_BOMB]), ("small craters (autocannon)", [PROJECTILE_CANNON; 3])] {
             let (map, _) = crate::read_world(&fixture).expect("a world to shell");
             let mut game = Game::new(map, 0).unwrap();
-            game.world.clear_pickups();
             let mut inboxes = Vec::new();
             let mut ids = Vec::new();
             for _ in 0..MAX_PLAYERS - 1 {
@@ -1307,7 +1306,6 @@ mod tests {
         };
         println!("world half extent {} m, {} buildings, {} trees", map.half_extent / 100, map.buildings.len(), map.trees.len());
         let mut game = Game::new(map, 0).unwrap();
-        game.world.clear_pickups();
         let mut inboxes = Vec::new();
         let mut ids = Vec::new();
         for _ in 0..MAX_PLAYERS {

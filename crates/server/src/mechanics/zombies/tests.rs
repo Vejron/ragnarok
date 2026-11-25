@@ -8,7 +8,6 @@ use tokio::sync::{mpsc, oneshot};
 fn game() -> Game {
     let map = WorldFile { version: WORLD_VERSION, half_extent: 10_000, spawns: vec![[-5_000, -5_000]], ..Default::default() };
     let mut game = Game::new(map, 0).unwrap();
-    game.world.clear_pickups();
     game.world.rng = crate::rng::Rng::from_seed(7);
     game
 }
@@ -174,7 +173,6 @@ fn horde_tick_cost() {
     for case in ["nobody", "prey 60 m off", "blasts 120 m off", "blasts and prey far off"] {
         let (map, _) = crate::read_world(std::path::Path::new(&path)).unwrap();
         let mut game = Game::new(map, 0).unwrap();
-        game.world.clear_pickups();
         let [sx, sz] = game.world.map.spawns[0].map(|v| v as f32 / 100.0);
         for n in 0..count {
             game.add_zombie([sx + (n % 5) as f32 * 2.0, sz + (n / 5) as f32 * 2.0]);

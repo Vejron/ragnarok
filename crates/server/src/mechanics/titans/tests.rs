@@ -9,9 +9,8 @@ use tokio::sync::{mpsc, oneshot};
 
 fn game() -> Game {
     let map = WorldFile { version: WORLD_VERSION, half_extent: 40_000, spawns: vec![[30_000, 30_000]], ..Default::default() };
-    let mut game = Game::new(map, 0).unwrap();
-    game.world.clear_pickups();
-    game
+    
+    Game::new(map, 0).unwrap()
 }
 
 fn join(game: &mut Game) -> u32 {
@@ -265,7 +264,6 @@ fn a_fist_fells_a_tree_and_takes_a_bite_out_of_a_house() {
         ..Default::default()
     };
     let mut game = Game::new(map, 0).unwrap();
-    game.world.clear_pickups();
     let vid = titan(&mut game);
     strike(&mut game.world, vid, [60.0, 3.0, 40.0 - TITAN_FIST_RADIUS + 0.5], TITAN_FIST_RADIUS, [0.0, 0.0, 20.0], 80.0, None);
     assert!(game.world.felled.contains(&Obj::Tree(tree_id)), "the tree goes over");
@@ -299,7 +297,6 @@ fn a_placed_titan_stands_is_boarded_from_between_its_feet_walks_and_sets_its_pil
     use shared::world::PlacedVehicle;
     let map = WorldFile { version: WORLD_VERSION, half_extent: 40_000, spawns: vec![[30_000, 30_000]], placed_vehicles: vec![PlacedVehicle { kind: KIND_TITAN, at: [0, 0], yaw: 0.0 }], ..Default::default() };
     let mut game = Game::new(map, 0).unwrap();
-    game.world.clear_pickups();
     let vid = game.world.entities.all::<Vehicle>().find(|(_, vehicle)| vehicle.kind == KIND_TITAN).map(|(id, _)| id).expect("placed");
     for _ in 0..300 {
         game.step();
@@ -354,7 +351,6 @@ fn a_slam_throws_and_hurts_soldiers_throws_a_jeep_fells_trees_and_brings_down_a_
         ..Default::default()
     };
     let mut game = Game::new(map, 0).unwrap();
-    game.world.clear_pickups();
     let pilot = join(&mut game);
     let (near, edge, far) = (join(&mut game), join(&mut game), join(&mut game));
     // The Titan stands well away: only where it is said to land matters here.
@@ -605,8 +601,7 @@ fn with_house() -> (Game, shared::world::ObjId) {
     let house = Building { height: 600, footprint: vec![[5500, -500], [6500, -500], [6500, 500], [5500, 500]], base: 0, first: 0, walls: 8, roof: 2, ..Default::default() };
     let house_id = ObjId { col: 1, row: 1, index: 0 };
     let map = WorldFile { version: WORLD_VERSION, half_extent: 40_000, spawns: vec![[30_000, 30_000]], buildings: vec![house], building_ids: vec![house_id], building_triangles: vec![[0, 12]], collision: CollisionMesh { vertices, triangles }, ..Default::default() };
-    let mut game = Game::new(map, 0).unwrap();
-    game.world.clear_pickups();
+    let game = Game::new(map, 0).unwrap();
     (game, house_id)
 }
 

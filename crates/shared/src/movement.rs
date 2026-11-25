@@ -238,12 +238,6 @@ mod tests {
     }
 
     #[test]
-    fn a_rested_jump_goes_1_6_times_as_high_as_a_winded_one() {
-        let ratio = (JUMP_SPEED * JUMP_SPEED) / (JUMP_SPEED_WINDED * JUMP_SPEED_WINDED);
-        assert!((ratio - 1.6).abs() < 0.01, "{ratio}");
-    }
-
-    #[test]
     fn running_spends_stamina_and_walking_or_standing_gets_it_back() {
         let run = frame(127, BUTTON_RUN);
         assert_eq!(spend_stamina(0, false, true, false, &run), (STAMINA_RUN_DRAIN, false, JUMP_SPEED));

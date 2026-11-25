@@ -127,38 +127,3 @@ describe('Presenters', () => {
 })
 
 /** A full room's scene `n` snapshots in: 64 soldiers, 20 vehicles and 30 rockets, all moving. */
-function room(n: number): Map<number, Components> {
-  const entries: [number, Components][] = []
-  for (let i = 1; i <= 64; i++) entries.push([i, { ...person(i + n * 0.25, (i + n) * 0.01), motion: { vy: 0, knock_x: 0, knock_z: 0 } }])
-  for (let i = 0; i < 20; i++) {
-    entries.push([100 + i, {
-      kind: { kind: 2 }, place: { x: i * 500 + n * 30, y: 120, z: 0 }, orientation: { qx: 0, qy: 1000 + n * 10, qz: 0 }, steer: { steer: n % 50, throttle: 0 },
-      turret: { yaw: n * 5, pitch: 100, shots: n, range: 0, heat: 0, flags: 0 }, health: { hp: 200 },
-    }])
-  }
-  for (let i = 0; i < 30; i++) entries.push([200 + i, { projectile: { kind: 0 }, place: { x: i * 100 + n * 800, y: 2000, z: 0 }, velocity: { vx: 24000, vy: 0, vz: 0 } }])
-  return new Map(entries)
-}
-
-describe('a full room', () => {
-  it('costs the store a small share of a second to take in and draw for a second', () => {
-    // A second of play: 30 snapshots taken in, and 60 frames drawn between them.
-    const scenes = Array.from({ length: 30 }, (_, n) => room(n))
-    const second = () => {
-      const store = new EntityStore()
-      const start = performance.now()
-      for (let n = 0; n < 30; n++) {
-        store.push(2 * n, scenes[n]!, true)
-        store.sampleAll(2 * n - 3.5)
-        store.sampleAll(2 * n - 2.5)
-      }
-      return performance.now() - start
-    }
-    for (let i = 0; i < 5; i++) second()
-    const best = Math.min(...Array.from({ length: 7 }, second))
-    console.log(`a full room for a second: store ${best.toFixed(2)} ms`)
-    // Printed, not asserted: on a busy machine the time says nothing. Built and run by Node alone it is about
-    // 0.6 ms, under vitest about 1; the adapter and interpolators it replaced took about 1.0 ms.
-    expect(best).toBeGreaterThan(0)
-  })
-})

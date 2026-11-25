@@ -5,7 +5,7 @@ The Stridsbåt 90 (CB90) is the Swedish navy's fast assault craft, here at its r
 ## In play
 
 - **The boat** (`KIND_CB90` = 34) has 200 hp.
-- **Placement.** It appears only where it is placed in the map editor (**Stridsbåt 90**, L in the palette), and only on open water: placed on land or on ice, it is skipped. The automatic line-up on worlds without editor placements does not include it. Vindeln has one, south of the pirate ship.
+- **Placement.** It appears only where it is placed in the map editor (**Stridsbåt 90**, L in the palette), and only on open water: placed on land or on ice, it is skipped. Vindeln has one, south of the pirate ship.
 - **It floats** 0.8 m deep and rides the waves as the ship does. It is boarded from the after deck, behind the wheelhouse, and whoever leaves it stands on the after deck.
 - **Seat 0 is the driver** (the HUD's `coxswain`).
   - W drives it ahead, hard: it reaches 30 knots in under five seconds and tops out at 23 m/s (45 knots).

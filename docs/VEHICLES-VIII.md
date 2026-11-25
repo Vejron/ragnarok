@@ -4,7 +4,7 @@ The tupp (Swedish for rooster) is a giant robot rooster of the Hedemora breed, t
 
 ## In play
 
-- **One tupp** (`KIND_TUPP` = 16) with 180 hp and one seat. On a world with no editor placements it takes a spawn point after the hen. On a world whose vehicles were placed in the map editor, it appears only where it is placed (**Tupp** in the editor's palette).
+- **One tupp** (`KIND_TUPP` = 16) with 180 hp and one seat. It appears only where it is placed in the map editor (**Tupp** in the editor's palette).
 - **Moving** is the hen's: W/S and A/D to walk, Space to leap, held to flap and then glide. See [VEHICLES-VII.md](VEHICLES-VII.md).
 - **The laser** is held, not tapped. Hold Click or F for 1.25 s while it charges; let go early and the charge is wasted. Then a beam burns for 1.5 s out to 250 m whatever the trigger does, and the head can sweep it. It needs 3 s to cool before it can charge again. The head turns up to about 50° either side of the legs. The beam strikes ten times a second, for 30 to a soldier, 30 to a plane and 14 to a hull, through up to 60 mm of plate. One whole burn does about 200 to a hull, which finishes anything short of a tank.
 

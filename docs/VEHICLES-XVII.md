@@ -5,7 +5,7 @@ The Pbv 302 is an amphibious tracked troop carrier, modelled on the Swedish Pans
 ## In play
 
 - **The Pbv 302** (`KIND_PBV` = 32) has 150 hp; the Strf 90 has 180 and the tank 250.
-- **Placement.** It appears only where it is placed in the map editor (**Pbv 302**, A in the palette). The automatic line-up on worlds without editor placements does not include it. The home world has two, each beside a Strf 90.
+- **Placement.** It appears only where it is placed in the map editor (**Pbv 302**, A in the palette). The home world has two, each beside a Strf 90.
 - **Seat 0 is the driver.** The controls are the tank's: it pivots on the spot. It reaches 18.3 m/s (66 km/h), between the tank's 12 and the Strf 90's 19, and stays upright at full stick flat out.
 - **On water it floats.** Driven into open water it rises off the bed once the water is about 1.3 m deep and rides with its roof 0.4 m clear, level, rising and falling with the waves.
   - Afloat its tracks paddle it at up to 2.5 m/s (9 km/h) ahead and half that astern, and turn it at 0.5 rad/s, on the spot too.

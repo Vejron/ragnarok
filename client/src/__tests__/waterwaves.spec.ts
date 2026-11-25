@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { MOST_STAMPS, Vec3, WaveField } from '@ragnarok/engine'
-import { WAVE_GRID, WAVE_TEXEL, WaterWaves } from '@/render/waterwaves'
+import { WAVE_TEXEL, WaterWaves } from '@/render/waterwaves'
 import { JetSpray } from '@/render/jetspray'
 import { Particles } from '@/render/particles'
 import { Skidmarks } from '@/render/skidmarks'
@@ -71,10 +71,6 @@ describe('the wave field', () => {
 })
 
 describe('the water waves', () => {
-  it('cover 96 m about the camera', () => {
-    expect(WAVE_GRID * WAVE_TEXEL).toBe(96)
-  })
-
   it('keep the nearest and biggest stirs when more come than the field takes, and ignore far ones', () => {
     const waves = new WaterWaves()
     waves.update(1 / 60, { x: 0, y: 0, z: 0 })

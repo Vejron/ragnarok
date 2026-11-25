@@ -4,7 +4,7 @@ Roadmap stage 2 from [design.md §14](design.md#14-roadmap): a car, seats, enter
 
 ## What you get
 
-- Six cars park on the roads of the Södermalm block, facing along the road. They are placed at spawn points, preferring ones players don't start on, and any spot where the chassis would touch a building is skipped.
+- Cars park on the roads of the Södermalm block, facing along the road, where the map editor puts them. A spot where the chassis would touch a building is skipped.
 - Walk to within 4 m of a car and press **E**. The first player in takes the driver's seat, the next ones take the three passenger seats. **E** again gets out, beside the car.
 - The driver uses **W/S** for gas and brake (brake, then reverse), **A/D** to steer and **Space** for the handbrake. Passengers just ride.
 - A HUD hint shows what **E** does when a car is in reach, and the driving keys while at the wheel.
@@ -142,4 +142,4 @@ Run `cargo test --workspace` and `cd client && npm test`.
 - The client cannot tell a step off the roof onto the ground from a step along it, so its `ride` flag lasts until the next snapshot corrects it (up to one round trip). Mispredicting that only shifts the soldier by the car's frame, and the correction is smoothed.
 - Riders are carried but the car is not affected by their weight. Standing in the open-top cabin is not special: it is the same as the roof.
 - A car's wheels do not follow the suspension travel visually.
-- Cars are placed once at start and never stream in or out. Interest management (stage 5) needs to include them.
+- Cars are placed once at start, from the map editor's placements, and never stream in or out. Interest management (stage 5) needs to include them.

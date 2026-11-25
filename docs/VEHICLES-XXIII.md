@@ -25,7 +25,7 @@ The traffic was jeeps, sports cars and EPA traktors, and the jeep and the sports
 - **Seat 0 drives,** on the left. The others are passengers, front then back. The van's driver and one passenger sit over the front wheels, with two more by the sliding door and three on the back bench.
 - **Each car has 100 hp** and a car's sheet-steel skin, with its engine under the bonnet (the van's under the back floor) and its fuel tank under the floor.
 - **The traffic** ([TRAFFIC.md](TRAFFIC.md)) lists each of the ten everyday cars twice and the Bronco, the Manta, the van and the EPA once each (`KINDS` in `traffic.rs`). So the Saabs, Volvos, Opels, Fords and the Golf make up most of what drives by.
-- **Placement.** In the map editor each new car is under its name, numbered 0 to 9 in the palette since every letter is taken. The automatic line-up on worlds without editor placements still puts out Broncos and Mantas.
+- **Placement.** In the map editor each new car is under its name, numbered 0 to 9 in the palette since every letter is taken.
 - **Paint.** Each kind is painted in colours it came in from the factory (`palette` in `render/car.ts`): Saab cherry red, Volvo navy and beige, Golf Tornado red, Opel signal yellow, Sierra metallic blue and so on. The colour is picked per car. The van's roof and posts are white over its colour.
 - **Sound.** The Saabs carry a turbo four (`TURBO_FOUR`, the petrol four with a turbo's whistle) and the van a flat four (`BOXER_FOUR`). The Omega has the straight six, the Bronco a V8, and the rest the petrol four, each with its own gears and redline. The rear-drive cars spin their back wheels on a hard launch (`drivenFrom: 2`). For the front-drive ones `drivenFrom` can only say all four (0).
 

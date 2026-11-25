@@ -562,7 +562,7 @@ mod tests {
         let herd: Area = serde_json::from_str(r#"{"tiles":[],"animals":[{"kind":20,"lat":63.82,"lon":20.29,"count":5}]}"#).unwrap();
         let saved: serde_json::Value = serde_json::from_slice(&serde_json::to_vec(&herd).unwrap()).unwrap();
         assert_eq!(saved["animals"][0]["count"].as_u64(), Some(5));
-        // An area saved before bots could be placed, or before it had a ground resolution, still loads.
+        // An area with no bots, animals or ground resolution loads, and saves without a `cell`.
         let old: Area = serde_json::from_str(r#"{"tiles":[]}"#).unwrap();
         assert!(old.bots.is_empty() && old.animals.is_empty());
         assert_eq!(old.cell, None);

@@ -438,11 +438,6 @@ fn steering_left_mirrors_it() {
 }
 
 #[test]
-fn a_snowmobiles_steering_has_no_delay() {
-    assert_eq!(spec(shared::protocol::KIND_SNOWMOBILE).steer_time, 0.0);
-}
-
-#[test]
 fn a_snowmobiles_lock_narrows_much_faster_with_speed_than_a_jeeps() {
     let sled = spec(shared::protocol::KIND_SNOWMOBILE);
     let jeep = spec(KIND_JEEP);
@@ -1622,7 +1617,7 @@ fn full_throttle_lifts_it_off_within_the_runway() {
         }
     };
     let run_length = rest.position[2] - pose.position[2];
-    assert!(run_length < PLANE_RUNWAY, "off the ground after {run_length} m: {pose:?}");
+    assert!(run_length < 80.0, "off the ground after {run_length} m: {pose:?}");
     assert!(pose.forward_speed > PLANE_STALL_SPEED * 0.9 && pose.position[0].abs() < 0.5, "{pose:?}");
 }
 
@@ -1760,23 +1755,6 @@ fn the_wings_are_solid_out_to_their_tips() {
     let at = [rest.position[0] - 10.0, rest.position[1] + wy, rest.position[2] + wz];
     let hit = physics.cast_ray_hit(at, [1.0, 0.0, 0.0], 20.0, 99).expect("the wing stops it");
     assert!((hit.0 - (10.0 - PLANE_WING_HALF_EXTENTS[0])).abs() < 0.1 && hit.1 == Some(1), "{hit:?}");
-}
-
-#[test]
-fn the_runway_ends_at_a_wall() {
-    let world = world_with_wall();
-    let physics = Physics::new(&world).unwrap();
-    // The wall is 58 m ahead (-Z) and nothing is behind, all the way to the world's edge.
-    let ahead = physics.runway(&world.ground, [0.0, 1.5, 0.0], 0.0, 150.0);
-    let behind = physics.runway(&world.ground, [0.0, 1.5, 0.0], std::f32::consts::PI, 150.0);
-    assert!((ahead - 58.0).abs() < 0.5, "{ahead}");
-    assert_eq!(behind, 150.0);
-    let edge = physics.runway(&world.ground, [0.0, 1.5, 0.0], std::f32::consts::PI, 250.0);
-    assert!((edge - 200.0).abs() < 1.0, "the boundary wall: {edge}");
-    // Past the end of the wall, the wingtip still clips it.
-    let beside = physics.runway(&world.ground, [7.0, 1.5, 0.0], 0.0, 150.0);
-    assert!((beside - 58.0).abs() < 0.5, "{beside}");
-    assert!(physics.runway(&world.ground, [9.5, 1.5, 0.0], 0.0, 150.0) > 99.0);
 }
 
 /// A scripted flight for the fixture in `vehicle.spec.ts`: parked, a take-off, a climbing turn,

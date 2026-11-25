@@ -15,7 +15,6 @@ const NEXT_DOOR: [f32; 3] = [50.0, 0.0, 40.0];
 fn game(jobs: usize) -> Game {
     let map = WorldFile { version: WORLD_VERSION, half_extent: 40_000, spawns: vec![[0, 0]], ..Default::default() };
     let mut game = Game::new(map, 0).unwrap();
-    game.world.clear_pickups();
     game.world.rng = crate::rng::Rng::from_seed(3);
     game.world.deliveries = Some(DeliveryState::new(vec![SHOP], vec![HOUSE, NEXT_DOOR], jobs));
     game

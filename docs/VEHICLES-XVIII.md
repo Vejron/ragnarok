@@ -5,7 +5,7 @@ The AMV XA-361 is an eight-wheeled amphibious armoured mortar carrier, modelled 
 ## In play
 
 - **The AMV** (`KIND_AMV` = 33) has 180 hp, as much as the Strf 90.
-- **Placement.** It appears only where it is placed in the map editor (**AMV mortar**, C in the palette). The automatic line-up on worlds without editor placements does not include it. The home world has one, beside the first Pbv 302.
+- **Placement.** It appears only where it is placed in the map editor (**AMV mortar**, C in the palette). The home world has one, beside the first Pbv 302.
 - **It is true to size,** next to the other military vehicles: 7.7 m long, 2.8 m wide, 2.3 m to the hull roof and 3 m to the turret's top. That is longer than the Strf 90 (6.55 m) and the Pbv 302 (5.35 m), and the same width.
 - **Seat 0 is the driver.** It drives as a car does, but its first two axles steer, as the real one's do. The second turns about three fifths as far as the first, so every wheel rolls round the same point. At a crawl on full lock it goes round a 9.7 m radius, against 11.2 m on its front axle alone, the bus's 11.2 m and the jeep's 6.9 m. It weighs 24 t, gets to 50 km/h in about three seconds and tops out at 25 m/s (90 km/h). It stays flat at full lock flat out.
 - **It swims.** Most AMVs are amphibious; the heavy AMOS version usually is not, but here it is. It floats as the Pbv 302 does ([VEHICLES-XVII.md](VEHICLES-XVII.md)), 1.2 m deep, its roof 0.65 m clear of the water.

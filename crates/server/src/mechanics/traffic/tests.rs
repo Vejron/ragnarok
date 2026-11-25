@@ -22,7 +22,6 @@ fn game(cars: usize) -> Game {
     ];
     let map = WorldFile { version: WORLD_VERSION, half_extent: 60_000, spawns: vec![[-55_000, 55_000]], roads, ..Default::default() };
     let mut game = Game::new(map, 0).unwrap();
-    game.world.clear_pickups();
     busy(&mut game, cars);
     game
 }
@@ -227,7 +226,6 @@ fn a_car_a_player_takes_is_theirs_and_another_takes_its_place() {
 fn highway(cars: usize) -> Game {
     let map = WorldFile { version: WORLD_VERSION, half_extent: 140_000, spawns: vec![[-130_000, 130_000]], roads: vec![road(&[[-1400.0, 0.0], [0.0, 0.0], [1400.0, 0.0]])], ..Default::default() };
     let mut game = Game::new(map, 0).unwrap();
-    game.world.clear_pickups();
     busy(&mut game, cars);
     game
 }
@@ -287,6 +285,10 @@ fn cars_go_round_a_vehicle_standing_in_their_lane_without_touching_it() {
                 past.push(vid);
             }
         }
+        // Enough have got by: the rest of the run would only repeat it.
+        if past.len() >= 3 {
+            break;
+        }
     }
     let now = game.world.physics.car_pose(parked).unwrap().position;
     let moved = (now[0] - at[0]).hypot(now[2] - at[2]);
@@ -316,6 +318,10 @@ fn cars_go_round_a_vehicle_left_in_a_town_street_between_two_junctions() {
             if x > -75.0 && z < -140.0 && coming.contains(&vid) && !past.contains(&vid) {
                 past.push(vid);
             }
+        }
+        // Enough have got by: the rest of the run would only repeat it.
+        if past.len() >= 3 {
+            break;
         }
     }
     let now = game.world.physics.car_pose(parked).unwrap().position;

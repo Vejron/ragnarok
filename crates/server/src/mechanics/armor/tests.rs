@@ -194,15 +194,16 @@ fn reflecting_mirrors_about_the_normal() {
 // --- in the game ---
 
 fn game() -> Game {
+    let spawns: Vec<[i32; 2]> = [[-25_000, 0], [25_000, 0]].into_iter().chain((0..11).map(|i| [i * 2700 - 12_000, 0])).collect();
     let map = WorldFile {
         version: WORLD_VERSION,
         half_extent: 30_000,
-        spawns: [[-25_000, 0], [25_000, 0]].into_iter().chain((0..11).map(|i| [i * 2700 - 12_000, 0])).collect(),
+        placed_vehicles: crate::mechanics::for_tests::parked(&spawns, &[KIND_JEEP, KIND_TANK, KIND_STRV, KIND_HELI, KIND_WALKER]),
+        spawns,
         roads: vec![Road { width: 800, kind: 0, carried: false, points: vec![[-30_000, 0], [30_000, 0]], ..Default::default() }],
         ..Default::default()
     };
     let mut game = Game::new(map, 0).unwrap();
-    game.world.clear_pickups();
     for _ in 0..90 {
         game.step();
     }

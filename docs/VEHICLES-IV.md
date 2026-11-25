@@ -4,7 +4,7 @@ Two Fokker Dr.I triplanes, stretched into two-seaters: a pilot who flies and fir
 
 ## What you get
 
-- **Two planes**, one red and one yellow, park after everything else at the spawn points nothing took, facing along the road whichever way has the longer clear run (see [Placement](#placement)). Walk up and press **E**: the first in flies, the second takes the rear gun, a third can't board. **R** swaps seats.
+- **Two planes**, one red and one yellow, stand where the map editor places them (see [Placement](#placement)); give a plane a straight, flat run to take off along. Walk up and press **E**: the first in flies, the second takes the rear gun, a third can't board. **R** swaps seats.
 - **Flying.** **Space** and **Shift** are the throttle, like the helicopter's climb and sink: Space opens it, Shift cuts it (the blip switch: the engine drops out and the plane slows; on the ground it brakes), nothing held cruises. **The mouse steers**, as in War Thunder: the camera sits behind the plane looking where the mouse points, and the plane turns towards that heading at a limited rate, banking into the turn and levelling its wings when it arrives (the mouse can ask for up to 75° of climb or dive). **W** pushes the nose down, **S** pulls it up and **A/D** roll the wings by hand, taking their axis over from the mouse while held; with the mouse centred behind it flies level. A yellow cross shows where the guns point. On the ground it idles until Space is held, A/D steer the wheels, it gets light at about 17 m/s and is a metre clear of the ground after about 65 m with a little **S**. It cruises at 35 m/s, tops out at 45 m/s, and the engine fades out over the last 20 m below 160 m.
 - **Stalling.** Below 17 m/s the wings let go: the lift fades away, the nose drops towards where the plane is going and the controls go soft. Diving out of it recovers. Climbing steeply on the blip switch is the quick way to find out. A "STALL" warning blinks below 19 m/s.
 - **Forward guns.** Click or **F**: two Spandaus on the cowling fire in turn along the nose, twelve rounds a second between them, out to 300 m, drawn as bullets in flight like a rifle's. A round does 14 to a soldier, 7 to a plane and 3 to anything else (with a wheel hit as a rifle's). They heat up and jam after about four seconds of fire, and clear after about three seconds of rest (the bar bottom right).
@@ -36,7 +36,7 @@ The autopilot (`autopilot` in `physics/vehicle.rs`) turns towards a world direct
 
 ### Placement
 
-Cars, tanks and the helicopter are placed as before. Then `place_planes` looks at every spawn point left over, facing both ways along the road. For each it measures the runway with `Physics::runway`: rays at two heights along the middle and out at each wingtip, against the static world, and the ground's height every 4 m, which must stay within 1.5 m. Parked vehicles shorten it too. The longest runways win, and a plane is never parked within the first `PLANE_RUNWAY` (80 m) of another's. If nothing has 80 m, the best there is is used and the server logs a warning. The shipped fixture world gives runways of 216 m and 109 m.
+Planes are placed in the map editor like every other vehicle, and the server does not look for a runway: the person placing one picks a straight, flat, clear run of about 80 m and the heading. A plane that does not fit at its spot is skipped with a warning.
 
 ### Weapons
 
@@ -109,10 +109,8 @@ The `paint` material is tinted per plane. It sits level, as its box does, where 
   - the ceiling holds
   - it turns back before the edge of the world without hitting the ground
   - the wings are solid to their tips
-  - the runway ends at a wall, a wingtip and the boundary
   - a scripted 900-tick flight matches a fixture, which `vehicle.spec.ts` flies in WASM to within 1 cm
 - `mechanics/vehicles.rs`:
-  - both planes are placed in the test world and the fixture world with full runways, never on each other's or a parked vehicle's
   - a pilot and a gunner take one off and a third stays behind
   - a gentle landing does no harm
   - flying into the ground wrecks it

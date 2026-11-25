@@ -4,7 +4,7 @@ A giant robot hen that one player drives. It walks and balances on the walker's 
 
 ## What you get
 
-- **One hen** (`KIND_HEN` = 12) with 180 hp and one seat. It is the walker's size: a 2 × 2.4 × 3.6 m hull about 5 m up on legs, and about 8 m tall to the comb. On a world with no editor placements it takes a spawn point left after the planes and the mortar, so it never blocks a runway. On a world whose vehicles were placed in the map editor, it appears only where it is placed (**Hen** in the editor's palette).
+- **One hen** (`KIND_HEN` = 12) with 180 hp and one seat. It is the walker's size: a 2 × 2.4 × 3.6 m hull about 5 m up on legs, and about 8 m tall to the comb. It appears only where it is placed in the map editor (**Hen** in the editor's palette).
 - **Boarding.** Walk up between its feet and press **E**. A walker is boarded the same way now (see [Boarding a walker](#boarding-a-walker)).
 - **Walking (W/S, A/D).** Exactly the walker: up to 9 m/s, it plants its feet when let go, takes a catching step when shoved, and a big enough blast knocks it over.
 - **Leap (Space, on the ground).** It adds 11 m/s upward, about a 6 m leap, plus up to 6 m/s along its heading with W held (half that backwards). It costs a fifth of the stamina. One press is one leap.

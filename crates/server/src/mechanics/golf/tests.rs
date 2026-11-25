@@ -16,7 +16,6 @@ fn game() -> Game {
     let course = Course { holes: vec![Hole { number: 1, par: Some(3), tee: TEE, cup: CUP }], surfaces: Vec::new() };
     let map = WorldFile { version: WORLD_VERSION, half_extent: 20_000, spawns: vec![[5_000, 5_000]], golf: Some(course), ..Default::default() };
     let mut game = Game::new(map, 0).unwrap();
-    game.world.clear_pickups();
     game.world.rng = crate::rng::Rng::from_seed(5);
     game
 }

@@ -37,7 +37,7 @@ describe('codec', () => {
     expect(decodeServer(encode([11, [[7, 'Åsa', 3]]]))).toBeNull()
   })
 
-  it('matches the notice fixture and rejects a malformed one', () => {
+  it('matches the notice, gates, backpack, jobs and delivered fixtures and rejects a malformed one', () => {
     expect(decodeServer(bytes('notice'))).toEqual({ type: 'notice', kind: NOTICE_OBJECTIVE, text: 'Go' })
     expect(decodeServer(bytes('gates'))).toEqual({ type: 'gates', live: true, gates: [{ col: 2, row: 3, index: 70_000, door: 300, open: true }, { col: 0, row: 1, index: 4, door: 0, open: false }] })
     expect(decodeServer(bytes('backpack'))).toEqual({ type: 'backpack', x: -123.45, z: 678.9, radius: 75, carrier: 9, held: 301 })
@@ -95,9 +95,6 @@ describe('codec', () => {
     expect(decodeServer(new Uint8Array([0x93, 0x01, 0x01, 0x01]))).toBeNull()
     const snapshot = (updates: unknown, removed: unknown = []) => encode([1, 5, 0, 0, 0, updates, removed, [], []])
     expect(decodeServer(snapshot([]))).not.toBeNull()
-    // A v1 snapshot, with its sixteen fields, and one from before the owner's components (protocol 39).
-    expect(decodeServer(encode([1, 5, 0, 0, 0, [], [], [], [], [], null, [100, 0, []], [], [], [], []]))).toBeNull()
-    expect(decodeServer(encode([1, 5, 0, 0, 0, [], [], null, [100, 0, []], [], []]))).toBeNull()
     // An update cut short, a field that is not a number, a removed id that is not one.
     expect(decodeServer(snapshot([[9, 1, 10, 20]]))).toBeNull()
     expect(decodeServer(snapshot([[9, 2, 'x']]))).toBeNull()

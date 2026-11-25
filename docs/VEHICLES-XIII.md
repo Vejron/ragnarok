@@ -10,7 +10,7 @@ The snowracer is a steerable sled for two: a padded seat on a steel tube frame o
   - **Nothing on it can be shot out.** It has no engine or fuel modules, and its runners are not car wheels (`car_wheels: false`), so they cannot be bent or shot off.
   - **Its riders are still in the open**, and can be shot off it.
   - **It cannot tow** a gun, since only a car with wheels can.
-- **Placement.** It appears only where it is placed in the map editor (**Snowracer**, Z in the palette). The automatic line-up on worlds without editor placements does not include it.
+- **Placement.** It appears only where it is placed in the map editor (**Snowracer**, Z in the palette).
 - **Seat 0 is the rider**, who steers. W runs the motor, S brakes and jump is the brake claws (the handbrake). The steering lock fades quickly with speed, as the snowmobile's does, so at a slope's pace it carves rather than turns.
 - **Seat 1 is a passenger** sitting behind. Both ride in the open and can fire their own guns.
 - **Down a slope** it picks up speed with nothing but gravity, to well past its motor's top speed. Measured from the top of a 300 m run, against a snowmobile flat out:

@@ -4,7 +4,7 @@ Bricks are a hotbar item. With them a player puts 72 cm cubes onto the world: ag
 
 ## What you get
 
-- **The item** (`ITEM_BRICKS` = 11, "Bricks"). It is in everyone's starting loadout, in slot 5, where the loitering drone used to be. The loitering drone is still found lying about. Bricks are never used up, are not scattered as pickups, and can be placed in the map editor and named in a scenario loadout.
+- **The item** (`ITEM_BRICKS` = 11, "Bricks"). It is in everyone's starting loadout, in slot 5, where the loitering drone used to be. The loitering drone is found where it is placed. Bricks are never used up, are not lying about as pickups unless placed, and can be placed in the map editor and named in a scenario loadout.
 - **Place (click or F).** A cube goes where the crosshair is, on the near side of the face the crosshair ray meets. Hold the button to keep building, a cube every 10 ticks (1/6 s): looking at the last cube placed, the next one goes against it.
 - **Dig (aim held, then click or F).** The placed cube the crosshair is on is taken out. Aim is the right mouse button. Building cells cannot be dug, only placed cubes.
 - **Ghost.** With bricks in hand, a see-through white cube shows where the next one would go, or a faint grey one where it would be refused (nothing to rest on, or something in the way). With aim held, the cube that would be dug glows red instead.

@@ -38,10 +38,9 @@ get ground (see `WORLD.md`, "Painting a world").
 - Click a painted tile to place a marker. Placing outside the painted tiles is refused.
 - Shift or right-click removes the nearest marker of the current tool's kind.
 - Markers cannot be dragged: remove and place again.
-- Placing any of a kind **replaces the random ones** for that kind: placed spawns replace the
-  generated spawn points, placed vehicles replace the scattered vehicles and placed items replace
-  the scattered pickups. A kind with none placed behaves as before. Animals are only ever where
-  they are placed: there are no random ones.
+- Vehicles, items, bots and animals are **only ever where they are placed**: the server puts none
+  anywhere on its own, so a world with none placed has none. Only spawns have a fallback: placed
+  spawns replace the generated spawn points.
 - Vehicles that do not fit at their spot when the server starts are skipped, with a warning in the
   log.
 

@@ -4,7 +4,7 @@ First part of roadmap stage 3 (see [design.md §14](design.md#14-roadmap)): a ta
 
 ## What you get
 
-- Two tanks park on the roads next to the six cars. Walk up and press **E**: the first player in drives, the second takes the gun and the third the machine gun on the turret roof. A fourth can't board (three seats).
+- Tanks stand on the roads where the map editor puts them. Walk up and press **E**: the first player in drives, the second takes the gun and the third the machine gun on the turret roof. A fourth can't board (three seats).
 - **Driver:** W/S gas and brake, **A/D turns the tank on the spot** (or while driving), Space is the handbrake. Top speed is 12 m/s; the car's is 30.
 - **Gunner:** aims with the mouse and fires with a click or **F**. The camera sits behind the turret on the line of the barrel, so the reticle at the screen centre is where the barrel points; the shell falls from that line, so there is no aiming aid and long shots are judged by eye. The reticle goes dashed while the gun reloads (1.5 s).
 - The turret turns on the hull at 1.4 rad/s and the barrel nods at 0.9 rad/s, between −7° and +29°. It is *stabilised*: it follows the gunner's world heading, so a turning hull doesn't drag the aim.

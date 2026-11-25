@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { encode } from '@msgpack/msgpack'
-import { BUILDING_BRIDGE, CROP_NONE, CROP_WHEAT, GRAVE_CROSS, GRAVE_KINDS, RAIL_TRAIN, RAIL_TRAM, ROOF_GABLE, WORLD_BASE, decodeManifest, decodeTile, worldHash } from '@/world'
+import { BUILDING_BRIDGE, CROP_NONE, CROP_WHEAT, GRAVE_CROSS, GRAVE_KINDS, RAIL_TRAIN, RAIL_TRAM, ROOF_GABLE, decodeManifest, decodeTile, worldHash } from '@/world'
 import { buildingColors } from '@/render/buildingmesh'
 import { NO_CELLS } from './worlds'
 
@@ -10,10 +10,6 @@ import { NO_CELLS } from './worlds'
 const read = (path: string) => new Uint8Array(readFileSync(resolve(process.cwd(), '../fixtures/world', path)))
 
 describe('world files', () => {
-  it('is served from the site root unless VITE_WORLD_BASE says otherwise', () => {
-    expect(WORLD_BASE).toBe('/')
-  })
-
   it('hashes with FNV-1a like the server', () => {
     expect(worldHash(new Uint8Array())).toBe(0x811c9dc5)
     expect(worldHash(new TextEncoder().encode('a'))).toBe(0xe40c292c)

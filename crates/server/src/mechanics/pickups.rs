@@ -6,7 +6,7 @@ use shared::items::*;
 use shared::protocol::ItemSlot;
 use shared::quant::from_cm;
 
-/// Items lying on the ground. They are scattered once, around the spawn points, when the room
+/// Items lying on the ground. The map editor places them (`WorldFile::placed_items`) when the room
 /// starts; a player who presses use within `PICKUP_RADIUS` of one takes it, and it comes back
 /// `PICKUP_RESPAWN_TICKS` later.
 ///
@@ -64,55 +64,12 @@ impl World {
             }
         }
     }
-
-    /// Takes every item off the ground.
-    #[cfg(test)]
-    pub fn clear_pickups(&mut self) {
-        self.remove_pickups(|_| false);
-    }
 }
 
-/// How far from a spawn point an item may be dropped, metres.
-const SCATTER: f32 = 25.0;
-/// Attempts to find a free spot for each item before giving up on it.
-const ATTEMPTS: usize = 12;
 /// How high above the ground an item floats, metres.
 const FLOAT: f32 = 0.5;
 /// How far above or below a player's centre an item can be reached, metres.
 const REACH_Y: f32 = 2.5;
-
-fn pick_item(world: &mut World) -> u8 {
-    let total: u32 = (1..ITEM_COUNT).filter_map(def).map(|d| d.weight).sum();
-    let mut roll = (world.rng.next_u64() % total as u64) as u32;
-    for item in 1..ITEM_COUNT {
-        let weight = def(item).map_or(0, |d| d.weight);
-        if roll < weight {
-            return item;
-        }
-        roll -= weight;
-    }
-    ITEM_BANDAGE
-}
-
-/// A spot on open ground near a spawn point, or `None` if the item landed on a roof or a wall.
-fn pick_spot(world: &mut World) -> Option<[f32; 3]> {
-    let centre = if world.map.spawns.is_empty() {
-        [0.0, 0.0]
-    } else {
-        let at = world.map.spawns[(world.rng.next_u64() % world.map.spawns.len() as u64) as usize];
-        [from_cm(at[0]), from_cm(at[1])]
-    };
-    let mut offset = || (world.rng.next_f64() as f32 * 2.0 - 1.0) * SCATTER;
-    let (x, z) = (centre[0] + offset(), centre[1] + offset());
-    if !world.map.is_inside((x * 100.0) as i32, (z * 100.0) as i32) {
-        return None;
-    }
-    let ground = world.map.ground.height_at(x, z);
-    // Straight down from well above: if the first thing it meets is not the ground, this is under a roof.
-    let top = ground + 40.0;
-    let floor = world.physics.cast_ray([x, top, z], [0.0, -1.0, 0.0], 80.0, 0).map(|t| top - t)?;
-    ((floor - ground).abs() < 0.5).then_some([x, floor + FLOAT, z])
-}
 
 /// Adds `count` of `item` to the hotbar; returns how many did not fit.
 fn store(hotbar: &mut [ItemSlot], item: u8, count: u8) -> u8 {
@@ -135,30 +92,15 @@ fn store(hotbar: &mut [ItemSlot], item: u8, count: u8) -> u8 {
 impl Mechanic for Pickups {
     fn on_start(&mut self, world: &mut World) {
         let mut placed = 0;
-        // Items placed in the map editor replace the random scatter.
-        if !world.map.placed_items.is_empty() {
-            for spot in world.map.placed_items.clone() {
-                let (x, z) = (from_cm(spot.at[0]), from_cm(spot.at[1]));
-                let ground = world.map.ground.height_at(x, z);
-                let top = ground + 40.0;
-                let floor = world.physics.cast_ray([x, top, z], [0.0, -1.0, 0.0], 80.0, 0).map_or(ground, |t| top - t);
-                world.add_pickup([x, floor + FLOAT, z], spot.item, spot.count, false);
-                placed += 1;
-            }
-            tracing::info!(pickups = placed, "pickups placed from the editor");
-            return;
+        for spot in world.map.placed_items.clone() {
+            let (x, z) = (from_cm(spot.at[0]), from_cm(spot.at[1]));
+            let ground = world.map.ground.height_at(x, z);
+            let top = ground + 40.0;
+            let floor = world.physics.cast_ray([x, top, z], [0.0, -1.0, 0.0], 80.0, 0).map_or(ground, |t| top - t);
+            world.add_pickup([x, floor + FLOAT, z], spot.item, spot.count, false);
+            placed += 1;
         }
-        for _ in 0..PICKUP_COUNT {
-            for _ in 0..ATTEMPTS {
-                let Some(position) = pick_spot(world) else { continue };
-                let item = pick_item(world);
-                let count = def(item).map_or(1, |d| if d.kind == ItemKind::Gun { 1 } else { d.stack.min(2) });
-                world.add_pickup(position, item, count, false);
-                placed += 1;
-                break;
-            }
-        }
-        tracing::info!(pickups = placed, "pickups placed");
+        tracing::info!(pickups = placed, "pickups placed from the editor");
     }
 
     fn on_tick(&mut self, world: &mut World, _dt: f32) {
@@ -238,7 +180,6 @@ mod tests {
         let (reply, mut response) = oneshot::channel();
         game.handle(Command::Join { outbox, reply, profile: Default::default() });
         let id = response.try_recv().unwrap().unwrap();
-        game.world.clear_pickups();
         // These tests are about taking things, so they start with room to take them.
         game.world.entities.get_mut::<Player>(id).unwrap().hands.hotbar = Default::default();
         (game, id, inbox)
@@ -260,30 +201,21 @@ mod tests {
     }
 
     #[test]
-    fn scattering_places_items_on_the_ground() {
-        let (mut game, ..) = game();
-        Pickups.on_start(&mut game.world);
+    fn items_the_editor_placed_lie_on_the_ground_and_nothing_else_does() {
+        let map = WorldFile {
+            version: WORLD_VERSION,
+            half_extent: 20_000,
+            spawns: vec![[0, 0]],
+            placed_items: vec![shared::world::PlacedItem { item: ITEM_AK5, count: 1, at: [500, 700] }],
+            ..Default::default()
+        };
+        let game = Game::new(map, 0).unwrap();
         let ids = game.world.pickup_ids();
-        assert!(!ids.is_empty());
-        assert!(ids.len() <= PICKUP_COUNT);
-        assert!(ids.iter().all(|&pid| def(game.world.pickup(pid).unwrap().item).is_some()));
-    }
-
-    #[test]
-    fn the_fixture_world_gets_its_items_on_open_ground() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/world/world.msgpack");
-        let (world, hash) = crate::read_world(&path).unwrap();
-        let game = Game::new(world, hash).unwrap();
-        let ids = game.world.pickup_ids();
-        let placed = ids.len();
-        assert!(placed >= PICKUP_COUNT * 3 / 4, "only {placed} of {PICKUP_COUNT} found a spot");
-        for &pid in &ids {
-            let [x, y, z] = game.world.pickup_position(pid).unwrap();
-            let ground = game.world.map.ground.height_at(x, z);
-            assert!((y - ground - FLOAT).abs() < 0.6, "item at {x},{z} floats {} m above the ground", y - ground);
-        }
-        let kinds: std::collections::BTreeSet<u8> = ids.iter().map(|&pid| game.world.pickup(pid).unwrap().item).collect();
-        assert!(kinds.len() >= 3, "a spread of items, got {kinds:?}");
+        assert_eq!(ids.len(), 1);
+        let [x, y, z] = game.world.pickup_position(ids[0]).unwrap();
+        assert_eq!((x, z), (5.0, 7.0));
+        assert!((y - game.world.map.ground.height_at(x, z) - FLOAT).abs() < 0.6);
+        assert_eq!(game.world.pickup(ids[0]).unwrap().item, ITEM_AK5);
     }
 
     #[test]
@@ -335,6 +267,8 @@ mod tests {
     #[test]
     fn reaching_for_an_item_does_not_also_board_a_car() {
         let (mut game, id, _inbox) = game();
+        let at = game.world.entities.of::<Player>(id).character.position;
+        crate::mechanics::for_tests::add_vehicle(&mut game.world, shared::protocol::KIND_JEEP, [at[0] + 2.5, at[1] + 1.0, at[2]], 0.0);
         drop_at_feet(&mut game, id, ITEM_BANDAGE, 1);
         let mut seq = 0;
         press_use(&mut game, id, &mut seq, 0);

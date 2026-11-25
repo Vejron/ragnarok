@@ -8,7 +8,7 @@ Tesla showed the production car on 15 October 2026. Its "Rocket" trim has ten co
 
 ## What you get
 
-- **One Roadster** (`KIND_ROADSTER` = 10), parked with the other cars on the road. It has 100 hp and 2 seats, the sports car's wheels and body box, a stronger motor (18 kN) and a top speed of 62 m/s.
+- **One Roadster** (`KIND_ROADSTER` = 10), placed in the map editor like the other cars. It has 100 hp and 2 seats, the sports car's wheels and body box, a stronger motor (18 kN) and a top speed of 62 m/s.
 - **Boost (Shift).** The four rear nozzles push along the nose at 24 m/s², about 2.5 g, on the ground or in the air. The push is not limited by top speed or the engine's power curve. A full tank holds about three seconds of boost.
 - **Hop (Space, on the ground).** It adds 9 m/s upward in one tick, which clears about 4 m. It costs 15% of the tank.
 - **Hover (Space, held in the air).** The six lift nozzles under the car level it, and lean it a little with W/S/A/D like a helicopter, so it drifts the way it leans. A/D also turn it. Once the hop has topped out, they hold a 1 m/s climb that fades out below 40 m. A full tank holds about four seconds of hover. When the tank is empty the car falls.

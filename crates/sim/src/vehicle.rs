@@ -615,39 +615,6 @@ impl Physics {
         })
     }
 
-    /// How far a plane parked at `position` facing `yaw` could run straight ahead before a building,
-    /// a tree or a wall gets in the way of its fuselage or wingtips, or the ground rises or falls away
-    /// more than a little, up to `max` metres. Only the static world counts: cars move.
-    pub fn runway(&self, ground: &shared::terrain::Ground, position: [f32; 3], yaw: f32, max: f32) -> f32 {
-        let (sin, cos) = yaw.sin_cos();
-        let ahead = [-sin, 0.0, -cos];
-        let right = [cos, 0.0, -sin];
-        let start = ground.height_at(position[0], position[2]);
-        let mut clear = max;
-        // The ground along the way, every few metres.
-        let mut travelled = 0.0;
-        while travelled < max {
-            travelled += 4.0;
-            let height = ground.height_at(position[0] + ahead[0] * travelled, position[2] + ahead[2] * travelled);
-            if (height - start).abs() > 1.5 {
-                clear = clear.min(travelled - 4.0);
-                break;
-            }
-        }
-        // Rays along the middle and out at each wingtip, low and at the top wing.
-        let queries = self.broad_phase.as_query_pipeline(self.narrow_phase.query_dispatcher(), &self.bodies, &self.colliders, QueryFilter::exclude_dynamic().groups(super::past_fences()));
-        for offset in [0.0, -PLANE_WING_HALF_EXTENTS[0], PLANE_WING_HALF_EXTENTS[0]] {
-            for height in [0.6, 2.4] {
-                let origin = Vector::new(position[0] + right[0] * offset, start + height, position[2] + right[2] * offset);
-                let ray = Ray::new(origin, Vector::from(ahead));
-                if let Some((_, distance)) = queries.cast_ray(&ray, max, true) {
-                    clear = clear.min(distance);
-                }
-            }
-        }
-        clear.max(0.0)
-    }
-
     /// Adds a vehicle of `kind` under `id`; read it back with [`Physics::car_pose`].
     pub fn add_car(&mut self, id: u32, kind: u8, position: [f32; 3], yaw: f32) {
         let spec = spec(kind);

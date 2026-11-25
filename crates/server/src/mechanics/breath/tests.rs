@@ -25,7 +25,6 @@ fn lake() -> (Game, u32, mpsc::Receiver<crate::game::Outgoing>) {
         ..Default::default()
     };
     let mut game = Game::new(map, 0).unwrap();
-    game.world.clear_pickups();
     let (outbox, inbox) = mpsc::channel(1 << 16);
     let (reply, mut response) = oneshot::channel();
     game.handle(Command::Join { outbox, reply, profile: Default::default() });

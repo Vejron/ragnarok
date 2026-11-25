@@ -26,7 +26,6 @@ fn game(services: bool) -> Game {
     ];
     let map = WorldFile { version: WORLD_VERSION, half_extent: 60_000, spawns: vec![[-55_000, 55_000]], roads, ..Default::default() };
     let mut game = Game::new(map, 0).unwrap();
-    game.world.clear_pickups();
     (game.world.fleet.ambulance, game.world.fleet.police) = (services, services);
     game
 }
@@ -719,7 +718,6 @@ fn a_police_car_chasing_across_a_field_goes_round_a_house_in_its_way() {
     let mut map = game.world.map.clone();
     map.collision = shared::world::CollisionMesh { vertices, triangles };
     game = Game::new(map, 0).unwrap();
-    game.world.clear_pickups();
     (game.world.fleet.ambulance, game.world.fleet.police) = (true, true);
     let soldier = join(&mut game, [110.0, 0.0]);
     let id = civilian(&mut game, [114.0, 4.0]);

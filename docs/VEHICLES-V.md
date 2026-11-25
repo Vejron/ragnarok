@@ -4,7 +4,7 @@ A towed heavy mortar: a two-axle gun carriage with a steel tongue, one gunner, a
 
 ## What you get
 
-- **One mortar**, parked on a road-side spot after the planes have their runways, never on one (see [Placement](#placement)). It has 150 hp and about 900 kg, which a jeep can pull and a sports car struggles with.
+- **One mortar**, placed in the map editor (see [Placement](#placement)). It has 150 hp and about 900 kg, which a jeep can pull and a sports car struggles with.
 - **Hitching.** Stop a car and press **H** with its driver in seat 0: a free mortar within 2.5 m of the car's rear tow point is hitched to it. Press **H** again to let it go. Hitching needs the car at 1.5 m/s or less, and the mortar must be empty. A towed mortar cannot be boarded and cannot fire.
 - **Towing.** The mortar follows the car through a Rapier spherical joint, so it swings on corners and pulls on the car's rear. A wrecked car, or a respawn, lets it go.
 - **Aiming.** The mouse sets the bearing: the mount follows the look at 0.5 rad/s, a heavy gun cranked round by hand, so a new bearing takes seconds (a half turn about six). **W** and **S** walk a **range dial** from 55 m to 300 m (60 m/s, starting at 120 m). The barrel rises or falls at 0.17 rad/s to the lob that puts the bomb on that range, so from its flattest lob to its steepest takes about four seconds; the landing marker follows the barrel, so it shows where a bomb fired now would go.
@@ -50,7 +50,7 @@ A bomb is a `Rocket` in `step_shells`, the same falling path as a tank shell. `c
 
 ### Placement
 
-`MORTAR_COUNT` is 1. `mechanics/vehicles.rs` places it after the planes, on a spawn no plane or car took, skipping any spot on a plane's runway, and facing along the road. A mortar that does not fit simply is not placed. The fixture world has one spare spawn, so the count test asserts `mortars <= MORTAR_COUNT`.
+The mortar is placed in the map editor, like every other vehicle. One that does not fit at its spot is skipped with a warning.
 
 ## Wire
 
@@ -81,7 +81,7 @@ Protocol **26**:
 
 - `physics/vehicle/tests.rs`: `a_hitched_mortar_is_pulled_along_behind_the_jeep_until_it_is_let_go`.
 - `mechanics/gunnery/tests.rs`: the bomb lands at its dialled range and bursts on the ground; the dial clamps and the elevation follows.
-- `mechanics/vehicles/tests.rs`: `cars_are_placed_along_the_road` counts the mortar within `MORTAR_COUNT`. The mortar settles and stays put with the other parked cars.
+- `mechanics/vehicles/tests.rs`: the mortar is hitched and towed by a car.
 - `shared` parity: the gameplay fixture and the byte fixtures, regenerated with `UPDATE_PARITY=1 cargo test -p shared parity`.
 
 ## Not done, or not checked

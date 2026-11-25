@@ -10,7 +10,6 @@ use tokio::sync::{mpsc, oneshot};
 fn soldier() -> (Game, u32, mpsc::Receiver<Outgoing>) {
     let map = WorldFile { version: WORLD_VERSION, half_extent: 20_000, spawns: vec![[0, 0]], ..Default::default() };
     let mut game = Game::new(map, 0).unwrap();
-    game.world.clear_pickups();
     let (outbox, inbox) = mpsc::channel(1 << 16);
     let (reply, mut response) = oneshot::channel();
     game.handle(Command::Join { outbox, reply, profile: Default::default() });

@@ -33,7 +33,6 @@ fn sea() -> Game {
     let mut game = Game::new(map, 0).unwrap();
     // Still water: these are about her deck and guns, which a heaving, drifting hull makes hard to measure.
     game.world.physics.calm_waters();
-    game.world.clear_pickups();
     game
 }
 

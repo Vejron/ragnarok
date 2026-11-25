@@ -63,8 +63,7 @@ fn game() -> (Game, ObjId, ObjId) {
         collision: CollisionMesh { vertices, triangles },
         ..Default::default()
     };
-    let mut game = Game::new(map, 0).unwrap();
-    game.world.clear_pickups();
+    let game = Game::new(map, 0).unwrap();
     (game, ids[0], ids[1])
 }
 

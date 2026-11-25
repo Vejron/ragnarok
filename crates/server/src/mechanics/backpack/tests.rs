@@ -12,7 +12,6 @@ const HOME: [f32; 2] = [40.0, 40.0];
 fn game() -> Game {
     let map = WorldFile { version: WORLD_VERSION, half_extent: 20_000, spawns: vec![[0, 0]], ..Default::default() };
     let mut game = Game::new(map, 0).unwrap();
-    game.world.clear_pickups();
     game.world.rng = crate::rng::Rng::from_seed(3);
     game.world.backpack = Some(BackpackState::new(HOME));
     game

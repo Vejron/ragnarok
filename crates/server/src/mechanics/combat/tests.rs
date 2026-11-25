@@ -9,10 +9,8 @@ use shared::world::{WORLD_VERSION, WorldFile};
 use tokio::sync::{mpsc, oneshot};
 
 fn game() -> Game {
-    let map = WorldFile { version: WORLD_VERSION, half_extent: 20_000, spawns: vec![[0, 0]], ..Default::default() };
-    // Loose items would take a test's use button.
+    let map = WorldFile { version: WORLD_VERSION, half_extent: 20_000, spawns: vec![[0, 0]], placed_vehicles: vec![shared::world::PlacedVehicle { kind: shared::protocol::KIND_JEEP, at: [0, 0], yaw: 0.0 }], ..Default::default() };
     let mut game = Game::new(map, 0).unwrap();
-    game.world.clear_pickups();
     // A gun's spread the same every run: where on the body a round lands decides what it does.
     game.world.rng = crate::rng::Rng::from_seed(7);
     game
@@ -286,7 +284,7 @@ fn snapshots_carry_own_health_and_shot_events() {
 
 /// The one car in the test world, and a player sitting in its driver seat.
 fn driver_in_the_car(game: &mut Game) -> (u32, u32) {
-    let (vid, _) = game.world.entities.all::<Vehicle>().next().expect("a car is placed at the spawn point");
+    let (vid, _) = game.world.entities.all::<Vehicle>().next().expect("the test world places a jeep at the spawn point");
     let (id, inbox) = join(game);
     std::mem::forget(inbox);
     game.world.entities.get_mut::<Seats>(vid).unwrap()[0] = Some(id);
@@ -833,8 +831,7 @@ fn game_with_tree() -> (Game, Obj) {
     let tree = Tree { x: 1000, z: 0, base: 0, height: 1600, crown: 300, kind: TREE_PINE, solid: true };
     let id = ObjId { col: 2, row: 3, index: 0 };
     let map = WorldFile { version: WORLD_VERSION, half_extent: 20_000, spawns: vec![[0, 0]], trees: vec![tree], tree_ids: vec![id], ..Default::default() };
-    let mut game = Game::new(map, 0).unwrap();
-    game.world.clear_pickups();
+    let game = Game::new(map, 0).unwrap();
     (game, Obj::Tree(id))
 }
 
@@ -884,9 +881,8 @@ fn a_car_at_speed_fells_the_tree_it_drives_into() {
         .map(|[x, z]| Tree { x, z, base: 0, height: 1600, crown: 300, kind: TREE_PINE, solid: true })
         .collect();
     let tree_ids = (0..4).map(|index| ObjId { col: 2, row: 3, index }).collect();
-    let map = WorldFile { version: WORLD_VERSION, half_extent: 20_000, spawns: vec![[0, 0]], trees, tree_ids, ..Default::default() };
+    let map = WorldFile { version: WORLD_VERSION, half_extent: 20_000, spawns: vec![[0, 0]], placed_vehicles: vec![shared::world::PlacedVehicle { kind: shared::protocol::KIND_JEEP, at: [0, 0], yaw: 0.0 }], trees, tree_ids, ..Default::default() };
     let mut game = Game::new(map, 0).unwrap();
-    game.world.clear_pickups();
     let (_, driver) = driver_in_the_car(&mut game);
     for seq in 1..=TICK_RATE * 6 {
         game.handle(Command::Input(driver, 0, vec![InputFrame { seq, strafe: 0, forward: 127, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0, collective: 0 }]));
@@ -932,9 +928,8 @@ fn game_with_a_wall_and_a_fence() -> Game {
     use shared::world::{LINE_FENCE, LINE_WALL, Line};
     let line = |kind, x: i32| Line { kind, points: (-2..=2).map(|i| [x, i * 300]).collect(), base: vec![0; 5], end: true };
     let map = WorldFile { version: WORLD_VERSION, half_extent: 20_000, spawns: vec![[0, 0]], lines: vec![(2, 3, line(LINE_WALL, 1000)), (2, 3, line(LINE_FENCE, 2000))], ..Default::default() };
-    let mut game = Game::new(map, 0).unwrap();
-    game.world.clear_pickups();
-    game
+    
+    Game::new(map, 0).unwrap()
 }
 
 #[test]
@@ -1026,8 +1021,7 @@ fn game_with_house() -> (Game, Obj) {
         collision: CollisionMesh { vertices, triangles },
         ..Default::default()
     };
-    let mut game = Game::new(map, 0).unwrap();
-    game.world.clear_pickups();
+    let game = Game::new(map, 0).unwrap();
     (game, Obj::Building(id))
 }
 

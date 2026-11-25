@@ -18,7 +18,6 @@ fn map() -> WorldFile {
 /// A flat 200 m square running the scenario in `json`. People spawn at its far corner, -80, -80.
 fn start(json: &str) -> Game {
     let mut game = Game::new(map(), 0).unwrap();
-    game.world.clear_pickups();
     game.scenario = Some(read(json, &game.world.map).unwrap());
     game
 }
@@ -307,7 +306,6 @@ fn the_example_in_bots_md_plays_through_to_a_win() {
     // A flat 600 m square round the example's farm, with people starting well away from it.
     let map = WorldFile { version: WORLD_VERSION, half_extent: 30_000, frame: shared::world::Frame::Equirect { origin: (63.8420, 20.3440) }, spawns: vec![[-25_000, 25_000]], ..Default::default() };
     let mut game = Game::new(map, 0).unwrap();
-    game.world.clear_pickups();
     game.scenario = Some(read(documented_example(), &game.world.map).unwrap());
     let (_, mut inbox) = join(&mut game);
     game.step();

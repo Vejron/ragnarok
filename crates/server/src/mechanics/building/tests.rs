@@ -33,8 +33,7 @@ fn game() -> (Game, ObjId) {
         collision: CollisionMesh { vertices, triangles },
         ..Default::default()
     };
-    let mut game = Game::new(map, 0).unwrap();
-    game.world.clear_pickups();
+    let game = Game::new(map, 0).unwrap();
     (game, id)
 }
 
@@ -313,9 +312,8 @@ fn shooting_out_a_towers_foot_brings_it_down() {
 
 #[test]
 fn a_car_at_speed_breaks_the_bricks_it_drives_into() {
-    let map = WorldFile { version: WORLD_VERSION, half_extent: 20_000, spawns: vec![[0, 0]], ..Default::default() };
+    let map = WorldFile { version: WORLD_VERSION, half_extent: 20_000, spawns: vec![[0, 0]], placed_vehicles: vec![shared::world::PlacedVehicle { kind: shared::protocol::KIND_JEEP, at: [0, 0], yaw: 0.0 }], ..Default::default() };
     let mut game = Game::new(map, 0).unwrap();
-    game.world.clear_pickups();
     // The car's heading is not worth working out: a ring of wall two bricks high stands 25 m off all round.
     let r = cell_at([25.0, 0.0, 0.0])[0];
     for i in -r..=r {
@@ -326,7 +324,7 @@ fn a_car_at_speed_breaks_the_bricks_it_drives_into() {
         }
     }
     let built = game.world.construct.len();
-    let (vid, _) = game.world.entities.all::<crate::game::Vehicle>().next().expect("a car is placed at the spawn point");
+    let (vid, _) = game.world.entities.all::<crate::game::Vehicle>().next().expect("the test world places a jeep at the spawn point");
     let (driver, inbox) = join(&mut game);
     std::mem::forget(inbox);
     game.world.entities.get_mut::<crate::game::Seats>(vid).unwrap()[0] = Some(driver);

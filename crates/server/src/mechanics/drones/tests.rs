@@ -8,10 +8,8 @@ use tokio::sync::{mpsc, oneshot};
 
 fn game() -> Game {
     let map = WorldFile { version: WORLD_VERSION, half_extent: 40_000, spawns: vec![[0, 0]], ..Default::default() };
-    // Loose items would take a test's use button.
-    let mut game = Game::new(map, 0).unwrap();
-    game.world.clear_pickups();
-    game
+    
+    Game::new(map, 0).unwrap()
 }
 
 fn join(game: &mut Game) -> u32 {

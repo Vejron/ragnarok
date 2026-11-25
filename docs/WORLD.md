@@ -918,9 +918,7 @@ under the deck, and nobody spawns on it. A road that crosses under a bridge is n
 Both sides check `WORLD_VERSION` and read only the current layout: there is no reading of older
 worlds. When the layout changes, bump it in `crates/shared/src/world.rs` **and**
 `client/src/world.ts` and re-import every world (`osm-import --area worlds/<name>/area.json --out worlds/<name>/world.msgpack`, or
-**Generate world** in the editor). The server tests
-`parked_cars_in_the_fixture_world_settle_and_stay_put` and
-`the_fixture_world_gets_its_items_on_open_ground` and client `world.spec.ts` read the small
+**Generate world** in the editor). The client's `world.spec.ts` and server tests such as `the_fixture_worlds_bridge_is_solid_and_can_be_hit` read the small
 synthetic world committed in `fixtures/world/`, so with any format change regenerate and commit it:
 `cargo run -p osm-import -- --synthetic --out fixtures/world/world.msgpack`. The real world in
 `client/public` is generated and git-ignored.
@@ -942,4 +940,4 @@ coastline crossing it) gets no sea.
 
 ## Hand-placed spawns, vehicles, items and animals
 
-The map editor's Spawn, Vehicle, Item and Animal tools write `spawns`, `vehicles`, `items` and `animals` (latitude/longitude, plus `kind`/`yaw`, `item`/`count` or `kind`/`count`) into the world's `area.json`. They are not part of `world.msgpack`, so changing them needs a save and a server restart but no "Generate world". The server reads `area.json` next to the manifest on start. Placing any of a kind replaces the random ones: placed spawns replace the generated spawn points, placed vehicles replace the scattered vehicles, placed items replace the scattered pickups. Anything outside the painted tiles is dropped. Vehicle `yaw` is in radians as the simulation counts it (0 faces north, positive turns left).
+The map editor's Spawn, Vehicle, Item and Animal tools write `spawns`, `vehicles`, `items` and `animals` (latitude/longitude, plus `kind`/`yaw`, `item`/`count` or `kind`/`count`) into the world's `area.json`. They are not part of `world.msgpack`, so changing them needs a save and a server restart but no "Generate world". The server reads `area.json` next to the manifest on start. Vehicles, items, bots and animals are only where they are placed: the server adds none of its own. Placed spawns replace the generated spawn points. Anything outside the painted tiles is dropped. Vehicle `yaw` is in radians as the simulation counts it (0 faces north, positive turns left).

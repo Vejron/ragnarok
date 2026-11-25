@@ -48,9 +48,8 @@ fn barn() -> WorldFile {
 }
 
 fn game() -> Game {
-    let mut game = Game::new(barn(), 0).unwrap();
-    game.world.clear_pickups();
-    game
+    
+    Game::new(barn(), 0).unwrap()
 }
 
 fn join(game: &mut Game) -> (u32, mpsc::Receiver<crate::game::Outgoing>) {

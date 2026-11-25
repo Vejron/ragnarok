@@ -60,8 +60,6 @@ pub const PLANE_LEVEL_GAIN: f32 = 1.5;
 pub const PLANE_CEILING: f32 = 160.0;
 /// Within this many metres of the edge of the world the plane is steered back towards the middle.
 pub const PLANE_EDGE_MARGIN: f32 = 120.0;
-/// A plane is parked where a straight, flat, clear run of at least this many metres lies ahead.
-pub const PLANE_RUNWAY: f32 = 80.0;
 /// The two forward guns on the cowling, which fire in turn along the nose. `PLANE_GUN_COOLDOWN_TICKS`
 /// between rounds makes twelve a second between them. A round is a hitscan out to `PLANE_GUN_RANGE`.
 pub const PLANE_GUN_PIVOTS: [[f32; 3]; 2] = [[-0.16, 0.72, -2.0], [0.16, 0.72, -2.0]];

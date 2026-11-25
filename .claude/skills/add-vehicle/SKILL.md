@@ -21,7 +21,7 @@ Settle these first, and ask the user about anything the request leaves open:
 - **Seats.** At most `MAX_SEATS` (13, the bus's). Seat 0 drives. For each other seat, decide whether it is a passenger who fires their own gun (`crew_guns`) or works a mount.
 - **Exposure.** `Exposure::Open` (the crew can be shot), `Glazed` (behind glass, still hittable) or `Sealed` (inside armour).
 - **Weapons.** One `MountDef` per weapon. See the table in step 2 for what the client can see of each.
-- **Placement.** Most new kinds appear only where the map editor places them. The automatic line-up on worlds without editor placements is in `crates/server/src/mechanics/vehicles.rs`.
+- **Placement.** Every kind appears only where the map editor places it (`placed_vehicles`, read by `Vehicles::on_start` in `crates/server/src/mechanics/vehicles.rs`); the server places none on its own. A test that needs one places it in its test world's `placed_vehicles` (`for_tests::parked` in `mechanics/mod.rs`) or calls `for_tests::add_vehicle`.
 
 ## 1. Shared definition (Rust)
 
@@ -111,7 +111,7 @@ Read the `_three`, `_side` and `_rear` PNGs and fix anything that looks off.
 ## 6. Docs and placement
 
 - Write `docs/VEHICLES-<next roman numeral>.md`, following the latest one: what it is in play, its tuning and why, the model and the build command, and any protocol change. Add a line for it to the README's list.
-- To put it in a world, add `{"kind": <id>, "lat": ..., "lon": ..., "yaw": ...}` to `worlds/<world>/area.json` `vehicles`. Place it beside existing vehicles, about 5 m apart, matching their yaw. The server skips a vehicle that does not fit its spot and logs "placed vehicle does not fit; skipped".
+- This is the only way to put it in a world: add `{"kind": <id>, "lat": ..., "lon": ..., "yaw": ...}` to `worlds/<world>/area.json` `vehicles`. Place it beside existing vehicles, about 5 m apart, matching their yaw. The server skips a vehicle that does not fit its spot and logs "placed vehicle does not fit; skipped".
 
 ## 7. Verify
 

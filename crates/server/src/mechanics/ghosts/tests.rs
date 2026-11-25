@@ -22,9 +22,8 @@ fn game() -> Game {
         spawns: vec![[-8_000, 0]],
         ..Default::default()
     };
-    let mut game = Game::new(map, 0).unwrap();
-    game.world.clear_pickups();
-    game
+    
+    Game::new(map, 0).unwrap()
 }
 
 fn join(game: &mut Game) -> u32 {
