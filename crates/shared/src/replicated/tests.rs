@@ -65,7 +65,7 @@ fn a_new_entity_brings_everything_it_has_and_decodes_back() {
         hotbar: Some(Hotbar { slots: [ItemSlot { item: 3, count: 1, ammo: 17 }, ItemSlot::default(), ItemSlot { item: 9, count: 2, ammo: 0 }, ItemSlot::default(), ItemSlot { item: 1, count: 255, ammo: 255 }] }),
         drive: Some(Drive { vx: 120, vy: -5, vz: -2500, wx: 30, wy: -400, wz: 15, steer: 250, spin: -600 }),
         seated: Some(Seated { vehicle: 70_000, seat: 2, step: 140 }),
-        doors: Some(Doors { open: 0b01, gone: 0b10 }),
+        doors: Some(Doors { left: 200, right: 0, gone: 0b10 }),
         look: Some(Look { pitch: -1570 }),
         carry: Some(Carry { what: 1 }),
     };
@@ -360,7 +360,7 @@ fn fixture_json() -> String {
         hotbar: Some(Hotbar { slots: [ItemSlot { item: 3, count: 1, ammo: 17 }, ItemSlot::default(), ItemSlot { item: 9, count: 2, ammo: 0 }, ItemSlot::default(), ItemSlot { item: 1, count: 255, ammo: 255 }] }),
         drive: Some(Drive { vx: 120, vy: -5, vz: -2500, wx: 30, wy: -400, wz: 15, steer: 250, spin: -600 }),
         seated: Some(Seated { vehicle: 70_000, seat: 2, step: 0 }),
-        doors: Some(Doors { open: 0b11, gone: 0 }),
+        doors: Some(Doors { left: 255, right: 128, gone: 0 }),
         look: Some(Look { pitch: -1570 }),
         carry: Some(Carry { what: 1 }),
     };

@@ -30,6 +30,8 @@ The docs are in [docs/](docs/).
 - [BOTS.md](docs/BOTS.md): server-run enemy soldiers, tank crews, and scenarios with squads, triggers, waves, objectives and a win or a loss
 - [ARMOR.md](docs/ARMOR.md): armor zones, ricochets, weak spots, turret loss and the Strv S
 - [LIMBS.md](docs/LIMBS.md): limb loss and part health
+- [CHARACTER-LOOKS.md](docs/CHARACTER-LOOKS.md): the people on foot: Quaternius' low-poly men and women (CC0) dressed as soldiers, police officers, ambulance medics and civilians, on one skeleton that every clip is retargeted onto, the Universal Animation Library's hand-keyed clips among the game's own
+- [ANIMATION.md](docs/ANIMATION.md): what moves a character besides its clips: feet stood on the slope and held where they land, the left hand kept on the gun, jumps in the pose eased out, the aim followed a moment late and the head swaying with the hips
 - [DOORS.md](docs/DOORS.md): getting in and out of a car by its doors, which swing open, bailing out of one going fast, police and ambulance crews who are the same people in the car and out of it, and doors shot or crashed off
 - [KNOCKDOWN.md](docs/KNOCKDOWN.md): blasts, cars and ragdolls; every death a ragdoll thrown by the blow, with joint limits, that loses limbs and freezes where it lies
 - [GHOSTS.md](docs/GHOSTS.md): coming back from death as a flying shadow that takes shape again, never right beside an enemy

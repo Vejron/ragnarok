@@ -561,13 +561,24 @@ pub struct Vehicle {
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct DoorState {
     /// The damage each door has taken; it comes off at its `DoorDef::hp`.
-    pub damage: [u8; 2],
-    /// Bit `n` is set while door `n` stands open.
+    pub damage: [f32; 2],
+    /// Bit `n` is set while door `n` is unlatched: open, swinging, or being pulled shut.
     pub open: u8,
     /// Bit `n` is set once door `n` has come off.
     pub gone: u8,
     /// Ticks until each open door is pulled shut, 0 for one that stays as it is.
     pub shut_in: [u16; 2],
+    /// Bit `n` is set while someone pulls door `n` shut; it latches once it gets there.
+    pub pulling: u8,
+    /// How far each door stands open, radians, from 0 shut to its `DoorDef::swing`.
+    pub angle: [f32; 2],
+    /// How fast each door swings on its hinge, radians a second, + opening.
+    pub rate: [f32; 2],
+    /// Where the outer edge of each open door was last tick in the world, metres, for the path it
+    /// swept since to be checked for what it snagged on. `None` for a shut door.
+    pub tip: [Option<[f32; 3]>; 2],
+    /// The car's velocity last tick, m/s, for how hard it speeds up, brakes or turns.
+    pub velocity: [f32; 3],
 }
 
 impl DoorState {
@@ -579,6 +590,11 @@ impl DoorState {
     /// Whether door `n` stands open.
     pub fn ajar(&self, n: usize) -> bool {
         self.open & (1 << n) != 0
+    }
+
+    /// How far door `n` stands open as a share of `swing`, for the wire: 0 shut, 255 wide open.
+    pub fn share(&self, n: usize, swing: f32) -> u8 {
+        if self.off(n) { 0 } else { (self.angle[n] / swing * 255.0).round().clamp(0.0, 255.0) as u8 }
     }
 }
 

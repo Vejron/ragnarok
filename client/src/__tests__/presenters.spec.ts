@@ -124,16 +124,22 @@ describe('a driver of the traffic', () => {
     expect([...soldiers.civilians]).toEqual([3])
   })
 
-  it('has the company of a police officer and an ambulance medic, drawn on foot and remembered the same way', () => {
+  it('has the company of a police officer and an ambulance medic, drawn on foot in their uniforms and remembered the same way', () => {
     const drawn: number[] = []
+    const avatars = new Map<number, { look?: string }>()
+    const avatar = (id: number) => {
+      if (!avatars.has(id)) avatars.set(id, { update() {}, takeSteps: () => [] } as { look?: string })
+      return avatars.get(id)!
+    }
     const presenters = new Presenters<Frame>()
-    const soldiers = presenters.add(new Soldiers({ avatars: { draw: (id: number) => (drawn.push(id), { update() {}, takeSteps: () => [] }) } as never, blobFoot: () => {}, rewave: () => 0, current: () => [0, 0], wade: () => {}, skiRun: () => {}, headlamp: () => {}, footfall: () => {}, zombie: () => {} }))
+    const soldiers = presenters.add(new Soldiers({ avatars: { draw: (id: number) => (drawn.push(id), avatar(id)) } as never, blobFoot: () => {}, rewave: () => 0, current: () => [0, 0], wade: () => {}, skiRun: () => {}, headlamp: () => {}, footfall: () => {}, zombie: () => {} }))
     const person = (kind: number): Components => ({ kind: { kind }, place: { x: 0, y: 90, z: 0 }, heading: { yaw: 0 }, flags: { flags: FLAG_GROUNDED, stance: 0 } })
     const store = new EntityStore()
     store.push(10, new Map([[3, person(KIND_OFFICER)], [4, person(KIND_MEDIC)], [5, person(0)]]), true)
     presenters.run(store.sampleAll(10), frame(10))
     expect(drawn).toEqual([3, 4, 5])
     expect([...soldiers.civilians]).toEqual([3, 4])
+    expect([3, 4, 5].map((id) => avatars.get(id)!.look)).toEqual(['officer', 'medic', 'soldier'])
   })
 })
 

@@ -38,6 +38,12 @@ describe('gibs', () => {
     expect(limbOf('hips').key).toBe('torso')
   })
 
+  it('throws the fingers and thumb with the forearm and the toes with the shin', () => {
+    expect(limbOf('fingers_R')).toEqual({ key: 'forearm_R', bone: 'forearm_R' })
+    expect(limbOf('thumb_L').key).toBe('forearm_L')
+    expect(limbOf('toes_L')).toEqual({ key: 'shin_L', bone: 'shin_L' })
+  })
+
   it('cuts every triangle into exactly one limb, centred on itself', () => {
     const { mesh } = skinned()
     const limbs = splitLimbs(mesh)

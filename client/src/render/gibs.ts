@@ -10,7 +10,7 @@ export interface Limb {
   centre: Vector3
 }
 
-/** Which limb a bone belongs to: arms and legs split at the elbow and knee, the rest is the torso. */
+/** Which limb a bone belongs to: arms and legs split at the elbow and knee (the hand and its fingers go with the forearm, the foot and its toes with the shin), the rest is the torso. */
 export function limbOf(bone: string): { key: string; bone: string } {
   const side = /_([LR])$/.exec(bone)?.[1]
   const base = side ? bone.slice(0, -2) : bone
@@ -22,11 +22,16 @@ export function limbOf(bone: string): { key: string; bone: string } {
       return { key: `upper_arm_${side}`, bone: bone }
     case 'forearm':
     case 'hand':
+    case 'palm':
+    case 'fingers':
+    case 'thumb':
+    case 'thumb2':
       return { key: `forearm_${side}`, bone: `forearm_${side}` }
     case 'thigh':
       return { key: `thigh_${side}`, bone: bone }
     case 'shin':
     case 'foot':
+    case 'toes':
       return { key: `shin_${side}`, bone: `shin_${side}` }
     default:
       return { key: 'torso', bone: 'spine' }

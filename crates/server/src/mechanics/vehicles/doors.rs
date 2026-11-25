@@ -13,6 +13,11 @@
 //!
 //! The doors themselves come off when they have taken their `DoorDef::hp`: from rounds that meet them,
 //! from blasts beside them and from crashes on their side, and much sooner when they stand open.
+//!
+//! A door standing open that nobody holds swings freely on its hinge (`swing`): the car speeding up,
+//! braking and leaning swings it, and the wind blows it shut driving forwards and open reversing. It
+//! is no body of the physics and never moves the car, but rays along it and along the path of its
+//! edge find what it snags on, and it is torn off by anything it meets faster than a walk.
 
 use crate::entities::Component;
 use crate::game::{Player, Vehicle, World};
@@ -138,7 +143,7 @@ pub fn step(world: &mut World) {
             if vehicle.doors.shut_in[n] > 0 {
                 vehicle.doors.shut_in[n] -= 1;
                 if vehicle.doors.shut_in[n] == 0 {
-                    vehicle.doors.open &= !(1 << n);
+                    vehicle.doors.pulling |= 1 << n;
                 }
             }
         }
@@ -199,6 +204,7 @@ fn open(world: &mut World, vid: u32, n: usize) {
         && !vehicle.doors.off(n)
     {
         vehicle.doors.open |= 1 << n;
+        vehicle.doors.pulling &= !(1 << n);
         vehicle.doors.shut_in[n] = 0;
     }
 }
@@ -239,6 +245,201 @@ pub fn bail(world: &mut World, id: u32) {
     tracing::debug!(id, vid, speed, "bailed out");
 }
 
+/// How far open a door must stand for what it meets to snag it, radians.
+const SNAG_FROM: f32 = 0.1;
+/// The heights along a door, as shares of its height up from its bottom, that rays look along for
+/// what it snags on: below the waist and below the top of the window.
+const SNAG_HEIGHTS: [f32; 2] = [0.4, 0.85];
+/// Above this, m/s², a change in the car's velocity from one tick to the next is a crash, which
+/// `crash_doors` deals with, not something that swings a door.
+const SWING_ACCEL_MAX: f32 = 60.0;
+
+/// One tick of the doors on their hinges, `dt` seconds: those held by whoever climbs through them
+/// swing open, those being pulled shut swing shut and latch, and the rest swing freely with the
+/// car's motion and the wind and are snagged by what they meet.
+pub fn swing(world: &mut World, dt: f32) {
+    let held: Vec<(u32, usize)> = world.entities.all::<Stepping>().filter(|(_, stepping)| stepping.ticks >= 1 && !stepping.over()).map(|(_, stepping)| (stepping.vehicle, stepping.door)).collect();
+    let mut hurts: Vec<(u32, usize, f32)> = Vec::new();
+    for vid in world.entities.ids::<crate::entities::With<Vehicle>>() {
+        let kind = world.entities.of::<Vehicle>(vid).kind;
+        let def = vehicle_def(kind);
+        if def.doors.is_empty() {
+            continue;
+        }
+        let Some(pose) = world.physics.car_pose(vid) else { continue };
+        let mut doors = world.entities.of::<Vehicle>(vid).doors;
+        let mut accel = [0.0; 3];
+        for (axis, value) in accel.iter_mut().enumerate() {
+            *value = (pose.velocity[axis] - doors.velocity[axis]) / dt;
+        }
+        doors.velocity = pose.velocity;
+        if doors.open & !doors.gone == 0 {
+            world.entities.of_mut::<Vehicle>(vid).doors = doors;
+            continue;
+        }
+        if shared::vec3::length(accel) > SWING_ACCEL_MAX {
+            accel = [0.0; 3];
+        }
+        // What swings a door, in the hull frame: gravity less the car's own acceleration, per kilogram,
+        // and the wind of its going.
+        let pull = pose.local_dir([-accel[0], -CAR_GRAVITY - accel[1], -accel[2]]);
+        let wind = pose.local_dir([-pose.velocity[0], -pose.velocity[1], -pose.velocity[2]]);
+        for (n, door) in def.doors.iter().enumerate() {
+            if !doors.ajar(n) || doors.off(n) {
+                doors.tip[n] = None;
+                continue;
+            }
+            let pace = door.swing / DOOR_OPEN_S;
+            let mut hurt = 0.0;
+            if held.contains(&(vid, n)) {
+                // Swung open by hand.
+                doors.angle[n] = (doors.angle[n] + pace * dt).min(door.swing);
+                doors.rate[n] = 0.0;
+            } else if doors.pulling & (1 << n) != 0 {
+                // Pulled shut by hand, and latched.
+                doors.angle[n] = (doors.angle[n] - pace * dt).max(0.0);
+                doors.rate[n] = 0.0;
+                if doors.angle[n] == 0.0 {
+                    latch(&mut doors, n);
+                    continue;
+                }
+            } else {
+                hurt += free_swing(&mut doors, n, door, pull, wind, dt);
+                if !doors.ajar(n) {
+                    continue;
+                }
+                hurt += snag(world, vid, &pose, &mut doors, n, door, dt);
+            }
+            doors.tip[n] = Some(pose.world_point(tip_of(door, doors.angle[n], SNAG_HEIGHTS[0])));
+            if hurt > 0.0 {
+                hurts.push((vid, n, hurt));
+            }
+        }
+        world.entities.of_mut::<Vehicle>(vid).doors = doors;
+    }
+    for (vid, n, amount) in hurts {
+        hurt_door(world, vid, n, amount);
+    }
+}
+
+/// Door `n` swings shut and latches there.
+fn latch(doors: &mut crate::game::DoorState, n: usize) {
+    doors.open &= !(1 << n);
+    doors.pulling &= !(1 << n);
+    doors.angle[n] = 0.0;
+    doors.rate[n] = 0.0;
+    doors.tip[n] = None;
+}
+
+/// The outward face of `door` standing `angle` open, a unit vector in the hull frame: it faces out of
+/// the side shut, and turns forwards as the door opens.
+fn face_of(door: &DoorDef, angle: f32) -> [f32; 3] {
+    [door.side() * angle.cos(), 0.0, -angle.sin()]
+}
+
+/// The outer edge of `door` standing `angle` open, `share` of the way up it, in the hull frame.
+fn tip_of(door: &DoorDef, angle: f32, share: f32) -> [f32; 3] {
+    [door.hinge[0] + door.side() * door.length * angle.sin(), door.hinge[1] + door.height * share, door.hinge[2] + door.length * angle.cos()]
+}
+
+/// Door `n`, a flat plate hung on its front edge, swings for `dt` seconds under `pull` (what the car's
+/// motion and gravity do to each kilogram of it, m/s², in the hull frame) and the `wind` across it
+/// (m/s, in the hull frame). It latches if it swings shut. What it takes from slamming onto or being
+/// bent past its open stop.
+fn free_swing(doors: &mut crate::game::DoorState, n: usize, door: &DoorDef, pull: [f32; 3], wind: [f32; 3], dt: f32) -> f32 {
+    let face = face_of(door, doors.angle[n]);
+    // A uniform plate turning on one edge: its middle, where the push acts, is half its length out,
+    // and it turns a third as easily as its length squared.
+    let across = shared::vec3::dot(wind, face);
+    let push = 1.5 * (shared::vec3::dot(pull, face) + DOOR_AIR * across * across.abs()) / door.length;
+    let mut rate = doors.rate[n];
+    if rate.abs() < 0.05 && push.abs() < DOOR_HINGE_HOLD {
+        rate = 0.0;
+    } else {
+        rate = (rate + push * dt) * (1.0 - DOOR_DAMPING * dt).max(0.0);
+    }
+    let mut angle = doors.angle[n] + rate * dt;
+    let mut hurt = 0.0;
+    if angle <= 0.0 {
+        latch(doors, n);
+        return 0.0;
+    }
+    if angle >= door.swing {
+        angle = door.swing;
+        if rate > DOOR_STOP_TEAR {
+            hurt += (rate - DOOR_STOP_TEAR) * DOOR_STOP_HURT;
+        }
+        if push > DOOR_STOP_STRAIN {
+            hurt += (push - DOOR_STOP_STRAIN) * DOOR_STRAIN_HURT * dt;
+        }
+        if rate > 0.0 {
+            rate = -rate * DOOR_STOP_BOUNCE;
+        }
+    }
+    doors.angle[n] = angle;
+    doors.rate[n] = rate;
+    hurt
+}
+
+/// Door `n` of `vid`, standing open, looks along itself and along the path its edge swept since last
+/// tick for anything it meets, which shoves it aside, or tears it off going past faster than
+/// `DOOR_SNAG_TEAR`. What it takes.
+fn snag(world: &World, vid: u32, pose: &CarPose, doors: &mut crate::game::DoorState, n: usize, door: &DoorDef, dt: f32) -> f32 {
+    let angle = doors.angle[n];
+    if angle < SNAG_FROM {
+        return 0.0;
+    }
+    let edge = pose.world_point(tip_of(door, angle, SNAG_HEIGHTS[0]));
+    // Where it meets something, and how far out from the hinge.
+    let mut met: Option<(f32, Option<u32>)> = None;
+    for share in SNAG_HEIGHTS {
+        let from = pose.world_point([door.hinge[0], door.hinge[1] + door.height * share, door.hinge[2]]);
+        let to = pose.world_point(tip_of(door, angle, share));
+        if let Some(hit) = ray_between(world, from, to, vid) {
+            met = Some(met.map_or(hit, |seen: (f32, Option<u32>)| if hit.0 < seen.0 { hit } else { seen }));
+        }
+    }
+    if let Some(last) = doors.tip[n]
+        && let Some((_, car)) = ray_between(world, last, edge, vid)
+    {
+        met = Some((door.length, car));
+    }
+    let Some((out, car)) = met else { return 0.0 };
+    // How fast the door goes past what it met, m/s.
+    let mut past = doors.tip[n].map_or(pose.velocity, |last| [(edge[0] - last[0]) / dt, (edge[1] - last[1]) / dt, (edge[2] - last[2]) / dt]);
+    if let Some(other) = car.and_then(|car| world.physics.car_pose(car)) {
+        past = shared::vec3::sub(past, other.velocity);
+    }
+    past[1] = 0.0;
+    // The edge's going is the car's and the door's own swing; where it met something, nearer the
+    // hinge, the swing carries it less far.
+    let face = pose.world_dir(face_of(door, angle));
+    let out = out.clamp(0.3, door.length);
+    let rate = doors.rate[n];
+    let at = shared::vec3::sub(past, [face[0] * rate * (door.length - out), 0.0, face[2] * rate * (door.length - out)]);
+    let speed = shared::vec3::length(at);
+    if speed >= DOOR_SNAG_TEAR {
+        tracing::debug!(vid, door = n, speed, "an open door snagged and was torn off");
+        return f32::from(door.hp);
+    }
+    // Shoved aside: it swings so that where it met something goes no further into it.
+    let carried = shared::vec3::dot(past, face) - rate * door.length;
+    doors.rate[n] = -carried / out;
+    speed * DOOR_SNAG_HURT * dt
+}
+
+/// What a ray from `from` to `to` meets first, other than vehicle `ignore`: how far along it, and the
+/// vehicle it met if it was one.
+fn ray_between(world: &World, from: [f32; 3], to: [f32; 3], ignore: u32) -> Option<(f32, Option<u32>)> {
+    let line = shared::vec3::sub(to, from);
+    let length = shared::vec3::length(line);
+    if length < 1e-3 {
+        return None;
+    }
+    let dir = [line[0] / length, line[1] / length, line[2] / length];
+    world.physics.cast_ray_hit(from, dir, length, ignore)
+}
+
 /// What a door on the side a blow lands on takes from a crash, per m/s of the blow over the least
 /// that dents; a door standing open takes `OPEN_DOOR_FRAILTY` times as much, and strikes whatever it
 /// swings into.
@@ -258,12 +459,17 @@ pub fn hurt_door(world: &mut World, vid: u32, n: usize, amount: f32) {
     if vehicle.doors.off(n) || amount <= 0.0 {
         return;
     }
-    let taken = (f32::from(vehicle.doors.damage[n]) + amount).min(255.0) as u8;
+    let taken = vehicle.doors.damage[n] + amount;
     vehicle.doors.damage[n] = taken;
-    if taken >= door.hp {
-        vehicle.doors.gone |= 1 << n;
-        vehicle.doors.open &= !(1 << n);
-        vehicle.doors.shut_in[n] = 0;
+    if taken >= f32::from(door.hp) {
+        let doors = &mut vehicle.doors;
+        doors.gone |= 1 << n;
+        doors.open &= !(1 << n);
+        doors.pulling &= !(1 << n);
+        doors.shut_in[n] = 0;
+        doors.angle[n] = 0.0;
+        doors.rate[n] = 0.0;
+        doors.tip[n] = None;
         tracing::debug!(vid, door = n, "a door came off");
     }
 }

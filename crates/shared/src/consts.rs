@@ -46,7 +46,7 @@ pub use crate::vehicles::police_car::*;
 pub use crate::vehicles::ambulance::*;
 
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
-pub const PROTOCOL_VERSION: u8 = 96;
+pub const PROTOCOL_VERSION: u8 = 97;
 
 /// Why a page closes its session (`Bye`): the tab is closing or reloading.
 pub const BYE_LEAVING: u8 = 0;
@@ -463,6 +463,30 @@ pub const DOOR_OPEN_S: f32 = 0.25;
 pub const STEP_OUT_S: f32 = 0.8;
 /// How long after they are out someone shuts the door behind them, seconds.
 pub const DOOR_SHUT_S: f32 = 0.25;
+/// How hard the air pushes on a door standing open, per (m/s)² of the wind across it, over the door's
+/// mass, per metre: driving forwards blows an open door shut, reversing blows it open.
+pub const DOOR_AIR: f32 = 0.03;
+/// How fast a swinging door's hinge slows its swing, per second.
+pub const DOOR_DAMPING: f32 = 1.5;
+/// A door left standing still on its hinge stays where it is until something swings it harder than
+/// this, radians a second squared: a parked car's door on a gentle slope stays open.
+pub const DOOR_HINGE_HOLD: f32 = 1.0;
+/// A door that slams onto its open stop faster than this, radians a second, is wrenched by it, and
+/// takes `DOOR_STOP_HURT` for each radian a second over.
+pub const DOOR_STOP_TEAR: f32 = 2.0;
+pub const DOOR_STOP_HURT: f32 = 80.0;
+/// A door held against its open stop harder than this, radians a second squared (by the wind of a car
+/// reversing fast), is bent past it, and takes `DOOR_STRAIN_HURT` a second for each radian a second
+/// squared over.
+pub const DOOR_STOP_STRAIN: f32 = 1.5;
+pub const DOOR_STRAIN_HURT: f32 = 150.0;
+/// How much of its swing a door keeps as it bounces back off its open stop.
+pub const DOOR_STOP_BOUNCE: f32 = 0.3;
+/// An open door that snags on something going faster than this past it, m/s, is torn off at once.
+pub const DOOR_SNAG_TEAR: f32 = 2.5;
+/// What an open door takes for each second it scrapes past something slower than `DOOR_SNAG_TEAR`,
+/// for each m/s it goes past it.
+pub const DOOR_SNAG_HURT: f32 = 60.0;
 /// Where someone who got out by a door stands: this far out from the side of the body, metres, and
 /// this share of the way back along the door from its hinge, in the gap between the open door and the car.
 pub const STEP_OUT_SIDE: f32 = 0.55;

@@ -93,16 +93,20 @@ The hotbar selection is kept, and the gun is back in hand on land.
 
 ## Animation
 
-`tools/character/build_character.py` bakes four clips shared by every stance, since nothing is held:
+Four clips, shared by every stance since nothing is held. At the surface they are Quaternius'
+Universal Animation Library's (CHARACTER-LOOKS.md), moved so the head rides where the build's own
+clips have it, out of the water 1.3 m over the origin. Under the water they are the build's own
+(`tools/character/build_character.py`):
 
 | Clip | What it is |
 |---|---|
-| `swim_tread` | upright with the chin at the surface, arms sculling wide under it, legs in an eggbeater |
-| `swim_fwd` | a breaststroke nearly flat (`SWIM_PITCH`) about `SWIM_PIVOT`: the arms stay under the water, the chest comes up for a breath on the insweep |
+| `swim_tread` | the library's `Swim_Idle_Loop`: upright with the head and shoulders out, arms sculling, legs kicking |
+| `swim_fwd` | the library's `Swim_Fwd_Loop`: a front crawl along the surface, the head breaking it |
 | `dive_idle` | flat under the water about `DIVE_PIVOT`, near the capsule centre, sculling slowly |
 | `dive_fwd` | an underwater breaststroke: a pull to the thighs, a frog kick and a long glide |
 
-How the clips are posed:
+How the build poses its own (it still poses a surface pair, a tread and a breaststroke, as the
+place the library's are fitted to):
 - **Arms:** `stroke_arm` takes directions in the root's frame and takes the chest's lean back out, so
   an arched back does not lift the arms out of the water.
 - **Curves:** `keyed` runs a smooth spline through the stroke's keys, so nothing stops dead at one.
@@ -111,11 +115,13 @@ How the clips are posed:
 
 The client blends them in `Character.swimTargets` (`client/src/render/character.ts`):
 - **Which clip:** `swim` 1 (surface) or 2 (under) picks the pair, and speed picks still or stroking.
-- **Stroke pace:** the strokes advance with the water covered, `SWIM_STROKE` (2.6 m) a cycle.
+- **Stroke pace:** the strokes advance with the water covered, `SWIM_STROKE` (2.38 m, the front
+  crawl's own, `STROKE swim_fwd` from the build) a cycle.
 - **Tilt:** a diver tips about the middle of the body towards where it swims, up to `DIVE_TILT_MAX`.
 - **What switches off:** the aim lean and the landing dip. The twist is kept at the surface only.
-- **Previews:** `Blender -b -P tools/character/build_character.py -- --preview DIR --only swim` (or
-  `--only dive`) draws each clip with the surface line.
+- **Previews:** `Blender -b -P tools/character/build_character.py -- --preview DIR --only soldier_m
+  --strip swim_tread,swim_fwd,dive_fwd` draws each clip through its cycle with the surface line, on the
+  people; `--preview-source DIR --only swim` (or `--only dive`) draws the source rig's own.
 
 ## Effects
 

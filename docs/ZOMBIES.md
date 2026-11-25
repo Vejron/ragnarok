@@ -68,9 +68,9 @@ Nothing new in the format; `PROTOCOL_VERSION` 73 marks the new values, and 74 th
 ## On the client
 
 - **Look.** `Soldiers` (`entities/presenters/people.ts`) draws a zombie with the soldier's model. `Character.zombie` paints the outfit in rags (`ZOMBIE_RAGS`) and tints the skin and boots grey-green with a copy of the `gear` material. A zombie keeps its rags whatever colour its profile names.
-- **Clips.** `tools/character/build_character.py` bakes three clips:
-  - `zombie_idle`: hunched and swaying, arms half up.
-  - `zombie_walk`: a shamble with the right leg dragged and the arms out in front, paced by `ZOMBIE_WALK_SPEED` (1.2 m/s).
+- **Clips.** `tools/character/build_character.py` makes four clips:
+  - `zombie_idle`: the animation library's `Zombie_Idle_Loop` (CHARACTER-LOOKS.md), deeply hunched and swaying, arms hanging.
+  - `zombie_walk`: the library's `Zombie_Walk_Fwd_Loop`, a hunched lurch with the arms dangling, paced by `ZOMBIE_WALK_SPEED` (0.86 m/s, the build's `SPEED zombie_walk`). Zombies walk at 1.7 to 3 m/s, so it plays two to three and a half times over.
   - `zombie_claw`: the right arm up and back, then raked down across the front.
   - `zombie_rise`: once, out of the grave (above). Its preview shots draw the ground as a slab (`--only zombie_rise`).
 

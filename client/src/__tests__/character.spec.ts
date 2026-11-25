@@ -1,9 +1,11 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { Quaternion, Vector3 } from '@ragnarok/engine'
+import { Mesh, Quaternion, Vector3 } from '@ragnarok/engine'
 import { describe, expect, it } from 'vitest'
 import { Character, Crowd, parseCharacter } from '@/render/character'
 import { boxOf } from './helpers'
+import { colorFor } from '@/profile'
+import { LIMB_ARM_L } from '@/net/codec'
 import { ITEM_AK5, ITEM_BANDAGE, ITEM_GRENADE, ITEM_NONE, ITEM_REVOLVER, fillsHands } from '@/sim/items'
 
 const file = resolve(process.cwd(), 'public/models/player.glb')
@@ -38,7 +40,7 @@ describe('Character on skis', () => {
 
   it('has the skis-with-a-gun clips in every stance', async () => {
     const c = await crowd()
-    for (const prefix of ['', 'pistol_', 'hold_', 'shoulder_']) {
+    for (const prefix of ['', 'pistol_', 'hold_', 'shoulder_', 'free_']) {
       for (const name of ['glide', 'skate', 'climb', 'tuck', 'plow', 'air']) expect(c.asset!.clips.has(`${prefix}armed_${name}`), prefix + name).toBe(true)
     }
     c.dispose()
@@ -168,7 +170,7 @@ describe('Character', () => {
     expect(person.blend.get('zombie_idle')).toBeGreaterThan(0.8)
     run(person, 0, 0, -1.2, 1.5)
     expect(person.blend.get('zombie_walk')).toBeGreaterThan(0.8)
-    expect(person.blend.get('hold_walk_fwd') ?? 0).toBeLessThan(0.05)
+    expect(person.blend.get('free_walk_fwd') ?? 0).toBeLessThan(0.05)
     person.clawing = true
     run(person, 0, 0, 0, 0.3)
     expect(person.blend.get('zombie_claw')).toBeGreaterThan(0.5)
@@ -176,10 +178,10 @@ describe('Character', () => {
     run(person, 0, 0, 0, 1.2)
     expect(person.blend.get('zombie_claw') ?? 0).toBeLessThan(0.05)
     for (let k = 0; k < 90; k++) person.update([0, 0.3, 0], 0, 0, -1.5, true, 1 / 60, 0, false, false, true)
-    expect(person.blend.get('hold_crawl_fwd')).toBeGreaterThan(0.8)
+    expect(person.blend.get('free_crawl_fwd')).toBeGreaterThan(0.8)
     person.zombie = false
     run(person, 0, 0, 0, 1.5)
-    expect(person.blend.get('hold_idle')).toBeGreaterThan(0.8)
+    expect(person.blend.get('free_idle')).toBeGreaterThan(0.8)
     c.dispose()
   })
 
@@ -539,6 +541,113 @@ describe('Character coming alive', () => {
   })
 })
 
+describe('Character’s looks', () => {
+  const BODIES = {
+    soldier: ['body_soldier_m', 'body_soldier_f'],
+    officer: ['body_officer_m', 'body_officer_f'],
+    medic: ['body_medic_m', 'body_medic_f'],
+    civilian: ['body_civilian_man', 'body_civilian_sleeves', 'body_civilian_suit', 'body_civilian_woman', 'body_civilian_casual', 'body_civilian_dress', 'body_civilian_tanktop'],
+  }
+  const ALL = Object.values(BODIES).flat()
+  /** The model a character draws, which it keeps to itself. */
+  const rootOf = (who: Character) => (who as unknown as { object: import('@ragnarok/engine').Node }).object
+  /** The bodies it shows. */
+  const shown = (who: Character) => ALL.filter((name) => rootOf(who).getObjectByName(name)!.visible)
+  /** The colour of its own material `name` (`outfit`, `gear` or `skin`). */
+  const tint = (who: Character, name: string) => {
+    let hex = -1
+    rootOf(who).traverse((node) => {
+      if (node instanceof Mesh && node.material.name === name) hex = node.material.color.getHex()
+    })
+    return hex
+  }
+
+  it('has every body, and the joints the game moves by name', async () => {
+    const c = await crowd()
+    for (const name of [...ALL, 'hips', 'spine', 'chest', 'neck', 'head', 'upper_arm_L', 'forearm_R', 'hand_R', 'fingers_L', 'thumb_R', 'thigh_L', 'shin_R', 'foot_L', 'muzzle']) expect(c.asset!.scene.getObjectByName(name), name).toBeTruthy()
+    c.dispose()
+  })
+
+  it('shows one body of the look it wears, a uniform for an officer and a medic', async () => {
+    const c = await crowd()
+    for (let id = 1; id <= 6; id++) {
+      const person = new Character(c, id)
+      for (const look of ['soldier', 'officer', 'medic', 'civilian'] as const) {
+        person.look = look
+        expect(shown(person)).toEqual([person.dressed])
+        expect(BODIES[look]).toContain(person.dressed)
+      }
+      person.dispose()
+    }
+    c.dispose()
+  })
+
+  it('dresses civilians in every body, with tops and skin of their own, the same every time', async () => {
+    const c = await crowd()
+    const bodies = new Set<string>()
+    const tops = new Set<number>()
+    const skins = new Set<number>()
+    for (let id = 1; id <= 60; id++) {
+      const person = new Character(c, id)
+      person.look = 'civilian'
+      bodies.add(person.dressed)
+      tops.add(tint(person, 'outfit'))
+      skins.add(tint(person, 'skin'))
+      const again = new Character(c, id)
+      again.look = 'civilian'
+      expect(shown(again)).toEqual(shown(person))
+      expect(tint(again, 'outfit')).toBe(tint(person, 'outfit'))
+      person.dispose()
+      again.dispose()
+    }
+    expect([...bodies].sort()).toEqual([...BODIES.civilian].sort())
+    expect(tops.size).toBeGreaterThan(5)
+    expect(skins.size).toBeGreaterThan(3)
+    c.dispose()
+  })
+
+  it('wears the player’s colour on a soldier’s patches, but not on an officer’s uniform', async () => {
+    const c = await crowd()
+    const person = new Character(c, 1)
+    person.setColor(0x123456)
+    expect(tint(person, 'outfit')).toBe(0x123456)
+    person.look = 'officer'
+    person.setColor(0x654321)
+    expect(tint(person, 'outfit')).toBe(0xffffff)
+    person.look = 'soldier'
+    expect(tint(person, 'outfit')).toBe(0x654321)
+    c.dispose()
+  })
+
+  it('rises as a zombie in a civilian’s body, in rags with grey skin, and goes back to the uniform', async () => {
+    const c = await crowd()
+    const person = new Character(c, 5)
+    const skin = tint(person, 'skin')
+    person.zombie = true
+    expect(BODIES.civilian).toContain(shown(person)[0])
+    expect(tint(person, 'outfit')).not.toBe(colorFor(5))
+    expect(tint(person, 'skin')).not.toBe(skin)
+    person.zombie = false
+    expect(BODIES.soldier).toContain(shown(person)[0])
+    expect(tint(person, 'skin')).toBe(skin)
+    c.dispose()
+  })
+
+  it('breaks up only the body it wears', async () => {
+    const c = await crowd()
+    const one = new Character(c, 1)
+    one.held = ITEM_AK5
+    run(one, 0, 0, 0, 0.1)
+    const pieces = one.shatter()
+    // Each limb comes off once for each of the materials it is made in, and no more: not from the bodies it does not wear.
+    const perLimb = new Map<string, number>()
+    for (const { key } of pieces) perLimb.set(key, (perLimb.get(key) ?? 0) + 1)
+    expect([...perLimb.keys()].sort()).toEqual(['forearm_L', 'forearm_R', 'head', 'shin_L', 'shin_R', 'thigh_L', 'thigh_R', 'torso', 'upper_arm_L', 'upper_arm_R'])
+    for (const count of perLimb.values()) expect(count).toBeLessThanOrEqual(3)
+    c.dispose()
+  })
+})
+
 describe('Character losing limbs', () => {
   it('shrinks away a lost limb, keeps the gun in a hand with the right arm gone, and says what is new', async () => {
     const { LIMB_ARM_R, LIMB_BLEED_SHIFT, LIMB_LEG_L } = await import('@/net/codec')
@@ -616,6 +725,150 @@ describe('Character’s footsteps', () => {
     person.swim = 1
     steps(person, 0, -1.5, 1)
     expect(steps(person, 0, -1.5)).toEqual([])
+    c.dispose()
+  })
+})
+
+describe('Character’s runtime layer', () => {
+  /** The world place of `name` among the crowd's bones. */
+  const where = (c: Crowd, name: string) => {
+    let found: Vector3 | null = null
+    c.root.updateWorldMatrix(true, true)
+    c.root.traverse((node) => {
+      if (node.name === name && !found) found = node.getWorldPosition(new Vector3())
+    })
+    return found! as Vector3
+  }
+  /** Stands it still facing -Z with its capsule centre at (x, y, z), for `seconds`. */
+  const stand = (person: Character, at: [number, number, number], seconds: number, pitch = 0) => {
+    for (let t = 0; t < seconds; t += 1 / 60) person.update(at, 0, 0, 0, true, 1 / 60, pitch)
+  }
+
+  it('stands each foot on the slope under it and lowers the hips onto the lower one', async () => {
+    const flat = await crowd()
+    flat.groundAt = () => 0
+    const level = new Character(flat, 1)
+    stand(level, [0, 0.85, 0], 1)
+    const left = where(flat, 'foot_L')
+    const right = where(flat, 'foot_R')
+    const hips = where(flat, 'hips')
+    flat.dispose()
+
+    // Rising 0.3 m per metre along +X, across the way it faces: one foot stands higher than the other.
+    const slope = (x: number) => 0.3 * x
+    const c = await crowd()
+    c.groundAt = (x) => slope(x)
+    const person = new Character(c, 1)
+    stand(person, [0, 0.85, 0], 1)
+    for (const [name, before] of [['foot_L', left], ['foot_R', right]] as const) {
+      const after = where(c, name)
+      // As high over its own ground as it stood over the flat.
+      expect(after.y - slope(after.x), name).toBeCloseTo(before.y, 1)
+      expect(Math.abs(after.y - slope(after.x) - before.y), name).toBeLessThan(0.02)
+    }
+    expect(where(c, 'hips').y).toBeLessThan(hips.y - 0.01)
+    c.dispose()
+  })
+
+  it('keeps off a floor the terrain is far below', async () => {
+    const c = await crowd()
+    // A first floor 3 m over the ground: the terrain says nothing about where the feet stand.
+    c.groundAt = (x) => -3 + 0.3 * x
+    const person = new Character(c, 1)
+    stand(person, [0, 0.85, 0], 1)
+    const left = where(c, 'foot_L')
+    const right = where(c, 'foot_R')
+    expect(Math.abs(left.y - right.y)).toBeLessThan(0.01)
+    c.dispose()
+  })
+
+  it('holds a planted foot still when the body shifts a little under it', async () => {
+    const c = await crowd()
+    c.groundAt = () => 0
+    const person = new Character(c, 1)
+    stand(person, [0, 0.85, 0], 1)
+    const before = where(c, 'foot_L')
+    // A small correction moves the body 6 cm; the planted feet stay where they were.
+    stand(person, [0.06, 0.85, 0], 0.1)
+    const after = where(c, 'foot_L')
+    expect(Math.hypot(after.x - before.x, after.z - before.z)).toBeLessThan(0.01)
+    c.dispose()
+  })
+
+  it('lets go of the feet at once when the body is moved a long way', async () => {
+    const c = await crowd()
+    c.groundAt = () => 0
+    const person = new Character(c, 1)
+    stand(person, [0, 0.85, 0], 1)
+    // A respawn or a big correction: the feet go with the body, not back to where they stood.
+    stand(person, [5, 0.85, 0], 1 / 60)
+    const foot = where(c, 'foot_L')
+    const hips = where(c, 'hips')
+    expect(Math.hypot(foot.x - hips.x, foot.z - hips.z)).toBeLessThan(0.4)
+    c.dispose()
+  })
+
+  it('keeps the left hand on the rifle’s grip as it aims up and flinches', async () => {
+    const c = await crowd()
+    c.groundAt = () => 0
+    const person = new Character(c, 1)
+    person.held = ITEM_AK5
+    stand(person, [0, 0.85, 0], 1, 0.7)
+    expect(where(c, 'hand_L').distanceTo(where(c, 'grip'))).toBeLessThan(0.005)
+    person.flinch(LIMB_ARM_L, 0, 40)
+    stand(person, [0, 0.85, 0], 0.05, 0.7)
+    expect(where(c, 'hand_L').distanceTo(where(c, 'grip'))).toBeLessThan(0.005)
+    c.dispose()
+  })
+
+  it('moves the body through a clip snapped in rather than jumping it', async () => {
+    const c = await crowd()
+    c.groundAt = () => 0
+    const person = new Character(c, 1)
+    person.zombie = true
+    stand(person, [0, 0.85, 0], 1)
+    const before = where(c, 'head')
+    // Climbing out of the grave snaps every other clip out at once.
+    person.graveRise = true
+    stand(person, [0, 0.85, 0], 1 / 60)
+    const jump = where(c, 'head').distanceTo(before)
+    expect(jump).toBeLessThan(0.05)
+    c.dispose()
+  })
+})
+
+describe('Character landing', () => {
+  /** Falls for a third of a second at 6 m/s, then lands moving at (vx, vz), and runs `after` seconds on the ground. */
+  const fall = (person: Character, vx: number, vz: number, after: number) => {
+    for (let t = 0; t < 0.5; t += 1 / 60) person.update([0, 0.85, 0], 0, vx, vz, true, 1 / 60)
+    for (let t = 0; t < 0.33; t += 1 / 60) person.update([0, 2, 0], 0, vx, vz, false, 1 / 60, 0, false, false, false, false, -6)
+    for (let t = 0; t < after; t += 1 / 60) person.update([0, 0.85, 0], 0, vx, vz, true, 1 / 60)
+  }
+
+  it('squats under a fall it lands standing, gun in hand, and stands up again', async () => {
+    const c = await crowd()
+    const person = new Character(c, 1)
+    person.held = ITEM_AK5
+    fall(person, 0, 0, 0.2)
+    expect(person.blend.get('jump_land')!).toBeGreaterThan(0.5)
+    for (let t = 0; t < 1.5; t += 1 / 60) person.update([0, 0.85, 0], 0, 0, 0, true, 1 / 60)
+    expect(person.blend.get('jump_land')!).toBeLessThan(0.02)
+    expect(person.blend.get('idle')!).toBeGreaterThan(0.9)
+    c.dispose()
+  })
+
+  it('runs on through a landing on the move', async () => {
+    const c = await crowd()
+    const person = new Character(c, 1)
+    person.held = ITEM_AK5
+    fall(person, 0, -4, 0.2)
+    expect(person.blend.get('jump_land') ?? 0).toBeLessThan(0.05)
+    c.dispose()
+  })
+
+  it('has a landing in every stance', async () => {
+    const c = await crowd()
+    for (const prefix of ['', 'pistol_', 'hold_', 'shoulder_', 'free_']) expect(c.asset!.clips.has(`${prefix}jump_land`), prefix).toBe(true)
     c.dispose()
   })
 })

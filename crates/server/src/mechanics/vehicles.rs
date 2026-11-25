@@ -915,6 +915,7 @@ impl Mechanic for Vehicles {
         super::armor::burn(world);
         // Getting in and out by the doors, and the doors themselves. Whoever is at it does nothing else.
         doors::step(world);
+        doors::swing(world, dt);
         for id in world.entities.ids::<With<Stepping>>() {
             if let Some(mut player) = world.entities.get_mut::<Player>(id) {
                 player.input.buttons = 0;

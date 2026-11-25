@@ -38,7 +38,8 @@ fn a_player_getting_out_of_a_car_opens_the_door_climbs_out_and_shuts_it_behind_t
     idle(&mut game, id, &mut seq, ticks_of(0.2));
     assert!(seated(&game, id), "still in the seat while the door opens");
     assert_eq!(game.world.entities.of::<Vehicle>(vid).doors.open, 0b01, "the driver's door is open");
-    assert_eq!(game.seen(vid).unwrap().doors.map(|doors| doors.open), Some(0b01), "and is seen to be");
+    let seen = game.seen(vid).unwrap().doors.expect("its doors are told of");
+    assert!(seen.left > 100 && seen.right == 0, "and is seen to swing open: {seen:?}");
     idle(&mut game, id, &mut seq, ticks_of(0.5));
     let step = game.seen(id).unwrap().seated.expect("still drawn in the car").step;
     assert!(step > 60 && step < 220, "part way out: {step}");
@@ -47,7 +48,7 @@ fn a_player_getting_out_of_a_car_opens_the_door_climbs_out_and_shuts_it_behind_t
     let at = game.world.entities.of::<Player>(id).character.position;
     let spot = door_spot(&game, vid, 0);
     assert!((at[0] - spot[0]).hypot(at[2] - spot[2]) < 0.2, "standing in the open door: {at:?}, not {spot:?}");
-    idle(&mut game, id, &mut seq, ticks_of(0.4));
+    idle(&mut game, id, &mut seq, ticks_of(0.6));
     assert_eq!(game.world.entities.of::<Vehicle>(vid).doors.open, 0, "and the door is shut behind them");
     assert!(game.seen(vid).unwrap().doors.is_none(), "nothing to tell of a car with its doors shut");
 }
@@ -69,7 +70,7 @@ fn a_player_getting_in_by_a_door_has_the_seat_at_once_and_drives_only_once_in() 
     assert_eq!(game.world.entities.of::<Seats>(vid)[1], Some(id), "still in their own seat");
     idle(&mut game, id, &mut seq, ticks_of(0.7));
     assert_eq!(game.seen(id).unwrap().seated.unwrap().step, 0, "in, and sitting");
-    idle(&mut game, id, &mut seq, ticks_of(0.4));
+    idle(&mut game, id, &mut seq, ticks_of(0.6));
     assert_eq!(game.world.entities.of::<Vehicle>(vid).doors.open, 0, "the door pulled shut");
 }
 
@@ -172,4 +173,98 @@ fn getting_out_by_a_door_that_has_come_off_is_quicker() {
     idle(&mut game, id, &mut seq, ticks_of(STEP_OUT_S) + 1);
     assert!(!seated(&game, id), "out without waiting for a door to open");
     assert_eq!(game.world.entities.of::<Vehicle>(vid).doors.open, 0, "and nothing is left open");
+}
+
+/// Door `n` of `vid` stands wide open, swinging free with nobody holding it.
+fn fling_open(game: &mut Game, vid: u32, n: usize) {
+    let doors = &mut game.world.entities.of_mut::<Vehicle>(vid).doors;
+    doors.open |= 1 << n;
+    doors.angle[n] = DOOR_SWING;
+}
+
+/// A Volvo 240 facing -z beside the wall of `game_with_a_house` (x = 55, from z = -5 to 5), its right
+/// door standing open over the wall's line, which it passes at `speed` m/s, held there, for `seconds`:
+/// the doors it ends with.
+fn pass_the_wall_with_a_door_open(speed: f32, seconds: f32) -> crate::game::DoorState {
+    let (mut game, _) = game_with_a_house();
+    let (_, door) = door_of(KIND_VOLVO_240, 1).unwrap();
+    // Its side half a metre off the wall, and its open door's edge a metre short of the wall's end.
+    let x = 55.0 - door.hinge[0] - 0.5;
+    let z = 5.0 + 1.0 - door.hinge[2] - door.length * DOOR_SWING.cos();
+    let vid = add_vehicle(&mut game.world, KIND_VOLVO_240, [x, 1.5, z], 0.0);
+    for _ in 0..60 {
+        Vehicles.on_tick(&mut game.world, TICK_DT);
+    }
+    fling_open(&mut game, vid, 1);
+    for _ in 0..ticks_of(seconds) {
+        game.world.physics.set_car_velocity(vid, [0.0, 0.0, -speed]);
+        Vehicles.on_tick(&mut game.world, TICK_DT);
+        if game.world.entities.of::<Vehicle>(vid).doors.off(1) {
+            break;
+        }
+    }
+    let pose = game.world.physics.car_pose(vid).unwrap();
+    assert!(pose.position[0] > x - 0.3, "the car itself goes on along the wall, untouched: {pose:?}");
+    game.world.entities.of::<Vehicle>(vid).doors
+}
+
+#[test]
+fn an_open_door_is_torn_off_driving_past_a_wall() {
+    let doors = pass_the_wall_with_a_door_open(5.0, 2.0);
+    assert!(doors.off(1), "the open door snagged on the wall and came off: {doors:?}");
+    assert!(!doors.off(0), "the shut one on the other side is still on");
+}
+
+#[test]
+fn an_open_door_that_brushes_a_wall_at_a_crawl_is_shoved_shut_and_dented_not_lost() {
+    let doors = pass_the_wall_with_a_door_open(0.6, 4.0);
+    assert!(!doors.off(1), "still on: {doors:?}");
+    assert!(doors.damage[1] > 1.0, "but dented: {doors:?}");
+    assert!(doors.angle[1] < DOOR_SWING - 0.2, "and pushed shut by the wall: {doors:?}");
+}
+
+#[test]
+fn an_open_door_swings_shut_and_latches_as_the_car_drives_off() {
+    let mut game = game();
+    let (id, vid, mut seq) = volvo(&mut game, 0.0, 60.0);
+    assert!(seat(&mut game.world, id, vid, 0));
+    fling_open(&mut game, vid, 1);
+    idle(&mut game, id, &mut seq, 3);
+    assert!(game.world.entities.of::<Vehicle>(vid).doors.ajar(1), "it stands open while the car stands");
+    press(&mut game, id, &mut seq, (0, 127), 0, ticks_of(2.0));
+    let doors = game.world.entities.of::<Vehicle>(vid).doors;
+    assert!(!doors.ajar(1) && doors.angle[1] == 0.0, "it swung shut and latched: {doors:?}");
+    assert!(!doors.off(1), "without coming off");
+    assert!(game.seen(vid).unwrap().doors.is_none(), "and is seen shut");
+}
+
+#[test]
+fn a_parked_cars_open_door_stays_where_it_was_left() {
+    let mut game = game();
+    let (id, vid, mut seq) = volvo(&mut game, 0.0, 60.0);
+    fling_open(&mut game, vid, 0);
+    game.world.entities.of_mut::<Vehicle>(vid).doors.angle[0] = 0.7;
+    idle(&mut game, id, &mut seq, ticks_of(3.0));
+    let doors = game.world.entities.of::<Vehicle>(vid).doors;
+    assert!(doors.ajar(0) && (doors.angle[0] - 0.7).abs() < 0.01, "{doors:?}");
+    let seen = game.seen(vid).unwrap().doors.unwrap();
+    assert_eq!(seen.left, (0.7 / DOOR_SWING * 255.0).round() as u8, "and is seen as far open");
+}
+
+#[test]
+fn reversing_fast_with_a_door_open_bends_it_past_its_stop_and_off() {
+    let mut game = game();
+    let (id, vid, mut seq) = volvo(&mut game, 0.0, 0.0);
+    assert!(seat(&mut game.world, id, vid, 0));
+    fling_open(&mut game, vid, 1);
+    game.world.entities.of_mut::<Vehicle>(vid).doors.angle[1] = 0.6;
+    let mut fastest: f32 = 0.0;
+    for _ in 0..ticks_of(4.0) {
+        press(&mut game, id, &mut seq, (0, -127), 0, 1);
+        fastest = fastest.max(game.world.physics.car_pose(vid).unwrap().forward_speed.abs());
+        if game.world.entities.of::<Vehicle>(vid).doors.off(1) {
+            break;
+        }
+    }
+    assert!(game.world.entities.of::<Vehicle>(vid).doors.off(1), "the wind tore it off, reversing at up to {fastest} m/s: {:?}", game.world.entities.of::<Vehicle>(vid).doors);
 }

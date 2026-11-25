@@ -5,7 +5,7 @@ import { FLAG_HELD_MASK, FLAG_HELD_SHIFT, KIND_MEDIC, KIND_OFFICER } from '@/net
 import { colorFor, knownPlayer, setPlayer } from '@/profile'
 import { seatView } from '@/seats'
 import { doorOf, seatHead } from '@/sim/vehicles'
-import type { DoorStep } from '@/render/character'
+import { lookOf, type DoorStep } from '@/render/character'
 import type { Avatars } from '../avatars'
 import type { Frame, Presenter } from '../presenter'
 import type { Sampled } from '../store'
@@ -91,6 +91,8 @@ export class Riders implements Presenter<Frame> {
       setPlayer(id, kind === KIND_OFFICER ? 'Police' : 'Medic', 0, SERVICES_TEAM, true)
       avatar.setColor(colorFor(id))
     }
+    // In their uniform at the wheel too: a police car's crew as police, an ambulance's as medics.
+    avatar.look = lookOf(kind)
     avatar.dead = false
     avatar.held = ((entity.flags?.flags ?? 0) & FLAG_HELD_MASK) >> FLAG_HELD_SHIFT
     avatar.seat(this.head, this.turn, entity.heading?.yaw ?? car.yaw, entity.look?.pitch ?? 0, frame.dt, seatView(car.kind, seat).stand === true, doorStep(model, car.kind, seat, step, this.door))

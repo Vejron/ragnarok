@@ -46,7 +46,7 @@ const HEN_FOOT = 0.4
 /** Damage parts of a vehicle that is not hurt. */
 const UNHURT: readonly number[] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 /** Doors all shut and on. */
-const SHUT = { open: 0, gone: 0 }
+const SHUT = { left: 0, right: 0, gone: 0 }
 
 /** A vehicle as drawn this frame: where (predicted, for the one the local player drives), and its parts. */
 export interface Placed {
@@ -72,7 +72,7 @@ export interface Placed {
   /** `VehicleState::damage`'s parts; all 0 while unhurt. */
   damage: readonly number[]
   /** Its doors standing open and come off, by their index (`Doors`, DOORS.md). */
-  doors: { open: number; gone: number }
+  doors: { left: number; right: number; gone: number }
   /** `THRUST_*` nozzles firing, as drawn: the driver's own at once, from their prediction. */
   jets: number
   /** Air, stamina or battery left, 0..1, if it has any. */

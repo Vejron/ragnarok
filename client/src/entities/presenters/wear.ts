@@ -32,7 +32,7 @@ export class Wear implements Presenter<Frame> {
     if (model instanceof CarModel) {
       const velocity = this.vehicles.fx(id)?.velocity ?? STILL
       model.wear(placed.damage, placed.hp, this.world.debris, velocity)
-      model.swingDoors(placed.doors.open, placed.doors.gone, frame.dt, this.world.debris, velocity)
+      model.swingDoors(placed.doors.left, placed.doors.right, placed.doors.gone, frame.dt, this.world.debris, velocity)
     }
     if (model instanceof TankModel && vehicleDef(placed.kind).shedsTurret) {
       if (placed.damage[DAMAGE_TURRET] === TURRET_GONE) this.shedTurret(id)

@@ -2,23 +2,38 @@
 Builds the player character and exports it to client/public/models/player.glb.
 
     /Applications/Blender.app/Contents/MacOS/Blender -b -P tools/character/build_character.py -- \
-        [--out client/public/models/player.glb] [--preview DIR]
+        [--out client/public/models/player.glb] [--preview DIR [--only BODY] [--strip CLIPS]] \
+        [--preview-source DIR]
 
-Everything is procedural so the art is reproducible: a low-poly, flat-shaded humanoid, a ~20 bone
-rig, one baked action per movement clip per stance, and the weapons as separate meshes on the right
-hand that the game shows or hides.
+It runs in three stages (CHARACTER-LOOKS.md in docs/ has the whole pipeline):
+  1. The source rig: the game's own 27 bone rig, its clips posed in code below, one baked action per
+     movement clip per stance. Its body (`bodies.py`) is not exported; it settles the lying clips.
+  2. The people (`characters.py`): Quaternius' Animated Men and Women, recoloured into the looks and
+     bound to one skeleton named as the game names its bones.
+  3. The clips onto the people (`retarget.py`): every source clip, and in place of some of them the
+     hand-keyed clips of Quaternius' Universal Animation Library (`library.py`, `FROM_LIBRARY`). The
+     weapons are moved onto the people's right hand. Only the people, their skeleton and the weapons
+     are exported.
 
-Conventions
+Conventions (of the source rig and its clips; the people's skeleton has no toes, and on the people the
+clips in `FROM_LIBRARY` are the library's, the source's of that name giving only the held upper body)
   * Blender: Z up, the character faces -Y, its right hand side is -X. The glTF exporter turns that into
     Y up, facing +Z (the renderer spins it by PI so it faces the game's -Z).
   * Origin is at the feet. Height is about 1.72 m, matching the 1.7 m capsule.
-  * Two materials, so two draw calls per player: `outfit` (vertex colours are shades of white, tinted
-    per player at runtime) and `gear` (skin, boots; vertex colours are the final colours). Each weapon
-    is its own mesh, `weapon_<name>`, skinned to the right hand and made in the pose it is held in.
+  * Looks: thirteen bodies, `body_<name>` for each row of `characters.BODIES`, all on the one skeleton;
+    the client shows one.
+  * Three materials, so up to three draw calls per player: `outfit` (vertex colours are shades of white,
+    tinted per character at runtime: a soldier's patches, a civilian's top), `gear` (vertex colours are
+    the final colours) and `skin` (shades of white, tinted with a skin tone). Each weapon is its own
+    mesh, `weapon_<name>`, skinned to the right hand and made in the pose it is held in.
+  * Hands and feet: `fingers_*` curls the four fingers together and `thumb_*` the thumb; `toes_*` bends
+    at the ball of the foot. No clip keys them itself: `bake` closes the hands on what the stance holds
+    (`GRIP_CURL`) unless the clip is `empty_handed`, and `roll_toes` bends the toes up wherever a pose
+    would push their tips into the ground, so a lifting heel rolls over the ball of the foot.
   * Stances say how the arms hold things: `rifle` (both hands on the gun), `pistol` (both hands, out in front),
-    `hold` (hands low, in front) and `shoulder` (a launcher tube on the right shoulder). Clips are baked per
-    stance: the rifle's are named plainly (`idle`, `walk_fwd`, ...), the others carry a `pistol_` / `hold_` /
-    `shoulder_` prefix. `freefall`, `chute` and the get-ups are shared. There is no death clip: a body
+    `hold` (hands low, in front), `shoulder` (a launcher tube on the right shoulder) and `free` (empty
+    hands, swinging). Clips are baked per stance: the rifle's are named plainly (`idle`, `walk_fwd`,
+    ...), the others carry a `pistol_` / `hold_` / `shoulder_` / `free_` prefix. `freefall`, `chute` and the get-ups are shared. There is no death clip: a body
     killed is a ragdoll (KNOCKDOWN.md).
   * Clips: idle, walk_fwd/back/left/right, run_fwd/back/left/right, crouch_idle, crouch_fwd/back/left/
     right, crawl_idle, crawl_fwd/back/left/right, slide, jump_air, sit, freefall (a skydiver's box,
@@ -34,8 +49,9 @@ Conventions
   * Swimming clips, shared by every stance as the gun is put away: swim_tread (upright, the head out),
     swim_fwd (a breaststroke tipped forward about `SWIM_PIVOT`), dive_idle and dive_fwd (flat under the
     water about `DIVE_PIVOT`, near the capsule centre, which the client tips towards where it swims).
-  * Zombie clips, shared by every stance as a zombie's hands are empty: zombie_idle (hunched and swaying,
-    arms half up), zombie_walk (a shamble, the right leg dragged, arms out in front), zombie_claw (the
+  * Zombie clips, shared by every stance as a zombie's hands are empty: zombie_idle and zombie_walk
+    (the library's on the people; the source's are hunched and swaying with the arms half up, and a
+    shamble with the right leg dragged and the arms out in front), zombie_claw (the
     right arm up and back, then raked down across the front) and zombie_rise (once, out of the
     grave: a hand through the soil, the head, a heave out on both hands, a knee up, and standing).
 """
@@ -48,6 +64,15 @@ import bmesh
 import bpy
 from mathutils import Euler, Matrix, Quaternion, Vector
 
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.dont_write_bytecode = True
+sys.path.insert(0, HERE)
+import bodies  # noqa: E402
+import characters  # noqa: E402
+import library  # noqa: E402
+import retarget  # noqa: E402
+from parts import MAT_GEAR, MAT_OUTFIT, MAT_SKIN, Builder, grey, sharpen, srgb  # noqa: E402
+
 argv = sys.argv[sys.argv.index("--") + 1 :] if "--" in sys.argv else []
 
 
@@ -55,11 +80,13 @@ def arg(name, default=None):
     return argv[argv.index(name) + 1] if name in argv else default
 
 
-HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = arg("--out", os.path.normpath(os.path.join(HERE, "../../client/public/models/player.glb")))
 PREVIEW = arg("--preview")
+PREVIEW_SOURCE = arg("--preview-source")
 # Only the preview shots whose names start with this.
 ONLY = arg("--only", "")
+# With `--preview`: clips (comma-separated) to render through their cycle instead, eight phases each.
+STRIP = [c for c in arg("--strip", "").split(",") if c]
 
 FPS = 60
 
@@ -79,6 +106,12 @@ SHOULDER_X = 0.25
 UPPER_ARM = 0.34
 FOREARM = 0.32
 HAND_LEN = 0.10
+# From the wrist to the knuckles, and the fingers' length, metres.
+KNUCKLES = 0.07
+FINGERS = 0.08
+# How far ahead of the ankle the ball of the foot is, where the toes bend, and the toe's tip (-y is forward).
+BALL_Y = -0.108
+TOE_Y = -0.215
 
 # Where the right hand grips the rifle and where the left hand supports it, armature space.
 GRIP = Vector((-0.15, -0.24, 1.04))
@@ -105,29 +138,12 @@ STANCES = {
         pole_r=Vector((-0.6, 0.3, -1.0)), pole_l=Vector((0.6, 0.1, -1.0)),
     ),
 }
-STANCE_PREFIX = {"rifle": "", "pistol": "pistol_", "hold": "hold_", "shoulder": "shoulder_"}
+STANCE_PREFIX = {"rifle": "", "pistol": "pistol_", "hold": "hold_", "shoulder": "shoulder_", "free": "free_"}
+# `free` is empty hands: the arms hang and swing, and in the pack's clips they move as the pack's do.
 
 
-def srgb(h):
-    """Hex colour to linear rgba."""
-    out = []
-    for shift in (16, 8, 0):
-        c = ((h >> shift) & 0xFF) / 255.0
-        out.append(c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4)
-    return (*out, 1.0)
-
-
-def grey(v):
-    return (v, v, v, 1.0)
-
-
-# Outfit shades are multiplied by the player's colour at runtime.
-OUTFIT_TOP = grey(1.0)
-OUTFIT_PANTS = grey(0.55)
-OUTFIT_TRIM = grey(0.78)
-SKIN = srgb(0xE8B58F)
+# The weapons' colours (the bodies' are in `bodies.py`).
 DARK = srgb(0x2A2C31)
-BOOT = srgb(0x1B1C20)
 GUN_BODY = srgb(0x3B3F47)
 GUN_TRIM = srgb(0xF2A33A)
 WOOD = srgb(0x7A4A2A)
@@ -174,6 +190,11 @@ for side, sx in (("L", 1), ("R", -1)):
     bone(f"upper_arm_{side}", "chest", sh, el)
     bone(f"forearm_{side}", f"upper_arm_{side}", el, wr)
     bone(f"hand_{side}", f"forearm_{side}", wr, (wr[0], wr[1], wr[2] - HAND_LEN))
+    # The four fingers together from the knuckles, and the thumb from the heel of the hand.
+    bone(f"fingers_{side}", f"hand_{side}", (wr[0], wr[1], wr[2] - KNUCKLES), (wr[0], wr[1], wr[2] - KNUCKLES - FINGERS))
+    bone(f"thumb_{side}", f"hand_{side}", (wr[0] - sx * 0.004, -0.03, wr[2] - 0.012), (wr[0] - sx * 0.012, -0.058, wr[2] - 0.068))
+    # The toes from the ball of the foot.
+    bone(f"toes_{side}", f"foot_{side}", (sx * LEG_X, BALL_Y, 0.035), (sx * LEG_X, TOE_Y, 0.035))
 
 
 def make_bones():
@@ -286,107 +307,31 @@ def skin_matrix(name):
 # --------------------------------------------------------------------------------------------------
 # Mesh
 # --------------------------------------------------------------------------------------------------
-bm = bmesh.new()
-deform = bm.verts.layers.deform.verify()
-colors = bm.loops.layers.float_color.new("Color")
-GROUPS = {}
+# Every mesh's vertex groups, one per bone in the rig's order, so every mesh binds to the same joints.
+GROUPS = {name: i for i, name in enumerate(BONES)}
+# The mesh being built: `start_mesh` begins one, and `box`, `prism` and `blob` build into it.
+B = Builder(GROUPS)
 
 
 def start_mesh():
-    """Starts a new mesh; `box`, `prism` and `blob` build into it."""
-    global bm, deform, colors
-    bm = bmesh.new()
-    deform = bm.verts.layers.deform.verify()
-    colors = bm.loops.layers.float_color.new("Color")
+    global B
+    B = Builder(GROUPS)
 
 
-def group_index(name):
-    if name not in GROUPS:
-        GROUPS[name] = len(GROUPS)
-    return GROUPS[name]
+def box(*args, **kwargs):
+    return B.box(*args, **kwargs)
 
 
-MAT_OUTFIT, MAT_GEAR = 0, 1
+def prism(*args, **kwargs):
+    return B.prism(*args, **kwargs)
 
 
-def finish(verts, bone_name, material, color, transform=None):
-    """Binds freshly created verts rigidly to a bone and paints their faces."""
-    gi = group_index(bone_name)
-    faces = set()
-    for v in verts:
-        if transform is not None:
-            v.co = transform @ v.co
-        v[deform][gi] = 1.0
-        faces.update(v.link_faces)
-    for f in faces:
-        f.material_index = material
-        f.smooth = False
-        for loop in f.loops:
-            loop[colors] = color
+def blob(*args, **kwargs):
+    return B.blob(*args, **kwargs)
 
 
-def box(center, size, bone_name, material, color, taper=None, transform=None):
-    """Axis-aligned box. `taper` = (sx, sy) scales the top face's cross-section."""
-    res = bmesh.ops.create_cube(bm, size=1.0)
-    verts = res["verts"]
-    for v in verts:
-        top = v.co.z > 0
-        x, y, z = v.co.x * size[0], v.co.y * size[1], v.co.z * size[2]
-        if taper and top:
-            x *= taper[0]
-            y *= taper[1]
-        v.co = Vector((x, y, z)) + Vector(center)
-    finish(verts, bone_name, material, color, transform)
-    return verts
-
-
-def prism(p0, p1, r0, r1, bone_name, material, color, sides=6, transform=None):
-    """Tapered prism from p0 to p1."""
-    p0, p1 = Vector(p0), Vector(p1)
-    axis = p1 - p0
-    rot = Vector((0, 0, 1)).rotation_difference(axis.normalized()).to_matrix().to_4x4()
-    m = Matrix.Translation((p0 + p1) / 2) @ rot
-    res = bmesh.ops.create_cone(
-        bm, cap_ends=True, cap_tris=False, segments=sides, radius1=r0, radius2=r1, depth=axis.length, matrix=m
-    )
-    finish(res["verts"], bone_name, material, color, transform)
-    return res["verts"]
-
-
-def blob(center, radii, bone_name, material, color, subdivisions=1, transform=None):
-    res = bmesh.ops.create_icosphere(bm, subdivisions=subdivisions, radius=1.0)
-    for v in res["verts"]:
-        v.co = Vector((v.co.x * radii[0], v.co.y * radii[1], v.co.z * radii[2])) + Vector(center)
-    finish(res["verts"], bone_name, material, color, transform)
-    return res["verts"]
-
-
-def build_body():
-    # Pelvis and torso: a belted hip block under a wider chest, wide at the shoulders.
-    box((0, 0, 0.93), (0.30, 0.20, 0.16), "hips", MAT_OUTFIT, OUTFIT_PANTS)
-    box((0, 0, 1.085), (0.30, 0.19, 0.18), "spine", MAT_OUTFIT, OUTFIT_TOP, taper=(1.05, 1.0))
-    box((0, 0, 1.27), (0.37, 0.22, 0.28), "chest", MAT_OUTFIT, OUTFIT_TOP, taper=(1.15, 1.0))
-    # Belt, and a backpack.
-    box((0, 0, 1.01), (0.32, 0.215, 0.05), "spine", MAT_GEAR, DARK)
-    box((0, 0.185, 1.25), (0.26, 0.15, 0.30), "chest", MAT_GEAR, DARK, taper=(0.9, 0.9))
-    # Neck, head, helmet and goggles.
-    prism((0, 0, 1.43), (0, 0, 1.53), 0.055, 0.05, "neck", MAT_GEAR, SKIN)
-    blob((0, 0, 1.62), (0.155, 0.165, 0.17), "head", MAT_GEAR, SKIN)
-    blob((0, 0.02, 1.665), (0.178, 0.18, 0.155), "head", MAT_OUTFIT, OUTFIT_TRIM)
-    box((0, -0.15, 1.635), (0.27, 0.06, 0.075), "head", MAT_GEAR, VISOR)
-    box((0, -0.13, 1.575), (0.24, 0.10, 0.06), "head", MAT_GEAR, SKIN)
-    for side, sx in (("L", 1), ("R", -1)):
-        # Legs: thigh, shin, boot.
-        prism((sx * LEG_X, 0, HIP_Z - 0.02), (sx * LEG_X, 0, KNEE_Z), 0.098, 0.075, f"thigh_{side}", MAT_OUTFIT, OUTFIT_PANTS)
-        prism((sx * LEG_X, 0, KNEE_Z), (sx * LEG_X, 0, ANKLE_Z + 0.04), 0.078, 0.062, f"shin_{side}", MAT_OUTFIT, OUTFIT_PANTS)
-        box((sx * LEG_X, -0.045, 0.06), (0.125, 0.28, 0.13), f"foot_{side}", MAT_GEAR, BOOT, taper=(0.9, 0.8))
-        # Arms: shoulder pad, sleeve, forearm, glove.
-        sx_ = sx * SHOULDER_X
-        blob((sx_, 0, SHOULDER_Z - 0.03), (0.095, 0.095, 0.095), f"upper_arm_{side}", MAT_OUTFIT, OUTFIT_TRIM)
-        prism((sx_, 0, SHOULDER_Z - 0.02), (sx_, 0, SHOULDER_Z - UPPER_ARM), 0.07, 0.058, f"upper_arm_{side}", MAT_OUTFIT, OUTFIT_TOP)
-        prism((sx_, 0, SHOULDER_Z - UPPER_ARM), (sx_, 0, SHOULDER_Z - UPPER_ARM - FOREARM + 0.03), 0.058, 0.048, f"forearm_{side}", MAT_OUTFIT, OUTFIT_TOP)
-        wz = SHOULDER_Z - UPPER_ARM - FOREARM
-        box((sx_, 0, wz - 0.035), (0.085, 0.10, 0.12), f"hand_{side}", MAT_GEAR, DARK)
+# The builder's dimensions, as `bodies` reads them.
+DIMS = type("Dims", (), {k: v for k, v in globals().items() if k.isupper() and isinstance(v, float)})
 
 
 def pose_to_rest(stance):
@@ -493,11 +438,10 @@ WEAPONS = [
     ),
 ]
 
-build_body()
-
 outfit_mat = bpy.data.materials.new("outfit")
 gear_mat = bpy.data.materials.new("gear")
-for m in (outfit_mat, gear_mat):
+skin_mat = bpy.data.materials.new("skin")
+for m in (outfit_mat, gear_mat, skin_mat):
     m.use_nodes = True
     nodes = m.node_tree.nodes
     bsdf = nodes["Principled BSDF"]
@@ -508,27 +452,44 @@ for m in (outfit_mat, gear_mat):
     m.node_tree.links.new(attr.outputs["Color"], bsdf.inputs["Base Color"])
 
 
-def make_object(name, builder):
-    """Turns what `builder` put in the current bmesh into an armature-skinned object."""
+def make_object(name, builder, armature=None, groups=None):
+    """Turns what `builder` put in the current bmesh into an object skinned to `armature` (the source
+    rig by default)."""
+    armature = armature or arm_obj
+    groups = groups or GROUPS
     mesh_ = bpy.data.meshes.new(name)
-    builder.to_mesh(mesh_)
-    builder.free()
+    builder.weld()
+    builder.bm.to_mesh(mesh_)
+    builder.bm.free()
+    sharpen(mesh_)
     mesh_.attributes.active_color = mesh_.color_attributes["Color"]
     mesh_.materials.append(outfit_mat)
     mesh_.materials.append(gear_mat)
+    mesh_.materials.append(skin_mat)
     obj = bpy.data.objects.new(name, mesh_)
     scene.collection.objects.link(obj)
-    for gname in GROUPS:
+    for gname in groups:
         obj.vertex_groups.new(name=gname)
     mod_ = obj.modifiers.new("Armature", "ARMATURE")
-    mod_.object = arm_obj
-    obj.parent = arm_obj
+    mod_.object = armature
+    obj.parent = armature
     return obj, mesh_
 
 
-body, mesh = make_object("Player", bm)
-for gname, index in GROUPS.items():
-    assert body.vertex_groups[gname].index == index
+# The source rig's body: only for settling the lying clips on the ground. The game draws the packs'
+# people (`characters.py`), onto which every clip is retargeted at the end.
+look_objects = []
+for look in ("soldier",):
+    start_mesh()
+    bodies.build(look, B, DIMS)
+    obj, look_mesh = make_object(look if look.startswith("hat_") else f"body_{look}", B)
+    for gname, index in GROUPS.items():
+        assert obj.vertex_groups[gname].index == index
+    print(f"{obj.name}: {sum(len(p.vertices) - 2 for p in look_mesh.polygons)} tris")
+    look_objects.append(obj)
+# The soldier is the one the lying clips are settled on the ground by.
+body = look_objects[0]
+mesh = body.data
 
 # Weapons: one mesh each, in the pose it is held in, and the muzzle where its barrel ends.
 weapon_objects = []
@@ -536,7 +497,7 @@ MUZZLES = {}  # bone name -> (stance, tip in rest space)
 for wname, wstance, parts, muzzle in WEAPONS:
     start_mesh()
     build_weapon(parts, wstance)
-    obj, _ = make_object(f"weapon_{wname}", bm)
+    obj, _ = make_object(f"weapon_{wname}", B)
     weapon_objects.append(obj)
     if muzzle is not None:
         # The tip is found here, with the rig posed in this stance; edit mode does not re-evaluate the pose.
@@ -565,8 +526,80 @@ SOLO_BONES = KEYED
 
 
 def set_arms_carry():
-    for name, e in CARRY[CURRENT].items():
+    for name, e in CARRY.get(CURRENT, {}).items():
         arm_obj.pose.bones[name].rotation_euler = e.copy()
+
+
+# How far each hand's fingers curl round what the stance holds, radians at the knuckles: the right
+# hand round the grip, the left round the foregrip, the revolver's other hand or nothing much.
+GRIP_CURL = {
+    "rifle": {"R": 1.45, "L": 1.25},
+    "pistol": {"R": 1.45, "L": 1.2},
+    "hold": {"R": 1.3, "L": 0.45},
+    "shoulder": {"R": 1.45, "L": 1.3},
+    "free": {"R": 0.35, "L": 0.35},
+}
+# Fingers curled a little, as a hand hangs with nothing in it.
+RELAXED = 0.3
+
+
+def curl_hand(side, curl, thumb=None):
+    """Curls `side`'s fingers `curl` radians in towards the palm, and the thumb across it (by default
+    as far as the fingers take it). The palms face in at rest, so the curl turns about the forward axis."""
+    s = 1.0 if side == "L" else -1.0
+    thumb = min(curl, 1.0) * 0.55 if thumb is None else thumb
+    pose_rot(f"fingers_{side}", 0, s * curl, 0)
+    pose_rot(f"thumb_{side}", -0.2 * thumb, s * thumb, 0)
+
+
+def grip_hands():
+    """Both hands closed on what the stance holds: every clip starts so."""
+    for side, curl in GRIP_CURL[CURRENT].items():
+        curl_hand(side, curl)
+
+
+def relax_hands(curl=RELAXED):
+    """Both hands open, for a clip whose hands hold nothing (swimming, falling, a zombie's)."""
+    for side in ("L", "R"):
+        curl_hand(side, curl, thumb=0.15)
+
+
+# Where each toe's tip and the ball it bends at are in the rest pose: the toes bend up to keep the
+# tip out of the ground.
+TOE_TIP = {side: Vector((sx * LEG_X, TOE_Y + 0.005, 0.002)) for side, sx in (("L", 1), ("R", -1))}
+# The most the toes bend up, radians.
+TOE_BEND = 1.0
+
+
+def roll_toes():
+    """Bends each foot's toes up at the ball until the tip is out of the ground, so a heel that lifts
+    rolls the foot over the ball instead of pushing the toes into the ground. Runs on the posed rig."""
+    for side in ("L", "R"):
+        pb = arm_obj.pose.bones[f"toes_{side}"]
+        pb.rotation_euler = (0, 0, 0)
+    bpy.context.view_layer.update()
+    for side in ("L", "R"):
+        pb = arm_obj.pose.bones[f"toes_{side}"]
+        posed = pb.matrix @ arm_data.bones[pb.name].matrix_local.inverted()
+        ball = posed @ arm_data.bones[pb.name].head_local
+        tip = posed @ TOE_TIP[side]
+        if tip.z >= 0.0:
+            continue
+        # The foot's own lateral axis: the toes bend about it, the way that lifts the tip.
+        across = (posed.to_3x3() @ Vector((1, 0, 0))).normalized()
+        height = lambda angle: (ball + Matrix.Rotation(angle, 3, across) @ (tip - ball)).z
+        up = TOE_BEND if height(0.3) > height(-0.3) else -TOE_BEND
+        # Bisect between bent enough (`out`) and not (`into`) for the least bend that clears the ground.
+        out, into = up, 0.0
+        if height(out) < 0.0:
+            into = out
+        for _ in range(16):
+            mid = (out + into) / 2
+            if height(mid) < 0.0:
+                into = mid
+            else:
+                out = mid
+        pose_rot(f"toes_{side}", out, 0, 0)
 
 
 def new_action(name):
@@ -585,15 +618,21 @@ def key_frame(frame):
             pb.keyframe_insert("location", frame=frame, group=n)
 
 
+# Every clip baked on the source rig, by name: these are retargeted onto the packs' people.
+BAKED = set()
+
+
 def bake(name, frames, pose_fn, loop=True):
     """One action: `pose_fn(phase)` poses the rig for phase 0..1. Looping clips repeat the first key last."""
+    BAKED.add(name)
     new_action(name)
     scene.frame_start, scene.frame_end = 0, frames
     for f in range(frames + 1):
         reset_pose()
         set_arms_carry()
+        grip_hands()
         pose_fn((f % frames) / frames if loop else f / frames)
-        bpy.context.view_layer.update()
+        roll_toes()
         key_frame(f)
 
 
@@ -616,6 +655,12 @@ def gait(direction, amp, lat_amp, knee, lean, bob, cycle_sway):
             pose_rot(f"thigh_{side}", thigh_x, thigh_y, 0)
             pose_rot(f"shin_{side}", shin_x, 0, 0)
             foot = -(thigh_x + shin_x) * 0.85
+            if CURRENT == "free":
+                # Empty hands swing against the leg on their side, the elbow bending as it comes forward.
+                sx = 1.0 if side == "L" else -1.0
+                swing = 0.7 * amp * s * df
+                pose_rot(f"upper_arm_{side}", swing, -sx * 0.12, 0)
+                pose_rot(f"forearm_{side}", -0.25 - 0.3 * max(0.0, -s * df) * amp, 0, 0)
             pose_rot(f"foot_{side}", foot, 0, 0)
         up = bob * (math.cos(2 * phi) - 1.0)
         pose_loc("hips", (cycle_sway * math.sin(phi) * 0.5, 0, up - 0.02))
@@ -639,6 +684,10 @@ def idle(t):
         pose_rot(f"thigh_{side}", 0.05, 0.06 if side == "L" else -0.06, 0)
         pose_rot(f"shin_{side}", 0.08, 0, 0)
         pose_rot(f"foot_{side}", -0.11, 0, 0)
+        if CURRENT == "free":
+            sx = 1.0 if side == "L" else -1.0
+            pose_rot(f"upper_arm_{side}", 0.02 * breath, -sx * 0.1, 0)
+            pose_rot(f"forearm_{side}", -0.15, 0, 0)
 
 
 def jump_air(t):
@@ -931,7 +980,7 @@ def lying_arms(t, moving, back=False):
     bandage stays in the right hand while the hands take turns pulling along the ground."""
     bpy.context.view_layer.update()
     shoulder = {n: arm_obj.pose.bones[f"upper_arm_{n}"].head.copy() for n in ("R", "L")}
-    hands = CARRY_HAND[CURRENT]
+    hands = CARRY_HAND.get(CURRENT, CARRY_HAND["hold"])
     if CURRENT in GUN_AHEAD:
         nudge = 0.04 * math.sin(2 * TAU * t) if moving else 0.0
         grip = shoulder["R"] + GUN_AHEAD[CURRENT] - Vector((0, nudge, 0))
@@ -946,7 +995,7 @@ def lying_arms(t, moving, back=False):
             d = 1.0 - d
         lift = 0.06 * math.sin(math.pi * d) if moving and drawn(t + (0.0 if n == "R" else 0.5) + 0.01) > d else 0.0
         wrist = Vector((shoulder[n].x + sx * 0.1, shoulder[n].y - 0.05 - 0.42 * d, 0.06 + lift))
-        turned = hands["R"][0] if n == "R" else FLAT_HAND[n]
+        turned = hands["R"][0] if n == "R" and CURRENT != "free" else FLAT_HAND[n]
         reach(n, wrist, turned, (sx * 1.0, 0.2, 0.4))
 
 
@@ -1767,6 +1816,16 @@ def zombie_rise(t):
         reach(side, wrist, hand.to_matrix(), pole)
 
 
+def empty_handed(fn, curl=RELAXED):
+    """A clip whose hands hold nothing: the fingers open (or hooked, for `curl` larger) before it poses."""
+
+    def posed(t):
+        relax_hands(curl)
+        fn(t)
+
+    return posed
+
+
 def build_actions():
     global CURRENT
     walk = dict(amp=0.68, lat_amp=0.38, knee=0.95, lean=0.0, bob=0.022, cycle_sway=0.03)
@@ -1813,16 +1872,16 @@ def build_actions():
     # Both hands on the club: whatever stance a club is held in.
     bake("golf_swing", 150, golf_swing, loop=False)
     # A zombie's own: its hands are empty, whatever stance it would have.
-    bake("zombie_idle", 120, zombie_idle)
-    bake("zombie_walk", 60, zombie_walk)
-    bake("zombie_claw", 42, zombie_claw)
-    bake("zombie_rise", 240, zombie_rise, loop=False)
+    bake("zombie_idle", 120, empty_handed(zombie_idle, 0.7))
+    bake("zombie_walk", 60, empty_handed(zombie_walk, 0.7))
+    bake("zombie_claw", 42, empty_handed(zombie_claw, 0.85))
+    bake("zombie_rise", 240, empty_handed(zombie_rise, 0.6), loop=False)
     # Falling lets go of the item's grip too: shared by every stance.
-    bake("freefall", 90, freefall)
-    bake("chute", 120, chute)
+    bake("freefall", 90, empty_handed(freefall, 0.15))
+    bake("chute", 120, empty_handed(chute, 1.3))
     # Up again after being knocked flat: one off the back, one off the belly.
-    bake("getup_back", 54, getup_back, loop=False)
-    bake("getup_front", 54, getup_front, loop=False)
+    bake("getup_back", 54, empty_handed(getup_back, 0.1), loop=False)
+    bake("getup_front", 54, empty_handed(getup_front, 0.1), loop=False)
     # The arms are on the poles, whatever is carried: every stance's.
     bake("ski_glide", 120, ski_glide)
     bake("ski_stride", 54, ski_stride(0.42, 0.5, 0.5))
@@ -1835,10 +1894,10 @@ def build_actions():
     bake("ski_plow", 120, ski_plow)
     bake("ski_air", 60, ski_air)
     # In the water the gun is put away: every stance's.
-    bake("swim_tread", 72, swim_tread)
-    bake("swim_fwd", 48, swim_fwd)
-    bake("dive_idle", 120, dive_idle)
-    bake("dive_fwd", 60, dive_fwd)
+    bake("swim_tread", 72, empty_handed(swim_tread, 0.15))
+    bake("swim_fwd", 48, empty_handed(swim_fwd, 0.1))
+    bake("dive_idle", 120, empty_handed(dive_idle, 0.15))
+    bake("dive_fwd", 60, empty_handed(dive_fwd, 0.1))
     reset_pose()
     arm_obj.animation_data.action = bpy.data.actions["idle"]
 
@@ -1851,16 +1910,425 @@ arm_obj.animation_data.action = anim_action
 
 
 # --------------------------------------------------------------------------------------------------
+# Onto the packs' people: every clip retargeted from the source rig onto their skeleton, the guns
+# moved onto their right hand, and only they exported.
+# --------------------------------------------------------------------------------------------------
+if not characters.available():
+    sys.exit(f"The character packs are not in {characters.PACKS}: see docs/CHARACTER-LOOKS.md.")
+
+# The source rig's own guns and body give their names up to the target's.
+for obj in look_objects + weapon_objects:
+    obj.name = "source_" + obj.name
+    obj.data.name = "source_" + obj.data.name
+
+# The target's vertex groups, one per bone in its order.
+TGROUPS = {name: i for i, name in enumerate(characters.PARENT)}
+target, people, JOINTS, skeleton = characters.build(TGROUPS)
+people_objects = []
+for name, builder in people.items():
+    obj, me = make_object(f"body_{name}", builder, target, TGROUPS)
+    print(f"{obj.name}: {sum(len(p.vertices) - 2 for p in me.polygons)} tris")
+    people_objects.append(obj)
+
+# The source rig in the target's rest pose, a T-pose: arms out level, palms down.
+reset_pose()
+pose_rot("upper_arm_L", 0, -math.pi / 2, 0)
+pose_rot("upper_arm_R", 0, math.pi / 2, 0)
+bpy.context.view_layer.update()
+SOURCE_OF = {"root": "root", "hips": "hips", "spine": "spine", "chest": "chest", "neck": "neck", "head": "head"}
+for _s in ("L", "R"):
+    SOURCE_OF.update({f"{p}_{_s}": f"{q}_{_s}" for p, q in (("upper_arm", "upper_arm"), ("forearm", "forearm"), ("hand", "hand"), ("palm", "fingers"), ("thumb", "thumb"), ("thigh", "thigh"), ("shin", "shin"), ("foot", "foot"))})
+REFERENCE = {b: (arm_obj.matrix_world @ arm_obj.pose.bones[b].matrix).to_3x3().normalized() for b in SOURCE_OF.values()}
+reset_pose()
+bpy.context.view_layer.update()
+# The target's legs and arms against the source's: the hips move by the one, the hands reach by the other.
+LEG_SCALE = JOINTS["thigh_L"].z / HIP_Z
+ARM_SCALE = ((JOINTS["forearm_L"] - JOINTS["upper_arm_L"]).length + (JOINTS["hand_L"] - JOINTS["forearm_L"]).length) / (UPPER_ARM + FOREARM)
+HIPS_SHIFT = JOINTS["hips"] - Vector((0, 0, HIP_Z)) * LEG_SCALE
+print(f"legs x{LEG_SCALE:.3f}, arms x{ARM_SCALE:.3f}")
+
+
+def place(p):
+    return p * LEG_SCALE
+
+
+retarget_moved = ("root", "hips")
+def placed(name, p):
+    """A source bone's head in the target's world: the hips with their rest offset, the rest scaled."""
+    return place(p) + (HIPS_SHIFT if name == "hips" else Vector())
+
+
+mover = retarget.Retarget(arm_obj, target, SOURCE_OF, REFERENCE, place=placed, moved=retarget_moved)
+
+
+def grips():
+    """Where the source's hands are against its shoulders, scaled to the target's arms, with the
+    elbows' sides as poles: the target's arms are solved onto these."""
+    out = {}
+    pbs = arm_obj.pose.bones
+    for side in ("L", "R"):
+        shoulder = (arm_obj.matrix_world @ pbs[f"upper_arm_{side}"].matrix).to_translation()
+        elbow = (arm_obj.matrix_world @ pbs[f"forearm_{side}"].matrix).to_translation()
+        wrist = (arm_obj.matrix_world @ pbs[f"hand_{side}"].matrix).to_translation()
+        out[side] = ((wrist - shoulder) * ARM_SCALE, elbow - (shoulder + wrist) / 2, None)
+    return out
+
+
+# Clips whose hands hold something keep them where the source has them.
+FREE_HANDS = {"zombie_idle", "zombie_walk", "zombie_claw", "zombie_rise", "freefall", "chute", "getup_back", "getup_front", "swim_tread", "swim_fwd", "dive_idle", "dive_fwd"}
+source_actions = [a for a in bpy.data.actions if a.name in BAKED]
+for act in source_actions:
+    arm_obj.animation_data.action = act
+    start, end = (int(x) for x in act.frame_range)
+    out = retarget.new_action(target, "T:" + act.name)
+    holding = act.name not in FREE_HANDS and not act.name.startswith("free_")
+    for f in range(start, end + 1):
+        scene.frame_set(f)
+        mover.pose(grips() if holding else None)
+        mover.key(f)
+    # Read: the source's action is no longer needed.
+arm_obj.animation_data.action = None
+# Quaternius' Universal Animation Library takes over the clips it has (library.py): standing,
+# jogging (the game's 4 m/s walk), sprinting, crouching, and a zombie's standing and walking. With
+# empty hands, and for a zombie, the clip is the library's whole. With something held, the library's
+# hips and legs carry the stance's own upper body, turned in the world as the stance's clip turns it,
+# so the gun stays level and in both hands however far the library's trunk leans. Cycles are turned
+# to start where ours do, so the clips still blend in step with the strafes, which stay ours.
+# (our clip, the library's, whether every stance has one, how it is fitted). How:
+# - `once`: played once through by progress (getting up), not looped;
+# - `fit`: a bone whose average place over the clip is moved onto where our own clip has it: the
+#   hips for a seat, the head for the water line. The client places those bodies by our clips' numbers.
+# - `upper`: the clip of ours whose upper body holds the item, where we have none of that name (a
+#   landing has the stance's idle arms);
+# - `upright`: our upper body with empty hands too, not the library's: its sitter leans its head 0.2 m
+#   forward, into a car's windscreen, from where the seat puts it (`SIT_HEAD_BACK` in the client).
+FROM_LIBRARY = [
+    ("idle", "Idle_Loop", True, {}),
+    ("walk_fwd", "Jog_Fwd_Loop", True, {}),
+    ("run_fwd", "Sprint_Loop", True, {}),
+    ("crouch_idle", "Crouch_Idle_Loop", True, {}),
+    ("crouch_fwd", "Crouch_Fwd_Loop", True, {}),
+    ("zombie_idle", "Zombie_Idle_Loop", False, {}),
+    ("zombie_walk", "Zombie_Walk_Fwd_Loop", False, {}),
+    ("jump_air", "Jump_Loop", True, {}),
+    ("sit", "Sitting_Idle_Loop", True, {"fit": "hips", "upright": True}),
+    ("swim_tread", "Swim_Idle_Loop", False, {"fit": "head"}),
+    ("swim_fwd", "Swim_Fwd_Loop", False, {"fit": "head"}),
+    ("getup_back", "LayToIdle", False, {"once": True}),
+    ("jump_land", "Jump_Land", True, {"once": True, "upper": "idle"}),
+]
+# Cycles whose feet are lined up with ours.
+STEPPING = {"walk_fwd", "run_fwd", "crouch_fwd", "zombie_walk"}
+# What the stance's clip turns when something is held: everything over the hips.
+UPPER_BODY = ["pelvis", "spine", "chest", "neck", "head"] + [f"{p}_{s}" for s in ("L", "R") for p in ("clavicle", "upper_arm", "forearm", "hand", "palm", "fingers", "thumb", "thumb2")]
+if not library.available():
+    sys.exit(f"The Universal Animation Library is not in {library.UAL}: see docs/CHARACTER-LOOKS.md.")
+LIBRARY = library.Library()
+lib_arm = LIBRARY.armature
+LIB_SCALE = JOINTS["thigh_L"].z / LIBRARY.thigh
+lib_mover = retarget.Retarget(
+    lib_arm, target, {t: s for s, t in library.BONE_MAP.items()}, place=lambda name, p: JOINTS["hips"] + (p - LIBRARY.hips) * LIB_SCALE, moved=("root", "hips")
+)
+# The root has no bone of the library's, so it is keyed where it rests: unkeyed, Blender would keep
+# whatever the clip before left there, and the build would measure the library's clips off it.
+
+
+def at_phase(obj, act, t, once=False):
+    """Poses `obj` by `act` at phase `t` (0..1) of its cycle, or of its once through."""
+    retarget.play(obj, act)
+    start, end = act.frame_range
+    x = start + (min(max(t, 0.0), 1.0) if once else t % 1.0) * (end - start)
+    scene.frame_set(int(x), subframe=x - int(x))
+
+
+def forward_phase(obj, act, foot):
+    """The phase at which `foot` (a bone of `obj`) is furthest forward: where the cycles are lined up."""
+    best, at = None, 0.0
+    for i in range(48):
+        at_phase(obj, act, i / 48)
+        y = (obj.matrix_world @ obj.pose.bones[foot].matrix).to_translation().y
+        if best is None or y < best:
+            best, at = y, i / 48
+    return at
+
+
+# How fast each stepping clip goes, m/s: the library's own travel per cycle, scaled to our legs.
+LIB_TRAVEL = LIBRARY.travel({theirs for ours, theirs, _, _ in FROM_LIBRARY if ours in STEPPING or ours == "swim_fwd"})
+LIB_SPEED = {}
+
+
+def mean_place(act, bone):
+    """Where `bone` of the target is on average over clip `act`, in the world."""
+    target.animation_data.action = act
+    start, end = (int(x) for x in act.frame_range)
+    total = Vector()
+    for f in range(start, end + 1):
+        scene.frame_set(f)
+        total += (target.matrix_world @ target.pose.bones[bone].matrix).to_translation()
+    return total / (end - start + 1)
+
+
+def move_hips(act, by):
+    """Moves the hips of clip `act` by `by` (world metres) at every frame, re-keyed."""
+    target.animation_data.action = act
+    hips = target.pose.bones["hips"]
+    start, end = (int(x) for x in act.frame_range)
+    for f in range(start, end + 1):
+        scene.frame_set(f)
+        m = hips.matrix.copy()
+        m.translation += by
+        hips.matrix = m
+        hips.keyframe_insert("location", frame=f, group="hips")
+
+
+for ours, theirs, stanced, how in FROM_LIBRARY:
+    once = how.get("once", False)
+    lib_act = LIBRARY.clips[theirs]
+    seconds = (lib_act.frame_range[1] - lib_act.frame_range[0]) / scene.render.fps
+    frames = max(2, round(seconds * FPS))
+    shift = 0.0
+    if ours == "swim_fwd":
+        print(f"STROKE swim_fwd: {LIB_TRAVEL[theirs] * LIB_SCALE:.2f} m a stroke (the library's)")
+    if ours in STEPPING:
+        LIB_SPEED[ours] = LIB_TRAVEL[theirs] * LIB_SCALE / seconds
+        shift = forward_phase(lib_arm, lib_act, "foot_l") - forward_phase(arm_obj, bpy.data.actions[ours], "foot_L")
+    for prefix in STANCE_PREFIX.values() if stanced else ("",):
+        name = prefix + ours
+        source = bpy.data.actions[prefix + how.get("upper", ours)]
+        out = retarget.new_action(target, "P:" + name)
+        held = stanced and (how.get("upright", False) or not name.startswith("free_"))
+        for f in range(frames + 1):
+            t = (f if once else f % frames) / frames
+            upper = None
+            if held:
+                at_phase(arm_obj, source, t, once)
+                # Empty hands are retargeted as they are, not solved onto a grip.
+                mats = mover.pose(None if name.startswith("free_") else grips())
+                upper = {n: retarget.rot3(mats[n]) for n in UPPER_BODY}
+            at_phase(lib_arm, lib_act, t + shift, once)
+            lib_mover.pose(None, fixed=upper)
+            lib_mover.key(f)
+        fitted = ""
+        if "fit" in how:
+            # Our own clip of that name, retargeted, says where the body goes; sideways it stays centred.
+            by = mean_place(bpy.data.actions["T:" + name], how["fit"]) - mean_place(out, how["fit"])
+            by.x = 0.0
+            move_hips(out, by)
+            after = mean_place(out, how["fit"]) - mean_place(bpy.data.actions["T:" + name], how["fit"])
+            fitted = f", its {how['fit']} moved by ({by.y:+.2f}, {by.z:+.2f}) m, off by ({after.y:+.2f}, {after.z:+.2f})"
+        print(f"{name}: from the library's {theirs}, {seconds:.2f} s, shifted {shift:+.2f}{fitted}")
+arm_obj.animation_data.action = None
+# The source's clips give their names up to the retargeted ones, and the library's take over theirs.
+for act in source_actions:
+    name = act.name
+    bpy.data.actions.remove(act)
+    taken = bpy.data.actions.get("P:" + name)
+    if taken:
+        bpy.data.actions.remove(bpy.data.actions["T:" + name])
+        taken.name = name
+    else:
+        bpy.data.actions["T:" + name].name = name
+# The library's clips that are none of ours (a landing) keep their names.
+for act in [a for a in bpy.data.actions if a.name.startswith("P:")]:
+    act.name = act.name[2:]
+# Neither the library nor the packs' own clips are exported.
+LIBRARY.remove()
+for act in [a for a in bpy.data.actions if "|" in a.name]:
+    bpy.data.actions.remove(act)
+bpy.data.objects.remove(skeleton.armature, do_unlink=True)
+
+
+# The people's limbs are not the source rig's, so a body the source laid on the ground floats over it
+# or sinks into it once retargeted: an armed crawl, propped on the elbows over the gun, by up to 0.3 m.
+# Measured on the soldier's posed body, the crawls are lowered or raised as a whole so the lowest point
+# of their cycle touches the ground, and getting up and sliding are raised wherever they would go
+# through it. The client stands a lying body's origin on the ground.
+GAUGE = next(o for o in people_objects if o.name == "body_soldier_m")
+
+
+def lowest(act, frame):
+    """The lowest point of the soldier's body in clip `act` at `frame`, metres over the origin."""
+    target.animation_data.action = act
+    scene.frame_set(frame)
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    evaluated = GAUGE.evaluated_get(depsgraph)
+    mesh = evaluated.to_mesh()
+    low = min((evaluated.matrix_world @ v.co).z for v in mesh.vertices)
+    evaluated.to_mesh_clear()
+    return low
+
+
+def lift_hips(act, lifts):
+    """Moves the hips of clip `act` up by `lifts[frame]` metres at each of its frames, re-keyed."""
+    target.animation_data.action = act
+    hips = target.pose.bones["hips"]
+    for frame, up in lifts.items():
+        scene.frame_set(frame)
+        m = hips.matrix.copy()
+        m.translation.z += up
+        hips.matrix = m
+        hips.keyframe_insert("location", frame=frame, group="hips")
+
+
+def on_the_ground(name, whole):
+    """Puts clip `name` on the ground: as a whole (`whole`, a cycle whose lowest point goes to the
+    ground), or frame by frame wherever it is under it."""
+    act = bpy.data.actions[name]
+    frames = range(int(act.frame_range[0]), int(act.frame_range[1]) + 1)
+    lows = {f: lowest(act, f) for f in frames}
+    if whole:
+        bottom = min(lows.values())
+        lift_hips(act, {f: -bottom for f in frames})
+        print(f"GROUND {name}: moved {-bottom * 100:+.0f} cm")
+    else:
+        under = {f: -low for f, low in lows.items() if low < 0}
+        lift_hips(act, under)
+        print(f"GROUND {name}: raised {len(under)} of {len(lows)} frames, at most {max(under.values(), default=0) * 100:.0f} cm")
+
+
+for prefix in STANCE_PREFIX.values():
+    for clip in ("crawl_idle", "crawl_fwd", "crawl_back", "crawl_left", "crawl_right"):
+        on_the_ground(prefix + clip, True)
+    on_the_ground(prefix + "slide", False)
+for clip in ("getup_back", "getup_front"):
+    on_the_ground(clip, False)
+target.animation_data.action = None
+
+
+def ground_speed(name):
+    """The speed at which clip `name`'s planted feet slide back under the body, m/s: the ground speed
+    at which they do not slide (`SPEED_OF` in client/src/render/character.ts)."""
+    act = bpy.data.actions[name]
+    target.animation_data.action = act
+    start, end = (int(x) for x in act.frame_range)
+    speeds = []
+    for foot in ("foot_L", "foot_R"):
+        track = []
+        for f in range(start, end + 1):
+            scene.frame_set(f)
+            track.append((target.matrix_world @ target.pose.bones[foot].matrix).to_translation())
+        low, high = min(p.z for p in track), max(p.z for p in track)
+        # The frames this foot is down: in the lowest fifth of its lift.
+        for a_, b_ in zip(track, track[1:]):
+            if max(a_.z, b_.z) < low + 0.2 * (high - low):
+                speeds.append((b_ - a_).xy.length * FPS)
+    speeds.sort()
+    return speeds[len(speeds) // 2] if speeds else 0.0
+
+
+for name in ("walk_fwd", "walk_back", "walk_left", "walk_right", "run_fwd", "run_back", "run_left", "run_right", "crouch_fwd", "crouch_back", "crouch_left", "crouch_right", "zombie_walk"):
+    if name in LIB_SPEED:
+        print(f"SPEED {name}: {LIB_SPEED[name]:.2f} m/s (the library's)")
+    else:
+        print(f"SPEED {name}: {ground_speed(name):.2f} m/s")
+for clip in ("sit", "idle"):
+    target.animation_data.action = bpy.data.actions[clip]
+    scene.frame_set(0)
+    print(f"HEAD {clip}: {(target.matrix_world @ target.pose.bones['head'].matrix).to_translation().z:.3f} m")
+target.animation_data.action = None
+
+
+def target_hand(stance):
+    """The target's right hand posed as the stance's idle has it: its world matrix and wrist."""
+    target.animation_data.action = bpy.data.actions[STANCE_PREFIX[stance] + "idle"]
+    scene.frame_set(0)
+    bpy.context.view_layer.update()
+    m = target.matrix_world @ target.pose.bones["hand_R"].matrix
+    return m, m.to_translation()
+
+
+# The guns on the target's right hand: each made where the source's hand holds it, moved with the
+# wrist to where the target's is, and bound in the hand's rest frame.
+target_weapons = []
+TMUZZLES = {}
+source_wrist = {}
+for stance in STANCES:
+    reset_pose()
+    carry_pose(stance)
+    bpy.context.view_layer.update()
+    source_wrist[stance] = (arm_obj.matrix_world @ arm_obj.pose.bones["hand_R"].matrix).to_translation()
+reset_pose()
+for wname, wstance, wparts, muzzle in WEAPONS:
+    hand, wrist = target_hand(wstance)
+    to_rest = target.data.bones["hand_R"].matrix_local @ hand.inverted() @ Matrix.Translation(wrist - source_wrist[wstance])
+    start_mesh()
+    B.groups = TGROUPS
+    g = STANCES[wstance]["R"]
+    for kind, off, size, color in wparts:
+        if kind == "box":
+            box(g + Vector(off), size, "hand_R", MAT_GEAR, color, transform=to_rest)
+        elif kind == "tube":
+            back, front, length = size
+            c = g + Vector(off)
+            prism(c + Vector((0, length / 2, 0)), c - Vector((0, length / 2, 0)), back, front, "hand_R", MAT_GEAR, color, sides=8, transform=to_rest)
+        else:
+            blob(g + Vector(off), size, "hand_R", MAT_GEAR, color, transform=to_rest)
+    obj, _ = make_object(f"weapon_{wname}", B, target, TGROUPS)
+    target_weapons.append(obj)
+    if muzzle is not None:
+        TMUZZLES["muzzle" if wstance == "rifle" else f"muzzle_{wstance}"] = to_rest @ (g + Vector(muzzle))
+# Where the left hand holds what the right one does, per stance: a bone on the right hand that the left
+# hand lies on in the stance's idle (`grip`, `grip_pistol`, ...). The client pulls the left hand onto it
+# (ik.ts), so it stays on the gun whatever bends the arms apart: a blend, a flinch, the aim.
+GRIPS = {}
+for stance in STANCES:
+    target.animation_data.action = bpy.data.actions[STANCE_PREFIX[stance] + "idle"]
+    scene.frame_set(0)
+    bpy.context.view_layer.update()
+    right = target.pose.bones["hand_R"].matrix
+    left = target.pose.bones["hand_L"].matrix
+    GRIPS["grip" if stance == "rifle" else f"grip_{stance}"] = (stance, target.data.bones["hand_R"].matrix_local @ right.inverted() @ left)
+
+
+def grip_off(clip, stance):
+    """How far clip `clip`'s left hand strays from the stance's grip at worst, metres."""
+    act = bpy.data.actions[clip]
+    target.animation_data.action = act
+    marker = target.data.bones["hand_R"].matrix_local.inverted() @ GRIPS["grip" if stance == "rifle" else f"grip_{stance}"][1]
+    worst = 0.0
+    for f in range(int(act.frame_range[0]), int(act.frame_range[1]) + 1, 3):
+        scene.frame_set(f)
+        pbs = target.pose.bones
+        want = (pbs["hand_R"].matrix @ marker).to_translation()
+        worst = max(worst, (pbs["hand_L"].matrix.to_translation() - want).length)
+    return worst
+
+
+for stance in STANCES:
+    prefix = STANCE_PREFIX[stance]
+    offs = []
+    for act in bpy.data.actions:
+        base = act.name[len(prefix):] if prefix else act.name
+        if act.name.startswith(prefix) and not any(act.name.startswith(p) for p in STANCE_PREFIX.values() if p and p != prefix) and f"free_{base}" in bpy.data.actions:
+            offs.append((grip_off(act.name, stance), act.name))
+    print(f"GRIP {stance}: " + ", ".join(f"{name} {off * 100:.0f} cm" for off, name in sorted(offs, reverse=True) if off > 0.03))
+target.animation_data.action = None
+bpy.context.view_layer.objects.active = target
+bpy.ops.object.mode_set(mode="EDIT")
+for bname, tip in TMUZZLES.items():
+    eb = target.data.edit_bones.new(bname)
+    eb.head = tip
+    eb.tail = tip + Vector((0, 0, -0.05))
+    eb.parent = target.data.edit_bones["hand_R"]
+for bname, (stance, m) in GRIPS.items():
+    eb = target.data.edit_bones.new(bname)
+    eb.head = (0, 0, 0)
+    eb.tail = (0, 0.05, 0)
+    eb.matrix = m
+    eb.parent = target.data.edit_bones["hand_R"]
+bpy.ops.object.mode_set(mode="OBJECT")
+
+
+# --------------------------------------------------------------------------------------------------
 # Export
 # --------------------------------------------------------------------------------------------------
 def export():
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     bpy.ops.object.select_all(action="DESELECT")
-    arm_obj.select_set(True)
-    body.select_set(True)
-    for obj in weapon_objects:
+    target.select_set(True)
+    for obj in people_objects + target_weapons:
         obj.select_set(True)
-    bpy.context.view_layer.objects.active = arm_obj
+    bpy.context.view_layer.objects.active = target
     kwargs = dict(
         filepath=OUT,
         export_format="GLB",
@@ -1885,8 +2353,7 @@ def export():
 
 
 export()
-print("tris:", sum(len(p.vertices) - 2 for p in mesh.polygons))
-print("bones:", len(arm_data.bones))
+print("bones:", len(target.data.bones))
 print("actions:", sorted(a.name for a in bpy.data.actions))
 print("wrote", OUT)
 
@@ -1950,6 +2417,7 @@ def preview(directory):
     def at(action, frame):
         arm_obj.animation_data.action = bpy.data.actions[action]
         scene.frame_set(frame)
+
 
     at("idle", 0)
     for v in views:
@@ -2094,5 +2562,82 @@ def preview(directory):
     cam_data.ortho_scale = 2.1
 
 
+def preview_people(directory):
+    """Each body of the packs' people, standing and in the clips that bend it furthest, a gun in hand
+    where the clip has one: `<body>_<clip>_<view>.png`. `--only` keeps the shots whose names start so."""
+    os.makedirs(directory, exist_ok=True)
+    scene.render.engine = "BLENDER_WORKBENCH"
+    scene.display.shading.light = "STUDIO"
+    scene.display.shading.color_type = "VERTEX"
+    scene.render.resolution_x, scene.render.resolution_y = 360, 480
+    for obj in [arm_obj] + look_objects + weapon_objects:
+        obj.hide_render = True
+    cam_data = bpy.data.cameras.new("cam")
+    cam_data.type = "ORTHO"
+    cam_data.ortho_scale = 2.1
+    cam = bpy.data.objects.new("cam", cam_data)
+    scene.collection.objects.link(cam)
+    scene.camera = cam
+    views = {
+        "front": (Vector((0, -6, 0.9)), Vector((0, 0, 0.9))),
+        "side": (Vector((6, 0, 0.9)), Vector((0, 0, 0.9))),
+        "three": (Vector((-4, -5, 3.0)), Vector((0, 0, 0.85))),
+        "lie": (Vector((-3.5, -4.0, 2.4)), Vector((0, -0.85, 0.2))),
+    }
+    target.animation_data_create()
+    # The water's surface for the swimming clips (`SWIM_DEPTH`, 1.3 m over the origin), seen edge on
+    # from the side.
+    bpy.ops.mesh.primitive_cube_add(size=1, location=(0, 0, 1.3))
+    water = bpy.context.active_object
+    water.scale = (0.02, 6, 0.01)
+    water.hide_render = True
+    # (clip, phase 0..1 through it, view)
+    shots = [
+        ("idle", 0.0, "front"),
+        ("idle", 0.0, "three"),
+        ("walk_fwd", 0.25, "side"),
+        ("run_fwd", 0.25, "three"),
+        ("crouch_fwd", 0.25, "three"),
+        ("sit", 0.0, "three"),
+        ("car_out", 0.4, "three"),
+        ("crawl_fwd", 0.15, "lie"),
+        ("zombie_walk", 0.25, "three"),
+        ("zombie_claw", 0.5, "three"),
+        ("swim_tread", 0.15, "front"),
+    ]
+    if STRIP:
+        shots = [(clip, i / 8, view) for clip in STRIP for view in ("side", "three") for i in range(8)]
+    for body_obj in people_objects:
+        name = body_obj.name[len("body_"):]
+        for obj in people_objects:
+            obj.hide_render = obj is not body_obj
+        for clip, phase, view in shots:
+            shot = f"{name}_{clip}_{view}" + (f"_{round(phase * 8)}" if STRIP else "")
+            if not shot.startswith(ONLY):
+                continue
+            gun = None if clip.startswith(("zombie", "swim", "free_")) else "weapon_ak5"
+            for w in target_weapons:
+                w.hide_render = w.name != gun
+            act = bpy.data.actions[clip]
+            target.animation_data.action = act
+            x = act.frame_range[0] + phase * (act.frame_range[1] - act.frame_range[0])
+            scene.frame_set(int(x), subframe=x - int(x))
+            pos, look_at = views[view]
+            # A swimmer lies along the water: a wider view.
+            cam_data.ortho_scale = 3.4 if clip in ("swim_fwd", "dive_fwd", "dive_idle") else 2.1
+            water.hide_render = not (clip.startswith(("swim", "dive")) and view == "side")
+            cam.location = pos
+            cam.rotation_euler = (look_at - pos).to_track_quat("-Z", "Y").to_euler()
+            scene.render.filepath = os.path.join(directory, f"{shot}.png")
+            bpy.ops.render.render(write_still=True)
+
+
 if PREVIEW:
-    preview(PREVIEW)
+    preview_people(PREVIEW)
+# The source rig's own clips, as they are baked before they are retargeted: for working on a clip.
+if PREVIEW_SOURCE:
+    for obj in people_objects + target_weapons:
+        obj.hide_render = True
+    for obj in look_objects + weapon_objects:
+        obj.hide_render = False
+    preview(PREVIEW_SOURCE)

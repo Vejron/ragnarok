@@ -627,7 +627,8 @@ fn the_police_who_get_out_are_the_ones_who_drove_and_leave_their_doors_open_and_
     assert_eq!(officers, crew, "the officers are the two who sat in the car");
     let doors = game.world.entities.of::<Vehicle>(vid).doors;
     assert_eq!(doors.open, 0b11, "both doors are left standing open");
-    assert_eq!(game.seen(vid).and_then(|seen| seen.doors).map(|doors| doors.open), Some(0b11), "and are seen to be");
+    let seen = game.seen(vid).and_then(|seen| seen.doors).expect("its doors are told of");
+    assert!(seen.left > 200 && seen.right > 200, "and are seen to be: {seen:?}");
     // Wanted no more, they walk back and climb in by their doors, its crew again, and shut them.
     wanted::clear(&mut game.world, soldier);
     assert!(until(&mut game, 60.0, |game| crate::mechanics::traffic::crew_of(&game.world, vid).len() == 2), "both are back in");

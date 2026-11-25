@@ -1,4 +1,4 @@
-import type { Character } from '@/render/character'
+import { lookOf, type Character } from '@/render/character'
 import { FLAG_CLAWING, FLAG_CROUCHING, FLAG_DEAD, FLAG_GROUNDED, FLAG_HELD_MASK, FLAG_HELD_SHIFT, KIND_CIVILIAN, KIND_MEDIC, KIND_OFFICER, KIND_SOLDIER, KIND_ZOMBIE } from '@/net/codec'
 import { CARRY_BACKPACK, CARRY_PARCEL, CARRY_LAMP, CARRY_POLING, CARRY_SKIS, SLIDE_MIN_SPEED, STANCE_CHUTE, STANCE_DIVE, STANCE_DOWN, STANCE_PRONE, STANCE_RISE, STANCE_SURRENDER, STANCE_SWIM } from '@/sim/consts'
 import type { Avatars } from '../avatars'
@@ -84,6 +84,7 @@ export class Soldiers implements Presenter<Frame> {
     this.nearby.push({ id, x, y, z })
     const avatar = this.world.avatars.draw(id)
     const zombie = entity.kind!.kind === KIND_ZOMBIE
+    avatar.look = lookOf(entity.kind!.kind)
     avatar.zombie = zombie
     const clawing = zombie && (flags & FLAG_CLAWING) !== 0
     avatar.clawing = clawing

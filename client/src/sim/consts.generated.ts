@@ -2,7 +2,7 @@
 // change the Rust and run `npm run gen:consts`. Client-only constants live in consts.ts.
 
 /** Wire schema version. Bumped on any incompatible protocol or world-format change. */
-export const PROTOCOL_VERSION = 96
+export const PROTOCOL_VERSION = 97
 
 /** Why a page closes its session (`Bye`): the tab is closing or reloading. */
 export const BYE_LEAVING = 0
@@ -660,6 +660,48 @@ export const STEP_OUT_S = 0.8
 
 /** How long after they are out someone shuts the door behind them, seconds. */
 export const DOOR_SHUT_S = 0.25
+
+/**
+ * How hard the air pushes on a door standing open, per (m/s)² of the wind across it, over the door's
+ * mass, per metre: driving forwards blows an open door shut, reversing blows it open.
+ */
+export const DOOR_AIR = 0.03
+
+/** How fast a swinging door's hinge slows its swing, per second. */
+export const DOOR_DAMPING = 1.5
+
+/**
+ * A door left standing still on its hinge stays where it is until something swings it harder than
+ * this, radians a second squared: a parked car's door on a gentle slope stays open.
+ */
+export const DOOR_HINGE_HOLD = 1.0
+
+/**
+ * A door that slams onto its open stop faster than this, radians a second, is wrenched by it, and
+ * takes `DOOR_STOP_HURT` for each radian a second over.
+ */
+export const DOOR_STOP_TEAR = 2.0
+export const DOOR_STOP_HURT = 80.0
+
+/**
+ * A door held against its open stop harder than this, radians a second squared (by the wind of a car
+ * reversing fast), is bent past it, and takes `DOOR_STRAIN_HURT` a second for each radian a second
+ * squared over.
+ */
+export const DOOR_STOP_STRAIN = 1.5
+export const DOOR_STRAIN_HURT = 150.0
+
+/** How much of its swing a door keeps as it bounces back off its open stop. */
+export const DOOR_STOP_BOUNCE = 0.3
+
+/** An open door that snags on something going faster than this past it, m/s, is torn off at once. */
+export const DOOR_SNAG_TEAR = 2.5
+
+/**
+ * What an open door takes for each second it scrapes past something slower than `DOOR_SNAG_TEAR`,
+ * for each m/s it goes past it.
+ */
+export const DOOR_SNAG_HURT = 60.0
 
 /**
  * Where someone who got out by a door stands: this far out from the side of the body, metres, and

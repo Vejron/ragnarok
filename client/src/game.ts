@@ -673,6 +673,8 @@ export class Game {
     if (world.riverTint !== undefined) setWaterRiver(world.riverTint, !!world.tintAll)
     this.scene.groundAt = (x, z) => this.terrain?.heightAt(x, z) ?? 0
     const terrain = this.terrain
+    // Feet stand on the terrain where its tile is loaded; NaN elsewhere lets the layer fade out.
+    this.crowd.groundAt = (x, z) => terrain.sample(x, z) ?? Number.NaN
     this.grass = this.view.grass = this.surroundings.grass = new Grass(world.halfExtent, world.tileSize, (x, z) => terrain.sample(x, z))
     this.scene.scene.add(this.grass.root)
     this.crops = this.view.crops = this.surroundings.crops = new Grass(world.halfExtent, world.tileSize, (x, z) => terrain.sample(x, z), WHEAT)

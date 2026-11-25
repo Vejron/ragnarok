@@ -38,7 +38,7 @@ export function toGame(w: Components): Entity {
     lifted: w.lifted,
     titan: w.titan && { lx: w.titan.lx / 100, ly: w.titan.ly / 100, lz: w.titan.lz / 100, rx: w.titan.rx / 100, ry: w.titan.ry / 100, rz: w.titan.rz / 100, flx: w.titan.flx / 100, fly: w.titan.fly / 100, flz: w.titan.flz / 100, frx: w.titan.frx / 100, fry: w.titan.fry / 100, frz: w.titan.frz / 100, flags: w.titan.flags, step: w.titan.step, weight: w.titan.weight / 255, head_yaw: w.titan.head_yaw / 1000, head_pitch: w.titan.head_pitch / 1000 },
     held: w.held,
-    doors: w.doors,
+    doors: w.doors && { left: w.doors.left / 255, right: w.doors.right / 255, gone: w.doors.gone },
   }
 }
 

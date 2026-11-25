@@ -476,9 +476,10 @@ replicated! {
     Held { vehicle: u32, hand: u8 }
 
     set 30 doors
-    /// A car's doors (`VehicleDef::doors`), by their index: bit `n` of `open` is set while door `n`
-    /// stands open, and of `gone` once it has come off. Left out while every door is shut and on.
-    Doors { open: u8, gone: u8 }
+    /// A car's doors (`VehicleDef::doors`): how far the left (index 0) and the right (index 1) stand
+    /// open, as shares of their swing, and bit `n` of `gone` once door `n` has come off. Left out while
+    /// every door is shut and on.
+    Doors { left: u8 as byte, right: u8 as byte, gone: u8 }
 }
 
 /// The structs a component field can hold a list of, with their fields in wire order and each one's

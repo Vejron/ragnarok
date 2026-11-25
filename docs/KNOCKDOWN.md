@@ -99,7 +99,8 @@ Client only, and only for show. Where a soldier is stays the server's.
   they had.
 - **Getting up:**
   - When the stance leaves `DOWN`, the ragdoll lets go.
-  - The soldier gets up with `getup_back` or `getup_front`, whichever side they lie on, facing the way
+  - The soldier gets up with `getup_back` (the animation library's `LayToIdle`: sits up, rolls onto
+    a knee and stands) or `getup_front` (the build's own), whichever side they lie on, facing the way
     the body lies. That takes 1.1 s, easing out of the ragdoll's pose over the first 0.3 s.
   - Then the stance's clips take over again.
 - **Dying** (`Ragdolls.update`, `Gore.die`):

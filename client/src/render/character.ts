@@ -5,13 +5,14 @@ import { CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS, GETUP_TICKS, PRONE_CENTRE, RUN_SPE
 import { ITEM_AK5, ITEM_AT_RIFLE, ITEM_BANDAGE, ITEM_BRICKS, ITEM_CARL_GUSTAF, ITEM_FLARE, ITEM_GRENADE, ITEM_REVOLVER, ITEM_SHOTGUN, ITEM_SNIPER, fillsHands, itemDef, type ItemDef } from '@/sim/items'
 import { type Limb, poseLimb, splitLimbs } from './gibs'
 import { colorFor } from '@/profile'
-import { LIMB_ALL, LIMB_ARM_L, LIMB_ARM_R, LIMB_LEG_L, LIMB_LEG_R, PART_HEAD } from '@/net/codec'
+import { KIND_CIVILIAN, KIND_MEDIC, KIND_OFFICER, LIMB_ALL, LIMB_ARM_L, LIMB_ARM_R, LIMB_LEG_L, LIMB_LEG_R, PART_HEAD } from '@/net/codec'
 import { buildBackpack } from './backpack'
 import { buildParcel } from './parcel'
 import { Headlamp } from './headlamp'
 import { POLE_REACH, SOLE_DROP, buildPole, buildSki } from './skigear'
 import { buildClub, swingLength, swingPhase } from './golfclub'
 import { smoothstep } from '@/math'
+import { Feet, Follow, Grip, Inertia, Sway } from './ik'
 
 /** The worn backpack's bottom: this high above the feet standing, this much lower crouched, and this far behind the body's middle. */
 const PACK_Y = 0.85
@@ -22,23 +23,58 @@ const FOOT_OFFSET = CAPSULE_HALF_HEIGHT + CAPSULE_RADIUS
 
 export const MODEL_URL = `${import.meta.env.BASE_URL}models/player.glb`
 
-/** A zombie's rags, whatever colour it had, and the grey-green its skin and boots are tinted. */
+/** A zombie's rags, whatever colour it had, the grey-green of its skin and the dirt its clothes and shoes are dulled with. */
 const ZOMBIE_RAGS = 0x4a4636
 const ZOMBIE_SKIN = 0x9db08a
+const ZOMBIE_DIRT = 0xa89e8a
+
+/**
+ * What a person wears (`tools/character/characters.py`, CHARACTER-LOOKS.md): a soldier's uniform with
+ * their colour on the patches, a civilian's own clothes, a police officer's uniform or an ambulance
+ * medic's.
+ */
+export type Look = 'soldier' | 'civilian' | 'officer' | 'medic'
+/** The model's bodies for each look: a person wears the one picked by their id. */
+const BODIES_OF: Record<Look, readonly string[]> = {
+  soldier: ['body_soldier_m', 'body_soldier_f'],
+  officer: ['body_officer_m', 'body_officer_f'],
+  medic: ['body_medic_m', 'body_medic_f'],
+  civilian: ['body_civilian_man', 'body_civilian_sleeves', 'body_civilian_suit', 'body_civilian_woman', 'body_civilian_casual', 'body_civilian_dress', 'body_civilian_tanktop'],
+}
+/** The colours a civilian's top comes in, picked by id: muted, as people dress. */
+const CIVILIAN_TOPS = [0x2f4a6d, 0x8c2f2f, 0xc29a3a, 0x5d6066, 0x3d5a3d, 0xb8a888, 0x2b2c30, 0x7a9cc0, 0x6b4a6e, 0xa0522d, 0xd8d4c8, 0x1f5f6b]
+/** Skin tones, picked by id. */
+const SKIN_TONES = [0xf1c7a5, 0xe8b58f, 0xd9a47c, 0xc08660, 0x9a6844, 0x6e4a32]
+
+/** What a person of entity kind `kind` wears: a soldier's uniform unless they are a civilian, a police officer or a medic. */
+export function lookOf(kind: number | undefined): Look {
+  return kind === KIND_CIVILIAN ? 'civilian' : kind === KIND_OFFICER ? 'officer' : kind === KIND_MEDIC ? 'medic' : 'soldier'
+}
+
+/** One of `n` choices for person `id`, a different spread for each `salt`, so cut, colour and tone vary apart. */
+function pick(id: number, salt: number, n: number): number {
+  let h = Math.imul(id + 1, 0x9e3779b1) ^ Math.imul(salt + 1, 0x85ebca6b)
+  h = Math.imul(h ^ (h >>> 15), 0x2c1b3c6d)
+  h ^= h >>> 12
+  return (h >>> 0) % n
+}
 /** How long a zombie's claw clip takes to play out, seconds: the wind-up the server flags, the blow and the recovery. */
 const ZOMBIE_CLAW_TIME = 0.7
 /** How long a zombie takes to climb out of its grave, seconds: the server's `ZOMBIE_RISE_TICKS`. */
 const ZOMBIE_RISE_TIME = ZOMBIE_RISE_TICKS / TICK_RATE
-/** The ground speed at which a zombie's shambling feet stop sliding, m/s. */
-const ZOMBIE_WALK_SPEED = 1.2
+/** The ground speed at which a zombie's shambling feet stop sliding, m/s: the library's shamble, measured by the build (`SPEED zombie_walk`). */
+const ZOMBIE_WALK_SPEED = 0.86
 
 type Direction = 'fwd' | 'back' | 'left' | 'right'
 const DIRECTIONS: Direction[] = ['fwd', 'back', 'left', 'right']
 
-type Stance = ItemDef['stance']
+/** How the arms hold what is in hand, or `free` with nothing in them: the arms hang and swing. */
+type Stance = ItemDef['stance'] | 'free'
 
 /** Clip name prefix per stance, and the weapon mesh each item shows. Mirrors build_character.py. */
-const PREFIX: Record<Stance, string> = { rifle: '', pistol: 'pistol_', hold: 'hold_', shoulder: 'shoulder_' }
+const PREFIX: Record<Stance, string> = { rifle: '', pistol: 'pistol_', hold: 'hold_', shoulder: 'shoulder_', free: 'free_' }
+/** A clip name's stance prefix, as `PREFIX` gives them. */
+const STANCE_PREFIX = /^(pistol_|hold_|shoulder_|free_)/
 const WEAPON_MESH: Record<number, string> = {
   [ITEM_AK5]: 'weapon_ak5',
   [ITEM_SNIPER]: 'weapon_sniper',
@@ -68,22 +104,44 @@ function limbBit(key: string): number {
   return 0
 }
 
-const MUZZLE_BONE: Record<Stance, string | null> = { rifle: 'muzzle', pistol: 'muzzle_pistol', hold: null, shoulder: 'muzzle_shoulder' }
+const MUZZLE_BONE: Record<Stance, string | null> = { rifle: 'muzzle', pistol: 'muzzle_pistol', hold: null, shoulder: 'muzzle_shoulder', free: null }
+/** The bone on the right hand that each stance lays the left hand on (the build's `GRIPS`): what the left hand is held to. */
+const GRIP_BONE: Record<Stance, string | null> = { rifle: 'grip', pistol: 'grip_pistol', hold: 'grip_hold', shoulder: 'grip_shoulder', free: null }
+/** The bones the clips' pose is smoothed over when it jumps (`Inertia`): the body, not the fingers. */
+const INERTIA_BONES = [
+  'hips',
+  'pelvis',
+  'spine',
+  'chest',
+  'neck',
+  'head',
+  ...['L', 'R'].flatMap((side) => ['clavicle', 'upper_arm', 'forearm', 'hand', 'thigh', 'shin', 'foot'].map((bone) => `${bone}_${side}`)),
+]
+/**
+ * Within this far of the camera, metres (`animationFocus`, a scope's zoom counting as near), a character
+ * gets the runtime layer (ik.ts): feet on the ground, the left hand on the gun, the jumps smoothed out.
+ * Further off nobody sees it.
+ */
+const LAYER_RANGE = 40
+/** How long the body takes to follow the look, half the way, seconds: a moment's weight behind the aim. */
+const AIM_LAG = 0.05
 
 /**
  * Clips baked by `tools/character/build_character.py`, with the ground speed (m/s) at which their
- * feet stop sliding. Every stance has the same set under its own prefix. The speeds follow from each clip's stride and length, so they only change when
- * the script's gait does.
+ * feet stop sliding. Every stance has the same set under its own prefix. The speeds follow from each
+ * clip's stride and length: `walk_fwd` (a jog), `run_fwd` (a sprint) and `crouch_fwd` are the
+ * animation library's, measured by the build (`SPEED ...`); the others are the procedural clips'
+ * strides scaled to the packs' shorter legs (`legs x0.85`).
  */
 const SPEED_OF: Record<string, number> = {
-  walk_fwd: 3.8,
-  walk_back: 3.8,
-  walk_left: 3.1,
-  walk_right: 3.1,
-  run_fwd: 7.3,
-  run_back: 6.4,
-  run_left: 5.8,
-  run_right: 5.8,
+  walk_fwd: 4.39,
+  walk_back: 3.2,
+  walk_left: 2.6,
+  walk_right: 2.6,
+  run_fwd: 6.77,
+  run_back: 5.4,
+  run_left: 4.9,
+  run_right: 4.9,
   // Ground covered by one cycle of the arms, not by the feet: a ski just slides.
   ski_stride: 4.2,
   ski_pole: 9,
@@ -92,10 +150,11 @@ const SPEED_OF: Record<string, number> = {
   ski_pole_hard: 7,
   armed_skate: 3,
   armed_climb: 1.5,
-  crouch_fwd: 1.8,
-  crouch_back: 1.8,
-  crouch_left: 1.5,
-  crouch_right: 1.5,
+  // A deep sneak, played three times over at crouching speed (2 m/s).
+  crouch_fwd: 0.62,
+  crouch_back: 1.5,
+  crouch_left: 1.3,
+  crouch_right: 1.3,
   // The knees push off about 0.4 m/s worth (the build script prints it), but lying flat the slide
   // hardly shows and a crawl cycling that fast looks frantic: this keeps a steady pull at prone speed.
   crawl_fwd: 0.7,
@@ -124,14 +183,14 @@ const STEPS: Record<Direction, { walk: string; run: string; crouch: string; craw
 /** Every stance's stepping clips: the clip's name, and the name before the prefix that `SPEED_OF` knows it by. */
 const STRIDES: { name: string; base: string }[] = Object.values(PREFIX).flatMap((prefix) => LOCOMOTION.map((base) => ({ name: prefix + base, base })))
 /** Each stance's name for a clip, by the name before the prefix. */
-const CLIP_OF: Record<Stance, Map<string, string>> = { rifle: new Map(), pistol: new Map(), hold: new Map(), shoulder: new Map() }
+const CLIP_OF: Record<Stance, Map<string, string>> = { rifle: new Map(), pistol: new Map(), hold: new Map(), shoulder: new Map(), free: new Map() }
 /** A clip's name with the stance's prefix taken off. */
 const BASE_OF = new Map<string, string>()
 
 /** `name` without its stance's prefix: the clip every stance has its own of. */
 function baseOf(name: string): string {
   let base = BASE_OF.get(name)
-  if (base === undefined) BASE_OF.set(name, (base = name.replace(/^(pistol_|hold_|shoulder_)/, '')))
+  if (base === undefined) BASE_OF.set(name, (base = name.replace(STANCE_PREFIX, '')))
   return base
 }
 
@@ -170,8 +229,8 @@ const STILL_SPEED = 0.3
 /** Swimming: the speed under which it treads water (or hangs under it) and from which it strokes in full, m/s. */
 const SWIM_STILL = 0.3
 const SWIM_FULL = 1.2
-/** Water covered by one stroke of `swim_fwd` and `dive_fwd`, metres (an unhurried stroke every 1.3 s at swimming speed), and the slowest the strokes go, m/s. */
-const SWIM_STROKE = 2.6
+/** Water covered by one stroke of `swim_fwd` (the animation library's front crawl, `STROKE swim_fwd` from the build) and `dive_fwd`, metres, and the slowest the strokes go, m/s. */
+const SWIM_STROKE = 2.38
 const SWIM_PACE = 0.6
 /** The steepest a diver's body tips towards where it swims, radians, and how fast it gets there, per second. */
 const DIVE_TILT_MAX = 1.1
@@ -225,9 +284,17 @@ const TURN_LEAN = 0.025
 const SPEED_LEAN = 0.02
 const LEAN_MAX = 0.22
 const LEAN_RATE = 6
-/** A landing sinks into a crouch this much per m/s of fall, at most `LAND_MAX`. */
+/** A landing on the move sinks into a crouch this much per m/s of fall, at most `LAND_MAX`. */
 const LAND_DIP = 0.07
 const LAND_MAX = 0.85
+/**
+ * Standing, a landing plays `jump_land` (the animation library's: it squats under the fall and stands
+ * up again) once it lands faster than `LAND_FROM` m/s, in full from `LAND_FULL`. It fades out over the
+ * last `LAND_FADE` of the clip.
+ */
+const LAND_FROM = 3
+const LAND_FULL = 7
+const LAND_FADE = 0.45
 /** Hit reactions: the springs' stiffness and damping, and how hard a hit kicks, rad/s (`KICK_MIN` plus this per point lost). */
 const SPRING_K = 260
 const SPRING_C = 16
@@ -237,10 +304,11 @@ const KICK_MAX = 14
 const RECOIL_KICK = 0.09
 const RECOIL_DECAY = 14
 /**
- * Height of the head's middle above the model's origin in the `sit` clip: the hips come down 0.42 m
- * (`SIT_DROP` in build_character.py). A seated player is placed so their head lands on the seat's head point.
+ * Height of the head's middle above the model's origin in the `sit` clip, as the build script prints
+ * it (`HEAD sit`, plus the 0.1 m from the head bone to the head's middle). A seated player is placed
+ * so their head lands on the seat's head point.
  */
-export const SIT_HEAD = 1.22
+export const SIT_HEAD = 1.25
 /** Where in the climb out of a car (`car_out`, 0..1) the body moves from over the seat to over the door's spot: between these. */
 const STEP_ACROSS = [0.1, 0.8] as const
 
@@ -250,8 +318,10 @@ export interface DoorStep {
   side: number
   spot: Vector3
 }
-/** Height of the head's middle above the model's origin standing: `SIT_HEAD` with the hips back up `SIT_DROP`. */
-const STAND_HEAD = SIT_HEAD + 0.42
+/** How far behind the model's origin the head is in the `sit` clip, metres: the seat's head point is moved forward by it. */
+const SIT_HEAD_BACK = 0.057
+/** Height of the head's middle above the model's origin standing (`HEAD idle` from the build, plus 0.1 m). */
+const STAND_HEAD = 1.57
 /** How far a seated body turns at the waist and chest towards where it aims, either way, radians. */
 const SIT_TWIST = 1.7
 /** Of that turn, the share the spine takes; the chest takes the rest. */
@@ -290,6 +360,8 @@ export class Crowd {
   readonly outfits = new Set<Material>()
   /** Each skinned mesh's limbs, cut once, for gibs. */
   readonly limbs = new Map<Geometry, Limb[]>()
+  /** The terrain's height under (x, z), which the feet are stood on; null where it is not known. */
+  groundAt: ((x: number, z: number) => number) | null = null
   private count = 0
 
   async load(url = MODEL_URL) {
@@ -379,7 +451,7 @@ const WOUND_BONES: [string, string | null][] = [
     [`shin_${side}`, `foot_${side}`],
   ]),
 ]
-const HEAD_LENGTH = 0.25
+const HEAD_LENGTH = 0.21
 
 /**
  * The parts of a ragdoll (`crates/sim/src/ragdoll.rs`, in its order), each as the bones its segment
@@ -474,7 +546,18 @@ export class Character {
   private readonly weights = new Map<string, number>()
   /** The weight each clip is pulled towards this frame; kept from frame to frame, and zeroed at the start of each. */
   private readonly targets = new Map<string, number>()
+  /**
+   * Its own materials: `outfit` tinted per look (a soldier's patches, a civilian's top), `kit` (the `gear` material) in its
+   * final colours (white, but dulled on a zombie) and `skin` tinted with a skin tone.
+   */
   private readonly outfit: Material
+  private readonly kit: Material
+  private readonly skin: Material
+  /** The model's bodies by name, one shown for the look worn. */
+  private readonly bodies = new Map<string, Node>()
+  /** What it wears, and the player's colour, which a soldier shows on their patches. */
+  private worn: Look = 'soldier'
+  private color: number
   private readonly chest: Node | null
   private readonly spine: Node | null
   private readonly hips: Node | null
@@ -615,10 +698,6 @@ export class Character {
   private struckCount: number | null = null
   /** Drawn as a zombie: in rags, grey-green, shambling with its arms out. */
   private undead = false
-  /** The meshes in the shared `gear` material, and a zombie's own tinted copy of it. */
-  private readonly gearMeshes: Mesh[] = []
-  private gearMaterial: Material | null = null
-  private zombieGear: Material | null = null
   /** Seconds into a zombie's claw, or -1 when it is not clawing; and whether the server said so last. */
   private clawTime = -1
   private clawSaid = false
@@ -628,20 +707,37 @@ export class Character {
   private shamble = 0
   /** Feet that have come down since `takeSteps`, each by how hard: 0 a crawl's shuffle, up to 1 a sprint. */
   private readonly steps: number[] = []
+  /** Seconds into the landing clip (`jump_land`), or -1 for none; and how much of it plays, by how hard it landed. */
+  private landTime = -1
+  private landHard = 0
+  /** The runtime layer (ik.ts), near the camera only: feet on the ground, the left hand on the gun, jumps in the pose smoothed, the head's sway. */
+  private readonly feet: Feet
+  private readonly grip: Grip
+  private readonly inertia: Inertia
+  private readonly sway = new Sway()
+  /** The aim's pitch and the waist's twist, as the body follows them a moment late. */
+  private readonly aimPitch = new Follow(AIM_LAG)
+  private readonly aimTwist = new Follow(AIM_LAG)
+  /** Each stance's grip bone, and the clips of its own that lay the left hand on it (all but the crawls). */
+  private readonly gripBones = new Map<Stance, Node>()
+  private readonly gripClips = new Map<Stance, string[]>()
+  /** Whether it was near enough for the runtime layer when last posed. */
+  private layered = false
 
-  constructor(private readonly crowd: Crowd, id: number) {
+  constructor(private readonly crowd: Crowd, private readonly id: number) {
     const asset = crowd.asset
     if (!asset) throw new Error('Crowd.load() must finish before characters are created')
     this.object = asset.scene.clone()
-    this.outfit = toonMaterial({ vertexColors: true, color: colorFor(id) })
+    this.color = colorFor(id)
+    this.outfit = toonMaterial({ vertexColors: true, color: this.color, name: 'outfit' })
+    this.kit = toonMaterial({ vertexColors: true, color: 0xffffff, name: 'gear' })
+    this.skin = toonMaterial({ vertexColors: true, color: SKIN_TONES[pick(id, 3, SKIN_TONES.length)]!, name: 'skin' })
+    const own: Record<string, Material> = { outfit: this.outfit, gear: this.kit, skin: this.skin }
     this.object.traverse((node) => {
-      if (node instanceof Mesh && node.material.name === 'outfit') node.material = this.outfit
-      if (node instanceof Mesh && node.material.name === 'gear') {
-        this.gearMeshes.push(node)
-        this.gearMaterial = node.material
-      }
+      if (node instanceof Mesh && own[node.material.name]) node.material = own[node.material.name]!
+      if (node.name.startsWith('body_') && !this.bodies.has(node.name) && !(node.parent?.name === node.name)) this.bodies.set(node.name, node)
     })
-    crowd.outfits.add(this.outfit)
+    for (const material of [this.outfit, this.kit, this.skin]) crowd.outfits.add(material)
     crowd.root.add(this.object)
     crowd.adjust(1)
 
@@ -678,9 +774,28 @@ export class Character {
       if (mesh) this.weapons.set(Number(item), mesh)
     }
     this.showWeapon()
+    this.dress()
 
     this.animator = new Animator(this.object, [...asset.clips.values()])
     this.actions = this.animator.actions
+    const bone = (name: string) => this.bones.get(name)
+    this.feet = new Feet(bone)
+    this.grip = new Grip(bone)
+    this.inertia = new Inertia(
+      INERTIA_BONES.flatMap((name) => this.bones.get(name) ?? []),
+      ['root', 'hips'].flatMap((name) => this.bones.get(name) ?? []),
+    )
+    for (const stance of Object.keys(GRIP_BONE) as Stance[]) {
+      const grip = GRIP_BONE[stance] ? this.bones.get(GRIP_BONE[stance]!) : undefined
+      if (!grip) continue
+      this.gripBones.set(stance, grip)
+      const prefix = PREFIX[stance]
+      const own = [...this.actions.keys()].filter((name) => {
+        const base = baseOf(name)
+        return prefix + base === name && this.actions.has(`free_${base}`) && !base.startsWith('crawl_')
+      })
+      this.gripClips.set(stance, own)
+    }
     for (const [name, action] of this.actions) {
       // Weights and time are driven by hand, so the animator only has to sample.
       action.timeScale = 0
@@ -747,16 +862,46 @@ export class Character {
     this.steps.push((0.25 * crouch + 0.5 * walk + run) / feet)
   }
 
-  /** Repaints the outfit: the player's chosen colour can arrive after their soldier. A zombie keeps its rags. */
+  /**
+   * The player's colour, which can arrive after their soldier: on a soldier's patches and on the
+   * canopy. Anyone else's clothes keep their own colours.
+   */
   setColor(hex: number) {
-    if (this.undead) return
-    this.paint(hex)
+    this.color = hex
+    this.canopy.setColor(hex)
+    this.dress()
   }
 
-  private paint(hex: number) {
-    this.outfit.color.setHex(hex)
-    this.canopy.setColor(hex)
-    this.outfit.needsUpdate()
+  /** What it wears (`Look`). */
+  set look(look: Look) {
+    if (look === this.worn) return
+    this.worn = look
+    this.dress()
+  }
+
+  get look(): Look {
+    return this.worn
+  }
+
+  /** The body the look shows, picked by id: for tests and debugging. A zombie wears a civilian's. */
+  get dressed(): string {
+    const bodies = BODIES_OF[this.undead ? 'civilian' : this.worn]
+    return bodies[pick(this.id, 1, bodies.length)]!
+  }
+
+  /**
+   * Shows the body of the look worn and tints it: a soldier's patches in the player's colour, a
+   * civilian's top in a colour of their own, and a uniform as it is. A zombie wears a civilian's cut in
+   * rags, its skin grey-green.
+   */
+  private dress() {
+    const body = this.dressed
+    for (const [name, node] of this.bodies) node.visible = name === body
+    const top = this.undead ? ZOMBIE_RAGS : this.worn === 'soldier' ? this.color : this.worn === 'civilian' ? CIVILIAN_TOPS[pick(this.id, 4, CIVILIAN_TOPS.length)]! : 0xffffff
+    this.outfit.color.setHex(top)
+    this.kit.color.setHex(this.undead ? ZOMBIE_DIRT : 0xffffff)
+    this.skin.color.setHex(this.undead ? ZOMBIE_SKIN : SKIN_TONES[pick(this.id, 3, SKIN_TONES.length)]!)
+    for (const material of [this.outfit, this.kit, this.skin]) material.needsUpdate()
   }
 
   update(
@@ -765,18 +910,18 @@ export class Character {
     this.position.set(position[0]!, position[1]!, position[2]!)
     this.pitch = pitch
     this.fadeFlash(dt)
-    if (!this.shown || this.gibbed) return
+    if (!this.shown || this.gibbed) return this.unlayer()
     // A ragdoll poses it (`driveRagdoll`), or a body lies as its ragdoll left it; nothing here does.
     if (this.ragdoll || this.still) {
       this.canopy.update(false, dt)
-      return
+      return this.unlayer()
     }
     // Far off, the pose waits for a later frame; the body still goes where it is. A turn (`turn`)
     // adds to the bones' pose, so the whole pose is skipped, never just the clips.
     // Dead, its ragdoll is made from the pose it died in (`ragdollSegments`): it holds that pose until then.
     if (this.down && this.placed) {
       this.object.position.copy(this.position).add(this.posedOffset)
-      return
+      return this.unlayer()
     }
     if (this.placed && this.skipsFrame()) {
       this.unposed += dt
@@ -804,7 +949,19 @@ export class Character {
     this.fall = chase(this.fall, falling ? 1 : 0, FALL_RATE, dt)
     this.hang = chase(this.hang, ((chute && !grounded) || this.handsUp) && !this.down ? 1 : 0, FALL_RATE, dt)
     // A landing sinks into a crouch as deep as the fall was hard, and comes back up.
-    if (grounded && !this.wasGrounded && !this.down) this.crouch = Math.max(this.crouch, Math.min(LAND_MAX, -this.fallSpeed * LAND_DIP))
+    if (grounded && !this.wasGrounded && !this.down) {
+      // Standing, the landing clip takes the fall; on the move the crouch clips dip under it.
+      const onTheMove = smoothstep(STILL_SPEED, FULL_STEP, Math.hypot(vx, vz))
+      this.crouch = Math.max(this.crouch, Math.min(LAND_MAX, -this.fallSpeed * LAND_DIP) * onTheMove)
+      if (-this.fallSpeed > LAND_FROM && !swimming) {
+        this.landTime = 0
+        this.landHard = 0.5 + 0.5 * smoothstep(LAND_FROM, LAND_FULL, -this.fallSpeed)
+      }
+    }
+    // Off the ground again, or played out, the landing is over.
+    const landClip = this.actions.get(this.clip('jump_land'))
+    if (this.landTime >= 0) this.landTime = !grounded || !landClip || this.landTime > landClip.clip.duration ? -1 : this.landTime + dt
+    const landing = landClip && this.landTime >= 0 ? this.landHard * (1 - smoothstep((1 - LAND_FADE) * landClip.clip.duration, landClip.clip.duration, this.landTime)) : 0
     if (grounded) this.fallSpeed = 0
     this.wasGrounded = grounded
 
@@ -888,7 +1045,8 @@ export class Character {
     const addressing = golfing ? (this.swingTime >= 0 ? 1 : 1 - moving) : 0
     targets.set('golf_swing', standing * addressing)
     this.golf = chase(this.golf, standing * addressing, BLEND_RATE, dt)
-    set('idle', standing * (1 - moving) * (1 - addressing))
+    set('idle', standing * (1 - moving) * (1 - addressing) * (1 - landing))
+    set('jump_land', standing * (1 - moving) * (1 - addressing) * landing)
     set('crouch_idle', low * (1 - moving))
     set('crawl_idle', crawl * (1 - moving))
     set('slide', sliding_)
@@ -959,6 +1117,7 @@ export class Character {
       action.weight = w
       if (base === 'idle' || base === 'crouch_idle' || base === 'crawl_idle' || base === 'slide' || base === 'ski_glide' || base === 'ski_tuck' || base === 'ski_plow' || base === 'armed_glide' || base === 'armed_tuck' || base === 'armed_plow') action.time = this.idleTime % action.clip.duration
       else if (base === 'ski_air' || base === 'armed_air') action.time = this.clock % action.clip.duration
+      else if (base === 'jump_land') action.time = Math.min(Math.max(this.landTime, 0), action.clip.duration - 1e-4)
       else if (base === 'jump_air') action.time = (this.idleTime / (idle?.clip.duration ?? 1)) * action.clip.duration
       else if (base === 'freefall' || base === 'chute') action.time = this.clock % action.clip.duration
       else if (base === 'getup_back' || base === 'getup_front') action.time = Math.min(1, (this.rising?.time ?? GETUP_TIME) / GETUP_TIME) * action.clip.duration
@@ -973,15 +1132,17 @@ export class Character {
     }
 
     this.animator.update(dt)
+    const near = this.nearCamera()
+    this.smooth(near, dt)
     this.head?.scale.setScalar(this.headless ? 0.001 : 1)
     this.hideLimbs()
     this.recoil = chase(this.recoil, 0, RECOIL_DECAY, dt)
-    this.aim()
+    this.aim(dt)
     // The waist and chest take what the legs have not turned, so the gun points where it looks.
     // On skis with a gun the legs go the way the skis do and the torso alone carries it to the look.
     const heading = speedNow > 0.5 ? Math.atan2(-vx, -vz) : body
     const skiTurn = this.skiGun * (1 - this.air) * wrap(yaw + Math.max(-SKI_TWIST, Math.min(SKI_TWIST, wrap(heading - yaw))) - body)
-    const twist = wrap(yaw - body - skiTurn) * (1 - this.lie) * (1 - this.air) * (1 - this.golf) * (1 - this.under) * (this.rising || this.graveTime >= 0 ? 0 : 1)
+    const twist = this.aimTwist.step(wrap(yaw - body - skiTurn) * (1 - this.lie) * (1 - this.air) * (1 - this.golf) * (1 - this.under) * (this.rising || this.graveTime >= 0 ? 0 : 1), dt)
     this.turn(this.spine, twist * TWIST_SPINE, AXIS_Y)
     this.turn(this.chest, twist * (1 - TWIST_SPINE), AXIS_Y)
     this.live(dt, speedNow, standing * (1 - moving))
@@ -989,10 +1150,70 @@ export class Character {
     this.lean(dt, vx, vz, body, ground * (1 - this.lie))
     // A slide carries the body along its heading, rifle and all, rather than where the camera looks.
     const turn = Math.atan2(Math.sin(heading - body), Math.cos(heading - body))
-    this.place(body + skiTurn + turn * Math.max(this.slide, this.ski))
+    const facing = body + skiTurn + turn * Math.max(this.slide, this.ski)
+    this.place(facing)
+    if (near) {
+      this.swayHead(facing, ground * (1 - this.lie), dt)
+      // Stood on the ground under each foot: not in the air, lying, sliding, on skis, getting up or out of a grave.
+      const settled = this.rising || this.graveTime >= 0 ? 0 : 1
+      this.fitFeet(facing, ground * walking * (1 - this.lie) * (1 - this.slide) * settled, dt)
+      this.holdGrip()
+    }
     this.easeUp()
     if (this.onSkis) this.fitSkis()
     this.posedOffset.copy(this.object.position).sub(this.position)
+  }
+
+  /** Whether it is near enough the camera for the runtime layer (`LAYER_RANGE`). */
+  private nearCamera() {
+    const focus = animationFocus
+    return Math.hypot(this.position.x - focus.x, this.position.y - focus.y, this.position.z - focus.z) / focus.zoom < LAYER_RANGE
+  }
+
+  /** Eases a jump in the clips' pose out (`Inertia`), near the camera; further off it forgets the pose. */
+  private smooth(near: boolean, dt: number) {
+    if (near && !this.layered) this.inertia.forget()
+    this.layered = near
+    if (near) this.inertia.apply(dt)
+  }
+
+  /** Lets go of everything the runtime layer holds: something else has the bones, or it is not drawn. */
+  private unlayer() {
+    this.inertia.forget()
+    this.feet.reset()
+    this.sway.reset()
+    this.layered = false
+  }
+
+  /** The head and neck nod and roll with the hips' starts, stops and bob (`Sway`), by `on`. */
+  private swayHead(facing: number, on: number, dt: number) {
+    const hips = this.hips
+    if (!hips) return
+    this.sway.step(hips.getWorldPosition(SCRATCH.at), facing, on, dt)
+    this.turn(this.neck, this.sway.nod * 0.4, AXIS_X)
+    this.turn(this.head, this.sway.nod * 0.6, AXIS_X)
+    this.turn(this.neck, this.sway.roll * 0.4, AXIS_Z)
+    this.turn(this.head, this.sway.roll * 0.6, AXIS_Z)
+  }
+
+  /** Stands the feet on the terrain under them (`Feet`), `wanted` of the way, facing `facing`. */
+  private fitFeet(facing: number, wanted: number, dt: number) {
+    const ground = this.crowd.groundAt
+    if (!ground || this.lostLimbs & (LIMB_LEG_L | LIMB_LEG_R)) {
+      this.feet.reset()
+      return
+    }
+    // The game's yaw 0 faces -Z.
+    this.feet.fit(this.object, ground, wanted, SCRATCH.forward.set(-Math.sin(facing), 0, -Math.cos(facing)), dt)
+  }
+
+  /** Lays the left hand on what the right holds (`Grip`), as much as the clips holding it in both hands count. */
+  private holdGrip() {
+    const grip = this.gripBones.get(this.stance)
+    if (!grip || this.lostLimbs & (LIMB_ARM_L | LIMB_ARM_R) || !this.object.visible) return
+    let weight = 0
+    for (const name of this.gripClips.get(this.stance)!) weight += this.weights.get(name) ?? 0
+    this.grip.hold(grip, Math.min(1, weight))
   }
 
   /**
@@ -1274,7 +1495,7 @@ export class Character {
     this.position.copy(head)
     this.pitch = pitch
     this.fadeFlash(dt)
-    if (!this.shown || this.gibbed) return
+    if (!this.shown || this.gibbed) return this.unlayer()
 
     // Getting in or out by a door: how far through it, eased between the snapshots that say, and
     // taken as it is when it starts (getting in starts outside, at 1).
@@ -1301,10 +1522,13 @@ export class Character {
       else if (name.endsWith(pose)) action.time = this.idleTime
     }
     this.animator.update(dt)
+    const near = this.nearCamera()
+    this.smooth(near, dt)
+    this.feet.reset()
     this.head?.scale.setScalar(this.headless ? 0.001 : 1)
     this.hideLimbs()
     this.recoil = chase(this.recoil, 0, RECOIL_DECAY, dt)
-    this.aim()
+    this.aim(dt)
 
     // The legs stay with the seat; the waist and chest turn towards the aim, as far as a body turns.
     const forward = SCRATCH.forward.set(0, 0, -1).applyQuaternion(rotation)
@@ -1317,7 +1541,7 @@ export class Character {
     // The model faces +Z; the vehicle's nose is its -Z.
     this.object.quaternion.copy(rotation).multiply(SCRATCH.turn.setFromAxisAngle(AXIS_Y, Math.PI))
     const up = SCRATCH.axis.set(0, 1, 0).applyQuaternion(rotation)
-    this.object.position.copy(head).addScaledVector(up, -(standing && !stepping ? STAND_HEAD : SIT_HEAD))
+    this.object.position.copy(head).addScaledVector(up, -(standing && !stepping ? STAND_HEAD : SIT_HEAD)).addScaledVector(forward, SIT_HEAD_BACK)
     if (stepping) {
       // The clip rises from the seat itself; the body is moved out to the door's spot level with the
       // seat, mostly while it ducks under the roof in the middle of the climb.
@@ -1328,6 +1552,7 @@ export class Character {
     }
     this.placed = true
     this.object.visible = this.shown && !this.gibbed
+    if (near) this.holdGrip()
   }
 
   /** Fades a hit's whitening. */
@@ -1336,8 +1561,10 @@ export class Character {
     this.flashLeft = Math.max(0, this.flashLeft - dt)
     // Faint: the wound is what shows where it was hit; this only says it was.
     const glow = (this.flashLeft / HIT_FLASH) * 0.35
-    this.outfit.emissive.set(glow, glow, glow)
-    this.outfit.needsUpdate()
+    for (const material of [this.outfit, this.kit, this.skin]) {
+      material.emissive.set(glow, glow, glow)
+      material.needsUpdate()
+    }
   }
 
   private place(yaw: number) {
@@ -1573,7 +1800,8 @@ export class Character {
     const pieces: { key: string; object: Group }[] = []
     this.object.updateWorldMatrix(true, true)
     this.object.traverse((node) => {
-      if (!(node instanceof SkinnedMesh) || node.name.startsWith('weapon_')) return
+      // Only the body worn breaks up: not the guns, nor the looks and the cap it does not wear.
+      if (!(node instanceof SkinnedMesh) || node.name.startsWith('weapon_') || !this.isShown(node)) return
       const mesh = node
       let limbs = this.crowd.limbs.get(mesh.geometry)
       if (!limbs) this.crowd.limbs.set(mesh.geometry, (limbs = splitLimbs(mesh)))
@@ -1592,17 +1820,24 @@ export class Character {
     return pieces
   }
 
-  /** Leans the torso (and the rifle it carries) with the camera pitch and the last shot's kick. */
-  private aim() {
+  /** Whether `node` is shown, as far up as the character's own root. */
+  private isShown(node: Node): boolean {
+    for (let at: Node | null = node; at && at !== this.object; at = at.parent) if (!at.visible) return false
+    return true
+  }
+
+  /** Leans the torso (and the rifle it carries) with the camera pitch, followed a moment late, and the last shot's kick. */
+  private aim(dt: number) {
     if (this.down) return
+    const pitch = this.aimPitch.step(this.pitch, dt)
     // Falling flat or hanging in the harness, there is nothing to aim.
     // A golfer's look is down at the ball, which the swing clip already has.
     // A swimmer has nothing in hand, and the strokes hold the body as it swims.
     const held = (1 - Math.max(this.fall, this.hang)) * (1 - this.golf) * (1 - this.wet)
-    const lean = (-this.pitch - this.recoil) * held
+    const lean = (-pitch - this.recoil) * held
     this.turn(this.spine, lean * AIM_SPINE, AXIS_X)
     this.turn(this.chest, lean * AIM_CHEST, AXIS_X)
-    this.turn(this.neck, -this.pitch * AIM_NECK * held, AXIS_X)
+    this.turn(this.neck, -pitch * AIM_NECK * held, AXIS_X)
   }
 
   /** Rotates a bone about `axis` in model space: X bends it forward and back, Y turns it. */
@@ -1686,16 +1921,8 @@ export class Character {
   /** Drawn as a zombie (`KIND_ZOMBIE`): rags, grey-green skin, and its own clips standing and walking. */
   set zombie(on: boolean) {
     if (on === this.undead) return
-    if (on) {
-      this.paint(ZOMBIE_RAGS)
-      if (!this.zombieGear) {
-        this.zombieGear = toonMaterial({ vertexColors: true, color: ZOMBIE_SKIN })
-        this.crowd.outfits.add(this.zombieGear)
-      }
-    }
     this.undead = on
-    const gear = on ? this.zombieGear : this.gearMaterial
-    if (gear) for (const mesh of this.gearMeshes) mesh.material = gear
+    this.dress()
     if (!on) this.clawTime = -1
   }
 
@@ -1730,7 +1957,7 @@ export class Character {
     let idle = 0
     let walk = 0
     for (const [name, weight] of targets) {
-      const base = name.replace(/^(pistol_|hold_|shoulder_)/, '')
+      const base = name.replace(STANCE_PREFIX, '')
       if (base === 'idle') idle += weight
       else if (base.startsWith('walk_') || base.startsWith('run_')) walk += weight
       else continue
@@ -1763,7 +1990,7 @@ export class Character {
   set held(item: number) {
     if (item === this.item) return
     this.item = item
-    this.stance = itemDef(item)?.stance ?? 'hold'
+    this.stance = itemDef(item)?.stance ?? 'free'
     this.showGear()
   }
 
@@ -1908,11 +2135,9 @@ export class Character {
   dispose() {
     this.canopy.dispose()
     this.object.removeFromParent()
-    this.crowd.outfits.delete(this.outfit)
-    this.outfit.dispose()
-    if (this.zombieGear) {
-      this.crowd.outfits.delete(this.zombieGear)
-      this.zombieGear.dispose()
+    for (const material of [this.outfit, this.kit, this.skin]) {
+      this.crowd.outfits.delete(material)
+      material.dispose()
     }
     this.crowd.adjust(-1)
   }

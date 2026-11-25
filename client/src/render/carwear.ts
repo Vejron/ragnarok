@@ -1,7 +1,7 @@
 import { Geometry, Group, Mesh, Color, type Material, type Node, Matrix4, Quaternion, Vector3 } from '@ragnarok/engine'
 import { toonMaterial } from './toon'
 import { DAMAGE_FRONT, DAMAGE_LEFT, DAMAGE_REAR, DAMAGE_RIGHT, DAMAGE_WHEELS, WHEEL_GONE } from '@/net/codec'
-import { DOOR_OPEN_S, DOOR_SWING } from '@/sim/consts.generated'
+import { DOOR_SWING } from '@/sim/consts.generated'
 import type { Debris } from './debris'
 
 /**
@@ -33,6 +33,11 @@ const DULL = Color.hex(0x4a4744)
 const CHARRED = Color.hex(0x1a1817)
 
 const WHEELS = ['wheel_FL', 'wheel_FR', 'wheel_RL', 'wheel_RR'] as const
+/** How fast a drawn door catches up with how far open the server last said it is, per second: it smooths the steps between snapshots. */
+const DOOR_FOLLOW = 25
+/** A door that comes off standing open was snagged and torn off: it is left behind with this share of the car's velocity. */
+const TORN_KEEPS = 0.15
+
 /** A saloon's front doors, by their index in `VehicleDef.doors`: the driver's on the left, then the passenger's. */
 const DOORS = ['door_FL', 'door_FR'] as const
 
@@ -80,6 +85,8 @@ export class CarWear {
   private readonly doors: (Node | null)[]
   private readonly doorAngle = [0, 0]
   private readonly doorGone = [false, false]
+  /** Scratch: the velocity a torn-off door is thrown with. */
+  private readonly leftBehind = new Vector3()
   private readonly baseColor: Color
   private hurt = false
 
@@ -114,25 +121,30 @@ export class CarWear {
   }
 
   /**
-   * Swings each door towards open or shut (bit `n` of `open`) over `dt` seconds, at the pace the server
-   * opens them, and throws off into `debris` any whose bit of `gone` is set; one put back by a repair
-   * hangs again.
+   * Swings each door over `dt` seconds towards how far open the server says it is (`left` and `right`,
+   * shares of its swing), and throws off into `debris` any whose bit of `gone` is set; one put back by a
+   * repair hangs again.
    */
-  swingDoors(open: number, gone: number, dt: number, debris: Debris | null, velocity: Vector3) {
-    const pace = (DOOR_SWING / DOOR_OPEN_S) * dt
+  swingDoors(left: number, right: number, gone: number, dt: number, debris: Debris | null, velocity: Vector3) {
+    const follow = 1 - Math.exp(-DOOR_FOLLOW * dt)
     this.doors.forEach((door, n) => {
       if (!door) return
       if (gone & (1 << n)) {
-        if (!this.doorGone[n]) this.shed(n, debris, velocity)
+        if (this.doorGone[n]) return
+        // One that was standing open was torn off by what it snagged on, and stays there; a shut one
+        // is thrown off with the car.
+        const torn = this.doorAngle[n]! > 0.2 * DOOR_SWING
+        this.shed(n, debris, torn ? this.leftBehind.copy(velocity).multiplyScalar(TORN_KEEPS) : velocity)
         return
       }
       if (this.doorGone[n]) {
         this.doorGone[n] = false
         door.visible = true
       }
-      const want = open & (1 << n) ? DOOR_SWING : 0
+      const want = (n === 0 ? left : right) * DOOR_SWING
       const angle = this.doorAngle[n]!
-      this.doorAngle[n] = angle + Math.max(-pace, Math.min(pace, want - angle))
+      const next = angle + (want - angle) * follow
+      this.doorAngle[n] = Math.abs(want - next) < 1e-3 ? want : next
       // The left door swings out to the left, a turn the other way about +Y from the right one's.
       door.rotation.y = (n === 0 ? -1 : 1) * this.doorAngle[n]!
     })

@@ -15,7 +15,7 @@ Render the clip from the side, from above and from the front, and look at every 
 
 ```sh
 B=/Applications/Blender.app/Contents/MacOS/Blender
-$B -b -P tools/character/build_character.py -- --out /tmp/x.glb --preview DIR --only swim
+$B -b -P tools/character/build_character.py -- --out /tmp/x.glb --preview-source DIR --only swim
 $B -b -P tools/character/sheet.py -- DIR swim_fwd      # one sheet: a row a view, a column a frame
 ```
 
@@ -31,6 +31,10 @@ $B -b -P tools/character/sheet.py -- DIR swim_fwd      # one sheet: a row a view
 - **Sideways rotation flips overhead.** The `pose_rot` turn that spreads a hanging arm or leg outward pulls it inward once the limb points up or forward. Do not reason in Euler angles for a limb that leaves its rest direction: say where it points instead (`stroke_arm` takes directions in the root's frame and works for both sides).
 - **Tip the body about a point.** `pitch_about(angle, pivot)` turns the root about a height on the body and not about the feet, so a flat swimmer stays where the capsule is.
 - **Axes:** x is the soldier's left, -y is forward, z is up.
+- **Fingers pose themselves.** `bake` closes the hands on the stance's grip (`GRIP_CURL`). A clip with empty hands is baked through `empty_handed(fn, curl)`, which opens them (or hooks them, for a larger `curl`).
+- **You pose the source rig; the game draws the packs' people.** Every clip is posed on the script's own rig and then retargeted onto the people's skeleton (CHARACTER-LOOKS.md). Arms that hold something are solved onto the source's hands. Look at the result with `--preview DIR --only <body>`, and at the source with `--preview-source DIR`. The people's legs are 0.85 of the source's, so a stride shrinks with them.
+- **Look in the animation library first.** Quaternius' Universal Animation Library (CC0, `library.py`) already drives standing, the forward jog and sprint, crouching, jumping and landing, sitting, swimming at the surface, getting up off the back and the zombies' standing and walking (`FROM_LIBRARY`). A row can be fitted to where the client expects the body (`fit`), played once (`once`), or borrow the stance's upper body from another clip (`upper`). Before posing a new move by hand, check whether the library has it (`Library().clips`, or https://quaternius.com/animviewer.html); a row in `FROM_LIBRARY` is far less work and moves better. With something held, the library gives the legs and the stance's clip the upper body, so the source clip of that name must still exist. Judge a cycle with `--preview DIR --only <body> --strip <clip>`, and copy the speed the build prints (`SPEED ... (the library's)`) into `SPEED_OF`.
+- **Five stances.** `free_` is empty hands: give a new clip's arms something to do when `CURRENT == "free"` (they hang at rest otherwise), as `gait` and `idle` do.
 
 ## 3. Make it move like a body
 
@@ -45,6 +49,7 @@ $B -b -P tools/character/sheet.py -- DIR swim_fwd      # one sheet: a row a view
 - **Pace:** a clip the feet drive goes in `SPEED_OF` with the ground speed at which its feet stop sliding. A clip that covers distance some other way advances a phase by distance, as `SWIM_STROKE` (metres a cycle) does.
 - **A clip played by progress** rather than by time (`car_out`, getting out of a car, which the server's `Seated.step` drives, DOORS.md): set `action.time = progress × duration` (a hair under the duration, so it does not wrap) and give it all the weight at once, with no blending. Make its first and last frames the poses it starts and ends from (`car_out` starts as `sit` and ends as `idle`), so the switches do not jump, and keep the root where it is: the client moves the body along the path. Ease the progress between snapshots, which come less often than frames. Play it backwards for the reverse move (getting in).
 - **Switch off what fights it:** the aim lean, the landing dip and the held item, where they make no sense.
+- **The runtime layer runs on top** (`render/ik.ts`, ANIMATION.md): the feet are stood on the slope and held where they land, the left hand is laid on the stance's grip bone, and a jump in the pose is eased out. A new clip with both hands on the item must keep the left hand on the grip: the build prints `GRIP <stance>:` with every clip whose left hand strays more than 3 cm. If it leaves the gun on purpose (the crawls do), leave it out of `gripClips` in `character.ts`. A clip where the feet are not standing on the ground (a climb, a vault) must turn `Feet` off through the `wanted` weight passed to `fitFeet`.
 - **Tests:** add the clip's name to the list in `client/src/__tests__/character.spec.ts`, and a test that the right clip carries the weight in the new state.
 - **Who sees it:** other players get the state from a stance or flag (`people.ts`), and your own soldier from the predicted state (`poseLocal` in `game.ts`). Wire both.
 

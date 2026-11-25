@@ -306,9 +306,9 @@ export class CarModel implements VehicleModel {
     this.damage.update(damage, hp, debris, velocity)
   }
 
-  /** Swings its doors open or shut (`Doors.open`) and throws off those that have come off (`Doors.gone`). */
-  swingDoors(open: number, gone: number, dt: number, debris: Debris | null, velocity: Vector3) {
-    this.damage.swingDoors(open, gone, dt, debris, velocity)
+  /** Swings its doors as far open as the server says (`Doors.left`, `Doors.right`) and throws off those that have come off (`Doors.gone`). */
+  swingDoors(left: number, right: number, gone: number, dt: number, debris: Debris | null, velocity: Vector3) {
+    this.damage.swingDoors(left, right, gone, dt, debris, velocity)
   }
 
   /** How far each of its doors is open, radians: for tests. */
