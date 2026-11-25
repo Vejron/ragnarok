@@ -85,6 +85,7 @@ For a car, add a `SPECS` entry and a `build_<kind>()` to `tools/vehicles/build_c
 
 - **Frame.** Blender is x right, y forward, z up, so a game point `(x, y, z)` is Blender `(x, -z, y)`. The ground is `ride` below the origin.
 - **Nodes.** Wheels come from `add_wheels(spec, lugs, rim_ratio)`, which names them `wheel_*` on `pivot_*`. `add_seats([...])` places `seat_N` markers at the `SEAT_HEADS`, converted to Blender's frame.
+- **Doors.** A closed car built with `build_saloon` has its front doors split off as `door_FL` and `door_FR`, hinged on their front seams (DOORS.md). The build prints a `doors <kind>: hinge_L (game) ...` line: copy its hinge, length and height into a `<KIND>_DOOR: DoorDef = DoorDef::front(...)` and set `doors: &[<KIND>_DOOR, <KIND>_DOOR.mirrored()]`. Every other kind sets `doors: NO_DOORS`. Raise the count in `every_door_hangs_on_its_cars_side…` in `crates/shared/src/vehicles.rs`; `car.spec.ts` checks the door nodes against the hinges.
 - **A turning gun** is a separate `Part("turret", location=pivot, parent=body_obj)` with a `Part("gun", parent=turret_obj)` child, both with their origins on the gun pivot.
 - **Size.** Keep it under about 2,500 triangles; `car.spec.ts` checks this.
 

@@ -26,7 +26,7 @@ The client's copies of shared data are generated from the Rust. Never edit a `*.
 | A message in `protocol.rs` or a component in `replicated.rs` | `UPDATE_PARITY=1 cargo test -p shared` | `client/src/net/*.generated.ts`, `client/src/entities/units.generated.ts` and the `__tests__/*.fixture.json` files |
 
 - **The struct field order is the wire format.** After adding, removing or reordering a field of a message or component, bump `PROTOCOL_VERSION` in `consts.rs`.
-- **A new field also needs three hand edits** that `UPDATE_PARITY=1` does not make: the struct literals in `crates/shared/src/protocol/tests.rs` and `replicated/tests.rs`, and the expected snapshot in `client/src/__tests__/codec.spec.ts`.
+- **A new field also needs three hand edits** that `UPDATE_PARITY=1` does not make: the struct literals in `crates/shared/src/protocol/tests.rs` and `replicated/tests.rs` (which has two literals listing every component), and the expected snapshot in `client/src/__tests__/codec.spec.ts`. A new field on a component the client builds in its specs (`seated`, or the presenters' `Placed`) also breaks literals in several specs: `npm run type-check` names each one.
 - **A quantised field arrives decoded.** The client reads a `u8 as byte` field as 0..1 and an `i16 as mrad` field as radians, not as the raw integer.
 - **Flag and kind constants are mirrored by hand** in `client/src/net/codec.ts` (`TURRET_*`, `KIND_*` exports and so on). `consts-parity.spec.ts` checks them.
 - **`gen-consts` parses the Rust as text.** Write constant arrays as literals (`[0.0, 1.79, 1.65]`), not expressions built from other constants.
@@ -59,6 +59,7 @@ To iterate faster:
 - The client's real type check is `vue-tsc --build`. Running `tsc` on the root `tsconfig.json` checks nothing.
 - Vehicle physics tests (`crates/sim/src/vehicle/tests.rs`) run on a small flat world that ends about 200 m out, so a long full-throttle run drives off it.
 - Water in a test world has waves, and the surface depends on `Physics::set_tick`. Call `calm_waters()` for a test that needs still water.
+- A server test that feeds input with `press(...)` (`vehicles/tests.rs` and others) sees it acted on a couple of ticks later, since the jitter buffer holds two frames before it uses one. Idle two ticks after a one-tick press before asserting on what it did.
 - A server test's world has a fixed seed (`Game::new` under `cfg(test)`), and the client's specs that draw from `Math.random` or animate by `performance.now` mock them, so a test passes or fails the same way every run. Keep it so: never assert on wall-clock time or on unseeded chance. For a test suspected of failing now and then, run the test binary that `cargo test -p server --no-run` names 50 times and read the failing assert.
 - **Keep `target/` small.** Rebuilds slow down badly once it has grown (a `shared` edit took 37 s at 267 GB and under 2 s after a `cargo clean`). When rebuilds feel slow, check `du -sh target` and clean it. `cargo test -p <crate>` and `cargo test --workspace` build the dependencies with different feature sets, so each keeps its own copy.
 - `npm run build:wasm` uses the `wasm-dev` profile (optimised, incremental, a second or two after an edit); only `npm run build` builds the release WASM. Performance runs (`--ignored`, `BENCH=1`) still want `--release`.

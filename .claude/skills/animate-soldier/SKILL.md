@@ -43,6 +43,7 @@ $B -b -P tools/character/sheet.py -- DIR swim_fwd      # one sheet: a row a view
 
 - **Blend:** give the clip a share of the `targets` map in `Character.update` (or in its own function, as `swimTargets` and `skiTargets`), and take that share out of the others so the weights still sum to one.
 - **Pace:** a clip the feet drive goes in `SPEED_OF` with the ground speed at which its feet stop sliding. A clip that covers distance some other way advances a phase by distance, as `SWIM_STROKE` (metres a cycle) does.
+- **A clip played by progress** rather than by time (`car_out`, getting out of a car, which the server's `Seated.step` drives, DOORS.md): set `action.time = progress × duration` (a hair under the duration, so it does not wrap) and give it all the weight at once, with no blending. Make its first and last frames the poses it starts and ends from (`car_out` starts as `sit` and ends as `idle`), so the switches do not jump, and keep the root where it is: the client moves the body along the path. Ease the progress between snapshots, which come less often than frames. Play it backwards for the reverse move (getting in).
 - **Switch off what fights it:** the aim lean, the landing dip and the held item, where they make no sense.
 - **Tests:** add the clip's name to the list in `client/src/__tests__/character.spec.ts`, and a test that the right clip carries the weight in the new state.
 - **Who sees it:** other players get the state from a stance or flag (`people.ts`), and your own soldier from the predicted state (`poseLocal` in `game.ts`). Wire both.
