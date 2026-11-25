@@ -40,7 +40,7 @@ const vehicle = (kind: number, x: number, { hp = 100, front = 0, lit = true } = 
   ...(front ? { damage: { parts: [front, 0, 0, 0, 0, 0, 0, 0] } } : {}),
   ...(lit ? { flags: { flags: FLAG_LAMP, stance: 0 } } : {}),
 })
-const rider = (vehicle: number, seat: number): Components => ({ kind: { kind: 0 }, seated: { vehicle, seat } })
+const rider = (vehicle: number, seat: number): Components => ({ kind: { kind: 0 }, seated: { vehicle, seat, step: 0 } })
 
 function harness() {
   const held: { x: number; radius: number; intensity: number; direction?: { x: number; y: number; z: number } }[] = []

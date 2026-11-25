@@ -262,7 +262,11 @@ fn drive(world: &World, bot: &mut Bot, vid: u32, pose: &CarPose, idle: InputFram
         }
     };
 
-    let off = wrap_angle(heading(at, goal) - pose.yaw());
+    // Round whatever it feels ahead on the way.
+    let kind = world.entities.get::<crate::game::Vehicle>(vid).map_or(KIND_TANK, |vehicle| vehicle.kind);
+    let (yaw, cap) = crate::mechanics::steering::avoid(world, vid, kind, pose, heading(at, goal), pose.forward_speed, &mut bot.lean);
+    limit = limit.min(cap.max(1.5));
+    let off = wrap_angle(yaw - pose.yaw());
     // A positive steer turns the hull clockwise seen from above, which takes its yaw down.
     let steer = -off * STEER_GAIN;
     if bot.walk.reverse_left > 0 {
@@ -305,7 +309,8 @@ fn next_waypoint(bot: &mut Bot) {
 fn spot_from_turret(world: &World, id: u32, vid: u32, eye: [f32; 3]) -> Option<(u32, [f32; 3])> {
     let mut best: Option<(u32, [f32; 3], f32)> = None;
     for (other, player) in world.entities.all::<Player>() {
-        if other == id || !world.entities.alive(other) || same_team(world, id, other) {
+        // Nobody's enemy, or given in: not to be shelled.
+        if other == id || !world.entities.alive(other) || same_team(world, id, other) || player.surrendered || super::super::is_noncombatant(world, other) {
             continue;
         }
         let riding = player.seat.filter(|seat| !seat.remote).map(|seat| seat.vehicle);
@@ -370,7 +375,7 @@ fn gun(world: &mut World, id: u32, bot: &mut Bot, vid: u32, pose: &CarPose, nois
     let turret_on = vehicle.damage[DAMAGE_TURRET] != TURRET_GONE;
 
     // A hit on the tank, or a fight heard, sends it after where that came from.
-    let heard = bot.hit_from.take().or_else(|| hear(id, bot, at, noises).filter(|&from| bot.mode != BotMode::Pursue || distance_2d(at, from) + NEARER_NOISE < distance_2d(at, bot.sight.last_seen)));
+    let heard = bot.hit_from.take().or_else(|| hear(world, id, bot, at, noises).filter(|&from| bot.mode != BotMode::Pursue || distance_2d(at, from) + NEARER_NOISE < distance_2d(at, bot.sight.last_seen)));
     if let Some(from) = heard
         && !(bot.mode == BotMode::Pursue && bot.sight.sees)
     {
@@ -431,7 +436,7 @@ fn gun(world: &mut World, id: u32, bot: &mut Bot, vid: u32, pose: &CarPose, nois
             bot.yaw = heading(eye, bot.sight.last_seen);
             (bot.yaw, 0.0, false)
         }
-        BotMode::Search | BotMode::Cover | BotMode::Surrender | BotMode::PlayDead => {
+        BotMode::Search | BotMode::Cover | BotMode::Surrender | BotMode::PlayDead | BotMode::Evade => {
             bot.mode_left = bot.mode_left.saturating_sub(1);
             if bot.mode_left == 0 {
                 resume_patrol(bot, at);

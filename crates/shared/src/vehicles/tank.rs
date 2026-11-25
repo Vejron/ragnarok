@@ -169,6 +169,7 @@ pub(super) const TANK: VehicleDef = VehicleDef {
     board: None,
     exit: None,
     fittings: &[],
+    doors: NO_DOORS,
 };
 
 /// The cannon, then the roof gun, which reads the turret's yaw as of this tick.

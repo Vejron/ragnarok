@@ -29,6 +29,10 @@ const ARMOR: Armor = Armor {
     canvas: false,
 };
 
+/// The driver's door, measured off the model (`build_car.py` prints it): its hinge, length and height.
+/// The passenger's is its mirror.
+pub const KADETT_DOOR: DoorDef = DoorDef::front([-0.83, -0.275, -1.0], 1.05, 1.18);
+
 pub(super) const KADETT: VehicleDef = VehicleDef {
     kind: KIND_KADETT,
     name: "Opel Kadett",
@@ -91,4 +95,5 @@ pub(super) const KADETT: VehicleDef = VehicleDef {
     board: None,
     exit: None,
     fittings: &[],
+    doors: &[KADETT_DOOR, KADETT_DOOR.mirrored()],
 };

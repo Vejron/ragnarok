@@ -5,7 +5,8 @@
 //! being flanked is dangerous. Anyone right next to the target fights regardless: a bot beside you
 //! that does not shoot looks broken.
 //!
-//! Handed out every `ASSIGN_EVERY` ticks. A squad no bigger than its tokens is all attackers.
+//! Handed out every `ASSIGN_EVERY` ticks. A bot on its own attacks; two or more always leave one to
+//! flank or keep heads down.
 
 use super::*;
 use crate::game::Role;
@@ -86,7 +87,7 @@ pub(super) fn assign(world: &mut World, ids: &[u32]) {
     for &id in ids {
         let (Some(player), Some(bot)) = (world.entities.get::<Player>(id), world.entities.get::<Bot>(id)) else { continue };
         let foe = bot.sight.target.filter(|_| bot.mode == BotMode::Pursue && world.entities.alive(id) && player.seat.is_none());
-        let Some(foe_at) = foe.and_then(|foe| world.entities.get::<Player>(foe).filter(|p| world.entities.alive(foe) && p.embodied())).map(|p| p.character.position) else {
+        let Some(foe_at) = foe.filter(|&foe| world.entities.alive(foe)).and_then(|foe| crate::mechanics::position_of(world, foe)) else {
             freed.push(id);
             continue;
         };
@@ -123,16 +124,15 @@ pub(super) fn assign(world: &mut World, ids: &[u32]) {
 
 /// Who does what in the fight of `members` against `target`.
 fn run_fight(world: &mut World, target: u32, mut members: Vec<Member>) {
-    let (target_at, target_yaw) = {
-        let target = &world.entities.of::<Player>(target).character;
-        (target.position, target.yaw)
-    };
+    let Some(target_at) = crate::mechanics::position_of(world, target) else { return };
+    let target_yaw = world.entities.of::<Player>(target).character.yaw;
     // What one of them has seen they have all been told, and the fight is on while anyone has.
     let latest = members.iter().filter_map(|m| world.entities.get::<Bot>(m.id).map(|bot| (bot.sight.seen_tick, bot.sight.last_seen))).max_by_key(|&(tick, _)| tick);
     let Some((seen_tick, last_seen)) = latest else { return };
     let contact = world.tick.wrapping_sub(seen_tick) < CONTACT_TICKS;
     let skill = members.iter().map(|m| m.skill).sum::<f32>() / members.len() as f32;
-    let mut tokens = lerp(TOKENS_POOR, TOKENS_GOOD, skill).round() as usize;
+    // However many tokens, two or more share them so that at least one is left to go round the side.
+    let mut tokens = (lerp(TOKENS_POOR, TOKENS_GOOD, skill).round() as usize).min(members.len().saturating_sub(1).max(1));
     if !contact || members.len() <= tokens {
         // No one is waiting for a place, or the fight is over and they are all looking.
         tokens = members.len();

@@ -41,6 +41,10 @@ const DUSK: f64 = 0.05;
 /// A noise further off than this it hears only roughly, metres, off by this share of the distance.
 const EXACT: f32 = 15.0;
 const ROUGH: f32 = 0.12;
+/// A vehicle with someone in it is big and loud: it is taken in at once within this, metres, and
+/// this many times faster than someone on foot further off.
+const VEHICLE_AT_ONCE: f32 = 40.0;
+const VEHICLE: f32 = 3.0;
 
 /// How dark it is at `tick`, 0 by day and 1 at night. The same clock the client's sky runs on.
 pub(crate) fn darkness(tick: u32) -> f32 {
@@ -101,7 +105,13 @@ pub(super) fn notice(world: &World, bot: &mut Bot, other: u32, at: [f32; 3], eye
         return true;
     }
     let Some(player) = world.entities.get::<Player>(other) else { return false };
-    let rate = visibility(player, distance, darkness(world.tick), crop_cover(world, player, eye)) * if alert { ALERT_RATE } else { 1.0 };
+    let seated = player.seat.is_some_and(|seat| !seat.remote);
+    if seated && distance <= VEHICLE_AT_ONCE {
+        bot.sight.aware = 1.0;
+        return true;
+    }
+    let size = if seated { VEHICLE } else { 1.0 };
+    let rate = size * visibility(player, distance, darkness(world.tick), crop_cover(world, player, eye)) * if alert { ALERT_RATE } else { 1.0 };
     bot.sight.aware = (bot.sight.aware + rate * LOOK_EVERY as f32 / TICK_RATE as f32 / FILL).min(1.0);
     if bot.sight.aware < 1.0 {
         if bot.mode == BotMode::Patrol {

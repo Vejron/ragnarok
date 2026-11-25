@@ -89,4 +89,5 @@ pub(super) const GOLF_CART: VehicleDef = VehicleDef {
     board: None,
     exit: None,
     fittings: &[],
+    doors: NO_DOORS,
 };

@@ -51,6 +51,20 @@ struct FileSpec {
     /// Cars that drive the world's roads (TRAFFIC.md).
     #[serde(default)]
     traffic: Option<TrafficSpec>,
+    /// Police and ambulances on those roads (EMERGENCY.md).
+    #[serde(default)]
+    emergency: Option<EmergencySpec>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EmergencySpec {
+    /// How many police cars are out on patrol when nothing is going on, 6 at the most.
+    patrols: usize,
+    /// Whether the world has police, who come for a player who hurts people, and ambulances, which
+    /// come for the casualties.
+    police: bool,
+    ambulance: bool,
 }
 
 #[derive(Deserialize)]
@@ -313,6 +327,8 @@ pub struct Scenario {
     deliveries: Option<u32>,
     /// How many cars of traffic there are for each kilometre of lane they drive; 0 for none.
     traffic: f32,
+    /// The world's emergency services: its patrols, and whether it has police and ambulances.
+    emergency: (usize, bool, bool),
 }
 
 fn ticks(seconds: f32) -> u32 {
@@ -402,6 +418,9 @@ impl Scenario {
                 }
                 let loadout = s.loadout.as_deref().map(loadout).transpose().with_context(|| format!("squad {name:?}"))?;
                 let temper = s.temper.map(|t| Temper { courage: t.courage.clamp(0.0, 1.0), aggression: t.aggression.clamp(0.0, 1.0), patience: t.patience.clamp(0.0, 1.0) });
+                if s.team == crate::mechanics::TEAM_SERVICES {
+                    bail!("squad {name}: team {} is the emergency services'", s.team);
+                }
                 Ok(Squad { name, team: s.team, skill: s.skill.clamp(0.0, 1.0), loadout, respawn: s.respawn, temper, bots, tanks })
             })
             .collect::<Result<_>>()?;
@@ -462,7 +481,7 @@ impl Scenario {
                 Ok(horde::Horde { areas, max: z.max, size: z.horde.max(1), every: ticks(z.every).max(1), day: z.day })
             })
             .transpose()?;
-        let mut scenario = Self { areas, zombies, squads, triggers, restart: ticks(file.restart), progress: Progress::default(), backpack, deliveries: file.deliveries.map(|d| d.jobs.max(1)), traffic: file.traffic.map_or(0.0, |t| t.per_km.max(0.0)) };
+        let mut scenario = Self { areas, zombies, squads, triggers, restart: ticks(file.restart), progress: Progress::default(), backpack, deliveries: file.deliveries.map(|d| d.jobs.max(1)), traffic: file.traffic.map_or(0.0, |t| t.per_km.max(0.0)), emergency: file.emergency.map_or((0, false, false), |e| (e.patrols, e.police, e.ambulance)) };
         scenario.progress = scenario.fresh();
         Ok(scenario)
     }
@@ -486,6 +505,12 @@ impl Scenario {
     /// 0 for none.
     pub fn traffic(&self) -> f32 {
         self.traffic
+    }
+
+    /// The world's emergency services (EMERGENCY.md): how many police cars patrol, and whether it
+    /// has police and ambulances.
+    pub fn emergency(&self) -> (usize, bool, bool) {
+        self.emergency
     }
 
     /// What everyone is meant to be doing now; empty when nothing.

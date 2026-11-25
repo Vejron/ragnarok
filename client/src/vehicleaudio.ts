@@ -38,6 +38,14 @@ const COLLAPSE_EVERY = 600
 /** Projectiles in flight further than this are not heard, metres, and no more than this many at once. */
 const FLIGHT_HEARING = 200
 const MAX_FLIGHTS = 4
+/** A siren further than this is not heard, metres (as far as `makePanner` carries), and no more than this many at once. */
+const SIREN_HEARING = 250
+const MAX_SIRENS = 3
+/** The two tones of a hi-lo siren, Hz, a fourth apart, and how long each is held, seconds. */
+const SIREN_TONES = [435, 580] as const
+const SIREN_TONE_TIME = 0.55
+/** How loud a siren is at the vehicle, where an engine's level is 0.4 or so: it carries over one without drowning it. */
+const SIREN_LEVEL = 0.3
 const SPEED_OF_SOUND = 343
 /**
  * How far the loud one-shots carry, metres: rifles and machine guns, a small blast, and a cannon or a
@@ -445,6 +453,52 @@ class FlightVoice {
   }
 }
 
+/**
+ * One vehicle's siren: a two-tone European hi-lo, a square wave with its edge taken off, through a
+ * panner at the vehicle, so it is heard from where it is and rises and falls as it passes.
+ */
+class SirenVoice {
+  private readonly source: OscillatorNode
+  private readonly gain: GainNode
+  private readonly panner: PannerNode
+  private stopped = false
+
+  constructor(ctx: BaseAudioContext, master: AudioNode) {
+    this.source = ctx.createOscillator()
+    this.source.type = 'square'
+    this.source.frequency.value = SIREN_TONES[0]
+    const filter = ctx.createBiquadFilter()
+    filter.type = 'lowpass'
+    filter.frequency.value = 1800
+    this.gain = ctx.createGain()
+    this.gain.gain.value = 0
+    this.panner = makePanner(ctx)
+    this.source.connect(filter).connect(this.gain).connect(this.panner).connect(master)
+    this.source.start(ctx.currentTime)
+  }
+
+  /** Moves it to `at`, closing on the listener at `closing` m/s, and sounds the tone that is due at `t`, the context's seconds. */
+  apply(t: number, at: Vec3, closing: number) {
+    if (this.stopped) return
+    place(this.panner, at)
+    const doppler = Math.min(1.25, Math.max(0.8, SPEED_OF_SOUND / (SPEED_OF_SOUND - Math.min(closing, 250))))
+    this.source.frequency.setTargetAtTime(sirenTone(t) * doppler, t, 0.01)
+    this.gain.gain.setTargetAtTime(SIREN_LEVEL, t, 0.05)
+  }
+
+  stop(t: number) {
+    if (this.stopped) return
+    this.stopped = true
+    this.gain.gain.setTargetAtTime(0, t, 0.04)
+    this.source.stop(t + 0.3)
+  }
+}
+
+/** The tone a hi-lo siren sounds at `t` seconds, Hz: the low one first, each held `SIREN_TONE_TIME`. */
+export function sirenTone(t: number): number {
+  return SIREN_TONES[Math.floor(t / SIREN_TONE_TIME) % 2]!
+}
+
 interface Candidate {
   id: number
   kind: number
@@ -475,6 +529,9 @@ export class VehicleSounds {
   /** Projectiles in flight reported this frame, and the voices of the nearest few. */
   private readonly flying: { id: number; sound: FlightSound; distance: number; at: Vec3; velocity: Vec3 }[] = []
   private readonly flights = new Map<number, FlightVoice>()
+  /** Vehicles whose sirens were reported on this frame, and the voices of the nearest few. */
+  private readonly wailing: { id: number; distance: number; at: Vec3; velocity: Vec3 }[] = []
+  private readonly sirens = new Map<number, SirenVoice>()
   /** Until when a big landing near each spot (`COLLAPSE_CELL`) is merged into the last one, ms. */
   private readonly collapses = new Map<string, number>()
   private readonly candidates: Candidate[] = []
@@ -489,6 +546,11 @@ export class VehicleSounds {
   /** Number of projectiles currently heard in flight. */
   get flightCount() {
     return this.flights.size
+  }
+
+  /** Number of sirens currently heard. */
+  get sirenCount() {
+    return this.sirens.size
   }
 
   /** Number of vehicles currently sounding. */
@@ -874,6 +936,51 @@ export class VehicleSounds {
     const voice = this.flights.get(id)
     if (ctx && voice) voice.stop(ctx.currentTime)
     this.flights.delete(id)
+  }
+
+  beginSirens() {
+    this.wailing.length = 0
+  }
+
+  /** Vehicle `id`, at `at` going `velocity`, has its siren on this frame. */
+  siren(id: number, at: Vec3, velocity: Vec3) {
+    const distance = this.distanceTo(at)
+    if (distance > SIREN_HEARING) return
+    this.wailing.push({ id, distance, at, velocity })
+  }
+
+  /** Starts, moves and stops the sirens of the nearest few vehicles reported since `beginSirens`. */
+  endSirens() {
+    if (this.wailing.length === 0 && this.sirens.size === 0) return
+    const ctx = this.ready()
+    const master = this.master
+    if (!ctx || !master) return
+    this.wailing.sort((a, b) => a.distance - b.distance)
+    const kept = new Set<number>()
+    for (const siren of this.wailing.slice(0, MAX_SIRENS)) {
+      kept.add(siren.id)
+      let voice = this.sirens.get(siren.id)
+      if (!voice) {
+        voice = new SirenVoice(ctx, master)
+        this.sirens.set(siren.id, voice)
+      }
+      const away = siren.distance > 0.5 ? siren.at.map((v, i) => (this.listener[i]! - v) / siren.distance) : [0, 0, 0]
+      const closing = (siren.velocity[0] - this.listenerVelocity[0]) * away[0]! + (siren.velocity[1] - this.listenerVelocity[1]) * away[1]! + (siren.velocity[2] - this.listenerVelocity[2]) * away[2]!
+      voice.apply(ctx.currentTime, siren.at, closing)
+    }
+    for (const [id, voice] of this.sirens) {
+      if (kept.has(id)) continue
+      voice.stop(ctx.currentTime)
+      this.sirens.delete(id)
+    }
+  }
+
+  /** Vehicle `id` is gone, or its siren is off. */
+  dropSiren(id: number) {
+    const ctx = this.ctx
+    const voice = this.sirens.get(id)
+    if (ctx && voice) voice.stop(ctx.currentTime)
+    this.sirens.delete(id)
   }
 
   /** A rifle (`kind` 'rifle'), revolver, sniper rifle or shotgun fired from `at`. The shotgun has no sample yet, so it is always synthesised. */
@@ -1423,6 +1530,8 @@ export class VehicleSounds {
     this.voices.clear()
     if (this.ctx) for (const voice of this.flights.values()) voice.stop(this.ctx.currentTime)
     this.flights.clear()
+    if (this.ctx) for (const voice of this.sirens.values()) voice.stop(this.ctx.currentTime)
+    this.sirens.clear()
     this.candidates.length = 0
   }
 }

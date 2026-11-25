@@ -44,13 +44,24 @@ fn run_to(world: &mut World, at: [f32; 3], spot: [f32; 3], budget: &mut usize) -
 /// Looks for a point near `at` hidden from `threat`, a short run away, and heads there. Stays as it
 /// is if this tick's `rays` have run out, or there is none.
 pub(super) fn seek(world: &mut World, bot: &mut Bot, at: [f32; 3], rays: &mut usize, budget: &mut usize) {
+    let Some(spot) = find(world, bot, at, bot.sight.last_seen, rays, budget) else { return };
+    tracing::debug!(target_id = ?bot.sight.target, ?spot, "bot takes cover");
+    bot.mode = BotMode::Cover;
+    bot.mode_left = (lerp(STAY[0], STAY[1], bot.temper.patience) * TICK_RATE as f32) as u32;
+    bot.cover = Some(spot);
+    bot.walk.path.clear();
+    new_goal(bot);
+}
+
+/// A point near `at` hidden from `threat`, a short run away: none if this tick's `rays` have run out,
+/// it looked a moment ago, or there is none.
+pub(super) fn find(world: &mut World, bot: &mut Bot, at: [f32; 3], threat: [f32; 3], rays: &mut usize, budget: &mut usize) -> Option<[f32; 3]> {
     bot.cover_wait = bot.cover_wait.saturating_sub(1);
     if bot.cover_wait > 0 || *rays < RAYS_A_LOOK {
-        return;
+        return None;
     }
     *rays -= RAYS_A_LOOK;
     bot.cover_wait = RETRY_TICKS;
-    let threat = bot.sight.last_seen;
     let eye = [threat[0], threat[1] + EYE_HEIGHT, threat[2]];
     let away = heading(threat, at);
     let far = distance_2d(at, threat);
@@ -62,16 +73,12 @@ pub(super) fn seek(world: &mut World, bot: &mut Bot, at: [f32; 3], rays: &mut us
         let (x, z) = (at[0] - sin * reach, at[2] - cos * reach);
         let Some(floor) = open_ground(world, x, z) else { continue };
         let spot = [x, floor + sim::STANDING_Y, z];
-        if distance_2d(spot, threat) + TOWARDS >= far && !clear_line(world, eye, [x, spot[1] + EYE_HEIGHT - CROUCH_EYE_DROP, z]) && run_to(world, at, spot, budget).is_some_and(|run| run < LONGEST_RUN) {
-            tracing::debug!(target_id = ?bot.sight.target, ?spot, "bot takes cover");
-            bot.mode = BotMode::Cover;
-            bot.mode_left = (lerp(STAY[0], STAY[1], bot.temper.patience) * TICK_RATE as f32) as u32;
-            bot.cover = Some(spot);
-            bot.walk.path.clear();
-            new_goal(bot);
-            return;
+        // From a vehicle the threat looks out past its own hull.
+        if distance_2d(spot, threat) + TOWARDS >= far && !clear_line_past(world, eye, [x, spot[1] + EYE_HEIGHT - CROUCH_EYE_DROP, z], bot.sight.vehicle) && run_to(world, at, spot, budget).is_some_and(|run| run < LONGEST_RUN) {
+            return Some(spot);
         }
     }
+    None
 }
 
 /// Out of cover, to where it last saw them, or to the side of that so it does not come back the

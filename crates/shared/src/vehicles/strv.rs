@@ -126,6 +126,7 @@ pub(super) const STRV: VehicleDef = VehicleDef {
     board: None,
     exit: None,
     fittings: &[],
+    doors: NO_DOORS,
 };
 
 /// The driver's main gun, fixed in the hull.

@@ -145,6 +145,7 @@ pub(super) const SEAPLANE: VehicleDef = VehicleDef {
     board: None,
     exit: None,
     fittings: &[],
+    doors: NO_DOORS,
 };
 
 /// The triplane's weapons on the seaplane's pivots: the gunner's ring mount behind the cockpit, the

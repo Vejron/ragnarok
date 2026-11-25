@@ -2,7 +2,7 @@
 // change the Rust and run `npm run gen:consts`. Client-only constants live in consts.ts.
 
 /** Wire schema version. Bumped on any incompatible protocol or world-format change. */
-export const PROTOCOL_VERSION = 94
+export const PROTOCOL_VERSION = 96
 
 /** Why a page closes its session (`Bye`): the tab is closing or reloading. */
 export const BYE_LEAVING = 0
@@ -206,6 +206,27 @@ export const KIND_SIERRA = 48
 
 /** The Ford Escort: a small, light, slow hatchback. */
 export const KIND_ESCORT = 49
+
+/** A police car: a white Volvo 240 with a blue stripe, a light bar and a siren (`FLAG_SIREN`). */
+export const KIND_POLICE_CAR = 50
+
+/**
+ * An ambulance on the road: a Transporter van with a light bar and a siren. Not the helicopter
+ * (`KIND_AIR_AMBULANCE`).
+ */
+export const KIND_AMBULANCE = 51
+
+/**
+ * A police officer on foot or in a seat: a person the server runs, drawn as a soldier in a dark
+ * blue uniform. Replicated as a civilian is.
+ */
+export const KIND_OFFICER = 52
+
+/**
+ * An ambulance medic on foot or in a seat: a person the server runs, drawn as a soldier in green
+ * and yellow. Replicated as a civilian is.
+ */
+export const KIND_MEDIC = 53
 
 /** Fixed simulation rate, in ticks per second. */
 export const TICK_RATE = 60
@@ -623,6 +644,35 @@ export const MAX_VEHICLES = 512
 
 /** A player can enter a vehicle whose centre is within this distance of their capsule centre. */
 export const ENTER_RADIUS = 4.0
+
+/** How far a car's door swings open, radians, and the damage it takes before it comes off (DOORS.md). */
+export const DOOR_SWING = 1.1
+export const DOOR_HP = 120
+
+/** How long a door takes to swing open or shut, seconds: who gets out waits for it to open first. */
+export const DOOR_OPEN_S = 0.25
+
+/**
+ * How long getting out of a seat by its door takes, once the door is open, seconds; getting in
+ * takes as long, the same moves the other way round.
+ */
+export const STEP_OUT_S = 0.8
+
+/** How long after they are out someone shuts the door behind them, seconds. */
+export const DOOR_SHUT_S = 0.25
+
+/**
+ * Where someone who got out by a door stands: this far out from the side of the body, metres, and
+ * this share of the way back along the door from its hinge, in the gap between the open door and the car.
+ */
+export const STEP_OUT_SIDE = 0.55
+export const STEP_OUT_BACK = 0.7
+
+/**
+ * Leaving a car going faster than this, m/s, is bailing out: no door, no climbing out, but falling out
+ * onto the road at the car's speed, knocked down.
+ */
+export const BAIL_SPEED = 6.0
 
 /**
  * Gravity acting on vehicle bodies. Soldiers use `GRAVITY`; the ray-cast suspension is tuned
@@ -1509,6 +1559,31 @@ export const AIR_AMBULANCE_HOVER_LEVER = 0.56
 
 /** The pilot front right and a passenger front left, then two passengers behind them. */
 export const AIR_AMBULANCE_SEAT_HEADS = [[0.31, 0.72, -0.85], [-0.31, 0.72, -0.85], [-0.31, 0.74, 0.35], [0.31, 0.74, 0.35]] as const
+
+/**
+ * The ambulance (`KIND_AMBULANCE`): a Volkswagen Transporter T3 in white and yellow with a red
+ * stripe and a light bar on its roof. Not the air ambulance (`KIND_AIR_AMBULANCE`), which flies. The
+ * same body, weight and springs as the Transporter (`transporter.rs`) and its seven seats behind
+ * glass: the driver and a passenger over the front wheels, then two by the sliding door and three at
+ * the back. A little faster flat out than the van it is built on.
+ */
+export const AMBULANCE_SEATS = 7
+export const AMBULANCE_HALF_EXTENTS = [0.92, 0.5, 2.25] as const
+export const AMBULANCE_WHEEL_RADIUS = 0.33
+export const AMBULANCE_TRACK_HALF = 0.785
+export const AMBULANCE_AXLE_Z = 1.23
+export const AMBULANCE_HARD_POINT_Y = 0.0
+export const AMBULANCE_SUSPENSION_REST = 0.486
+
+/** Measured by `ride_heights_differ_between_cars` in vehicle.rs. */
+export const AMBULANCE_RIDE_HEIGHT = 0.685
+export const AMBULANCE_MAX_STEER = 0.6
+
+/** Flat out, m/s: a little more than the Transporter's. */
+export const AMBULANCE_MAX_SPEED = 34.0
+
+/** The driver on the left, then the passengers, front to back. */
+export const AMBULANCE_SEAT_HEADS = [[-0.45, 0.87, -1.25], [0.45, 0.87, -1.25], [-0.4, 0.87, 0.05], [0.4, 0.87, 0.05], [-0.5, 0.87, 1.15], [0.0, 0.87, 1.15], [0.5, 0.87, 1.15]] as const
 
 /**
  * The AMV XA-361 (`KIND_AMV`): an eight-wheeled armoured vehicle with a turret on its back carrying
@@ -2630,6 +2705,30 @@ export const PLANE_REARM_TICKS = 3 * TICK_RATE
 
 /** The pilot behind the wings, the gunner standing in the ring. */
 export const PLANE_SEAT_HEADS = [[0.0, 0.98, -0.45], [0.0, 1.15, 0.7]] as const
+
+/**
+ * The police car (`KIND_POLICE_CAR`): a Volvo 240 estate of the 1980s in white with a blue stripe
+ * and a light bar on its roof. The same body, weight and springs as the Volvo 240 (`volvo_240.rs`),
+ * with an engine that keeps pulling to a higher top speed, so it can catch the traffic. Five seats
+ * behind glass.
+ */
+export const POLICE_CAR_SEATS = 5
+export const POLICE_CAR_HALF_EXTENTS = [0.86, 0.36, 2.4] as const
+export const POLICE_CAR_WHEEL_RADIUS = 0.32
+export const POLICE_CAR_TRACK_HALF = 0.73
+export const POLICE_CAR_AXLE_Z = 1.32
+export const POLICE_CAR_HARD_POINT_Y = 0.0
+export const POLICE_CAR_SUSPENSION_REST = 0.303
+
+/** Measured by `ride_heights_differ_between_cars` in vehicle.rs. */
+export const POLICE_CAR_RIDE_HEIGHT = 0.506
+export const POLICE_CAR_MAX_STEER = 0.55
+
+/** Flat out, m/s: about 15 % more than the Volvo 240's, well over what the traffic cruises at. */
+export const POLICE_CAR_MAX_SPEED = 41.5
+
+/** The driver on the left, then the passengers, front to back. */
+export const POLICE_CAR_SEAT_HEADS = [[-0.38, 0.67, 0.0], [0.38, 0.67, 0.0], [-0.4, 0.65, 0.88], [0.4, 0.65, 0.88], [0.0, 0.65, 0.88]] as const
 
 /**
  * The raft (`KIND_RAFT`): a small inflatable river-rafting boat for two, 3.6 m long and 1.6 m across

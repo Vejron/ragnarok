@@ -152,6 +152,7 @@ pub(super) const STRF: VehicleDef = VehicleDef {
     board: None,
     exit: Some(STRF_RAMP_EXIT),
     fittings: &[],
+    doors: NO_DOORS,
 };
 
 /// The gunner's autocannon in the turret.

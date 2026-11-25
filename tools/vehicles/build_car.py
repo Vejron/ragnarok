@@ -3,7 +3,7 @@ Builds the cars: the Bronco (the jeep), the Manta (the sports car) and the other
 thruster Roadster, the utility vehicles and the sleds, and exports them to client/public/models/.
 
     /Applications/Blender.app/Contents/MacOS/Blender -b -P tools/vehicles/build_car.py -- \
-        [--out DIR] [--only <name in BUILDERS>] [--preview DIR]
+        [--out DIR] [--only <name in BUILDERS>] [--preview DIR [--open RADIANS]]
 
 Everything is procedural and flat-shaded: about a thousand triangles each.
 
@@ -16,6 +16,9 @@ Conventions
       `pivot_FL`, `pivot_FR`, `pivot_RL`, `pivot_RR`  empties on each wheel's hub; the game steers the front ones about Y
       `wheel_FL` ... `wheel_RR`                        the wheels, children of the pivots, origin on the axle: the game rolls them about X
       `seat_0` ... `seat_N`                            empties where a seated player's head is drawn, driver first
+      `door_FL`, `door_FR`                             a saloon's front doors (FL the driver's, -X), origin on the hinge:
+                                                       the front seam, on the outer skin, at the door's foot. The game
+                                                       swings them about Z (glTF Y), FL by a negative angle, FR positive
       `nozzle_rear_N`, `nozzle_lift_N`                the Roadster's thruster mouths: the rear ones blow backwards, the lift ones down
   * Materials: `paint` is tinted per car at runtime; `lamp` is drawn unlit; `dark` (tyres, trim, seats),
     `glass`, `steel` (rims, bars), `red`, `white` and `amber` keep their colours.
@@ -39,6 +42,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = arg("--out", os.path.normpath(os.path.join(HERE, "../../client/public/models")))
 ONLY = arg("--only")
 PREVIEW = arg("--preview")
+OPEN = arg("--open")
 
 # --------------------------------------------------------------------------------------------------
 # Dimensions (metres). Keep in step with JEEP_* and SPORTS_* in crates/shared/src/vehicles/.
@@ -77,6 +81,9 @@ SPECS = {
     "omega": dict(half=(0.88, 0.33, 2.33), wheel_radius=0.31, wheel_width=0.2, track=0.725, axle=1.365, ride=0.475),
     "sierra": dict(half=(0.85, 0.32, 2.2), wheel_radius=0.3, wheel_width=0.2, track=0.725, axle=1.305, ride=0.465),
     "escort": dict(half=(0.82, 0.3, 2.0), wheel_radius=0.28, wheel_width=0.18, track=0.7, axle=1.2, ride=0.445),
+    # POLICE_CAR_* and AMBULANCE_* (VEHICLES-XXV.md): the Volvo 240's and the Transporter's bodies.
+    "police_car": dict(half=(0.86, 0.36, 2.4), wheel_radius=0.32, wheel_width=0.2, track=0.73, axle=1.32, ride=0.506),
+    "ambulance": dict(half=(0.92, 0.5, 2.25), wheel_radius=0.33, wheel_width=0.21, track=0.785, axle=1.23, ride=0.685),
 }
 
 MATERIAL_COLORS = {
@@ -167,6 +174,74 @@ class Part(common.Part):
             matrix=m,
         )["verts"]
         self._tag(verts, mat)
+
+
+class Door(Part):
+    """A front door of a saloon (`door_FL` on the driver's side, -X, or `door_FR`), cut out of the
+    body's side and built in the car's frame like the body. `close` turns the outer skin built so far
+    into a panel `THICK` deep, dark on the inside, so an opened door is not seen through; whatever is
+    added after it (trim, seams, the handle, lettering) lies on that panel. `build` moves the door's
+    origin to its hinge, where the game swings it open about the vertical."""
+
+    # How deep the door is between its outer skin and the dark inner one, metres.
+    THICK = 0.03
+
+    def __init__(self, name, side):
+        super().__init__(name)
+        # -1 for the left door, 1 for the right: the way its outer skin faces along X.
+        self.side = side
+        # The side glass and the posts painted into it, (points, material), part of the outer skin.
+        self.skin = []
+        self.panel = set()
+
+    def close(self):
+        """Gives the outer skin built so far an inner skin `THICK` inside it, dark where the outer one
+        is painted and glass where it is glass, and joins the two round every open edge in dark."""
+        bm = self.bm
+        for points, mat in self.skin:
+            bm.faces.new([bm.verts.new(p) for p in points]).material_index = mat
+        bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=1e-4)
+        bmesh.ops.delete(bm, geom=[v for v in bm.verts if not v.link_faces], context="VERTS")
+        outer = list(bm.faces)
+        for f in outer:
+            f.normal_update()
+            if f.normal.x * self.side < 0:
+                f.normal_flip()
+        edges = [(e, e.link_faces[0]) for e in bm.edges if len(e.link_faces) == 1]
+        inward = Vector((-self.side * self.THICK, 0.0, 0.0))
+        inner = {v: bm.verts.new(v.co + inward) for v in list(bm.verts)}
+        for f in outer:
+            g = bm.faces.new([inner[v] for v in reversed(f.verts)])
+            g.material_index = GLASS if f.material_index == GLASS else DARK
+        for e, f in edges:
+            v0, v1 = e.verts
+            rim = bm.faces.new((v0, v1, inner[v1], inner[v0]))
+            rim.material_index = DARK
+            rim.normal_update()
+            if rim.normal.dot((v0.co + v1.co) / 2 - f.calc_center_median()) < 0:
+                rim.normal_flip()
+        self.panel = set(bm.faces)
+
+    def build(self, hinge):
+        """The door's object, its origin at `hinge` (the car's frame) and its mesh about it."""
+        bm = self.bm
+        bmesh.ops.recalc_face_normals(bm, faces=[f for f in bm.faces if f not in self.panel])
+        for points, mat, normal in self.flat:
+            face = bm.faces.new([bm.verts.new(p) for p in points])
+            face.material_index = mat
+            face.normal_update()
+            if face.normal.dot(Vector(normal)) < 0:
+                face.normal_flip()
+        bmesh.ops.translate(bm, vec=-Vector(hinge), verts=bm.verts)
+        mesh = bpy.data.meshes.new(self.name)
+        bm.to_mesh(mesh)
+        bm.free()
+        for m in MATERIALS:
+            mesh.materials.append(m)
+        obj = bpy.data.objects.new(self.name, mesh)
+        obj.location = hinge
+        scene.collection.objects.link(obj)
+        return obj
 
 
 def empty(name, location, parent=None):
@@ -872,6 +947,8 @@ HEADS = {
     "sierra": [(-0.38, 0.71, 0.0), (0.38, 0.71, 0.0), (-0.4, 0.69, 0.88), (0.4, 0.69, 0.88), (0.0, 0.69, 0.88)],
     "escort": [(-0.38, 0.73, -0.05), (0.38, 0.73, -0.05), (-0.4, 0.71, 0.75), (0.4, 0.71, 0.75), (0.0, 0.71, 0.75)],
     "sports": [(-0.37, 0.72, 0.1), (0.37, 0.72, 0.1), (-0.38, 0.66, 0.85), (0.38, 0.66, 0.85)],
+    "police_car": [(-0.38, 0.67, 0.0), (0.38, 0.67, 0.0), (-0.4, 0.65, 0.88), (0.4, 0.65, 0.88), (0.0, 0.65, 0.88)],
+    "ambulance": [(-0.45, 0.87, -1.25), (0.45, 0.87, -1.25), (-0.4, 0.87, 0.05), (0.4, 0.87, 0.05), (-0.5, 0.87, 1.15), (0.0, 0.87, 1.15), (0.5, 0.87, 1.15)],
 }
 
 
@@ -1132,23 +1209,33 @@ def build_saloon(name, c, heads, details=None):
     for at in arches:
         stations |= {at - arch_r - 0.004, at + arch_r + 0.004}
         stations |= {at - arch_r * math.cos(math.radians(deg)) for deg in (0, 45, 90, 135, 180)}
-    stations = sorted(stations)
+    # The front door's seams are stations of their own, so its faces end exactly on them; a station
+    # close to a seam gives way to it.
+    d0, d1 = c["doors"][0], c["doors"][1]
+    seams = lambda points: sorted({a for a in points if min(abs(a - d0), abs(a - d1)) > 0.003} | {d0, d1})
+    stations = seams(stations)
     merged = []
     for a in stations:
         if not merged or a - merged[-1] > 0.002:
             merged.append(a)
+    in_door = lambda a0, a1: a0 >= d0 - 1e-6 and a1 <= d1 + 1e-6
 
-    rings, mats = [], []
-    for a in merged:
+    def side_of(a):
+        """The right half of the cross-section `a` back from the front face, bottom to top, as (out,
+        height, the material of the face up to the next point)."""
         w, hb, ht = width(a), bottom(a), along_line(c["top"], a)
         hs = max(ht - drop, hb + 0.6 * (ht - hb))
         hl = hb + min(0.07, (hs - hb) * 0.3)
-        # The right half, bottom to top, each point with the material of the face up to the next.
         lower = clad[1] if clad else PAINT
         half = [(w - tuck, hb, lower), (w, hl, lower)]
         if clad:
             half.append((w, min(max(clad[0], hl + 0.01), hs - 0.01), PAINT))
-        half += [(w, hs, PAINT), (w - inset, ht, PAINT)]
+        return half + [(w, hs, PAINT), (w - inset, ht, PAINT)]
+
+    rings, mats = [], []
+    for a in merged:
+        hb, ht = bottom(a), along_line(c["top"], a)
+        half = side_of(a)
         ring = [(0.0, hb)] + [(x, h) for x, h, _ in half] + [(0.0, ht)] + [(-x, h) for x, h, _ in half[::-1]]
         mats = [DARK] + [m for _, _, m in half[:-1]] + [PAINT, PAINT] + [m for _, _, m in half[-2::-1]] + [DARK]
         rings.append([(x, y_of(a), z(h)) for x, h in ring])
@@ -1157,7 +1244,15 @@ def build_saloon(name, c, heads, details=None):
     glass = c["glass"]
     under = lambda s: merged[s] >= glass[0][0] + 0.01 and merged[s + 1] <= glass[-1][0] - 0.01
     top_edges = {len(half), len(half) + 1}
-    shell(body, rings, lambda s, k: None if k in top_edges and under(s) else mats[k], cap=PAINT)
+    # The front doors: each side's faces between the seams, from the sill to the shoulder, cut out of
+    # the body into a door of its own. The left side is the driver's (-X).
+    H = len(half)
+    sides = {1: set(range(1, H)), -1: set(range(H + 2, 2 * H + 1))}
+    doors = {-1: Door("door_FL", -1), 1: Door("door_FR", 1)}
+    door_face = lambda s, k: in_door(merged[s], merged[s + 1]) and next((sx for sx, ks in sides.items() if k in ks), None)
+    shell(body, rings, lambda s, k: None if (k in top_edges and under(s)) or door_face(s, k) else mats[k], cap=PAINT)
+    for sx, door in doors.items():
+        shell(door, rings, lambda s, k: mats[k] if door_face(s, k) == sx else None)
     # The dark wells the wheels turn in.
     inner = spec["track"] - spec["wheel_width"] / 2 - 0.02
     for at in arches:
@@ -1172,7 +1267,7 @@ def build_saloon(name, c, heads, details=None):
     roof_h = max(h for _, h in glass)
     tumble = c.get("tumble", 0.12)
     pw = c.get("a_post", 0.07)
-    gstations = sorted({a for a, _ in glass})
+    gstations = seams({a for a, _ in glass})
     grings = []
     for a in gstations:
         wb = width(a) - inset - 0.005
@@ -1224,13 +1319,23 @@ def build_saloon(name, c, heads, details=None):
                     split.append((poly, mat))
                 pieces = [(poly, m) for poly, m in split if len(poly) >= 3 and area(poly) > 1e-8]
             # They meet their neighbours only at points along an edge, so they are faced out by hand.
-            body.flat += [(poly, m, (out, 0.0, 0.0)) for poly, m in pieces]
+            if in_door(gstations[s], gstations[s + 1]):
+                doors[int(out)].skin += pieces
+            else:
+                body.flat += [(poly, m, (out, 0.0, 0.0)) for poly, m in pieces]
+    # The doors' tops are the tops of their side glass; the posts' band over them stays on the body.
+    door_top = max(r[2][2] for a, r in zip(gstations, grings) if d0 - 1e-6 <= a <= d1 + 1e-6)
+    door_foot = z(min(bottom(a) for a in merged if d0 - 1e-6 <= a <= d1 + 1e-6))
+    for door in doors.values():
+        door.close()
 
     for sx in (1, -1):
-        # The trim along the foot of the side windows.
+        # The trim along the foot of the side windows, the piece on the front door with it.
         a0, a1 = screen[0] + 0.05, back[-1] - 0.05
-        hb0, hb1 = along_line(c["top"], a0), along_line(c["top"], a1)
-        beam(body, (sx * (hx - inset + 0.004), y_of(a0), z(hb0) + 0.012), (sx * (width(a1) - inset + 0.004), y_of(a1), z(hb1) + 0.012), 0.02, c.get("trim", DARK), 0.025)
+        for p0, p1, part in ((a0, min(a1, d0), body), (max(a0, d0), min(a1, d1), doors[sx]), (max(a0, d1), a1, body)):
+            if p1 - p0 > 0.01:
+                hb0, hb1 = along_line(c["top"], p0), along_line(c["top"], p1)
+                beam(part, (sx * (width(p0) - inset + 0.004), y_of(p0), z(hb0) + 0.012), (sx * (width(p1) - inset + 0.004), y_of(p1), z(hb1) + 0.012), 0.02, c.get("trim", DARK), 0.025)
 
     # Inside: a dash under the windscreen, the seats and the wheel.
     hd = along_line(c["top"], screen[0])
@@ -1328,10 +1433,45 @@ def build_saloon(name, c, heads, details=None):
     body.decal((hx + 0.003, y_of(af), z(along_line(c["top"], af) - drop - 0.06)), (0.12, 0.1), (1, 0, 0), DARK)
     if details:
         details(body, dict(c, hx=hx, hz=hz, z=z, y_of=y_of, width=width, top=lambda a: along_line(c["top"], a), glass_at=lambda a: along_line(glass, a), roof=roof_h, screen=screen, back=back, inset=inset, face=face, back_face=back_face))
+
+    # Whatever lies flat on a side over a front door (its seams, the handle, a strip, lettering) is cut
+    # at the seams, and the piece between them goes with the door.
+    flats, body.flat = body.flat, []
+    yf, yr = y_of(d0), y_of(d1)
+    for points, mat, normal in flats:
+        if abs(normal[0]) < 0.7 or min(abs(p[0]) for p in points) < hx * 0.5:
+            body.flat.append((points, mat, normal))
+            continue
+        for keep, part in ((lambda p: p[1] - yf, body), (lambda p: yf - p[1], doors[1 if normal[0] > 0 else -1]), (lambda p: yr - p[1], body)):
+            poly = clip(points, keep) if part is body else clip(clip(points, keep), lambda p: p[1] - yr)
+            if len(poly) >= 3 and max(p[1] for p in poly) - min(p[1] for p in poly) > 1e-5:
+                part.flat.append((poly, mat, normal))
+
+    # Behind each door, a dark lining a little inside the body's side from the sill to the waist, the
+    # jambs at the seams and a sill under the window, so an open door shows the cabin and not the
+    # body's skin from inside.
+    lining = hx - 0.1
+    inside = [a for a in merged if d0 - 1e-6 <= a <= d1 + 1e-6]
+    profile = lambda a: [(x, h) for x, h, _ in side_of(a)]
+    for sx in (-1, 1):
+        out = (sx, 0.0, 0.0)
+        for a0, a1 in zip(inside, inside[1:]):
+            hb0, ht0, hb1, ht1 = bottom(a0), along_line(c["top"], a0), bottom(a1), along_line(c["top"], a1)
+            body.flat.append(([(sx * lining, y_of(a0), z(hb0)), (sx * lining, y_of(a1), z(hb1)), (sx * lining, y_of(a1), z(ht1)), (sx * lining, y_of(a0), z(ht0))], DARK, out))
+            sill_x = lambda a: width(a) - inset - Door.THICK - 0.005
+            body.flat.append(([(sx * lining, y_of(a0), z(ht0)), (sx * sill_x(a0), y_of(a0), z(ht0)), (sx * sill_x(a1), y_of(a1), z(ht1)), (sx * lining, y_of(a1), z(ht1))], DARK, (0.0, 0.0, 1.0)))
+        for a, facing in ((d0, -1.0), (d1, 1.0)):
+            points = profile(a)
+            for (x0, h0), (x1, h1) in zip(points, points[1:]):
+                body.flat.append(([(sx * x0, y_of(a), z(h0)), (sx * x1, y_of(a), z(h1)), (sx * lining, y_of(a), z(h1)), (sx * lining, y_of(a), z(h0))], DARK, (0.0, facing, 0.0)))
+
     body_obj = body.build()
+    # Each door's hinge: on its front seam, on the outer skin and at the foot of the door.
+    door_objs = [doors[sx].build((sx * width(d0), y_of(d0), door_foot)) for sx in (-1, 1)]
+    print(f"doors {name}: hinge_L (game) [{-width(d0):.3f}, {door_foot:.3f}, {d0 - hz:.3f}] length {d1 - d0:.3f} height {door_top - door_foot:.3f}")
     wheels = styled_wheels(spec, c.get("wheels", "steel"), c.get("rim", 0.62))
     add_seats(to_blender(heads))
-    return [body_obj, *wheels]
+    return [body_obj, *door_objs, *wheels]
 
 
 def lip(body, c, a, h, span, deep=0.14, rx=0.0):
@@ -1375,14 +1515,9 @@ def build_saab_9000():
     return build_saloon("saab_9000", c, HEADS["saab_9000"])
 
 
-def build_volvo_240():
-    def details(body, c):
-        # Roof rails, and the tall lamps up the tailgate's sides.
-        for sx in (-1, 1):
-            x = sx * (c["hx"] - 0.2)
-            beam(body, (x, c["y_of"](1.75), c["z"](1.47)), (x, c["y_of"](4.6), c["z"](1.47)), 0.035, DARK)
-            body.decal((sx * (c["hx"] - 0.12), c["back_face"], c["z"](1.12)), (0.13, 0.36), (0, -1, 0), RED)
-    c = dict(
+def volvo_240_shape():
+    """The Volvo 240's measurements for `build_saloon`: the police car is built on them too."""
+    return dict(
         sill=0.19, chin=(0.32, 0.22), tail_lift=(0.32, 0.22), nose_round=0.08, tail_round=0.07, tumble=0.07, shoulder=(0.05, 0.03), tuck=0.04,
         top=[(0, 0.83), (0.05, 0.87), (1.05, 0.95), (4.75, 0.98), (4.8, 0.97)],
         glass=[(1.05, 0.95), (1.2, 1.2), (1.38, 1.39), (1.62, 1.46), (4.66, 1.46), (4.74, 1.42), (4.79, 1.0)],
@@ -1392,7 +1527,16 @@ def build_volvo_240():
         bumpers=dict(mat=DARK, lo=0.33, hi=0.52, out=0.14, back=0.38), tail=dict(x=(0.5, 0.74), z=(0.62, 0.9), plate=0.78),
         strip=(0.6, DARK, 0.05), wheels="steel",
     )
-    return build_saloon("volvo_240", c, HEADS["volvo_240"], details)
+
+
+def build_volvo_240():
+    def details(body, c):
+        # Roof rails, and the tall lamps up the tailgate's sides.
+        for sx in (-1, 1):
+            x = sx * (c["hx"] - 0.2)
+            beam(body, (x, c["y_of"](1.75), c["z"](1.47)), (x, c["y_of"](4.6), c["z"](1.47)), 0.035, DARK)
+            body.decal((sx * (c["hx"] - 0.12), c["back_face"], c["z"](1.12)), (0.13, 0.36), (0, -1, 0), RED)
+    return build_saloon("volvo_240", volvo_240_shape(), HEADS["volvo_240"], details)
 
 
 def build_volvo_740():
@@ -1447,7 +1591,12 @@ def build_transporter():
         for k in range(3):
             mirrored_decal(body, hx + 0.005, c["y_of"](3.75), c["z"](0.92 + 0.03 * k), (0.3, 0.01), (1, 0, 0), PAINT)
         body.decal((0.0, c["face"] + 0.002, c["z"](0.99)), (1.4, 0.06), (0, 1, 0), DARK)
-    c = dict(
+    return build_saloon("transporter", transporter_shape(), HEADS["transporter"], details)
+
+
+def transporter_shape():
+    """The Transporter's measurements for `build_saloon`: the ambulance is built on them too."""
+    return dict(
         sill=0.29, chin=(0.38, 0.15), tail_lift=(0.38, 0.15), nose_round=0.12, tail_round=0.1, tumble=0.07, shoulder=(0.04, 0.03), tuck=0.04,
         upper=WHITE,
         top=[(0, 1.02), (0.05, 1.06), (4.5, 1.07)],
@@ -1458,7 +1607,6 @@ def build_transporter():
         bumpers=dict(mat=DARK, lo=0.4, hi=0.56, out=0.06), tail=dict(x=(0.7, 0.86), z=(0.6, 1.0), plate=0.72),
         wheels="steel", rim=0.6,
     )
-    return build_saloon("transporter", c, HEADS["transporter"], details)
 
 
 def build_kadett():
@@ -1592,7 +1740,125 @@ def build_jeep():
     return [body_obj, *wheels]
 
 
-BUILDERS = {"amv": build_amv, "bus": build_bus, "jeep": build_jeep, "sports": build_sports, "roadster": build_roadster, "snowmobile": build_snowmobile, "golf_cart": build_golf_cart, "technical": build_technical, "snowracer": build_snowracer, "epa": build_epa, "saab_900": build_saab_900, "saab_9000": build_saab_9000, "volvo_240": build_volvo_240, "volvo_740": build_volvo_740, "gti": build_gti, "transporter": build_transporter, "kadett": build_kadett, "omega": build_omega, "sierra": build_sierra, "escort": build_escort}
+# --------------------------------------------------------------------------------------------------
+# The emergency vehicles (VEHICLES-XXV.md): the police car on the Volvo 240's body and the ambulance on
+# the Transporter's, each in its livery with a light bar on the roof. The bar's two lenses are nodes
+# of their own, `beacon_L` and `beacon_R`, beside the body and not under it, so the game can light
+# each by name; their origins are the middles of the lenses, where their light shines from.
+# --------------------------------------------------------------------------------------------------
+# Block capitals, five across and seven down, for the lettering down a side.
+GLYPHS = {
+    "A": (".###.", "#...#", "#...#", "#####", "#...#", "#...#", "#...#"),
+    "B": ("####.", "#...#", "#...#", "####.", "#...#", "#...#", "####."),
+    "I": ("#####", "..#..", "..#..", "..#..", "..#..", "..#..", "#####"),
+    "L": ("#....", "#....", "#....", "#....", "#....", "#....", "#####"),
+    "M": ("#...#", "##.##", "#.#.#", "#...#", "#...#", "#...#", "#...#"),
+    "N": ("#...#", "##..#", "#.#.#", "#..##", "#...#", "#...#", "#...#"),
+    "O": (".###.", "#...#", "#...#", "#...#", "#...#", "#...#", ".###."),
+    "P": ("####.", "#...#", "#...#", "####.", "#....", "#....", "#...."),
+    "S": (".####", "#....", "#....", ".###.", "....#", "....#", "####."),
+    "U": ("#...#", "#...#", "#...#", "#...#", "#...#", "#...#", ".###."),
+}
+
+
+def livery(name, rgb):
+    """A colour only the model being built wears, after the shared materials: its index for a part's
+    faces. `reset_scene` starts every model without it, so no other model is changed by it. Made before
+    any part of the model is built."""
+    MATERIALS.append(common.material(name, rgb))
+    return len(MATERIALS) - 1
+
+
+def lettering(part, text, middle, right, up, height, mat):
+    """`text` in block capitals `height` tall, as flat panels about `middle`: it reads along `right`
+    with `up` its top, and faces along right x up, so on a car's left side `right` is towards the tail."""
+    right, up = Vector(right).normalized(), Vector(up).normalized()
+    normal = tuple(right.cross(up))
+    dot = height / 7
+    start = Vector(middle) - right * (dot * (6 * len(text) - 1) / 2) - up * (height / 2)
+    for n, letter in enumerate(text):
+        # Each run of dots along a row, joined with the same run in the rows under it: a few panels a letter.
+        runs = {}
+        for r, row in enumerate(GLYPHS[letter]):
+            c = 0
+            while c < 5:
+                if row[c] != "#":
+                    c += 1
+                    continue
+                c1 = c
+                while c1 + 1 < 5 and row[c1 + 1] == "#":
+                    c1 += 1
+                above = runs.pop((r - 1, c, c1), None)
+                runs[(r, c, c1)] = r if above is None else above
+                c = c1 + 1
+        for (r1, c0, c1), r0 in runs.items():
+            x0, x1 = (6 * n + c0) * dot, (6 * n + c1 + 1) * dot
+            y0, y1 = (6 - r1) * dot, (7 - r0) * dot
+            part.flat.append(([tuple(start + right * x + up * y) for x, y in ((x0, y0), (x1, y0), (x1, y1), (x0, y1))], mat, normal))
+
+
+def light_bar(body, y, roof, half, lens, built):
+    """A light bar across the roof at `y`, standing on it at height `roof` (Blender z) and reaching
+    `half` to each side: a black foot, the siren's horn in the middle and a lens either side of it. The
+    lenses are their own nodes, `beacon_L` (the driver's side) and `beacon_R`, in material `lens`, added
+    to `built`."""
+    body.box((0.0, y, roof + 0.015), (2 * half + 0.06, 0.3, 0.05), DARK)
+    body.box((0.0, y, roof + 0.1), (0.3, 0.24, 0.12), STEEL)
+    body.decal((0.0, y + 0.122, roof + 0.1), (0.24, 0.08), (0, 1, 0), DARK)
+    span = half - 0.15
+    for tag, sx in (("L", -1), ("R", 1)):
+        beacon = Part(f"beacon_{tag}", location=(sx * (0.15 + span / 2), y, roof + 0.11))
+        beacon.box((0.0, 0.0, 0.0), (span, 0.26, 0.14), lens)
+        built.append(beacon.build())
+
+
+def build_police_car():
+    blue, lens = livery("blue", (0.05, 0.16, 0.5)), livery("beacon", (0.08, 0.25, 0.9))
+    beacons = []
+
+    def details(body, c):
+        hx, z, y_of = c["hx"], c["z"], c["y_of"]
+        # The Volvo's tall lamps up the tailgate's sides.
+        for sx in (-1, 1):
+            body.decal((sx * (hx - 0.12), c["back_face"], z(1.12)), (0.13, 0.36), (0, -1, 0), RED)
+        light_bar(body, y_of(2.15), z(c["roof"]), 0.55, lens, beacons)
+        # A blue stripe down each side over the arches, and POLIS on the front doors and the bonnet.
+        # The lettering fits between the front arch and the door's back seam.
+        a0, a1 = 0.12, 2 * c["hz"] - 0.12
+        mirrored_decal(body, hx + 0.004, y_of((a0 + a1) / 2), z(0.76), (a1 - a0, 0.12), (1, 0, 0), blue)
+        lettering(body, "POLIS", (-hx - 0.004, y_of(1.81), z(0.5)), (0, -1, 0), (0, 0, 1), 0.16, blue)
+        lettering(body, "POLIS", (hx + 0.004, y_of(1.81), z(0.5)), (0, 1, 0), (0, 0, 1), 0.16, blue)
+        # Read from in front of the car: its top is towards the windscreen, up the bonnet's slope.
+        slope = Vector((0.0, -0.9, c["top"](1.0) - c["top"](0.1))).normalized()
+        lettering(body, "POLIS", Vector((0.0, y_of(0.55), z(c["top"](0.55)))) + Vector((-1, 0, 0)).cross(slope) * 0.006, (-1, 0, 0), slope, 0.24, blue)
+
+    # No rubbing strip: the lettering is where it ran.
+    objects = build_saloon("police_car", dict(volvo_240_shape(), strip=None), HEADS["police_car"], details)
+    return [*objects, *beacons]
+
+
+def build_ambulance():
+    lens = livery("beacon", (0.08, 0.25, 0.9))
+    beacons = []
+
+    def details(body, c):
+        hx, z, y_of = c["hx"], c["z"], c["y_of"]
+        # The sliding door's track on the right and the second grille under the windscreen, as the van's.
+        body.decal((hx + 0.004, y_of(2.35), z(1.09)), (1.4, 0.03), (1, 0, 0), DARK)
+        body.decal((0.0, c["face"] + 0.002, z(0.99)), (1.4, 0.06), (0, 1, 0), DARK)
+        light_bar(body, y_of(0.95), z(c["roof"]), 0.6, lens, beacons)
+        # A red stripe down each side under the windows, and AMBULANS on the panels between the cab's
+        # doors and the back wheels.
+        a0, a1 = 0.15, 2 * c["hz"] - 0.15
+        mirrored_decal(body, hx + 0.004, y_of((a0 + a1) / 2), z(0.84), (a1 - a0, 0.1), (1, 0, 0), RED)
+        lettering(body, "AMBULANS", (-hx - 0.004, y_of(2.3), z(0.61)), (0, -1, 0), (0, 0, 1), 0.18, RED)
+        lettering(body, "AMBULANS", (hx + 0.004, y_of(2.3), z(0.61)), (0, 1, 0), (0, 0, 1), 0.18, RED)
+
+    objects = build_saloon("ambulance", transporter_shape(), HEADS["ambulance"], details)
+    return [*objects, *beacons]
+
+
+BUILDERS = {"amv": build_amv, "bus": build_bus, "jeep": build_jeep, "sports": build_sports, "roadster": build_roadster, "snowmobile": build_snowmobile, "golf_cart": build_golf_cart, "technical": build_technical, "snowracer": build_snowracer, "epa": build_epa, "saab_900": build_saab_900, "saab_9000": build_saab_9000, "volvo_240": build_volvo_240, "volvo_740": build_volvo_740, "gti": build_gti, "transporter": build_transporter, "kadett": build_kadett, "omega": build_omega, "sierra": build_sierra, "escort": build_escort, "police_car": build_police_car, "ambulance": build_ambulance}
 
 
 # --------------------------------------------------------------------------------------------------
@@ -1652,4 +1918,10 @@ for name in [ONLY] if ONLY else BUILDERS:
     export(os.path.join(OUT, f"{name}.glb"))
     print(name, "tris:", sum(len(p.vertices) - 2 for o in objects for p in o.data.polygons))
     if PREVIEW:
+        # The front doors swung open `--open` radians about their hinges for the pictures (only after
+        # the export): each one's back edge out, away from the car.
+        for tag, sx in (("FL", -1), ("FR", 1)):
+            door = bpy.data.objects.get(f"door_{tag}")
+            if door and OPEN:
+                door.rotation_euler.z = sx * float(OPEN)
         preview(PREVIEW, name)

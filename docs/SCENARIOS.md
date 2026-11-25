@@ -51,6 +51,8 @@ A world can also play the delivery mode: a phone full of food orders to fetch at
 
 And it can have traffic: `"traffic": { "per_km": 2 }` puts that many cars on each kilometre of lane the traffic drives, so a big world has more than a small one. [TRAFFIC.md](TRAFFIC.md) has how.
 
+With roads to drive it can have police and ambulances as well: `"emergency": { "patrols": 2, "police": true, "ambulance": true }`. An ambulance comes for civilians who are killed or badly hurt, a player who hurts them is wanted by the police, and `patrols` police cars (six at the most) drive about meanwhile. [EMERGENCY.md](EMERGENCY.md) has how.
+
 ## 4. Try it
 
 1. Save the file and **restart the server**. It is read at start-up, and a mistake stops the server with the place named: an undefined name, an unknown field or action, an item that does not exist, a text over 200 characters, or a position outside the world. Fix what it says and start again.

@@ -106,6 +106,7 @@ pub(super) const PAK: VehicleDef = VehicleDef {
     board: None,
     exit: None,
     fittings: &[],
+    doors: NO_DOORS,
 };
 
 /// The gun, laid by the look within its traverse, which a towed Pak cannot fire.

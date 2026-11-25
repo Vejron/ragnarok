@@ -130,6 +130,7 @@ pub(super) const HEN: VehicleDef = VehicleDef {
     board: None,
     exit: None,
     fittings: &[],
+    doors: NO_DOORS,
 };
 
 /// The clutch: an egg from under the tail, with the hull's velocity and a little backwards.

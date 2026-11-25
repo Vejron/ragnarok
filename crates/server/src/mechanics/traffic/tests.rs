@@ -385,6 +385,36 @@ fn traffic_on_a_real_world() {
     }
 }
 
+/// Not a regression test: what it costs to find the way by road on a real world. Plans `ROUTES`
+/// routes (200) between places picked at random on `WORLD`'s network, and prints how long one takes.
+/// `WORLD=$PWD/worlds/home/world.msgpack cargo test --release -p server -- --ignored --nocapture routes_on_a_real_world`
+#[test]
+#[ignore]
+fn routes_on_a_real_world() {
+    let path = std::env::var_os("WORLD").map(std::path::PathBuf::from).expect("WORLD");
+    let (map, _) = crate::read_world(&path).unwrap();
+    let routes: usize = std::env::var("ROUTES").ok().and_then(|n| n.parse().ok()).unwrap_or(200);
+    let mut game = Game::new(map, 0).unwrap();
+    game.world.traffic = 1.0;
+    game.step();
+    let graph = &traffic(&game).graph;
+    let mut rng = crate::rng::Rng::from_seed(11);
+    let mut place = || graph.place(rng.next_f64() as f32 * graph.driven()).expect("a road");
+    let (mut found, mut longest, mut seconds, mut ways) = (0, std::time::Duration::ZERO, 0.0, 0);
+    let started = std::time::Instant::now();
+    for _ in 0..routes {
+        let ((from, along), (to, stop)) = (place(), place());
+        let (p, _) = graph.pose(None, to, None, stop);
+        let one = std::time::Instant::now();
+        let spot = graph.locate(p, 150.0).expect("the road it is on");
+        if let Some(route) = graph.route(from, along, spot, 240.0) {
+            (found, seconds, ways) = (found + 1, seconds + route.cost, ways + route.ways.len());
+        }
+        longest = longest.max(one.elapsed());
+    }
+    println!("{routes} routes over {} ways: {:?} each, {longest:?} the slowest; {found} are under 240 s of driving, {:.0} s and {} ways on average", graph.live.len(), started.elapsed() / routes as u32, seconds / found.max(1) as f32, ways / found.max(1));
+}
+
 /// Not a regression test: prints the network within `REACH` metres (150) of `AT` ("x,z") on `WORLD`.
 #[test]
 #[ignore]
@@ -567,6 +597,22 @@ fn a_car_near_a_player_has_a_driver_at_its_wheel_and_a_far_one_has_none() {
 }
 
 #[test]
+fn a_civilian_driver_who_climbs_out_is_the_same_person_in_the_same_colour() {
+    let mut game = highway(24);
+    let id = join(&mut game);
+    stand(&mut game, id, 0.0, 9.0);
+    let i = manned_car_near(&mut game, 60.0);
+    let (vid, driver) = (traffic(&game).cars[i].vid.unwrap(), traffic(&game).cars[i].driver.unwrap());
+    assert!(crate::mechanics::seat(&mut game.world, id, vid, 0), "the wheel is free to take");
+    run(&mut game, 0.4);
+    assert!(game.seen(driver).and_then(|seen| seen.seated).is_some_and(|seated| seated.step > 0), "the driver is seen climbing out");
+    run(&mut game, 1.0);
+    assert!(game.world.entities.has::<crate::mechanics::Civilian>(driver), "out, the same person");
+    // Drawn at the wheel with no profile of their own, in the colour their id gives.
+    assert_eq!(u32::from(game.world.entities.of::<Player>(driver).color), driver % u32::from(PLAYER_COLOR_COUNT), "in the same colour");
+}
+
+#[test]
 fn a_player_who_takes_a_traffic_car_has_it_and_its_driver_is_out_on_the_road_running() {
     let mut game = highway(24);
     let id = join(&mut game);
@@ -582,7 +628,10 @@ fn a_player_who_takes_a_traffic_car_has_it_and_its_driver_is_out_on_the_road_run
     }
     let vid = vid.expect("a car with a driver came by");
     assert!(crate::mechanics::seat(&mut game.world, id, vid, 0), "the wheel is free to take");
+    // The driver climbs out by their door (DOORS.md), which takes a second.
     run(&mut game, 0.5);
+    assert!(on_foot(&game).is_empty(), "the driver is still getting out");
+    run(&mut game, 1.0);
     assert!(game.world.entities.has::<Abandoned>(vid) && !game.world.entities.has::<TrafficCar>(vid), "it is the player's car now");
     let out = on_foot(&game);
     assert_eq!(out.len(), 1, "its driver is out of it");
@@ -638,10 +687,14 @@ fn a_driver_with_a_gun_on_them_who_gives_up_stops_gets_out_with_their_hands_up_a
     assert!(gave_up, "a driver got out");
     let (driver, at) = on_foot(&game).swap_remove(0);
     assert!(driver.hands_up > 0, "with their hands up");
-    let left: Vec<u32> = game.world.entities.ids::<With<Abandoned>>();
-    assert_eq!(left.len(), 1, "the car is left where it stopped");
-    let pose = game.world.physics.car_pose(left[0]).unwrap();
-    assert!(pose.forward_speed.abs() < 1.0 && game.world.entities.of::<Seats>(left[0]).vacant(), "standing, with nobody in it");
+    // Theirs is the car they got out of; another driver may have given up too while they climbed out.
+    let left = game.world.entities.ids::<With<Abandoned>>().into_iter().min_by(|&a, &b| {
+        let off = |vid: u32| game.world.physics.car_pose(vid).map_or(f32::MAX, |pose| (pose.position[0] - at[0]).hypot(pose.position[2] - at[2]));
+        off(a).total_cmp(&off(b))
+    });
+    let left = left.expect("the car is left where it stopped");
+    let pose = game.world.physics.car_pose(left).unwrap();
+    assert!(pose.forward_speed.abs() < 1.0 && game.world.entities.of::<Seats>(left).vacant(), "standing, with nobody in it");
     let here = game.world.entities.get::<Player>(id).unwrap().character.position;
     let near = (at[0] - here[0]).hypot(at[2] - here[2]);
     run(&mut game, 6.0);
@@ -807,6 +860,8 @@ fn a_badly_damaged_car_pulls_onto_the_verge_and_is_left_there_out_of_the_traffic
     let pose = game.world.physics.car_pose(vid).unwrap();
     let [hx, _, _] = vehicle_def(game.world.entities.of::<Vehicle>(vid).kind).spec.half_extents;
     assert!(pose.position[2].abs() - hx > 3.5 - 0.5, "it stands off the 7 m road: its middle is {} m from the centre line", pose.position[2].abs());
+    // Out by their door, which takes a second.
+    run(&mut game, 1.5);
     assert_eq!(on_foot(&game).len(), 1, "and the driver is on foot");
     // The traffic drives on past it as if it were not there.
     for _ in 0..(40 * TICK_RATE) {
@@ -1174,4 +1229,305 @@ fn the_traffic_is_a_mix_of_the_period_cars_each_riding_at_its_own_height() {
         let y = game.world.physics.car_pose(vid).unwrap().position[1];
         assert!((y - sim::Physics::car_ride_height(kind)).abs() < 0.05, "kind {kind} rides at {y}");
     }
+}
+
+/// Gives `game` emergency services with `patrols` police cars out on patrol.
+fn services(game: &mut Game, patrols: usize) {
+    (game.world.fleet.ambulance, game.world.fleet.police, game.world.fleet.patrols) = (true, true, patrols);
+    game.step();
+}
+
+/// Sends a unit of `service` to `to` for `tag`, and gives which unit went. The tag is one that
+/// `Emergency`, which commands the fleet in a real game, takes for none of its own suspects', so it
+/// leaves the unit to the test.
+fn send(game: &mut Game, service: Service, to: [f32; 3], tag: u32) -> usize {
+    let tag = tag | 1 << 31;
+    game.world.fleet.orders.push(FleetOrder::Send { service, to, tag, ahead: None });
+    game.step();
+    game.world.fleet.units.iter().position(|unit| unit.tag == tag).expect("a unit was sent")
+}
+
+/// Steps `game` until unit `unit` is on `duty`, for `seconds` at most. Whether it got to be.
+fn until(game: &mut Game, unit: usize, duty: Duty, seconds: f32) -> bool {
+    for _ in 0..(seconds * TICK_RATE as f32) as u32 {
+        if game.world.fleet.units[unit].duty == duty {
+            return true;
+        }
+        game.step();
+    }
+    game.world.fleet.units[unit].duty == duty
+}
+
+#[test]
+fn a_world_without_emergency_services_has_no_units_and_one_with_them_has_them_dormant() {
+    let mut plain = game(10);
+    run(&mut plain, 1.0);
+    assert!(plain.world.fleet.units.is_empty());
+    let mut game = game(10);
+    services(&mut game, 0);
+    run(&mut game, 5.0);
+    assert_eq!(game.world.fleet.units.len(), FLEET);
+    assert_eq!(game.world.fleet.units.iter().filter(|unit| unit.service == Service::Police).count(), POLICE);
+    assert!(game.world.fleet.units.iter().all(|unit| unit.duty == Duty::Dormant && unit.vid.is_none()));
+    assert_eq!(traffic(&game).counts().0, 10, "the traffic is as it was");
+    // The traffic that was there before the fleet still drives, each car in the lane it was in.
+    let traffic = traffic(&game);
+    for (way, lane) in traffic.lanes.iter().enumerate() {
+        assert!(lane.iter().all(|&car| car as usize >= FLEET && traffic.cars[car as usize].way.index() == way));
+    }
+}
+
+#[test]
+fn a_unit_sent_somewhere_drives_there_by_road_fast_parks_on_the_verge_and_is_gone_when_let_go() {
+    let mut game = game(0);
+    services(&mut game, 0);
+    // Half way down the east side of the block.
+    let to = [200.0, 0.0, 0.0];
+    let unit = send(&mut game, Service::Ambulance, to, 7);
+    assert_eq!(game.world.fleet.units[unit].service, Service::Ambulance);
+    assert_eq!(game.world.fleet.units[unit].duty, Duty::Responding);
+    let from = game.world.fleet.units[unit].at;
+    assert!((from[0] - to[0]).hypot(from[2] - to[2]) > 250.0, "it starts well away: {from:?}");
+    let mut fastest = 0.0f32;
+    let mut turns = 0;
+    let mut way = traffic(&game).cars[unit].way;
+    for _ in 0..(180 * TICK_RATE) {
+        game.step();
+        let car = traffic(&game).cars[unit];
+        fastest = fastest.max(car.speed);
+        if car.way != way {
+            (way, turns) = (car.way, turns + 1);
+        }
+        assert!(game.world.fleet.units[unit].siren == (car.duty == Duty::Responding));
+        if car.duty == Duty::OnScene {
+            break;
+        }
+    }
+    let at = game.world.fleet.units[unit];
+    assert_eq!(at.duty, Duty::OnScene, "it got there");
+    assert!((at.at[0] - to[0]).hypot(at.at[2] - to[2]) < 8.0, "it stands by the place: {:?}", at.at);
+    assert!(turns >= 1, "by more than one road");
+    assert!(fastest > 12.0, "faster than the 10 m/s its roads are driven at: {fastest}");
+    let car = traffic(&game).cars[unit];
+    assert!(car.shift < -2.0 && car.speed == 0.0, "off the road on its right: {} m", car.shift);
+    assert!(traffic(&game).lanes.iter().all(|lane| !lane.contains(&(unit as u32))), "and in nobody's lane");
+    // It stands there as long as it is wanted.
+    run(&mut game, 200.0);
+    assert_eq!(game.world.fleet.units[unit].duty, Duty::OnScene);
+    // Let go, with nobody to see it leave, it is gone.
+    game.world.fleet.orders.push(FleetOrder::Release { unit });
+    run(&mut game, 1.0);
+    assert_eq!(game.world.fleet.units[unit].duty, Duty::Dormant);
+    assert_eq!(game.world.fleet.units[unit].tag, 0);
+}
+
+#[test]
+fn a_unit_someone_watches_arrive_is_a_car_that_parks_itself_and_drives_off_out_of_sight() {
+    let mut game = game(0);
+    let id = join(&mut game);
+    stand(&mut game, id, 230.0, 20.0);
+    services(&mut game, 0);
+    let unit = send(&mut game, Service::Police, [200.0, 0.0, 0.0], 3);
+    let from = game.world.fleet.units[unit].at;
+    assert!((from[0] - 230.0).hypot(from[2] - 20.0) > HIDE_BEYOND, "it starts out of the player's sight");
+    assert!(until(&mut game, unit, Duty::OnScene, 180.0), "it got there");
+    run(&mut game, 3.0);
+    let at = game.world.fleet.units[unit];
+    let vid = at.vid.expect("a car to look at");
+    assert!(!game.world.physics.car_on_rails(vid), "parked, it is a car like any other");
+    let pose = game.world.physics.car_pose(vid).unwrap();
+    assert!(pose.forward_speed.abs() < 0.2 && pose.up_y > 0.95, "standing on its wheels");
+    assert!((pose.position[0] - 200.0).hypot(pose.position[2]) < 12.0, "by the place: {:?}", pose.position);
+    assert!(game.world.entities.get::<Seats>(vid).is_some_and(|seats| seats.rider(0).is_none()), "with its wheel free");
+    // Sent on round the corner, it drives there.
+    game.world.fleet.orders.push(FleetOrder::Redirect { unit, to: [100.0, 0.0, 150.0] });
+    game.step();
+    assert_eq!(game.world.fleet.units[unit].duty, Duty::Responding);
+    assert!(until(&mut game, unit, Duty::OnScene, 120.0), "it got there too");
+    let at = game.world.fleet.units[unit].at;
+    assert!((at[0] - 100.0).hypot(at[2] - 150.0) < 12.0, "{at:?}");
+    // Let go, it drives off, and is gone once it is out of sight.
+    game.world.fleet.orders.push(FleetOrder::Release { unit });
+    game.step();
+    assert_eq!(game.world.fleet.units[unit].duty, Duty::Leaving);
+    assert!(!game.world.fleet.units[unit].siren);
+    assert!(until(&mut game, unit, Duty::Dormant, 240.0), "it left");
+    assert!(game.world.entities.get::<Vehicle>(vid).is_none(), "car and all");
+}
+
+#[test]
+fn traffic_pulls_onto_the_verge_for_a_siren_and_drives_on_when_it_is_past() {
+    // A long straight road with traffic on it, and a unit sent from one end to the other.
+    let run_it = |sirens: bool| {
+        let mut game = highway(40);
+        services(&mut game, 0);
+        run(&mut game, 20.0);
+        let unit = send(&mut game, Service::Police, [1200.0, 0.0, 0.0], 1);
+        let start = game.world.fleet.units[unit].at[0];
+        if !sirens {
+            game.with_mechanic(|traffic: &mut Traffic, _| traffic.cars[unit].mood = Mood::Calm);
+        }
+        let (mut yielded, mut seconds) = (0, 0.0);
+        while game.world.fleet.units[unit].duty == Duty::Responding && seconds < 400.0 {
+            run(&mut game, 0.5);
+            seconds += 0.5;
+            let traffic = traffic(&game);
+            yielded = yielded.max(traffic.cars.iter().filter(|car| matches!(car.mood, Mood::Yielding { .. }) && car.shift < -YIELDED).count());
+            // Nobody behind the siren is still out of its way.
+            let siren = traffic.cars[unit];
+            for car in traffic.cars.iter().filter(|car| car.way == siren.way && car.along < siren.along - 60.0) {
+                assert!(!matches!(car.mood, Mood::Yielding { .. }), "a car 60 m behind the siren still waits");
+            }
+        }
+        (game, unit, yielded, seconds / (1200.0 - start).max(1.0))
+    };
+    let (mut game, unit, yielded, pace) = run_it(true);
+    assert_eq!(game.world.fleet.units[unit].duty, Duty::OnScene, "it got there");
+    assert!(yielded >= 1, "cars pulled over for it");
+    let (.., slow) = run_it(false);
+    assert!(pace < slow * 0.8, "and it was there sooner for it: {pace} s/m against {slow}");
+    // The traffic is back in its lanes and driving.
+    run(&mut game, 20.0);
+    let traffic = traffic(&game);
+    assert!(traffic.cars[FLEET..].iter().all(|car| car.mood == Mood::Calm && car.shift.abs() < 0.5));
+    assert!(traffic.cars[FLEET..].iter().filter(|car| car.speed > 5.0).count() > 30);
+}
+
+#[test]
+fn a_unit_with_its_siren_on_is_given_a_junction_that_is_another_roads() {
+    let mut game = game(60);
+    services(&mut game, 0);
+    run(&mut game, 30.0);
+    let unit = send(&mut game, Service::Police, [0.0, 0.0, 100.0], 1);
+    let (mut crossed, mut waited) = (0, 0);
+    let mut held = None;
+    while game.world.fleet.units[unit].duty == Duty::Responding {
+        game.step();
+        let traffic = traffic(&game);
+        let car = traffic.cars[unit];
+        if let Some(node) = car.holds.filter(|&node| Some(node) != held) {
+            // The junction is its road's the moment it has it, whoever's it was.
+            assert_eq!(traffic.junctions[node as usize].map(|(way, ..)| way), Some(car.way.index() as u32));
+            crossed += 1;
+        }
+        held = car.holds;
+        waited = waited.max(car.waiting);
+        assert!(game.world.tick < 400 * TICK_RATE, "it never arrived");
+    }
+    assert!(crossed >= 1, "it crossed a junction on its way");
+    assert_eq!(waited, 0, "and waited at none");
+}
+
+#[test]
+fn traffic_goes_round_a_unit_parked_at_a_scene_and_does_not_queue_behind_it() {
+    let mut game = game(40);
+    let id = join(&mut game);
+    stand(&mut game, id, 215.0, 0.0);
+    services(&mut game, 0);
+    let unit = send(&mut game, Service::Ambulance, [200.0, 0.0, 0.0], 1);
+    assert!(until(&mut game, unit, Duty::OnScene, 240.0), "it got there");
+    let parked = traffic(&game).cars[unit];
+    // The cars of its lane keep coming by, and none stands behind it.
+    let (mut passed, mut last): (usize, Vec<u32>) = (0, Vec::new());
+    for _ in 0..(120 * TICK_RATE) {
+        game.step();
+        let traffic = traffic(&game);
+        let by: Vec<u32> = traffic.lanes[parked.way.index()].iter().copied().filter(|&car| traffic.cars[car as usize].along > parked.along + 10.0).collect();
+        passed += by.iter().filter(|car| !last.contains(car)).count();
+        last = by;
+        for &car in &traffic.lanes[parked.way.index()] {
+            let car = traffic.cars[car as usize];
+            assert!(!(car.along < parked.along && car.along > parked.along - 30.0 && car.stood > 20 * TICK_RATE), "a car has stood behind it for 20 s");
+        }
+    }
+    assert!(passed >= 3, "{passed} cars came by");
+    assert_eq!(game.world.fleet.units[unit].duty, Duty::OnScene);
+}
+
+#[test]
+fn a_unit_whose_car_is_wrecked_or_taken_is_lost_and_the_traffic_keeps_its_number() {
+    let mut game = game(10);
+    let id = join(&mut game);
+    stand(&mut game, id, 230.0, 20.0);
+    services(&mut game, 0);
+    let unit = send(&mut game, Service::Police, [200.0, 0.0, 0.0], 9);
+    assert!(until(&mut game, unit, Duty::OnScene, 180.0), "it got there");
+    run(&mut game, 1.0);
+    let vid = game.world.fleet.units[unit].vid.expect("a car to take");
+    // A player takes its wheel.
+    crate::mechanics::seat(&mut game.world, id, vid, 0);
+    run(&mut game, 1.0);
+    // Whoever sent it sees that it is gone: the unit no longer has that car, nor that errand.
+    let lost = game.world.fleet.units[unit];
+    assert!(lost.vid != Some(vid) && lost.tag != 9 | 1 << 31, "{lost:?}");
+    assert!(game.world.entities.has::<Abandoned>(vid) && !game.world.entities.has::<TrafficCar>(vid), "the car is the player's");
+    assert!(game.world.fleet.units.iter().all(|unit| unit.vid != Some(vid)));
+    assert_eq!(traffic(&game).counts().0, 10);
+}
+
+#[test]
+fn a_unit_plans_another_way_when_the_road_it_meant_to_take_is_shut_and_is_lost_when_there_is_none() {
+    let mut game = game(0);
+    services(&mut game, 0);
+    // To the road across the middle of the block, which is reached from either end of it.
+    let unit = send(&mut game, Service::Police, [0.0, 0.0, 50.0], 1);
+    let planned: Vec<Way> = traffic(&game).plans[unit].ways.iter().copied().collect();
+    let last = *planned.last().expect("it has more than one road to drive");
+    let shut = planned.iter().copied().find(|way| way.edge != last.edge).expect("and a road between where it is and the last");
+    game.with_mechanic(|traffic: &mut Traffic, world| traffic.shut(shut.edge, world));
+    assert!(traffic(&game).plans[unit].ways.iter().all(|way| way.edge != shut.edge), "its plan no longer has the road that is shut");
+    assert!(until(&mut game, unit, Duty::OnScene, 240.0), "and it got there another way");
+    let at = game.world.fleet.units[unit].at;
+    assert!(at[0].hypot(at[2] - 50.0) < 8.0, "{at:?}");
+    // One whose way to where it was sent is gone altogether is lost to whoever sent it.
+    let other = send(&mut game, Service::Ambulance, [200.0, 0.0, 0.0], 2);
+    let end = traffic(&game).plans[other].last;
+    game.with_mechanic(|traffic: &mut Traffic, world| traffic.shut(end.edge, world));
+    game.step();
+    let lost = game.world.fleet.units[other];
+    assert_eq!((lost.duty, lost.tag), (Duty::Dormant, 0));
+}
+
+#[test]
+fn a_world_with_patrols_keeps_that_many_police_cars_on_the_roads_and_sends_the_nearest() {
+    let mut game = game(10);
+    services(&mut game, 2);
+    run(&mut game, 30.0);
+    let patrols = |game: &Game| game.world.fleet.units.iter().filter(|unit| unit.duty == Duty::Patrol).count();
+    assert_eq!(patrols(&game), 2);
+    assert!(game.world.fleet.units.iter().all(|unit| unit.duty != Duty::Patrol || unit.service == Service::Police));
+    assert!(traffic(&game).cars[..FLEET].iter().filter(|car| car.duty == Duty::Patrol).all(|car| car.speed > 1.0 || car.waiting > 0 || car.along > 0.0));
+    // A patrol car that is near by road is the one that goes, with no siren until it is sent.
+    assert!(game.world.fleet.units.iter().all(|unit| !unit.siren));
+    let unit = send(&mut game, Service::Police, [0.0, 0.0, 0.0], 5);
+    assert_eq!(patrols(&game), 1, "one of the two went");
+    // And another takes its place on patrol.
+    run(&mut game, 3.0);
+    assert_eq!(patrols(&game), 2);
+    assert!(until(&mut game, unit, Duty::OnScene, 180.0));
+    // Let go with nobody near, it is gone: the patrols are already what they should be.
+    game.world.fleet.orders.push(FleetOrder::Release { unit });
+    run(&mut game, 2.0);
+    assert_eq!(game.world.fleet.units[unit].duty, Duty::Dormant);
+    assert_eq!(patrols(&game), 2);
+    // No more than there are police cars, whatever is asked for.
+    game.world.fleet.patrols = 50;
+    run(&mut game, 20.0);
+    assert_eq!(patrols(&game), POLICE);
+    assert_eq!(traffic(&game).counts().0, 10);
+}
+
+#[test]
+fn nothing_is_sent_to_a_place_no_road_leads_to_or_when_every_unit_is_out() {
+    let mut game = game(0);
+    services(&mut game, 0);
+    game.world.fleet.orders.push(FleetOrder::Send { service: Service::Ambulance, to: [-500.0, 0.0, 500.0], tag: 1, ahead: None });
+    run(&mut game, 1.0);
+    assert!(game.world.fleet.units.iter().all(|unit| unit.duty == Duty::Dormant), "a field far from any road");
+    for tag in 1..=3 {
+        game.world.fleet.orders.push(FleetOrder::Send { service: Service::Ambulance, to: [200.0, 0.0, 0.0], tag, ahead: None });
+        game.step();
+    }
+    let out: Vec<u32> = game.world.fleet.units.iter().filter(|unit| unit.duty != Duty::Dormant).map(|unit| unit.tag).collect();
+    assert_eq!(out, vec![1, 2], "there are two ambulances, and no police car goes in their place");
 }

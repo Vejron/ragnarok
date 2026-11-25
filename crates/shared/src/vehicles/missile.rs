@@ -130,4 +130,5 @@ pub(super) const MISSILE: VehicleDef = VehicleDef {
     board: None,
     exit: None,
     fittings: &[],
+    doors: NO_DOORS,
 };

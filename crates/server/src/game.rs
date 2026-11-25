@@ -21,6 +21,13 @@ use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{MissedTickBehavior, interval};
 
+/// One bot in this many carries an anti-tank weapon in the standard loadout (BOTS.md).
+const ANTI_TANK_ONE_IN: u32 = 4;
+/// A police officer shoots as well as this (`Aim::skill`), and has at least this much courage
+/// (EMERGENCY.md).
+const OFFICER_SKILL: f32 = 0.5;
+const OFFICER_COURAGE: f32 = 0.7;
+
 mod catch_up;
 mod construct;
 mod craters;
@@ -125,6 +132,8 @@ impl Game {
                 bus_calls: Vec::new(),
                 traffic_calls: Vec::new(),
                 traffic: 0.0,
+                fleet: Default::default(),
+                emergency_calls: Vec::new(),
                 map,
                 entities: Default::default(),
                 nav: Default::default(),
@@ -262,20 +271,34 @@ impl Game {
     /// (`[x, z]`, metres; empty makes one up). It is a player with no connection: `Bots` writes its
     /// input, and everything else treats it as anyone else. `None` when there are `MAX_BOTS` already.
     pub fn add_bot(&mut self, home: [f32; 2], team: u8, route: Vec<[f32; 2]>) -> Option<u32> {
-        let name = format!("Bot {}", self.world.entities.count::<Bot>() + 1);
+        let name = format!("Bot {}", self.bots() + 1);
         self.add_bot_as(name, home, team, route)
+    }
+
+    /// How many bots there are, not counting the police, who have a soldier's mind too but no place
+    /// in `MAX_BOTS`.
+    fn bots(&self) -> usize {
+        self.world.entities.count::<Bot>() - self.world.entities.count::<crate::mechanics::Officer>()
     }
 
     /// `add_bot`, under `name`.
     pub fn add_bot_as(&mut self, name: String, home: [f32; 2], team: u8, route: Vec<[f32; 2]>) -> Option<u32> {
-        if self.world.entities.count::<Bot>() >= MAX_BOTS {
+        if self.bots() >= MAX_BOTS {
             return None;
         }
         let id = self.world.alloc_id();
         let team = team.max(TEAM_BOTS);
         // One outfit per team, so a squad reads as one.
         let color = team.wrapping_mul(5) % PLAYER_COLOR_COUNT;
-        self.world.entities.spawn(id, Player::new(name, color, team, vec![home.map(to_cm)], starting_hotbar()));
+        // One in `ANTI_TANK_ONE_IN` carries a Carl Gustaf in place of the flare, for the tanks: by its
+        // id, so a squad's are spread through it and nothing else's dice change.
+        let mut hotbar = starting_hotbar();
+        if (id + 1).is_multiple_of(ANTI_TANK_ONE_IN)
+            && let Some(slot) = hotbar.iter_mut().find(|slot| slot.item == shared::items::ITEM_FLARE)
+        {
+            *slot = hotbar_of([shared::items::ITEM_CARL_GUSTAF; HOTBAR_SLOTS])[0];
+        }
+        self.world.entities.spawn(id, Player::new(name, color, team, vec![home.map(to_cm)], hotbar));
         let temper = Temper::rolled(|| self.world.rng.next_f64() as f32);
         self.world.entities.insert(id, (soldier_life(), Bot { temper, ..Bot::new(home, route) }));
         for mechanic in &mut self.mechanics {
@@ -357,7 +380,8 @@ impl Game {
                     let wounds = self.world.entities.get::<Wounds>(id).copied();
                     self.world.entities.despawn(id);
                     let rng = &mut self.world.rng;
-                    let color = (rng.next_u64() % u64::from(PLAYER_COLOR_COUNT)) as u8;
+                    // The colour they were drawn in at the wheel, where they had no profile: their id's.
+                    let color = (id % u32::from(PLAYER_COLOR_COUNT)) as u8;
                     let slant = (rng.next_f64() as f32 * 2.0 - 1.0) * crate::mechanics::CIVILIAN_SLANT;
                     // A civilian: on no team, with empty hands, and no coming back from the dead.
                     self.world.entities.spawn(id, Player::new("Civilian".into(), color, TEAM_NONE, vec![[feet[0], feet[2]].map(to_cm)], hotbar_of([shared::items::ITEM_NONE; HOTBAR_SLOTS])));
@@ -389,6 +413,90 @@ impl Game {
         }
     }
 
+    /// Answers what `Emergency` asked for this tick: medics out of their ambulance and officers out
+    /// of their car, each a player with no connection, and those who are back aboard or gone.
+    fn crew(&mut self) {
+        use crate::mechanics::{EmergencyCall, Medic, Officer, TEAM_SERVICES, officer_loadout};
+        for call in std::mem::take(&mut self.world.emergency_calls) {
+            match call {
+                EmergencyCall::Medic { id, feet, yaw, medic } => {
+                    // The one who sat in the ambulance, if anyone was seen to: what they took goes with them.
+                    let hp = self.crew_hp(id);
+                    // Nobody's enemy, with empty hands, and no coming back from the dead.
+                    self.world.entities.spawn(id, Player::new("Medic".into(), 0, TEAM_SERVICES, vec![[feet[0], feet[2]].map(to_cm)], hotbar_of([shared::items::ITEM_NONE; HOTBAR_SLOTS])));
+                    self.world.entities.insert(id, (soldier_life(), *medic));
+                    self.world.entities.remove::<crate::entities::Respawn>(id);
+                    for mechanic in &mut self.mechanics {
+                        mechanic.on_join(&mut self.world, id);
+                    }
+                    // Beside the ambulance's door, not at a spawn point.
+                    if let Some(mut player) = self.world.entities.get_mut::<Player>(id) {
+                        player.character.position = [feet[0], feet[1] + sim::STANDING_Y, feet[2]];
+                        player.character.yaw = yaw;
+                    }
+                    self.crew_health(id, hp);
+                    self.broadcast(encode(&Profiles { tag: S_PROFILES, players: vec![profile_entry(&self.world, id)] }));
+                }
+                EmergencyCall::Officer { id, feet, yaw, officer } => {
+                    let hp = self.crew_hp(id);
+                    // Armed, and after one person only; no coming back from the dead either.
+                    self.world.entities.spawn(id, Player::new("Police".into(), 0, TEAM_SERVICES, vec![[feet[0], feet[2]].map(to_cm)], hotbar_of(officer_loadout(officer.seat))));
+                    // A soldier's mind too, for when it comes to shooting (`Officer::armed`): steady,
+                    // a fair shot, and at home where they got out.
+                    let temper = Temper::rolled(|| self.world.rng.next_f64() as f32);
+                    let mut mind = Bot { temper: Temper { courage: temper.courage.max(OFFICER_COURAGE), ..temper }, yaw, ..Bot::new([feet[0], feet[2]], vec![[feet[0], feet[2]]]) };
+                    mind.aim.skill = OFFICER_SKILL;
+                    self.world.entities.insert(id, (soldier_life(), *officer, mind));
+                    self.world.entities.remove::<crate::entities::Respawn>(id);
+                    for mechanic in &mut self.mechanics {
+                        mechanic.on_join(&mut self.world, id);
+                    }
+                    if let Some(mut player) = self.world.entities.get_mut::<Player>(id) {
+                        player.character.position = [feet[0], feet[1] + sim::STANDING_Y, feet[2]];
+                        player.character.yaw = yaw;
+                    }
+                    self.crew_health(id, hp);
+                    self.broadcast(encode(&Profiles { tag: S_PROFILES, players: vec![profile_entry(&self.world, id)] }));
+                }
+                EmergencyCall::Gone(id) => {
+                    if self.world.entities.has::<Medic>(id) || self.world.entities.has::<Officer>(id) {
+                        self.leave(id);
+                    }
+                }
+                EmergencyCall::Aboard { id, vehicle, seat, kind } => {
+                    if !(self.world.entities.has::<Medic>(id) || self.world.entities.has::<Officer>(id)) {
+                        continue;
+                    }
+                    // Out of the game as a player, without a word to the clients: the same person sits
+                    // in the vehicle now, a driver of the traffic, and they keep drawing them.
+                    let hp = self.world.entities.get::<crate::entities::Health>(id).map_or(PLAYER_MAX_HP, |health| health.hp);
+                    for mechanic in &mut self.mechanics {
+                        mechanic.on_leave(&mut self.world, id);
+                    }
+                    self.world.entities.despawn(id);
+                    crate::mechanics::seat_crew(&mut self.world, id, vehicle, seat, kind, hp);
+                }
+            }
+        }
+    }
+
+    /// What crew member `id`, who sat in their vehicle as a driver of the traffic does, has left,
+    /// and them gone from their seat: they come out as a medic or an officer under the same id.
+    fn crew_hp(&mut self, id: u32) -> Option<u8> {
+        let hp = self.world.entities.get::<crate::entities::Health>(id).map(|health| health.hp);
+        if self.world.entities.has::<crate::mechanics::Driver>(id) {
+            self.world.entities.despawn(id);
+        }
+        hp
+    }
+
+    /// Crew member `id`, just out, keeps the health `hp` they had in their seat.
+    fn crew_health(&mut self, id: u32, hp: Option<u8>) {
+        if let (Some(hp), Some(mut health)) = (hp, self.world.entities.get_mut::<crate::entities::Health>(id)) {
+            health.hp = hp;
+        }
+    }
+
     /// Takes zombie `id` out of the game, as if it had left. Anyone else is left alone.
     pub fn remove_zombie(&mut self, id: u32) {
         if crate::mechanics::is_zombie(&self.world, id) {
@@ -403,7 +511,7 @@ impl Game {
     /// more bots or for the tank, or it does not fit there.
     pub fn add_crew(&mut self, names: [String; 2], at: [f32; 2], team: u8, route: Vec<[f32; 2]>) -> Option<(u32, [u32; 2])> {
         use crate::mechanics::{DRIVER, GUNNER, add_tank, nearest_waypoint, road_route, seat};
-        if self.world.entities.count::<Bot>() + 2 > MAX_BOTS {
+        if self.bots() + 2 > MAX_BOTS {
             return None;
         }
         let route = if route.is_empty() { road_route(&self.world.map, at) } else { route };
@@ -469,6 +577,7 @@ impl Game {
         let after = timed.is_some().then(std::time::Instant::now);
         self.staff_buses();
         self.street();
+        self.crew();
         if let Some(mut scenario) = self.scenario.take() {
             scenario.tick(self);
             self.scenario = Some(scenario);
@@ -489,6 +598,11 @@ impl Game {
         self.send_deliveries();
         for text in std::mem::take(&mut self.world.fresh.said) {
             self.notice(NOTICE_SAY, &text);
+        }
+        for (to, text) in std::mem::take(&mut self.world.fresh.told) {
+            if let Some(outbox) = self.outboxes.get(&to) {
+                send_reliable(outbox, to, &Bytes::from(encode(&Notice { tag: S_NOTICE, kind: NOTICE_SAY, text })), &mut self.stalled);
+            }
         }
         self.drop_stalled();
         crate::events::update(&mut self.world.entities.ecs);

@@ -74,7 +74,24 @@ kind (`Ball`, `Ap`, `He`) and a calibre. Guns carry it on their `ItemDef`, machi
 | helicopter autocannon | 20, HE | goes through a tank's roof |
 | mortar | 15, HE | |
 | bomb | 60, HE | |
-| Carl Gustaf | 400 | rocket: not judged by armour yet, hurts as before |
+| Carl Gustaf | 100, shaped charge | see below |
+
+**The Carl Gustaf's rocket** carries a shaped charge (`projectiles::Shaped`, the item's `pen`): it is judged
+by the armour it meets, as a shell is, but never glances off: a plate it would have skidded off stops
+it. What it does to the hull goes with what it had to spare (`armor::shaped_share`): `residual / 100` of
+its direct hit (0.8 × 160), and never less than a plain rocket's blast does to armour (`SPLASH_ARMOURED`,
+0.2), stopped or only just through. Inside, its jet goes on with a twentieth of what it had to spare
+(`SHAPED_INSIDE`) and does 40 to a person in its way (`SHAPED_CREW`). Hits to wreck one, from 30 m:
+
+| | front | side | rear |
+|---|---|---|---|
+| tank (60 mm front) | 5 | 3 | 3 |
+| Strv (its sloped glacis, 180 mm along a level shot) | 9 | 3 | 3 |
+| Strf, Pbv, AMV | 2 | 2 | 2 |
+| Titan | about 85 (3 a hit) | about 85 | about 40 (6 a hit) |
+
+The Titan's toughness (`Body::tough`, 0.1) cuts this as it cuts everything. A tank's driver lives
+through the first hit from ahead. `armor/tests.rs` fires the rockets (`carl_gustaf_hits`).
 
 A gun with two kinds of round (`Fire::Shell::alt`) swaps them with Q (`BUTTON_AMMO`, one swap per
 press). The swap takes a reload, and `TURRET_ALT` tells the client which round is loaded: the HUD
@@ -177,7 +194,7 @@ A wreck coming back as new (`Vehicle::renew`) has every part whole and its fire 
 
 ## Not done
 
-- Rockets (the Carl Gustaf, the helicopter's) and drones are not judged by armour; they hurt as before.
+- The helicopter's rockets and drones are not judged by armour; they hurt as before.
 - Turret crew die only when the turret comes off or a round reaches them (a T-55's machine gunner, in
   the open on the roof, can also be shot like anyone else); there is no bail-out or
   "knocked out" state for a vehicle whose crew are all dead.

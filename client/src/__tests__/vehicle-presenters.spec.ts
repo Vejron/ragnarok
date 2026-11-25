@@ -32,7 +32,7 @@ function tank(x: number, { shots = 0, hp = 250, damage }: { shots?: number; hp?:
 }
 
 /** Someone sitting in seat `seat` of vehicle `vehicle`. */
-const rider = (vehicle: number, seat: number): Components => ({ kind: { kind: 0 }, seated: { vehicle, seat } })
+const rider = (vehicle: number, seat: number): Components => ({ kind: { kind: 0 }, seated: { vehicle, seat, step: 0 } })
 
 /** Vehicles drawn into stand-ins that record what is heard, flashed and thrown. */
 function harness(driven: Driven | null = null) {

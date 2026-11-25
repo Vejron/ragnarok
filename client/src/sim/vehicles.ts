@@ -52,6 +52,22 @@ export interface VehicleDef {
   rotor: Rotor | null
   /** Its vision slits, which a round goes straight through (`Armor::slits`). */
   slits: readonly Slit[]
+  /** The side doors its crew get in and out by, which the model has as `door_FL` and `door_FR` (`VehicleDef::doors`, DOORS.md). */
+  doors: readonly Door[]
+}
+
+/** A side door, hung on its front edge, that whoever sits in `seat` gets in and out by. */
+export interface Door {
+  seat: number
+  /** Its hinge in the hull frame: the front edge, outside, at its foot. A door on the left has a negative x and swings out to the left. */
+  hinge: Triple
+  /** How far it reaches back from the hinge and how tall it is, metres. */
+  length: number
+  height: number
+  /** How far it swings open, radians. */
+  swing: number
+  /** Where whoever got out by it stands, in the hull frame, at the hinge's height (`DoorDef::spot`). */
+  spot: Triple
 }
 
 /** What the client needs of how a helicopter flies: the rest is the sim's. */
@@ -87,7 +103,11 @@ export const VEHICLES: readonly VehicleDef[] = tables.vehicles.map((row) => ({
   mountSeat: row.mountSeat && { seat: row.mountSeat.seat, pivot: triple(row.mountSeat.pivot), head: triple(row.mountSeat.head) },
   board: row.board ? triple(row.board) : null,
   slits: row.slits.map((slit) => ({ ...slit, centre: triple(slit.centre), half: triple(slit.half), out: triple(slit.out), pivot: triple(slit.pivot) })),
+  doors: row.doors.map((door) => ({ ...door, hinge: triple(door.hinge), spot: triple(door.spot) })),
 }))
+
+/** The door of seat `index` of a `kind`, if it has one. */
+export const doorOf = (kind: number | undefined, index: number): Door | null => vehicleDef(kind).doors.find((door) => door.seat === index) ?? null
 
 /** The definition of a vehicle `kind`. Unknown kinds are jeeps. */
 export const vehicleDef = (kind: number | undefined): VehicleDef => VEHICLES.find((def) => def.kind === kind) ?? VEHICLES[0]!

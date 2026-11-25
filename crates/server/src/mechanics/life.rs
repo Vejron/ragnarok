@@ -98,11 +98,11 @@ fn anchor(world: &World, id: u32, transform: Option<&Transform>, player: Option<
     match player {
         Some(player) if player.embodied() => Some((player.character.position, None)),
         Some(_) => world.seated_head(id).map(|(vehicle, head)| (head, Some(vehicle))),
-        None => match world.entities.get::<super::Driver>(id).map(|driver| driver.vehicle) {
+        None => match world.entities.get::<super::Driver>(id).map(|driver| (driver.vehicle, driver.seat)) {
             // A driver of the traffic at the wheel: where the head of a player in that seat would be.
-            Some(vehicle) => {
+            Some((vehicle, seat)) => {
                 let kind = world.entities.get::<crate::game::Vehicle>(vehicle)?.kind;
-                let head = shared::vehicles::seat_head(kind, 0, 0.0)?;
+                let head = shared::vehicles::seat_head(kind, seat, 0.0)?;
                 Some((world.physics.car_pose(vehicle)?.world_point(head), Some(vehicle)))
             }
             None => transform.map(|transform| (transform.position, None)),
@@ -321,6 +321,10 @@ const BLASTS: [u8; 12] = [WEAPON_ROCKET, WEAPON_SHELL, WEAPON_AP, WEAPON_WRECK, 
 pub fn damage_entity(world: &mut World, id: u32, harm: Harm) -> bool {
     let Harm { amount, attacker, weapon, from, head, limb, at, offset, unsparing } = harm;
     let other = attacker.filter(|&by| by != id);
+    // An officer's fire is for their suspect alone.
+    if other.is_some_and(|by| super::emergency::misses(world, by, id)) {
+        return false;
+    }
     if (!unsparing && other.is_some_and(|by| same_team(world, by, id))) || amount == 0 || !world.entities.alive(id) {
         return false;
     }

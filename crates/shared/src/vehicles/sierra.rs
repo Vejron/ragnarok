@@ -29,6 +29,10 @@ const ARMOR: Armor = Armor {
     canvas: false,
 };
 
+/// The driver's door, measured off the model (`build_car.py` prints it): its hinge, length and height.
+/// The passenger's is its mirror.
+pub const SIERRA_DOOR: DoorDef = DoorDef::front([-0.85, -0.285, -1.14], 1.1, 1.17);
+
 pub(super) const SIERRA: VehicleDef = VehicleDef {
     kind: KIND_SIERRA,
     name: "Ford Sierra",
@@ -91,4 +95,5 @@ pub(super) const SIERRA: VehicleDef = VehicleDef {
     board: None,
     exit: None,
     fittings: &[],
+    doors: &[SIERRA_DOOR, SIERRA_DOOR.mirrored()],
 };

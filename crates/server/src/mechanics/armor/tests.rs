@@ -670,3 +670,63 @@ fn a_hail_of_rifle_rounds_on_a_tank_is_one_scuff_a_snapshot_but_every_one_is_cal
     assert_eq!((hole.x, hole.y, hole.z), (-70, 32, -315));
     assert!(hole.dz > 120, "{hole:?}");
 }
+
+/// How many Carl Gustaf rockets fired from 30 m in the hull-frame direction `local_from`, a little from
+/// above, it takes to wreck a fresh `kind` with someone at its wheel; and that someone's health after
+/// the first. At most 40.
+fn carl_gustaf_hits(kind: u8, local_from: [f32; 3]) -> (u32, u8) {
+    let mut game = game();
+    let y = game.world.map.ground.height_at(0.0, 150.0) + 2.0;
+    let vid = crate::mechanics::for_tests::add_vehicle(&mut game.world, kind, [0.0, y, 150.0], 0.0);
+    let (outbox, inbox) = mpsc::channel(4096);
+    std::mem::forget(inbox);
+    let (reply, mut response) = oneshot::channel();
+    game.handle(Command::Join { outbox, reply, profile: crate::game::Profile::default() });
+    let crew = response.try_recv().unwrap().unwrap();
+    assert!(crate::mechanics::seat(&mut game.world, crew, vid, 0));
+    for _ in 0..60 {
+        game.step();
+    }
+    let (mut hits, mut after_first) = (0, 0);
+    while hits < 40 && !game.world.entities.dead(vid) {
+        let pose = game.world.physics.car_pose(vid).unwrap();
+        let at = pose.world_point([0.0, 0.3, 0.0]);
+        let back = pose.world_dir(local_from);
+        let from: [f32; 3] = std::array::from_fn(|i| at[i] + back[i] * 30.0 + if i == 1 { 2.0 } else { 0.0 });
+        let dir = vec3::sub(at, from).map(|v| v / vec3::distance(at, from));
+        let id = game.world.alloc_id();
+        game.world.launch_as(id, Flying { kind: shared::protocol::PROJECTILE_ROCKET, owner: 0, source: 0, position: from, velocity: dir.map(|v| v * ROCKET_SPEED), ttl: ROCKET_TTL_TICKS, item: shared::items::ITEM_CARL_GUSTAF, back: 0, flown: 0.0, hits: None });
+        for _ in 0..90 {
+            game.step();
+            if !game.world.in_flight().contains_key(&id) {
+                break;
+            }
+        }
+        hits += 1;
+        if hits == 1 {
+            after_first = if game.world.entities.alive(crew) { game.world.entities.of::<Health>(crew).hp } else { 0 };
+        }
+    }
+    (hits, after_first)
+}
+
+#[test]
+fn a_carl_gustaf_wrecks_a_tank_in_a_few_hits_more_through_its_front_and_its_crew_lives_through_the_first() {
+    let tank = shared::protocol::KIND_TANK;
+    let (front, crew) = carl_gustaf_hits(tank, [0.0, 0.0, -1.0]);
+    let (side, _) = carl_gustaf_hits(tank, [-1.0, 0.0, 0.0]);
+    let (rear, _) = carl_gustaf_hits(tank, [0.0, 0.0, 1.0]);
+    assert!((4..=6).contains(&front), "{front} through the front");
+    assert!((3..=4).contains(&side) && (3..=4).contains(&rear), "{side} through the side, {rear} the rear");
+    assert!(crew > 0, "the driver outlives the first");
+}
+
+#[test]
+fn a_carl_gustaf_takes_many_hits_on_the_heaviest_plate_and_two_on_light_armour() {
+    let (glacis, _) = carl_gustaf_hits(KIND_STRV, [0.0, 0.0, -1.0]);
+    assert!((8..40).contains(&glacis), "{glacis} on the Strv's sloped glacis, which it no longer glances off");
+    for kind in [KIND_STRF, shared::protocol::KIND_PBV, shared::protocol::KIND_AMV] {
+        let (hits, _) = carl_gustaf_hits(kind, [-1.0, 0.0, 0.0]);
+        assert!(hits <= 2, "kind {kind}: {hits}");
+    }
+}

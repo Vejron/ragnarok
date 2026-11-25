@@ -251,6 +251,7 @@ pub(super) const CB90: VehicleDef = VehicleDef {
     board: Some(CB90_BOARD),
     exit: Some(CB90_EXIT),
     fittings: &[],
+    doors: NO_DOORS,
 };
 
 /// The gunner's cannon in the ring, all the way round, and the driver's twin machine guns fixed on the

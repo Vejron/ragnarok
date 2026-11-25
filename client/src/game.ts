@@ -119,7 +119,8 @@ import { LyingBackpacks } from './render/backpack'
 import { lyingParcels } from './render/parcel'
 import { Parcels } from './entities/presenters/parcels'
 import { Soldiers } from './entities/presenters/people'
-import { Riders, seatFrame } from './entities/presenters/riders'
+import { Riders, doorStep, seatFrame } from './entities/presenters/riders'
+import type { DoorStep } from './render/character'
 import { LiftRiders } from './entities/presenters/liftriders'
 import { BusStops } from './render/busstops'
 import { LiftView } from './render/lifts'
@@ -131,6 +132,7 @@ import { Smoke } from './entities/presenters/smoke'
 import { Slits } from './entities/presenters/slits'
 import { Jets } from './entities/presenters/jets'
 import { Headlights } from './entities/presenters/headlights'
+import { Beacons } from './entities/presenters/beacons'
 import { Roosters } from './entities/presenters/roosters'
 import { Animals } from './entities/presenters/animals'
 import { TileStreamer } from './stream'
@@ -145,7 +147,7 @@ import { WorldView } from './worldview'
 import type { GolfMeterView, HudStats } from './hud'
 import { Notices } from './notices'
 import { Scoreboard, sides } from './scoreboard'
-import { Blips, type Blip } from './blips'
+import { Blips, emergencyBlips, type Blip } from './blips'
 import { BackpackTracker } from './backpack'
 import { DeliveryTracker } from './deliveries'
 import { Bodies } from './bodies'
@@ -231,7 +233,7 @@ const MOVERS: ReadonlySet<SeatView['role']> = new Set(['driver', 'roadster', 'sl
 interface Moment {
   now: number
   dt: number
-  seat: { vehicle: number; kind: number; index: number } | null
+  seat: { vehicle: number; kind: number; index: number; step: number } | null
   view: SeatView | null
   ride: Placed | undefined
   /** Where the local soldier is drawn. */
@@ -418,6 +420,8 @@ export class Game {
   /** Scratch for a seat's head point and its vehicle's turn. */
   private readonly seatAt = new Vector3()
   private readonly seatTurn = new Quaternion()
+  /** Where the local player stands once out of the door they are getting in or out by. */
+  private readonly doorAt: DoorStep = { step: 0, side: 0, spot: new Vector3() }
   private lastFireAt = -Infinity
   /** Kills and deaths of everyone, kept up to date by the server's kill events. */
   private readonly board = new Scoreboard()
@@ -450,7 +454,8 @@ export class Game {
   /** The local player's bricks, at once. */
   private readonly bricks: Bricklayer
   /** The vehicle seat the server says the local player sits in; null when on foot. */
-  private seat: { vehicle: number; kind: number; index: number } | null = null
+  /** Where the local player sits, and how far through getting in or out by its door they are (`Seated.step`). */
+  private seat: { vehicle: number; kind: number; index: number; step: number } | null = null
   /** A helicopter pilot's collective lever, and the seat (`vehicle:index`) it was last taken up in. */
   private readonly lever = new CollectiveLever()
   private leverSeat: string | null = null
@@ -611,6 +616,7 @@ export class Game {
     this.machines.add(new Slits(this.vehicles))
     this.machines.add(new Jets(world, this.vehicles))
     this.machines.add(new Headlights(world, this.vehicles))
+    this.machines.add(new Beacons(world, this.vehicles))
     this.machines.add(new Turrets(world, this.vehicles))
     this.machines.add(new PlaneGuns(world, this.vehicles))
     this.machines.add(new RoofGuns(world, this.vehicles))
@@ -985,7 +991,7 @@ export class Game {
     // Where the local player sits, if they do: their own `seated`, once their vehicle is in view.
     const mount = (own?.seated && this.refPoses.get(own.seated.vehicle)) || null
     const wasSeated = this.seat !== null
-    this.seat = mount ? { vehicle: mount.id, kind: mount.kind, index: own?.seated?.seat ?? -1 } : null
+    this.seat = mount ? { vehicle: mount.id, kind: mount.kind, index: own?.seated?.seat ?? -1, step: own?.seated?.step ?? 0 } : null
     // A door closing, for getting in or out (not for hopping seats).
     if (wasSeated !== (this.seat !== null) && this.player.alive) this.sounds.door()
     if (mount && this.seat?.index === 0 && !vehicleDef(mount.kind).towed && drive) {
@@ -1516,7 +1522,10 @@ export class Game {
     me.lamp = this.player.lamp && this.player.alive
     this.skiSounds(local, position, dt)
     // Face where the camera looks, immediately, rather than the last ticked yaw.
-    if (sitting) me.seat(this.seatAt, this.seatTurn, this.input.yaw, this.input.pitch, dt, view?.stand === true)
+    // Getting in or out by a door, the climb is drawn as it is for anyone else.
+    const mount = this.seat ? this.vehicles.model(this.seat.vehicle) : undefined
+    const door = this.seat && mount ? doorStep(mount, this.seat.kind, this.seat.index, this.seat.step, this.doorAt) : null
+    if (sitting) me.seat(this.seatAt, this.seatTurn, this.input.yaw, this.input.pitch, dt, view?.stand === true, door)
     else me.update(position, flying ? local.yaw : lookYaw, vx, vz, local.grounded, dt, flying ? 0 : lookPitch, this.crouching || flying,
       this.crouching && local.grounded && Math.hypot(local.knock[0], local.knock[1]) > SLIDE_MIN_SPEED, local.prone || local.down > 0, local.chute, local.vy)
     this.shine(me)
@@ -1776,6 +1785,7 @@ export class Game {
       dead: !player.alive,
       respawnIn: player.respawnIn(now),
       ghost: player.ghost || player.forming ? { left: player.ghostLeft, block: player.ghostBlock, forming: player.forming } : null,
+      wanted: player.wanted > 0 ? { stars: player.wanted, unseen: player.unseen } : null,
       sight: sighted,
       scoped: this.scoped,
       periscope: view?.rig.name === 'periscope' && player.alive,
@@ -1805,7 +1815,7 @@ export class Game {
       z: ride?.z ?? position[2],
       yaw: this.input.yaw,
       halfExtent: this.world?.halfExtent ?? 0,
-      blips: [...this.blips.view(now, this.localId, ride?.x ?? position[0]!, ride?.z ?? position[2]!, this.alliesInView(), MAP_SIDES), ...this.golfBlip()],
+      blips: [...this.blips.view(now, this.localId, ride?.x ?? position[0]!, ride?.z ?? position[2]!, this.alliesInView(), MAP_SIDES), ...emergencyBlips(this.vehicles.placed.values()), ...this.golfBlip()],
       backpack: this.backpack.view(this.localId),
       delivery: this.deliveries.view(this.board.cashOf(this.localId)),
       phoneUp: this.input.phone !== null,

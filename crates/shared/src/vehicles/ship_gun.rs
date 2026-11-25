@@ -105,6 +105,7 @@ pub(super) const SHIP_GUN: VehicleDef = VehicleDef {
     board: Some(SHIP_GUN_BOARD),
     exit: Some(SHIP_GUN_EXIT),
     fittings: &[],
+    doors: NO_DOORS,
 };
 
 /// The gun, laid by the look within its port.

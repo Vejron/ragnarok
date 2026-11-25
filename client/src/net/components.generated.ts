@@ -108,6 +108,7 @@ export interface Vitals {
   breath: number
   ghost: number
   block: number
+  wanted: number
 }
 
 export interface Hotbar {
@@ -128,6 +129,7 @@ export interface Drive {
 export interface Seated {
   vehicle: number
   seat: number
+  step: number
 }
 
 export interface Look {
@@ -197,6 +199,11 @@ export interface Held {
   hand: number
 }
 
+export interface Doors {
+  open: number
+  gone: number
+}
+
 /** An entity as it is replicated: the components it has. */
 export interface Components {
   place?: Place
@@ -228,6 +235,7 @@ export interface Components {
   lifted?: Lifted
   titan?: Titan
   held?: Held
+  doors?: Doors
 }
 
 export type ComponentName = keyof Components
@@ -257,10 +265,10 @@ export const SCHEMA: readonly { id: number; name: ComponentName; diff: boolean; 
   { id: 14, name: 'kind', diff: false, owner: false, fields: [{ name: 'kind' }] },
   { id: 15, name: 'projectile', diff: false, owner: false, fields: [{ name: 'kind' }] },
   { id: 16, name: 'pickup', diff: false, owner: false, fields: [{ name: 'item' }] },
-  { id: 17, name: 'vitals', diff: false, owner: true, fields: [{ name: 'hp' }, { name: 'progress', unit: 'byte' }, { name: 'spent' }, { name: 'winded' }, { name: 'parts' }, { name: 'down' }, { name: 'strain' }, { name: 'breath', unit: 'byte' }, { name: 'ghost' }, { name: 'block' }] },
+  { id: 17, name: 'vitals', diff: false, owner: true, fields: [{ name: 'hp' }, { name: 'progress', unit: 'byte' }, { name: 'spent' }, { name: 'winded' }, { name: 'parts' }, { name: 'down' }, { name: 'strain' }, { name: 'breath', unit: 'byte' }, { name: 'ghost' }, { name: 'block' }, { name: 'wanted' }] },
   { id: 18, name: 'hotbar', diff: false, owner: true, fields: [{ name: 'slots', struct: [{ name: 'item' }, { name: 'count' }, { name: 'ammo' }] }] },
   { id: 19, name: 'drive', diff: false, owner: true, fields: [{ name: 'vx', unit: 'cm' }, { name: 'vy', unit: 'cm' }, { name: 'vz', unit: 'cm' }, { name: 'wx', unit: 'mrad' }, { name: 'wy', unit: 'mrad' }, { name: 'wz', unit: 'mrad' }, { name: 'steer', unit: 'mrad' }, { name: 'spin', unit: 'mrad' }] },
-  { id: 20, name: 'seated', diff: false, owner: false, fields: [{ name: 'vehicle' }, { name: 'seat' }] },
+  { id: 20, name: 'seated', diff: false, owner: false, fields: [{ name: 'vehicle' }, { name: 'seat' }, { name: 'step', unit: 'byte' }] },
   { id: 21, name: 'look', diff: true, owner: false, fields: [{ name: 'pitch', unit: 'mrad' }] },
   { id: 22, name: 'carry', diff: false, owner: false, fields: [{ name: 'what' }] },
   { id: 23, name: 'struck', diff: false, owner: false, fields: [{ name: 'count' }, { name: 'part' }, { name: 'amount' }, { name: 'yaw', unit: 'mrad' }, { name: 'x', unit: 'cm' }, { name: 'y', unit: 'cm' }, { name: 'z', unit: 'cm' }] },
@@ -270,4 +278,5 @@ export const SCHEMA: readonly { id: number; name: ComponentName; diff: boolean; 
   { id: 27, name: 'lifted', diff: false, owner: false, fields: [{ name: 'lift' }, { name: 'chair' }, { name: 'seat' }] },
   { id: 28, name: 'titan', diff: false, owner: false, fields: [{ name: 'lx', unit: 'cm' }, { name: 'ly', unit: 'cm' }, { name: 'lz', unit: 'cm' }, { name: 'rx', unit: 'cm' }, { name: 'ry', unit: 'cm' }, { name: 'rz', unit: 'cm' }, { name: 'flx', unit: 'cm' }, { name: 'fly', unit: 'cm' }, { name: 'flz', unit: 'cm' }, { name: 'frx', unit: 'cm' }, { name: 'fry', unit: 'cm' }, { name: 'frz', unit: 'cm' }, { name: 'flags' }, { name: 'step' }, { name: 'weight', unit: 'byte' }, { name: 'head_yaw', unit: 'mrad' }, { name: 'head_pitch', unit: 'mrad' }] },
   { id: 29, name: 'held', diff: false, owner: false, fields: [{ name: 'vehicle' }, { name: 'hand' }] },
+  { id: 30, name: 'doors', diff: false, owner: false, fields: [{ name: 'open' }, { name: 'gone' }] },
 ]

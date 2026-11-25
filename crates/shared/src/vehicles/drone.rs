@@ -105,4 +105,5 @@ pub(super) const DRONE: VehicleDef = VehicleDef {
     board: None,
     exit: None,
     fittings: &[],
+    doors: NO_DOORS,
 };

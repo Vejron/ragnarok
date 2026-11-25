@@ -180,6 +180,12 @@ async fn main() -> Result<()> {
     if game.world.traffic > 0.0 {
         tracing::info!(per_km = game.world.traffic, "traffic");
     }
+    // `RAGNAROK_EMERGENCY=n` gives the world police and ambulances with `n` police cars on patrol, whatever the scenario says.
+    let (patrols, police, ambulance) = env("RAGNAROK_EMERGENCY").and_then(|n| n.parse().ok()).map(|n| (n, true, true)).unwrap_or_else(|| game.scenario.as_ref().map_or((0, false, false), scenario::Scenario::emergency));
+    (game.world.fleet.patrols, game.world.fleet.police, game.world.fleet.ambulance) = (patrols, police, ambulance);
+    if game.world.fleet.on() {
+        tracing::info!(patrols, police, ambulance, "emergency services");
+    }
     if let Some(home) = game.scenario.as_ref().and_then(scenario::Scenario::backpack) {
         tracing::info!(?home, "backpack mode");
         game.world.backpack = Some(mechanics::BackpackState::new(home));

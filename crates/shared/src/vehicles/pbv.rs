@@ -168,6 +168,7 @@ pub(super) const PBV: VehicleDef = VehicleDef {
     board: None,
     exit: Some(PBV_DOOR_EXIT),
     fittings: &[],
+    doors: NO_DOORS,
 };
 
 /// The gunner's automatic cannon in the turret.

@@ -38,7 +38,7 @@ pub struct Ghost {
 
 /// Whether player `id` comes back from death as a ghost: everyone with a mind of their own.
 pub(super) fn haunts(world: &World, id: u32) -> bool {
-    !world.entities.has::<Bot>(id) && !world.entities.has::<super::Zombie>(id) && !super::is_civilian(world, id)
+    !world.entities.has::<Bot>(id) && !world.entities.has::<super::Zombie>(id) && !super::is_noncombatant(world, id)
 }
 
 /// Player `id`'s ghost, if they are one.
@@ -79,7 +79,7 @@ fn spot(world: &World, id: u32) -> u8 {
     }
     let enemy = world.entities.all::<Player>().any(|(other, body)| {
         let [ox, _, oz] = super::position_of(world, other).unwrap_or(body.character.position);
-        other != id && world.entities.alive(other) && !super::is_civilian(world, other) && !same_team(world, id, other) && (ox - x).hypot(oz - z) < GHOST_KEEPOUT
+        other != id && world.entities.alive(other) && !super::is_noncombatant(world, other) && !same_team(world, id, other) && (ox - x).hypot(oz - z) < GHOST_KEEPOUT
     });
     if enemy { GHOST_BLOCK_ENEMY } else { GHOST_BLOCK_NONE }
 }

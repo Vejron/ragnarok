@@ -80,7 +80,7 @@ describe('Character holding things', () => {
   it('has a clip set per stance and a mesh and muzzle for each weapon', async () => {
     const c = await crowd()
     for (const prefix of ['pistol_', 'hold_']) {
-      for (const name of ['idle', 'jump_air', 'walk_fwd', 'run_left', 'crouch_idle', 'crouch_back', 'crawl_idle', 'crawl_fwd', 'slide', 'sit']) {
+      for (const name of ['idle', 'jump_air', 'walk_fwd', 'run_left', 'crouch_idle', 'crouch_back', 'crawl_idle', 'crawl_fwd', 'slide', 'sit', 'car_out', 'car_out_r']) {
         expect(c.asset!.clips.has(prefix + name), prefix + name).toBe(true)
       }
     }
@@ -310,6 +310,32 @@ describe('Character', () => {
     expect(c.size).toBe(10)
     people.forEach((p) => p.dispose())
     expect(c.size).toBe(0)
+    c.dispose()
+  })
+
+  it('climbs out of a car by its door from the seat to standing on the spot beside it', async () => {
+    const c = await crowd()
+    const person = new Character(c, 1)
+    const seat = new Vector3(-0.38, 1.2, 0)
+    const spot = new Vector3(-1.4, 0, 0.5)
+    const upright = new Quaternion()
+    const at = (step: number) => {
+      // The first frame of a climb takes the step as it is; those after ease towards it.
+      for (let t = 0; t < 1; t += 1 / 60) person.seat(seat, upright, 0, 0, 1 / 60, false, { step, side: -1, spot })
+      c.root.updateMatrixWorld(true)
+      return c.root.getObjectByName('head')!.getWorldPosition(new Vector3())
+    }
+    const start = at(0.01)
+    expect(person.blend.get('car_out')!).toBeCloseTo(1, 3)
+    expect(start.x).toBeCloseTo(seat.x, 1)
+    expect(start.y).toBeLessThan(seat.y)
+    const out = at(1)
+    // Out over the spot (the head a hand's breadth off the feet, as standing), a head taller than sitting.
+    expect(Math.hypot(out.x - spot.x, out.z - spot.z)).toBeLessThan(0.2)
+    expect(out.y).toBeGreaterThan(start.y + 0.3)
+    // Sitting still again: the sitting clip, back in the seat.
+    for (let t = 0; t < 1; t += 1 / 60) person.seat(seat, upright, 0, 0, 1 / 60)
+    expect(person.blend.get('sit')!).toBeGreaterThan(0.9)
     c.dispose()
   })
 

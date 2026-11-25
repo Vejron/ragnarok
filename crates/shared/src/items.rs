@@ -478,7 +478,8 @@ const CARL_GUSTAF: ItemDef = ItemDef {
     projectile: false,
     pellets: 1,
     falloff: Falloff::NONE,
-    pen: Pen::he(400.0, 84.0),
+    // Its shaped charge: through a tank's front with a little to spare, and a Titan's chest only just.
+    pen: Pen::he(100.0, 84.0),
     aim_speed: 0.4,
     scope: true,
     // Rounds left; the tube goes when the last is fired.
@@ -732,8 +733,13 @@ mod tests {
                 let gunners: Vec<String> = (0..d.seats).filter(|&seat| d.mounts.iter().any(|mount| mount.seat == seat)).map(|seat| seat.to_string()).collect();
                 let gunners = gunners.join(", ");
                 let rotor = d.spec.rotor.map_or("null".to_string(), |r| format!("{{\"hoverLever\": {}, \"leverRate\": {}, \"etlSpeed\": {}}}", r.hover_lever, r.lever_rate, r.etl_speed));
+                let doors: Vec<String> = d.doors.iter().map(|door| {
+                    let ([x, y, z], [sx, sy, sz]) = (door.hinge, door.spot());
+                    format!("{{\"seat\": {}, \"hinge\": [{x}, {y}, {z}], \"length\": {}, \"height\": {}, \"swing\": {}, \"spot\": [{sx}, {sy}, {sz}]}}", door.seat, door.length, door.height, door.swing)
+                }).collect();
+                let doors = doors.join(", ");
                 format!(
-                    "    {{\"kind\": {}, \"name\": \"{}\", \"hp\": {}, \"seats\": {}, \"halfExtents\": [{hx}, {hy}, {hz}], \"gun\": {}, \"arms\": {}, \"carWheels\": {}, \"trackHalf\": {}, \"axleZ\": {}, \"crew\": \"{}\", \"crewGuns\": {}, \"gunners\": [{gunners}], \"seatHeads\": [{}], \"mountSeat\": {mount_seat}, \"legged\": {}, \"heavy\": {}, \"towed\": {}, \"shedsTurret\": {}, \"drone\": {}, \"fists\": {}, \"board\": {board}, \"rotor\": {rotor}, \"slits\": [{slits}]}}",
+                    "    {{\"kind\": {}, \"name\": \"{}\", \"hp\": {}, \"seats\": {}, \"halfExtents\": [{hx}, {hy}, {hz}], \"gun\": {}, \"arms\": {}, \"carWheels\": {}, \"trackHalf\": {}, \"axleZ\": {}, \"crew\": \"{}\", \"crewGuns\": {}, \"gunners\": [{gunners}], \"seatHeads\": [{}], \"mountSeat\": {mount_seat}, \"legged\": {}, \"heavy\": {}, \"towed\": {}, \"shedsTurret\": {}, \"drone\": {}, \"fists\": {}, \"board\": {board}, \"rotor\": {rotor}, \"slits\": [{slits}], \"doors\": [{doors}]}}",
                     d.kind, d.name, d.hp, d.seats, d.gun(), d.arms(), d.car_wheels, d.track_half(), d.axle_z(), d.crew.name(), d.crew_guns, heads, d.body.legs > 0.0, d.body.heavy, d.body.towed, d.sheds_turret(), d.drone.is_some(), d.spec.arms.is_some()
                 )
             })

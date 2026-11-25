@@ -232,6 +232,8 @@ function status(p: Painter, s: HudStats): number {
   const pills: { text: string; color: string; weight?: number; alpha?: number }[] = []
   const state = s.status === 'CONNECTED' ? 'ONLINE' : s.status === 'CONNECTING' ? 'CONNECTING' : 'SOLO'
   pills.push({ text: state, color: s.status === 'CONNECTED' ? GREEN_CSS : s.status === 'CONNECTING' ? '#b26b00' : '#b3261e' })
+  // Wanted: a star for each, of five, faint while no police see them (EMERGENCY.md).
+  if (s.wanted) pills.push({ text: `WANTED ${'★'.repeat(s.wanted.stars)}${'☆'.repeat(5 - s.wanted.stars)}`, color: '#b3261e', alpha: s.wanted.unseen ? 0.45 : 1 })
   if (s.netStats && s.rtt !== null) pills.push({ text: `${Math.round(s.rtt)} ms`, color: INK })
   if (s.netStats) pills.push({ text: `${s.players} ${s.players === 1 ? 'player' : 'players'} in view`, color: INK })
   if (s.status === 'CONNECTED' && s.voice.mic !== 'unavailable') {

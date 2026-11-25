@@ -1,7 +1,7 @@
 use shared::vec3;
 use super::*;
 use shared::consts::TICK_DT;
-use shared::protocol::{KIND_AIR_AMBULANCE, KIND_AMV, KIND_BUS, KIND_DRONE, KIND_EPA, KIND_ESCORT, KIND_GTI, KIND_KADETT, KIND_OMEGA, KIND_SAAB_900, KIND_SAAB_9000, KIND_SIERRA, KIND_TRANSPORTER, KIND_VOLVO_240, KIND_VOLVO_740, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MISSILE, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_SEAPLANE, KIND_SNOWMOBILE, KIND_SNOWRACER, KIND_SPORTS, KIND_STRF, KIND_STRV, KIND_TANK, KIND_TECHNICAL, KIND_TITAN, KIND_WALKER};
+use shared::protocol::{KIND_AIR_AMBULANCE, KIND_AMBULANCE, KIND_POLICE_CAR, KIND_AMV, KIND_BUS, KIND_DRONE, KIND_EPA, KIND_ESCORT, KIND_GTI, KIND_KADETT, KIND_OMEGA, KIND_SAAB_900, KIND_SAAB_9000, KIND_SIERRA, KIND_TRANSPORTER, KIND_VOLVO_240, KIND_VOLVO_740, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MISSILE, KIND_MORTAR, KIND_PAK, KIND_PLANE, KIND_ROADSTER, KIND_SEAPLANE, KIND_SNOWMOBILE, KIND_SNOWRACER, KIND_SPORTS, KIND_STRF, KIND_STRV, KIND_TANK, KIND_TECHNICAL, KIND_TITAN, KIND_WALKER};
 use shared::world::{CollisionMesh, WORLD_VERSION, WorldFile};
 
 fn flat() -> WorldFile {
@@ -160,7 +160,7 @@ fn a_car_climbs_a_slope_like_wasm() {
 #[test]
 fn ride_heights_differ_between_cars() {
     let mut heights = vec![];
-    for (kind, ride) in [(KIND_JEEP, JEEP_RIDE_HEIGHT), (KIND_SPORTS, SPORTS_RIDE_HEIGHT), (KIND_GOLF_CART, GOLF_CART_RIDE_HEIGHT), (KIND_TECHNICAL, TECHNICAL_RIDE_HEIGHT), (KIND_SNOWRACER, SNOWRACER_RIDE_HEIGHT), (KIND_BUS, BUS_RIDE_HEIGHT), (KIND_AMV, AMV_RIDE_HEIGHT), (KIND_EPA, EPA_RIDE_HEIGHT), (KIND_SAAB_900, SAAB_900_RIDE_HEIGHT), (KIND_SAAB_9000, SAAB_9000_RIDE_HEIGHT), (KIND_VOLVO_240, VOLVO_240_RIDE_HEIGHT), (KIND_VOLVO_740, VOLVO_740_RIDE_HEIGHT), (KIND_GTI, GTI_RIDE_HEIGHT), (KIND_TRANSPORTER, TRANSPORTER_RIDE_HEIGHT), (KIND_KADETT, KADETT_RIDE_HEIGHT), (KIND_OMEGA, OMEGA_RIDE_HEIGHT), (KIND_SIERRA, SIERRA_RIDE_HEIGHT), (KIND_ESCORT, ESCORT_RIDE_HEIGHT)] {
+    for (kind, ride) in [(KIND_JEEP, JEEP_RIDE_HEIGHT), (KIND_SPORTS, SPORTS_RIDE_HEIGHT), (KIND_GOLF_CART, GOLF_CART_RIDE_HEIGHT), (KIND_TECHNICAL, TECHNICAL_RIDE_HEIGHT), (KIND_SNOWRACER, SNOWRACER_RIDE_HEIGHT), (KIND_BUS, BUS_RIDE_HEIGHT), (KIND_AMV, AMV_RIDE_HEIGHT), (KIND_EPA, EPA_RIDE_HEIGHT), (KIND_SAAB_900, SAAB_900_RIDE_HEIGHT), (KIND_SAAB_9000, SAAB_9000_RIDE_HEIGHT), (KIND_VOLVO_240, VOLVO_240_RIDE_HEIGHT), (KIND_VOLVO_740, VOLVO_740_RIDE_HEIGHT), (KIND_GTI, GTI_RIDE_HEIGHT), (KIND_TRANSPORTER, TRANSPORTER_RIDE_HEIGHT), (KIND_KADETT, KADETT_RIDE_HEIGHT), (KIND_OMEGA, OMEGA_RIDE_HEIGHT), (KIND_SIERRA, SIERRA_RIDE_HEIGHT), (KIND_ESCORT, ESCORT_RIDE_HEIGHT), (KIND_POLICE_CAR, POLICE_CAR_RIDE_HEIGHT), (KIND_AMBULANCE, AMBULANCE_RIDE_HEIGHT)] {
         let mut physics = Physics::new(&flat()).unwrap();
         physics.add_car(1, kind, [0.0, 1.5, 0.0], 0.0);
         let pose = run(&mut physics, COAST, 240);
@@ -3157,6 +3157,29 @@ fn the_period_cars_differ_off_the_line_and_flat_out() {
     // From the slowest to the fastest there is a spread of half again.
     let (low, high) = runs.iter().fold((f32::MAX, 0.0_f32), |(low, high), run| (low.min(run.2), high.max(run.2)));
     assert!(high > low * 1.5, "{runs:?}");
+}
+
+#[test]
+fn a_police_car_is_the_volvo_off_the_line_outruns_it_flat_out_and_stays_on_its_wheels() {
+    let top = cruise(KIND_POLICE_CAR);
+    let (early, late, worst, turned) = flat_out(KIND_POLICE_CAR);
+    let (volvo_early, volvo_late, ..) = flat_out(KIND_VOLVO_240);
+    assert!((early - volvo_early).abs() < 0.5, "the same engine and weight away from a standstill: {early} against {volvo_early}");
+    assert!(late > top * 0.85 && late <= top + 0.5, "it gets near {top} m/s and no further: {late}");
+    assert!(late > volvo_late + 3.0, "flat out it leaves the Volvo 240 behind: {late} against {volvo_late}");
+    assert!(worst > 0.9, "it stays on its wheels flat out at full lock: {worst}");
+    assert!(turned > 0.7, "it turns: {turned}");
+}
+
+#[test]
+fn an_ambulance_is_a_little_faster_flat_out_than_the_transporter_and_stays_on_its_wheels() {
+    let top = cruise(KIND_AMBULANCE);
+    let (_, late, worst, turned) = flat_out(KIND_AMBULANCE);
+    let (_, van_late, ..) = flat_out(KIND_TRANSPORTER);
+    assert!(late > top * 0.85 && late <= top + 0.5, "it gets near {top} m/s and no further: {late}");
+    assert!(late > van_late + 1.5, "flat out it is ahead of the van it is built on: {late} against {van_late}");
+    assert!(worst > 0.9, "it stays on its wheels flat out at full lock: {worst}");
+    assert!(turned > 0.7, "it turns: {turned}");
 }
 
 /// Car `kind` set down on a kilometre of flat ground and settled, then driven flat out for `ticks`

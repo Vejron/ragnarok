@@ -122,4 +122,5 @@ pub(super) const BUS: VehicleDef = VehicleDef {
     board: Some(BUS_DOOR),
     exit: Some(BUS_DOOR_EXIT),
     fittings: &[],
+    doors: NO_DOORS,
 };

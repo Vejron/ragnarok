@@ -15,6 +15,7 @@
 
 mod cover;
 mod crew;
+mod evade;
 mod nerve;
 mod senses;
 mod tokens;
@@ -31,9 +32,10 @@ use crate::entities::With;
 use super::combat::same_team;
 use super::life::open_ground;
 use super::npcs::turn_towards;
-use crate::game::{Bot, BotMode, Damaged, Noise, Player, Role, Walk, World};
+use crate::game::{Bot, BotMode, Damaged, Noise, Player, Role, Threat, Walk, World};
 use shared::consts::*;
-use shared::items::{HOTBAR_SLOTS, ITEM_AK5, ITEM_REVOLVER, ITEM_SHOTGUN, ITEM_SNIPER, ItemDef, ItemKind, def};
+use shared::items::{HOTBAR_SLOTS, ITEM_AK5, ITEM_AT_RIFLE, ITEM_CARL_GUSTAF, ITEM_REVOLVER, ITEM_SHOTGUN, ITEM_SNIPER, ItemDef, ItemKind, def};
+use shared::vehicles::{Exposure, vehicle_def};
 use shared::protocol::{InputFrame, ItemSlot};
 use shared::quant::to_mrad;
 use std::f32::consts::{PI, TAU};
@@ -128,8 +130,19 @@ const SHAKEN_PAUSE: f32 = 2.0;
 const MOVING_AIM: f32 = 0.25;
 const TARGET_SPEED_AIM: f32 = 0.04;
 const FAST: f32 = 10.0;
-/// With the gun empty it takes cover before reloading, if at least this patient.
-const COVER_PATIENCE: f32 = 0.4;
+/// A bot with less courage than this that has broken and found no cover runs.
+const COWARD: f32 = 0.35;
+/// Further off than this from whom it fights, metres, and short of where its gun is good, it closes
+/// in in bounds: a run of `BOUND_RUN` seconds, then down to fire for `BOUND_FIRE`, at the least and
+/// at the most.
+const BOUND_FROM: f32 = 8.0;
+const BOUND_RUN: [f32; 2] = [3.0, 5.0];
+const BOUND_FIRE: [f32; 2] = [2.0, 3.0];
+/// Standing off, it moves to another spot every `SHIFT_EVERY` seconds: this far round whom it
+/// fights, metres, giving up the move after `SHIFT_FOR` seconds.
+const SHIFT_EVERY: [f32; 2] = [5.0, 9.0];
+const SHIFT_BY: f32 = 8.0;
+const SHIFT_FOR: f32 = 4.0;
 /// How far it stands off for its gun, as a share of `hold_distance`: from no aggression to full.
 const HOLD_SCALE: [f32; 2] = [1.4, 0.5];
 /// Caught on patrol, at skill 0 it can take this much longer to react, seconds.
@@ -144,8 +157,15 @@ const SLOWEST_PACE: f32 = 80.0;
 const LOOK_ABOUT_RATE: f32 = 0.9;
 /// It looks up or down no further than this, radians.
 const PITCH_LIMIT: f32 = 1.4;
-/// Fastest it believes anyone moves, m/s: past that a sighting is a respawn or a teleport, not speed.
+/// Fastest it believes anyone moves, m/s, on foot and in a vehicle: past that a sighting is a respawn
+/// or a teleport, not speed.
 const TOP_SPEED: f32 = 20.0;
+const TOP_DRIVING: f32 = 60.0;
+/// Against a vehicle it takes up an anti-tank weapon past this, metres, and a tank nearer than
+/// `TOO_CLOSE` it gets away from even with one, and turns to fight again with one past `FIGHT_FROM`.
+const ANTI_TANK_PAST: f32 = 15.0;
+const TOO_CLOSE: f32 = 20.0;
+const FIGHT_FROM: f32 = 30.0;
 /// Rounds in a burst of a gun that fires while the trigger is held, and the pause after one at
 /// skill 0 and at skill 1, seconds.
 const BURST_SHOTS: [u32; 2] = [3, 6];
@@ -156,9 +176,14 @@ const SHOTGUN_IN: f32 = 10.0;
 const SHOTGUN_OUT: f32 = 15.0;
 /// The distance it picks its gun for when there is no one in sight.
 const PATROL_DISTANCE: f32 = 30.0;
-/// From this skill up it sidesteps while it stands and fights, a way for 0.6 to 1.6 s at a time.
+/// From this skill up it sidesteps while it stands and fights, a way for 0.6 to 1.6 s at a time with
+/// as long standing still between, at this share of a walk.
 const STRAFE_SKILL: f32 = 0.3;
 const STRAFE_TICKS: [f32; 2] = [0.6, 1.6];
+const SIDESTEP: f32 = 0.45;
+/// Others closer than this push it sideways while it fights, at no more than this share of a walk.
+const PUSHED_FROM: f32 = 0.3;
+const PUSHED: f32 = 0.5;
 
 fn lerp(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t
@@ -170,19 +195,37 @@ fn hold_distance(item: u8) -> f32 {
         ITEM_SHOTGUN => 5.0,
         ITEM_AK5 => 15.0,
         ITEM_SNIPER => 35.0,
+        ITEM_CARL_GUSTAF | ITEM_AT_RIFLE => 60.0,
         _ => 12.0,
     }
 }
 
-/// The slot to fight with at `distance`: the shotgun up close, else the AK5, the revolver or the
-/// sniper, whichever it has, else any gun. `None` when it has no gun. Holding the shotgun it keeps it
-/// a little past where it would take it up, so it does not swap back and forth at the edge.
-fn pick_gun(hotbar: &[ItemSlot; HOTBAR_SLOTS], distance: f32, current: u8) -> Option<u8> {
+/// Whether `slot` holds something that can hurt a tank, with a round left.
+fn anti_tank(slot: &ItemSlot) -> bool {
+    match slot.item {
+        ITEM_CARL_GUSTAF => slot.count > 0,
+        ITEM_AT_RIFLE => true,
+        _ => false,
+    }
+}
+
+/// The slot to fight `threat` with at `distance`. A tank only with an anti-tank weapon (`None` when it
+/// has none); a vehicle a rifle can reach with one past `ANTI_TANK_PAST`, if it has one. Otherwise the
+/// shotgun up close, else the AK5, the revolver or the sniper, whichever it has, else any gun but the
+/// anti-tank ones. `None` when it has no gun. Holding the shotgun it keeps it a little past where it
+/// would take it up, so it does not swap back and forth at the edge.
+fn pick_gun(hotbar: &[ItemSlot; HOTBAR_SLOTS], distance: f32, current: u8, threat: Threat) -> Option<u8> {
+    let anti = hotbar.iter().position(anti_tank).map(|i| i as u8);
+    match threat {
+        Threat::Armour => return anti,
+        Threat::Soft if distance > ANTI_TANK_PAST && anti.is_some() => return anti,
+        _ => {}
+    }
     let slot_of = |item: u8| hotbar.iter().position(|slot| slot.item == item).map(|i| i as u8);
     let holds_shotgun = hotbar.get(current as usize).is_some_and(|slot| slot.item == ITEM_SHOTGUN);
     let close = distance < if holds_shotgun { SHOTGUN_OUT } else { SHOTGUN_IN };
     let order = if close { [ITEM_SHOTGUN, ITEM_AK5, ITEM_REVOLVER, ITEM_SNIPER] } else { [ITEM_AK5, ITEM_REVOLVER, ITEM_SNIPER, ITEM_SHOTGUN] };
-    order.into_iter().find_map(slot_of).or_else(|| hotbar.iter().position(|slot| def(slot.item).is_some_and(|d| d.kind == ItemKind::Gun)).map(|i| i as u8))
+    order.into_iter().find_map(slot_of).or_else(|| hotbar.iter().position(|slot| def(slot.item).is_some_and(|d| d.kind == ItemKind::Gun) && !anti_tank(slot)).map(|i| i as u8)).or(anti)
 }
 
 /// Where to put the shot so it meets a body now at `target` moving at `velocity`: ahead of it by
@@ -252,13 +295,18 @@ pub(super) fn heading(from: [f32; 3], to: [f32; 3]) -> f32 {
 
 /// Whether nothing (the world, a building, a vehicle) stands between `from` and `to`.
 pub fn clear_line(world: &World, from: [f32; 3], to: [f32; 3]) -> bool {
+    clear_line_past(world, from, to, None)
+}
+
+/// `clear_line`, looking past vehicle `own` (the one whoever looks from `from` sits in).
+pub(crate) fn clear_line_past(world: &World, from: [f32; 3], to: [f32; 3], own: Option<u32>) -> bool {
     let d = [to[0] - from[0], to[1] - from[1], to[2] - from[2]];
     let length = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
     if length < 0.01 {
         return true;
     }
     let dir = d.map(|v| v / length);
-    world.physics.cast_ray(from, dir, length, 0).is_none_or(|t| t >= length - 0.2)
+    world.physics.cast_ray(from, dir, length, own.unwrap_or(0)).is_none_or(|t| t >= length - 0.2)
 }
 
 /// A short loop of open, straight-line-connected waypoints around `home`, starting at it.
@@ -280,17 +328,57 @@ fn make_route(world: &mut World, home: [f32; 2]) -> Vec<[f32; 2]> {
     route
 }
 
-/// The nearest living, standing player not on `id`'s team that it can see from `eye` looking along
-/// `yaw`, and where they stand. A calm bot only sees what is in front of it, and none sees someone
+/// Someone seen: where they are (a soldier's centre, or their vehicle's), the point of them to aim
+/// at, the vehicle they are in, and what they are to a soldier on foot.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Seen {
+    pub at: [f32; 3],
+    pub mark: [f32; 3],
+    pub vehicle: Option<u32>,
+    pub threat: Threat,
+}
+
+/// Player `id` as seen from `eye`, if nothing stands between: on foot, their chest; in a vehicle with
+/// glass or open sides, their head; in armour, its hull. The vehicle they are in does not hide them.
+pub(crate) fn sighting(world: &World, eye: [f32; 3], id: u32) -> Option<Seen> {
+    let player = world.entities.get::<Player>(id)?;
+    if player.embodied() {
+        let at = player.character.position;
+        let mark = [at[0], at[1] + CHEST, at[2]];
+        return clear_line(world, eye, mark).then_some(Seen { at, mark, vehicle: None, threat: Threat::Infantry });
+    }
+    let vid = player.seat.filter(|seat| !seat.remote)?.vehicle;
+    let kind = world.entities.get::<crate::game::Vehicle>(vid)?.kind;
+    let at = world.physics.car_pose(vid)?.position;
+    let threat = if vehicle_def(kind).crew == Exposure::Sealed { Threat::Armour } else { Threat::Soft };
+    let mark = match threat {
+        Threat::Soft => world.seated_head(id).map_or(at, |(_, head)| head),
+        _ => at,
+    };
+    let d = vec3::sub(mark, eye);
+    let length = vec3::length(d);
+    let clear = length < 0.01 || world.physics.cast_ray_hit(eye, d.map(|v| v / length), length, 0).is_none_or(|(t, hit)| t >= length - 0.2 || hit == Some(vid));
+    clear.then_some(Seen { at, mark, vehicle: Some(vid), threat })
+}
+
+/// The nearest living player not on `id`'s team that it can see from `eye` looking along `yaw`, on
+/// foot or in a vehicle, and how. A calm bot only sees what is in front of it, and none sees someone
 /// hidden in a crop (`senses::crop_cover`).
-fn spot(world: &World, id: u32, eye: [f32; 3], yaw: f32, alert: bool) -> Option<(u32, [f32; 3])> {
+fn spot(world: &World, id: u32, eye: [f32; 3], yaw: f32, alert: bool) -> Option<(u32, Seen)> {
     let facing = [-yaw.sin(), -yaw.cos()];
-    let mut best: Option<(u32, [f32; 3], f32)> = None;
+    let mut best: Option<(u32, Seen, f32)> = None;
     for (other, player) in world.entities.all::<Player>() {
-        if other == id || !world.entities.alive(other) || !player.embodied() || player.surrendered || same_team(world, id, other) || super::is_civilian(world, other) {
+        if other == id || !world.entities.alive(other) || player.surrendered || same_team(world, id, other) || super::is_noncombatant(world, other) {
             continue;
         }
-        let at = player.character.position;
+        if !player.embodied() && player.seat.is_none_or(|seat| seat.remote) {
+            continue;
+        }
+        // A police officer sees the one they are after and nobody else.
+        if world.entities.get::<super::Officer>(id).is_some_and(|officer| officer.suspect != other) {
+            continue;
+        }
+        let at = super::position_of(world, other).unwrap_or(player.character.position);
         let distance = distance_2d(eye, at);
         if distance > SIGHT_RANGE || best.is_some_and(|(_, _, nearest)| distance >= nearest) {
             continue;
@@ -306,16 +394,16 @@ fn spot(world: &World, id: u32, eye: [f32; 3], yaw: f32, alert: bool) -> Option<
         if distance > CLOSE_IN && senses::crop_cover(world, player, eye) <= 0.0 {
             continue;
         }
-        if clear_line(world, eye, [at[0], at[1] + CHEST, at[2]]) {
-            best = Some((other, at, distance));
+        if let Some(seen) = sighting(world, eye, other) {
+            best = Some((other, seen, distance));
         }
     }
-    best.map(|(other, at, _)| (other, at))
+    best.map(|(other, seen, _)| (other, seen))
 }
 
-/// Whether anything hears noises: a bot, a wild animal, or the drivers of the traffic.
+/// Whether anything hears noises: a bot, a wild animal, the drivers of the traffic, or the emergency services.
 fn listening(world: &World) -> bool {
-    world.traffic > 0.0 || world.entities.count::<Bot>() > 0 || world.entities.count::<super::wildlife::Wild>() > 0 || world.entities.count::<super::zombies::Zombie>() > 0
+    world.traffic > 0.0 || world.fleet.on() || world.entities.count::<Bot>() > 0 || world.entities.count::<super::wildlife::Wild>() > 0 || world.entities.count::<super::zombies::Zombie>() > 0
 }
 
 /// Notes a noise at `at` made by `by` that carries `reach` metres, for the bots to hear on the next
@@ -335,14 +423,18 @@ pub fn make_shot(world: &mut World, at: [f32; 3], by: Option<u32>, line: [f32; 3
 
 /// Where the nearest of `noises` that bot `id`, standing at `at`, hears and would go to look at came
 /// from: not its own, and not so far from its route that it would give up on the way. A teammate's
-/// gunfire counts: it goes to help.
-fn hear(id: u32, bot: &Bot, at: [f32; 3], noises: &[Noise]) -> Option<[f32; 3]> {
+/// gunfire counts: it goes to help. Their engine does not.
+fn hear(world: &World, id: u32, bot: &Bot, at: [f32; 3], noises: &[Noise]) -> Option<[f32; 3]> {
     noises
         .iter()
         .map(|noise| (noise, vec3::distance(noise.at, at)))
         .filter(|(noise, distance)| *distance <= noise.reach)
         .filter(|(noise, _)| off_route(bot, noise.at) < LEASH)
         .filter(|(noise, _)| noise.by != Some(id))
+        // A police officer listens for the one they are after.
+        .filter(|(noise, _)| world.entities.get::<super::Officer>(id).is_none_or(|officer| noise.by == Some(officer.suspect)))
+        // An engine its own side drives is nothing to look at.
+        .filter(|(noise, _)| noise.line.is_some() || noise.reach >= HEAR_BLAST || !noise.by.is_some_and(|by| same_team(world, id, by)))
         .min_by(|a, b| a.1.total_cmp(&b.1))
         .map(|(noise, _)| noise.at)
 }
@@ -433,7 +525,7 @@ pub(super) fn steer(world: &World, at: [f32; 3], want: f32) -> f32 {
 /// to where the shot has to go, closes to where that gun is good (or stands and sidesteps there), and
 /// fires once it has reacted and is on aim.
 #[allow(clippy::too_many_arguments)]
-fn fight(world: &mut World, id: u32, bot: &mut Bot, eye: [f32; 3], slot: u8, distance: f32, dt: f32, away: [f32; 2]) -> InputFrame {
+fn fight(world: &mut World, id: u32, bot: &mut Bot, eye: [f32; 3], slot: u8, distance: f32, dt: f32, away: [f32; 2], advance: bool) -> InputFrame {
     let Some(player) = world.entities.get::<Player>(id) else { return InputFrame::default() };
     let held = player.hands.hotbar[slot as usize];
     let (trigger_held, reloading) = (player.hands.trigger_held, player.hands.reload_left > 0);
@@ -443,9 +535,12 @@ fn fight(world: &mut World, id: u32, bot: &mut Bot, eye: [f32; 3], slot: u8, dis
     bot.aim.pause = bot.aim.pause.saturating_sub(1);
     new_goal(bot);
 
-    // Where they are by now, from where they were at the last look and how fast they were going.
+    // Where they are by now, from where they were at the last look and how fast they were going. In
+    // a vehicle that is the point of them it saw (their head, or the hull), which `aim_point` takes
+    // for a chest.
     let since = world.tick.wrapping_sub(bot.sight.seen_tick) as f32 / TICK_RATE as f32;
-    let mut now: [f32; 3] = vec3::along(bot.sight.last_seen, bot.sight.velocity, since);
+    let seen = if bot.sight.vehicle.is_some() { [bot.sight.mark[0], bot.sight.mark[1] - CHEST, bot.sight.mark[2]] } else { bot.sight.last_seen };
+    let mut now: [f32; 3] = vec3::along(seen, bot.sight.velocity, since);
     // `aim_point` goes for a standing chest, over the back of someone lying down.
     if bot.sight.target.and_then(|target| world.entities.get::<Player>(target)).is_some_and(|target| target.character.prone) {
         now[1] -= CHEST;
@@ -464,7 +559,9 @@ fn fight(world: &mut World, id: u32, bot: &mut Bot, eye: [f32; 3], slot: u8, dis
     let on_aim = (turn_towards(bot.yaw, want_yaw, PI) - bot.yaw).abs() < FIRE_WITHIN && (want_pitch - bot.pitch).abs() < FIRE_WITHIN;
 
     let mut buttons = 0;
-    if bot.aim.react == 0 && on_aim && !reloading && held.ammo > 0 && distance <= gun.range && !nerve::frozen(bot) {
+    // A launcher's rounds are its stack; a gun's, its magazine.
+    let loaded = if gun.kind == ItemKind::Launcher { held.count > 0 } else { held.ammo > 0 };
+    if bot.aim.react == 0 && on_aim && !reloading && loaded && distance <= gun.range && !nerve::frozen(bot) {
         let pull = if !gun.auto {
             // A fresh press for every round.
             !trigger_held
@@ -489,28 +586,63 @@ fn fight(world: &mut World, id: u32, bot: &mut Bot, eye: [f32; 3], slot: u8, dis
     }
 
     let (mut forward, mut strafe) = (0, 0);
-    if distance > hold_distance(held.item) * lerp(HOLD_SCALE[0], HOLD_SCALE[1], bot.temper.aggression) && !nerve::broken(bot) && bot.role == Role::Attacker {
+    if advance && distance > stand_off(bot, held.item) && !nerve::broken(bot) && bot.role == Role::Attacker {
         forward = 127;
     } else {
         // Where it wants to be: settle, aim down the sights, and, if it knows how, keep moving sideways.
         let pose = nerve::pose(world, bot, held.item, distance);
         buttons |= BUTTON_ALT | pose;
-        if bot.aim.skill >= STRAFE_SKILL && pose != BUTTON_PRONE {
+        // Kneeling or flat it keeps still to shoot; on its feet it sidesteps.
+        if bot.aim.skill >= STRAFE_SKILL && pose == 0 {
             bot.strafe_left = bot.strafe_left.saturating_sub(1);
             if bot.strafe_left == 0 {
-                bot.strafe = if bot.strafe == 0 { if world.rng.next_f64() < 0.5 { -1 } else { 1 } } else { -bot.strafe };
+                // A step one way, a moment still, and a step the other.
+                bot.strafe = match (bot.strafe, bot.strafe_last) {
+                    (0, 1) => -1,
+                    (0, _) => 1,
+                    _ => 0,
+                };
+                if bot.strafe != 0 {
+                    bot.strafe_last = bot.strafe;
+                }
                 bot.strafe_left = (lerp(STRAFE_TICKS[0], STRAFE_TICKS[1], world.rng.next_f64() as f32) * TICK_RATE as f32) as u32;
             }
-            strafe = bot.strafe * 127;
+            strafe = (f32::from(bot.strafe) * SIDESTEP * 127.0) as i8;
         }
     }
     // Others close by push it sideways, whether it is closing in or standing off, so a squad
     // fanning out round one target does not stack up on one line.
     let lateral = away[0] * bot.yaw.cos() - away[1] * bot.yaw.sin();
-    if lateral.abs() > 0.1 {
-        strafe = (lateral * 127.0).clamp(-127.0, 127.0) as i8;
+    if lateral.abs() > PUSHED_FROM {
+        strafe = (lateral.clamp(-1.0, 1.0) * PUSHED * 127.0) as i8;
     }
     InputFrame { forward, strafe, buttons, yaw: to_mrad(bot.yaw), pitch: to_mrad(bot.pitch), view: world.tick as u16, slot, ..Default::default() }
+}
+
+/// How close it comes to fight with `item`, metres: nearer the more aggressive it is.
+fn stand_off(bot: &Bot, item: u8) -> f32 {
+    hold_distance(item) * lerp(HOLD_SCALE[0], HOLD_SCALE[1], bot.temper.aggression)
+}
+
+/// Ticks of a random length between `range[0]` and `range[1]` seconds.
+fn ticks_between(world: &mut World, range: [f32; 2]) -> u32 {
+    (lerp(range[0], range[1], world.rng.next_f64() as f32) * TICK_RATE as f32) as u32
+}
+
+/// A spot `SHIFT_BY` round `target` from `at`, keeping its distance, on whichever side is open and
+/// less in front of them (facing `yaw`).
+fn shift_spot(world: &World, at: [f32; 3], target: [f32; 3], yaw: f32) -> Option<[f32; 3]> {
+    let reach = distance_2d(at, target).max(1.0);
+    let turn = SHIFT_BY / reach;
+    let ahead = |p: [f32; 3]| (p[0] - target[0]) * -yaw.sin() + (p[2] - target[2]) * -yaw.cos();
+    [turn, -turn]
+        .into_iter()
+        .filter_map(|turn| {
+            let (sin, cos) = (heading(target, at) + turn).sin_cos();
+            let (x, z) = (target[0] - sin * reach, target[2] - cos * reach);
+            open_ground(world, x, z).map(|floor| [x, floor + sim::STANDING_Y, z])
+        })
+        .min_by(|&a, &b| ahead(a).total_cmp(&ahead(b)))
 }
 
 /// Adds a reload to `input` when the gun in hand is empty, or is not full and there is no one in sight.
@@ -527,7 +659,7 @@ fn reload(world: &World, id: u32, bot: &Bot, mut input: InputFrame) -> InputFram
 
 /// One tick of bot `id`'s thinking: what it does now, as the input a player would send.
 #[allow(clippy::too_many_arguments)]
-fn think(world: &mut World, id: u32, bot: &mut Bot, dt: f32, noises: &[Noise], crowd: &[(u32, [f32; 2])], budget: &mut usize, rays: &mut usize) -> InputFrame {
+fn think(world: &mut World, id: u32, bot: &mut Bot, dt: f32, noises: &[Noise], crowd: &[(u32, [f32; 2])], movers: &[evade::Mover], budget: &mut usize, rays: &mut usize) -> InputFrame {
     let idle = InputFrame { yaw: to_mrad(bot.yaw), pitch: to_mrad(bot.pitch), view: world.tick as u16, slot: bot.slot, ..Default::default() };
     let Some(player) = world.entities.get::<Player>(id) else { return idle };
     if !world.entities.alive(id) {
@@ -551,6 +683,9 @@ fn think(world: &mut World, id: u32, bot: &mut Bot, dt: f32, noises: &[Noise], c
         bot.flanked = false;
         bot.pause_left = 0;
         bot.sight.aware = 0.0;
+        bot.dodge = 0;
+        bot.bound = 0;
+        bot.shift = None;
         if let Some(mut player) = world.entities.get_mut::<Player>(id) {
             player.surrendered = false;
         }
@@ -568,6 +703,18 @@ fn think(world: &mut World, id: u32, bot: &mut Bot, dt: f32, noises: &[Noise], c
     let eye = player.eye();
     let stepping = player.input.forward != 0 || player.input.strafe != 0;
     let away = push(id, at, crowd);
+    // A vehicle coming at it: out of the way first, whatever else it is about.
+    if bot.dodge == 0
+        && !matches!(bot.mode, BotMode::Surrender | BotMode::PlayDead)
+        && (world.tick + id).is_multiple_of(LOOK_EVERY)
+        && let Some(yaw) = evade::dodge(at, movers)
+    {
+        evade::start_dodge(bot, yaw);
+    }
+    if bot.dodge > 0 {
+        bot.dodge -= 1;
+        return evade::run_along(bot, bot.dodge_yaw, dt, idle);
+    }
     if bot.route.is_empty() {
         bot.route = make_route(world, bot.home);
     }
@@ -576,6 +723,7 @@ fn think(world: &mut World, id: u32, bot: &mut Bot, dt: f32, noises: &[Noise], c
     // Hit, or hearing a fight, while it is not in one itself: it goes to look where that came from,
     // alert, so it sees all round on the way. In cover it only notes where a hit came from.
     let hit = bot.hit_from.take();
+    let shot_at = hit.is_some();
     if bot.mode.committed()
         && let Some(from) = hit
     {
@@ -583,7 +731,7 @@ fn think(world: &mut World, id: u32, bot: &mut Bot, dt: f32, noises: &[Noise], c
     }
     let heard = hit.or_else(|| {
         let busy = bot.mode == BotMode::Pursue;
-        hear(id, bot, at, noises).map(|from| senses::roughly(id, at, from)).filter(|&from| !busy || distance_2d(at, from) + NEARER_NOISE < distance_2d(at, bot.sight.last_seen))
+        hear(world, id, bot, at, noises).map(|from| senses::roughly(id, at, from)).filter(|&from| !busy || distance_2d(at, from) + NEARER_NOISE < distance_2d(at, bot.sight.last_seen))
     });
     if let Some(from) = heard
         && !(bot.mode == BotMode::Pursue && bot.sight.sees)
@@ -599,13 +747,15 @@ fn think(world: &mut World, id: u32, bot: &mut Bot, dt: f32, noises: &[Noise], c
     }
 
     if (world.tick + id).is_multiple_of(LOOK_EVERY) {
-        let alert = bot.mode != BotMode::Patrol;
+        // An officer knows whom they are looking for, and looks all round.
+        let alert = bot.mode != BotMode::Patrol || world.entities.has::<super::Officer>(id);
         let in_view = spot(world, id, eye, bot.yaw, alert);
         if in_view.is_none() {
             senses::fade(bot);
         }
-        match in_view.filter(|&(other, seen_at)| senses::notice(world, bot, other, seen_at, eye, alert)) {
-            Some((other, seen_at)) => {
+        match in_view.filter(|&(other, seen)| senses::notice(world, bot, other, seen.at, eye, alert)) {
+            Some((other, seen)) => {
+                let seen_at = seen.at;
                 let same = (bot.mode == BotMode::Pursue || bot.mode.committed()) && bot.sight.target == Some(other);
                 if !same {
                     tracing::debug!(bot = id, target = other, "bot spotted someone");
@@ -615,13 +765,16 @@ fn think(world: &mut World, id: u32, bot: &mut Bot, dt: f32, noises: &[Noise], c
                 let since = world.tick.wrapping_sub(bot.sight.seen_tick) as f32 / TICK_RATE as f32;
                 let moved: [f32; 3] = std::array::from_fn(|i| (seen_at[i] - bot.sight.last_seen[i]) / since.max(1e-3));
                 let speed = vec3::length(moved);
-                bot.sight.velocity = if same && bot.sight.sees && speed < TOP_SPEED { std::array::from_fn(|i| (bot.sight.velocity[i] + moved[i]) / 2.0) } else { [0.0; 3] };
+                let top = if seen.vehicle.is_some() { TOP_DRIVING } else { TOP_SPEED };
+                bot.sight.velocity = if same && bot.sight.sees && speed < top { std::array::from_fn(|i| (bot.sight.velocity[i] + moved[i]) / 2.0) } else { [0.0; 3] };
                 if !same || !bot.sight.sees {
                     // Caught sight of them: it takes a moment to react, and its aim has to settle.
                     let startled = if bot.mode == BotMode::Patrol { world.rng.next_f64() as f32 * STARTLED * (1.0 - bot.aim.skill) } else { 0.0 };
                     bot.aim.react = ((lerp(REACT_POOR, REACT_GOOD, bot.aim.skill) + startled) * TICK_RATE as f32) as u32;
                     bot.aim.tracked = 0;
                     bot.aim.side = [if world.rng.next_f64() < 0.5 { -1.0 } else { 1.0 }, wobble(world) * 0.5];
+                    // A bound starts with it down and firing.
+                    (bot.bound, bot.bounding) = (0, true);
                 }
                 let settled = 1.0 + UNSETTLED * (-(bot.aim.tracked as f32) / (SETTLE * TICK_RATE as f32)).exp();
                 let shaken = 1.0 + (1.0 - bot.nerve) * SHAKEN_AIM;
@@ -632,6 +785,7 @@ fn think(world: &mut World, id: u32, bot: &mut Bot, dt: f32, noises: &[Noise], c
                     bot.mode = BotMode::Pursue;
                 }
                 bot.sight.target = Some(other);
+                (bot.sight.threat, bot.sight.vehicle, bot.sight.mark) = (seen.threat, seen.vehicle, seen.mark);
                 bot.sight.last_seen = seen_at;
                 bot.sight.seen_tick = world.tick;
                 bot.sight.sees = true;
@@ -645,16 +799,37 @@ fn think(world: &mut World, id: u32, bot: &mut Bot, dt: f32, noises: &[Noise], c
         bot.pitch = turn_towards(bot.pitch, 0.0, TURN_RATE * dt);
     }
     let distance = if fighting { distance_2d(at, bot.sight.last_seen) } else { PATROL_DISTANCE };
-    let gun = pick_gun(&player.hands.hotbar, distance, bot.slot);
+    let threat = if fighting { bot.sight.threat } else { Threat::Infantry };
+    // An officer keeps an anti-tank weapon for a tank.
+    let officer = world.entities.has::<super::Officer>(id);
+    let gun = pick_gun(&player.hands.hotbar, distance, bot.slot, if officer && threat == Threat::Soft { Threat::Infantry } else { threat });
+    // What it has for anything that is not a tank, to fire on one it cannot hurt.
+    let small_arm = pick_gun(&player.hands.hotbar, distance_2d(at, bot.sight.last_seen), bot.slot, Threat::Infantry).filter(|&slot| !anti_tank(&player.hands.hotbar[slot as usize]));
+    let carries_anti_tank = player.hands.hotbar.iter().any(anti_tank);
     if let Some(slot) = gun {
         bot.slot = slot;
     }
     let idle = InputFrame { slot: bot.slot, ..idle };
-    let out_of_rounds = fighting && bot.temper.patience >= COVER_PATIENCE && player.hands.hotbar[bot.slot as usize].ammo == 0;
-    if bot.mode == BotMode::Pursue && (nerve::broken(bot) || out_of_rounds) {
-        cover::seek(world, bot, at, rays, budget);
+    let out_of_rounds = fighting && player.hands.hotbar[bot.slot as usize].ammo == 0 && def(player.hands.hotbar[bot.slot as usize].item).is_some_and(|d| d.kind == ItemKind::Gun);
+    // Hit by someone it cannot see: it gets its head down first and finds them after.
+    let blind = shot_at && !bot.sight.sees;
+    // A tank it cannot hurt, or one too close to fight: it gets away from it.
+    if fighting && threat == Threat::Armour && (gun.is_none() || distance < TOO_CLOSE) && matches!(bot.mode, BotMode::Pursue | BotMode::Evade) {
+        evade::start(world, bot, false);
     }
-    if bot.mode == BotMode::Pursue && fighting && nerve::frozen(bot) && bot.cover_wait > 0 {
+    // Far enough again from a tank it has something for: it turns to fight it with that.
+    if bot.mode == BotMode::Evade && bot.sight.sees && bot.sight.threat == Threat::Armour && carries_anti_tank && distance_2d(at, bot.sight.last_seen) > FIGHT_FROM && !nerve::broken(bot) {
+        (bot.mode, bot.cover) = (BotMode::Pursue, None);
+        new_goal(bot);
+    }
+    if bot.mode == BotMode::Pursue && (nerve::broken(bot) || out_of_rounds || blind) {
+        cover::seek(world, bot, at, rays, budget);
+        // A coward that has broken and found nowhere to hide runs for it.
+        if bot.mode == BotMode::Pursue && nerve::broken(bot) && !nerve::frozen(bot) && bot.temper.courage < COWARD && bot.cover_wait > 0 && fighting && !world.entities.has::<crate::mechanics::Officer>(id) {
+            evade::start(world, bot, true);
+        }
+    }
+    if bot.mode == BotMode::Pursue && fighting && nerve::frozen(bot) && bot.cover_wait > 0 && !world.entities.has::<super::Officer>(id) {
         wounded::give_in(world, id, bot, at, crowd);
     }
     let Some(player) = world.entities.get::<Player>(id) else { return idle };
@@ -711,7 +886,43 @@ fn think(world: &mut World, id: u32, bot: &mut Bot, dt: f32, noises: &[Noise], c
                 return InputFrame { yaw: to_mrad(bot.yaw), buttons: BUTTON_CROUCH, ..idle };
             }
             if bot.sight.sees && let Some(slot) = gun {
-                return fight(world, id, bot, eye, slot, distance, dt, away);
+                let item = world.entities.get::<Player>(id).map_or(0, |player| player.hands.hotbar[slot as usize].item);
+                let far = distance > stand_off(bot, item);
+                // Far off: it closes in bounds, running a few seconds by the way round things, then
+                // down to fire a few, and on again.
+                if far && distance > BOUND_FROM && bot.role == Role::Attacker && !nerve::broken(bot) {
+                    bot.shift = None;
+                    bot.bound = bot.bound.saturating_sub(1);
+                    if bot.bound == 0 {
+                        bot.bounding = !bot.bounding;
+                        bot.bound = ticks_between(world, if bot.bounding { BOUND_RUN } else { BOUND_FIRE });
+                        new_goal(bot);
+                    }
+                    if bot.bounding {
+                        break 'plan (goal, true);
+                    }
+                    return fight(world, id, bot, eye, slot, distance, dt, away, false);
+                }
+                bot.bounding = false;
+                // Standing off: now and then it moves to another spot round them before it fires again.
+                if !far && distance > BOUND_FROM && bot.role == Role::Attacker && !nerve::broken(bot) {
+                    if let Some(point) = bot.shift {
+                        bot.shift_wait = bot.shift_wait.saturating_sub(1);
+                        if distance_2d(at, point) > REACHED * 1.5 && bot.shift_wait > 0 {
+                            break 'plan (point, true);
+                        }
+                        bot.shift = None;
+                        bot.shift_wait = ticks_between(world, SHIFT_EVERY);
+                    } else if bot.shift_wait == 0 {
+                        let yaw = bot.sight.target.and_then(|target| world.entities.get::<Player>(target)).map_or(0.0, |target| target.character.yaw);
+                        bot.shift = shift_spot(world, at, goal, yaw);
+                        bot.shift_wait = if bot.shift.is_some() { (SHIFT_FOR * TICK_RATE as f32) as u32 } else { ticks_between(world, SHIFT_EVERY) };
+                        new_goal(bot);
+                    } else {
+                        bot.shift_wait -= 1;
+                    }
+                }
+                return fight(world, id, bot, eye, slot, distance, dt, away, true);
             }
             if bot.sight.sees && distance < CLOSE_IN {
                 // Unarmed and up close: stand and face them.
@@ -776,6 +987,17 @@ fn think(world: &mut World, id: u32, bot: &mut Bot, dt: f32, noises: &[Noise], c
             }
             return InputFrame { buttons: BUTTON_PRONE, yaw: to_mrad(bot.yaw), ..idle };
         }
+        BotMode::Evade => match evade::plan(world, id, bot, at, dt, rays, budget, idle) {
+            Ok(plan) => plan,
+            // Kept down out of the way of a tank, now and then it fires on it anyway.
+            Err(_) if let Some(slot) = small_arm
+                && evade::harass(world, bot, at) =>
+            {
+                bot.slot = slot;
+                return fight(world, id, bot, eye, slot, distance_2d(at, bot.sight.last_seen), dt, away, false);
+            }
+            Err(input) => return input,
+        },
     } };
 
     let toward = follow(world, &mut bot.walk, at, goal, budget);
@@ -814,6 +1036,11 @@ impl Mechanic for Bots {
             .flat_map(|(damaged, from)| std::iter::once(damaged.victim).chain(damaged.aboard.iter().copied()).map(move |id| (id, from, damaged.lost)))
             .collect();
         for (id, from, lost) in hurt {
+            // An officer turns only to their suspect's fire.
+            let suspect = world.entities.get::<super::Officer>(id).map(|officer| officer.suspect);
+            if suspect.is_some() && !world.happened::<Damaged>().any(|damaged| (damaged.victim == id || damaged.aboard.contains(&id)) && damaged.attacker == suspect) {
+                continue;
+            }
             if let Some(mut bot) = world.entities.get_mut::<Bot>(id) {
                 bot.hit_from = Some(from);
                 nerve::shake(&mut bot, nerve::hit_shock(lost));
@@ -841,6 +1068,7 @@ impl Mechanic for Bots {
         let mut budget = SEARCH_PER_TICK;
         let mut rays = cover::RAYS_PER_TICK;
         let ids = world.entities.ids::<With<Bot>>();
+        let movers = if ids.is_empty() { Vec::new() } else { evade::movers(world) };
         if world.tick.is_multiple_of(tokens::ASSIGN_EVERY) {
             tokens::assign(world, &ids);
         }
@@ -852,9 +1080,14 @@ impl Mechanic for Bots {
         for id in ids {
             // Taken out to think with the world in hand, an empty mind in its place: what a bot thinks
             // reads only other bots' minds (a driver its gunner's).
+            // A police officer is a soldier only when it has come to shooting; the rest of the time
+            // the police's own mind has them (`emergency::officers`).
+            if world.entities.get::<super::Officer>(id).is_some_and(|officer| !officer.armed) {
+                continue;
+            }
             let Some(mut mind) = world.entities.get_mut::<Bot>(id) else { continue };
             let mut bot = std::mem::replace(&mut *mind, Bot::new([0.0; 2], Vec::new()));
-            let input = think(world, id, &mut bot, dt, &noises, &crowd, &mut budget, &mut rays);
+            let input = think(world, id, &mut bot, dt, &noises, &crowd, &movers, &mut budget, &mut rays);
             let input = if matches!(bot.mode, BotMode::Surrender | BotMode::PlayDead) { input } else { reload(world, id, &bot, input) };
             *world.entities.of_mut::<Bot>(id) = bot;
             if let Some(mut player) = world.entities.get_mut::<Player>(id) {

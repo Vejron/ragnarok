@@ -130,6 +130,7 @@ pub(super) const TECHNICAL: VehicleDef = VehicleDef {
     board: None,
     exit: None,
     fittings: &[],
+    doors: NO_DOORS,
 };
 
 /// The machine gun on its post, turned all the way round by the gunner's look.

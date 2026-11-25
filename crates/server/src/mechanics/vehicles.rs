@@ -13,6 +13,9 @@ use shared::quant::{to_cm, wrap_angle};
 use shared::world::{THEME_WINTER, WorldFile};
 use std::collections::BTreeMap;
 
+pub mod doors;
+pub use doors::{Stepping, step_byte, stepped_out, stepping};
+
 /// Cars parked around the map, seats, and driving them.
 ///
 /// `BUTTON_USE` is one press per input frame: it boards the nearest vehicle with a free seat, or
@@ -67,7 +70,7 @@ const UNFLIP_TICKS: u32 = 3 * TICK_RATE;
 const SHIP_KNOCK_SPEED: f32 = 4.0;
 
 /// How high above the ground a fresh vehicle of `kind` starts, at its chassis centre.
-fn drop_height(kind: u8) -> f32 {
+pub(super) fn drop_height(kind: u8) -> f32 {
     vehicle_def(kind).body.drop_y
 }
 
@@ -180,6 +183,8 @@ pub(super) fn add_vehicle(world: &mut World, kind: u8, position: [f32; 3], yaw: 
             scrape_in: 0,
             lamp: false,
             lamp_held: false,
+            siren: false,
+            doors: Default::default(),
         },
         Health::full(vehicle_hp(kind)),
         Seats::empty(vehicle_def(kind).seats),
@@ -304,13 +309,44 @@ fn board(world: &mut World, id: u32) {
         if world.entities.has::<super::traffic::TrafficCar>(vid) && pose.forward_speed.abs() > super::traffic::DRAG_SPEED {
             continue;
         }
+        // A police car or an ambulance with its crew in it is theirs: nobody drags an officer out.
+        if super::traffic::crewed(world, vid) {
+            continue;
+        }
         let distance = boarding_point(vehicle.kind, &pose).iter().zip(here).map(|(a, b)| (a - b) * (a - b)).sum::<f32>().sqrt();
         if distance <= ENTER_RADIUS && nearest.is_none_or(|(best, ..)| distance < best) {
             nearest = Some((distance, vid, free));
         }
     }
-    if let Some((_, vehicle, index)) = nearest {
-        seat(world, id, vehicle, index);
+    let Some((_, vehicle, free)) = nearest else { return };
+    // By the door of a free seat, they take that one.
+    let index = doors::door_within(world, vehicle, here, DOOR_REACH).map_or(free, |(seat, _)| seat);
+    // The driver of a car of the traffic still at its wheel gets out by the same door first.
+    let wait = if index == 0 && world.entities.all::<super::traffic::Driver>().any(|(_, driver)| driver.vehicle == vehicle && driver.seat == 0) { doors::out_ticks() } else { 0 };
+    if seat(world, id, vehicle, index) {
+        doors::start_in(world, id, vehicle, index, wait);
+    }
+}
+
+/// How near where a door is got out of someone must stand to get in by it rather than by whichever
+/// seat is free first, metres.
+const DOOR_REACH: f32 = 1.6;
+
+/// Player `id` leaves the seat they sit in: by its door, if it has one, while the car is slow
+/// enough; bailing out of a car that is going too fast; and otherwise at once.
+fn leave(world: &mut World, id: u32) {
+    let Some(seat) = world.entities.get::<Player>(id).and_then(|player| player.seat) else { return };
+    let Some(pose) = world.physics.car_pose(seat.vehicle) else {
+        alight(world, id);
+        return;
+    };
+    let kind = world.entities.get::<Vehicle>(seat.vehicle).map_or(KIND_JEEP, |vehicle| vehicle.kind);
+    if seat.remote {
+        alight(world, id);
+    } else if vehicle_def(kind).car_wheels && vec3::length(pose.velocity) > BAIL_SPEED {
+        doors::bail(world, id);
+    } else if !doors::start_out(world, id, seat.vehicle, seat.index, true) {
+        alight(world, id);
     }
 }
 
@@ -387,10 +423,17 @@ fn switch_seat(world: &mut World, id: u32) {
 
 /// Takes player `id` out of their seat and stands them beside the vehicle.
 pub fn alight(world: &mut World, id: u32) {
+    alight_at(world, id, None);
+}
+
+/// Takes player `id` out of their seat and stands them at `at` (the middle of a standing soldier),
+/// or with `None` beside the vehicle, wherever there is room.
+fn alight_at(world: &mut World, id: u32, at: Option<[f32; 3]>) {
+    world.entities.remove::<Stepping>(id);
     let Some(seat) = vacate(world, id) else { return };
     let Some(pose) = world.physics.car_pose(seat.vehicle) else { return };
     let kind = world.entities.get::<Vehicle>(seat.vehicle).map_or(KIND_JEEP, |vehicle| vehicle.kind);
-    let position = exit_position(world, kind, &pose, seat.index);
+    let position = at.unwrap_or_else(|| exit_position(world, kind, &pose, seat.index));
     if let Some(mut player) = world.entities.get_mut::<Player>(id) {
         // Stamina keeps what it was when they got in: a ride is no rest.
         let Character { spent, winded, skis, .. } = player.character;
@@ -650,6 +693,7 @@ fn crash(world: &mut World, before: &BTreeMap<u32, CarPose>) {
             over *= TREE_CRASH_FACTOR;
         }
         dent(vehicle.kind, &mut vehicle.damage, impact.local, over);
+        doors::crash_doors(world, vid, impact.local, over);
         // Whoever drove the other vehicle into it is to blame, should it go up.
         let attacker = impact.other_car.and_then(|other| world.entities.get::<Seats>(other)?.rider(0));
         world.shots.push(ShotEvent { shooter: vid, weapon: WEAPON_CRASH, x, y, z, yaw: SHOT_NO_YAW, dip: SHOT_NO_DIP });
@@ -758,6 +802,10 @@ fn knock_players(world: &mut World) {
     }
     // Whoever is driving is to blame.
     for (id, amount, car, at) in run_down {
+        // A police car or an ambulance on its way knocks people over, and takes no health for it.
+        if super::emergency::spares(world, car, id) {
+            continue;
+        }
         let driver = world.entities.get::<Seats>(car).and_then(|seats| seats.rider(0));
         super::life::damage_entity(world, id, super::life::Harm::new(amount, driver, WEAPON_ROADKILL).from(at));
     }
@@ -865,12 +913,19 @@ impl Mechanic for Vehicles {
 
     fn on_tick(&mut self, world: &mut World, dt: f32) {
         super::armor::burn(world);
+        // Getting in and out by the doors, and the doors themselves. Whoever is at it does nothing else.
+        doors::step(world);
+        for id in world.entities.ids::<With<Stepping>>() {
+            if let Some(mut player) = world.entities.get_mut::<Player>(id) {
+                player.input.buttons = 0;
+            }
+        }
         // Boarding and leaving.
         let pressed = world.entities.ids_where::<Player>(|id, player| world.entities.alive(id) && player.input.buttons() & BUTTON_USE != 0);
         for id in pressed {
             let seated = world.entities.of::<Player>(id).seat.is_some();
             if seated {
-                alight(world, id);
+                leave(world, id);
             } else {
                 board(world, id);
             }
@@ -896,7 +951,8 @@ impl Mechanic for Vehicles {
         // driver is away flying a missile they sent up from it (a Titan's pilot).
         for vid in world.entities.ids::<With<Vehicle>>() {
             let hp = world.entities.of::<Health>(vid).hp;
-            let driver = world.entities.of::<Seats>(vid).rider(0).and_then(|driver| world.entities.get::<Player>(driver)).filter(|driver| driver.seat.is_none_or(|seat| seat.vehicle == vid)).map(|driver| driver.input);
+            // A driver still climbing in or out has nothing in hand yet.
+            let driver = world.entities.of::<Seats>(vid).rider(0).filter(|&driver| !world.entities.has::<Stepping>(driver)).and_then(|driver| world.entities.get::<Player>(driver)).filter(|driver| driver.seat.is_none_or(|seat| seat.vehicle == vid)).map(|driver| driver.input);
             let occupied = world.entities.of::<Seats>(vid).rider(0).is_some();
             let autopilot = world.entities.get::<Autopilot>(vid).map(|autopilot| autopilot.0);
             let mut vehicle = world.entities.of_mut::<Vehicle>(vid);
@@ -996,6 +1052,32 @@ impl Mechanic for Vehicles {
                 restore(world, vid, burnt);
             }
         }
+        engines(world);
+    }
+}
+
+/// A vehicle someone drives faster than this is heard, m/s.
+const ENGINE_HEARD: f32 = 3.0;
+/// How far its engine carries, metres: a tank's tracks and diesel, and anything else.
+const ENGINE_TANK: f32 = 90.0;
+const ENGINE: f32 = 40.0;
+
+/// The engines of the vehicles people drive make noise, once a second each, for bots to hear and
+/// go to look (`bots::hear`). The traffic's are not listened for.
+fn engines(world: &mut World) {
+    let mut heard = Vec::new();
+    for vid in world.entities.ids::<With<Vehicle>>() {
+        if !(world.tick + vid).is_multiple_of(TICK_RATE) {
+            continue;
+        }
+        let Some(driver) = world.entities.get::<Seats>(vid).and_then(|seats| seats.rider(0)) else { continue };
+        let Some(pose) = world.physics.car_pose(vid).filter(|pose| pose.forward_speed.abs() > ENGINE_HEARD) else { continue };
+        let kind = world.entities.of::<Vehicle>(vid).kind;
+        let reach = if vehicle_def(kind).crew == shared::vehicles::Exposure::Sealed { ENGINE_TANK } else { ENGINE };
+        heard.push((pose.position, driver, reach));
+    }
+    for (at, driver, reach) in heard {
+        super::bots::make_noise(world, at, Some(driver), reach);
     }
 }
 

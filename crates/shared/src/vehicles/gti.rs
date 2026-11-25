@@ -30,6 +30,10 @@ const ARMOR: Armor = Armor {
     canvas: false,
 };
 
+/// The driver's door, measured off the model (`build_car.py` prints it): its hinge, length and height.
+/// The passenger's is its mirror.
+pub const GTI_DOOR: DoorDef = DoorDef::front([-0.84, -0.275, -1.0], 1.32, 1.19);
+
 pub(super) const GTI: VehicleDef = VehicleDef {
     kind: KIND_GTI,
     name: "Golf GTI",
@@ -92,4 +96,5 @@ pub(super) const GTI: VehicleDef = VehicleDef {
     board: None,
     exit: None,
     fittings: &[],
+    doors: &[GTI_DOOR, GTI_DOOR.mirrored()],
 };

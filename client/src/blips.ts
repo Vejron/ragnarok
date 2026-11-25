@@ -1,13 +1,15 @@
 /** What the minimap marks besides the player: allies where they are, and where others just fired. */
 
+import { KIND_AMBULANCE, KIND_POLICE_CAR } from './net/codec'
+
 /** One mark, in world metres (x east, z south). */
 export interface Blip {
   x: number
   z: number
   /** CSS colour. */
   color: string
-  /** An ally, shown while in view, someone who fired, or the golf ball the player last struck. */
-  kind: 'ally' | 'shot' | 'ball'
+  /** An ally, shown while in view, someone who fired, the golf ball the player last struck, or a police car or an ambulance in view. */
+  kind: 'ally' | 'shot' | 'ball' | 'police' | 'ambulance'
   /** 1 when new, falling to 0 as it goes. */
   strength: number
 }
@@ -30,6 +32,23 @@ export interface Sides {
 export const BOT_COLOR = '#e63946'
 export const UNKNOWN_COLOR = '#ff9f1c'
 export const ALLY_COLOR = '#2ec4b6'
+/** A police car's mark, the blue of its stripe, and an ambulance's, the red of its own. */
+export const POLICE_COLOR = '#2456c8'
+export const AMBULANCE_COLOR = '#d62839'
+
+/**
+ * A mark for every police car and ambulance among `vehicles` (those replicated to this client, as
+ * drawn) that is not a wreck: the map shows the law coming, and help.
+ */
+export function emergencyBlips(vehicles: Iterable<{ kind: number; x: number; z: number; hp: number }>): Blip[] {
+  const blips: Blip[] = []
+  for (const { kind, x, z, hp } of vehicles) {
+    if (hp <= 0) continue
+    if (kind === KIND_POLICE_CAR) blips.push({ x, z, color: POLICE_COLOR, kind: 'police', strength: 1 })
+    else if (kind === KIND_AMBULANCE) blips.push({ x, z, color: AMBULANCE_COLOR, kind: 'ambulance', strength: 1 })
+  }
+  return blips
+}
 
 export class Blips {
   private shots: { shooter: number; x: number; z: number; at: number }[] = []

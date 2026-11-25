@@ -23,7 +23,7 @@ impl Game {
         let mut scene: Scene = Vec::new();
         scene.extend(self.world.entities.all::<Player>().map(|(id, player)| {
             let shown = if player.embodied() { soldier(player, self.world.entities.alive(id), self.world.physics.submerged(&player.character)) } else { self.rider(player) };
-            let seated = player.seat.map(|seat| wire::Seated { vehicle: seat.vehicle, seat: seat.index as u8 });
+            let seated = player.seat.map(|seat| wire::Seated { vehicle: seat.vehicle, seat: seat.index as u8, step: crate::mechanics::step_byte(&self.world, id) });
             let one_arm = crate::mechanics::limbs_lost(&self.world, id) & LIMB_ARMS != 0;
             let wounds = self.world.entities.get::<Wounds>(id).copied();
             let limbs = wounds.filter(|wounds| wounds.lost != 0).map(|wounds| wire::Limbs { lost: wounds.wire() });
@@ -39,6 +39,12 @@ impl Game {
             // A civilian out of a car of the traffic is drawn as a driver at the wheel is (TRAFFIC.md).
             if self.world.entities.has::<crate::mechanics::Civilian>(id) {
                 shown.kind = Some(wire::Kind { kind: KIND_CIVILIAN });
+            }
+            if self.world.entities.has::<crate::mechanics::Medic>(id) {
+                shown.kind = Some(wire::Kind { kind: crate::mechanics::MEDIC_KIND });
+            }
+            if self.world.entities.has::<crate::mechanics::Officer>(id) {
+                shown.kind = Some(wire::Kind { kind: crate::mechanics::OFFICER_KIND });
             }
             if crate::mechanics::is_zombie(&self.world, id) && player.embodied() {
                 shown.kind = Some(wire::Kind { kind: KIND_ZOMBIE });
@@ -59,7 +65,7 @@ impl Game {
             }
             let (_, ghost, block) = ghost.unwrap_or_default();
             let hp = self.world.entities.get::<Health>(id).map_or(0, |health| health.hp);
-            (id, Replicated { vitals: Some(wire::Vitals { hp, progress: progress(player, one_arm), spent: player.character.spent, winded: player.character.winded.into(), parts, down: player.character.down, strain: player.character.ski_strain, breath: breath_byte(player.breath), ghost, block }), hotbar: Some(wire::Hotbar { slots: player.hands.hotbar }), ..shown })
+            (id, Replicated { vitals: Some(wire::Vitals { hp, progress: progress(player, one_arm), spent: player.character.spent, winded: player.character.winded.into(), parts, down: player.character.down, strain: player.character.ski_strain, breath: breath_byte(player.breath), ghost, block, wanted: crate::mechanics::wanted_byte(&self.world, id) }), hotbar: Some(wire::Hotbar { slots: player.hands.hotbar }), ..shown })
         }));
         scene.extend(self.creatures());
         scene.extend(self.drivers());
@@ -150,8 +156,8 @@ impl Game {
                 Some((
                     id,
                     Replicated {
-                        kind: Some(wire::Kind { kind: KIND_CIVILIAN }),
-                        seated: Some(wire::Seated { vehicle: driver.vehicle, seat: 0 }),
+                        kind: Some(wire::Kind { kind: driver.kind }),
+                        seated: Some(wire::Seated { vehicle: driver.vehicle, seat: driver.seat as u8, step: crate::mechanics::step_byte(&self.world, id) }),
                         heading: Some(wire::Heading { yaw: to_mrad(pose.yaw()) }),
                         look: Some(wire::Look { pitch: 0 }),
                         flags: Some(wire::Flags { flags: FLAG_CROUCHING | if entities.dead(id) { FLAG_DEAD } else { 0 }, stance: STANCE_STANDING }),
@@ -251,9 +257,11 @@ impl Game {
             pintle,
             thrust,
             arms,
-            flags: vehicle.lamp.then_some(wire::Flags { flags: FLAG_LAMP, stance: STANCE_STANDING }),
+            // Only while its lamps or its siren are on: most vehicles send no flags at all.
+            flags: (vehicle.lamp || vehicle.siren).then_some(wire::Flags { flags: if vehicle.lamp { FLAG_LAMP } else { 0 } | if vehicle.siren { FLAG_SIREN } else { 0 }, stance: STANCE_STANDING }),
             health: Some(wire::Health { hp: entities.get::<Health>(id).map_or(0, |health| health.hp) }),
             damage: (vehicle.damage != [0; shared::protocol::DAMAGE_SLOTS]).then_some(wire::Damage { parts: vehicle.damage }),
+            doors: (vehicle.doors.open | vehicle.doors.gone != 0).then_some(wire::Doors { open: vehicle.doors.open, gone: vehicle.doors.gone }),
             // A gun fixed to a ship goes where the ship takes it: its gunner has nothing to predict.
             drive: driver.filter(|&driver| entities.has::<Player>(driver) && self.world.physics.mounted_on(id).is_none()).and_then(|_| self.drive(id)),
             ..Default::default()

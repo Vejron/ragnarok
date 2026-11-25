@@ -121,4 +121,5 @@ pub(super) const SNOWRACER: VehicleDef = VehicleDef {
     board: None,
     exit: None,
     fittings: &[],
+    doors: NO_DOORS,
 };

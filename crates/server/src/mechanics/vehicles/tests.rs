@@ -106,7 +106,7 @@ fn use_boards_the_nearest_car_and_use_again_leaves() {
     idle(&mut game, id, &mut seq, 3);
     assert_eq!(game.world.entities.of::<Seats>(vid)[0], Some(id));
     assert!(game.seen_people(shared::protocol::KIND_SOLDIER).is_empty(), "a seated player is not a soldier on foot");
-    assert_eq!(game.seen(id).unwrap().seated, Some(shared::replicated::Seated { vehicle: vid, seat: 0 }));
+    assert_eq!(game.seen(id).unwrap().seated, Some(shared::replicated::Seated { vehicle: vid, seat: 0, step: 0 }));
     assert!(game.seen(id).unwrap().place.is_none(), "they are where their seat is");
 
     press(&mut game, id, &mut seq, (0, 0), BUTTON_USE, 1);
@@ -969,6 +969,7 @@ fn a_hen_driver_leaps_on_jump_and_the_snapshot_carries_its_stamina() {
     assert!(thrust.flags & THRUST_AIR != 0 && thrust.flags & THRUST_LIFT != 0 && thrust.air < 255, "{thrust:?}");
 }
 
+mod doors;
 mod ship;
 
 #[test]

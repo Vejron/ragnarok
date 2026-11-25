@@ -184,6 +184,7 @@ pub(super) const PLANE: VehicleDef = VehicleDef {
     board: None,
     exit: None,
     fittings: &[],
+    doors: NO_DOORS,
 };
 
 /// The gunner's ring mount behind the cockpit, the pilot's two forward guns, which take turns, and

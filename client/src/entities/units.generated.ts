@@ -25,10 +25,10 @@ export function toGame(w: Components): Entity {
     kind: w.kind,
     projectile: w.projectile,
     pickup: w.pickup,
-    vitals: w.vitals && { hp: w.vitals.hp, progress: w.vitals.progress / 255, spent: w.vitals.spent, winded: w.vitals.winded, parts: w.vitals.parts, down: w.vitals.down, strain: w.vitals.strain, breath: w.vitals.breath / 255, ghost: w.vitals.ghost, block: w.vitals.block },
+    vitals: w.vitals && { hp: w.vitals.hp, progress: w.vitals.progress / 255, spent: w.vitals.spent, winded: w.vitals.winded, parts: w.vitals.parts, down: w.vitals.down, strain: w.vitals.strain, breath: w.vitals.breath / 255, ghost: w.vitals.ghost, block: w.vitals.block, wanted: w.vitals.wanted },
     hotbar: w.hotbar,
     drive: w.drive && { vx: w.drive.vx / 100, vy: w.drive.vy / 100, vz: w.drive.vz / 100, wx: w.drive.wx / 1000, wy: w.drive.wy / 1000, wz: w.drive.wz / 1000, steer: w.drive.steer / 1000, spin: w.drive.spin / 1000 },
-    seated: w.seated,
+    seated: w.seated && { vehicle: w.seated.vehicle, seat: w.seated.seat, step: w.seated.step / 255 },
     look: w.look && { pitch: w.look.pitch / 1000 },
     carry: w.carry,
     struck: w.struck && { count: w.struck.count, part: w.struck.part, amount: w.struck.amount, yaw: w.struck.yaw / 1000, x: w.struck.x / 100, y: w.struck.y / 100, z: w.struck.z / 100 },
@@ -38,6 +38,7 @@ export function toGame(w: Components): Entity {
     lifted: w.lifted,
     titan: w.titan && { lx: w.titan.lx / 100, ly: w.titan.ly / 100, lz: w.titan.lz / 100, rx: w.titan.rx / 100, ry: w.titan.ry / 100, rz: w.titan.rz / 100, flx: w.titan.flx / 100, fly: w.titan.fly / 100, flz: w.titan.flz / 100, frx: w.titan.frx / 100, fry: w.titan.fry / 100, frz: w.titan.frz / 100, flags: w.titan.flags, step: w.titan.step, weight: w.titan.weight / 255, head_yaw: w.titan.head_yaw / 1000, head_pitch: w.titan.head_pitch / 1000 },
     held: w.held,
+    doors: w.doors,
   }
 }
 
@@ -78,5 +79,6 @@ export function blend(a: Entity, b: Entity, t: number): Entity {
     lifted: near.lifted,
     titan: a.titan && b.titan ? (a.titan === b.titan || (a.titan.lx === b.titan.lx && a.titan.ly === b.titan.ly && a.titan.lz === b.titan.lz && a.titan.rx === b.titan.rx && a.titan.ry === b.titan.ry && a.titan.rz === b.titan.rz && a.titan.flx === b.titan.flx && a.titan.fly === b.titan.fly && a.titan.flz === b.titan.flz && a.titan.frx === b.titan.frx && a.titan.fry === b.titan.fry && a.titan.frz === b.titan.frz && a.titan.flags === b.titan.flags && a.titan.step === b.titan.step && a.titan.weight === b.titan.weight && a.titan.head_yaw === b.titan.head_yaw && a.titan.head_pitch === b.titan.head_pitch) ? b.titan : { lx: lerp(a.titan.lx, b.titan.lx, t), ly: lerp(a.titan.ly, b.titan.ly, t), lz: lerp(a.titan.lz, b.titan.lz, t), rx: lerp(a.titan.rx, b.titan.rx, t), ry: lerp(a.titan.ry, b.titan.ry, t), rz: lerp(a.titan.rz, b.titan.rz, t), flx: lerp(a.titan.flx, b.titan.flx, t), fly: lerp(a.titan.fly, b.titan.fly, t), flz: lerp(a.titan.flz, b.titan.flz, t), frx: lerp(a.titan.frx, b.titan.frx, t), fry: lerp(a.titan.fry, b.titan.fry, t), frz: lerp(a.titan.frz, b.titan.frz, t), flags: t < 0.5 ? a.titan.flags : b.titan.flags, step: t < 0.5 ? a.titan.step : b.titan.step, weight: t < 0.5 ? a.titan.weight : b.titan.weight, head_yaw: angle(a.titan.head_yaw, b.titan.head_yaw, t), head_pitch: angle(a.titan.head_pitch, b.titan.head_pitch, t) }) : near.titan,
     held: near.held,
+    doors: near.doors,
   }
 }

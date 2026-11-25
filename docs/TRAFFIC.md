@@ -13,7 +13,7 @@ Nobody can see a thousand cars at once, and that is what makes it possible. A ve
 - **They overtake.** A car that catches a slower one pulls out and passes where the road is straight, the line down its middle is not solid, and nobody is coming for as far as the pass takes. One that misjudges it drops back and pulls in behind again.
 - **They keep off a broken bridge.** When a deck is blown through, its road is shut within a few seconds, and so is whatever road only led to it. Cars already heading for it drive to the end of their road and stand there; those on the broken span are left to the physics.
 - **Someone drives them.** A car near enough to see into has its driver at the wheel.
-- **They can be taken.** Press E beside one that stands or crawls (under 3 m/s) and its driver is dragged out, and runs. With you at the wheel it is yours, and it is no longer traffic. A car that is driving is not boarded.
+- **They can be taken.** Press E beside one that stands or crawls (under 3 m/s) and its driver climbs out by their door, and runs; you get in once they are out (DOORS.md). Out of the car they are the same person, in the same colour. With you at the wheel it is yours, and it is no longer traffic. A car that is driving is not boarded.
 - **Aim a gun at one** (right mouse, down the sights) from within 30 m and keep it there for 0.4 seconds, and its driver does one of three things. A gun that is only in your hand is nothing to them, whichever way it points. Four in ten stop, get out with their hands up for two seconds and run, leaving you the car. Four in ten flee. Two in ten drive at you for up to 4 seconds if you are ahead of them and within 40 m, and then flee.
 - **A driver who flees** goes flat out on the straights and faster than traffic through the bends for 20 seconds, waits at no junction, sits a metre off the car ahead, and passes whatever is slower wherever they are: across a solid line, into the face of whoever is coming, round a queue. One that is boxed in for 3 seconds gets out and runs.
 - **Shoot the car** and half the drivers lose their heads: flat out, braking for nothing, the wheel thrown from side to side, until the car hits something or 12 seconds are up. Then they get out and run, if the crash left them a car to get out of. The other half do as their nerve has them. A driver who is hit themselves always panics.
@@ -26,7 +26,9 @@ Nobody can see a thousand cars at once, and that is what makes it possible. A ve
 - **They can be wrecked.** A wreck burns where it lies and is taken away after 8 seconds, its driver with it.
 - **The roads stay as busy.** For every car taken or wrecked, another starts somewhere nobody is looking. A car that drives out of the world by a road that leaves it comes back in by another.
 
-Not there yet: passengers, lamps at night, police and ambulances, parked cars, traffic lights, and a way round a shut bridge for a car with somewhere to be: traffic wanders, so it only stops choosing that road.
+Police cars and ambulances are cars of the traffic with somewhere to be: see [EMERGENCY.md](EMERGENCY.md), which also has how a route is planned and what traffic does for a siren.
+
+Not there yet: passengers, lamps at night, parked cars and traffic lights.
 
 ## Turning it on
 

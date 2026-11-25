@@ -42,9 +42,11 @@ pub use crate::vehicles::kadett::*;
 pub use crate::vehicles::omega::*;
 pub use crate::vehicles::sierra::*;
 pub use crate::vehicles::escort::*;
+pub use crate::vehicles::police_car::*;
+pub use crate::vehicles::ambulance::*;
 
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
-pub const PROTOCOL_VERSION: u8 = 94;
+pub const PROTOCOL_VERSION: u8 = 96;
 
 /// Why a page closes its session (`Bye`): the tab is closing or reloading.
 pub const BYE_LEAVING: u8 = 0;
@@ -166,6 +168,17 @@ pub const KIND_OMEGA: u8 = 47;
 pub const KIND_SIERRA: u8 = 48;
 /// The Ford Escort: a small, light, slow hatchback.
 pub const KIND_ESCORT: u8 = 49;
+/// A police car: a white Volvo 240 with a blue stripe, a light bar and a siren (`FLAG_SIREN`).
+pub const KIND_POLICE_CAR: u8 = 50;
+/// An ambulance on the road: a Transporter van with a light bar and a siren. Not the helicopter
+/// (`KIND_AIR_AMBULANCE`).
+pub const KIND_AMBULANCE: u8 = 51;
+/// A police officer on foot or in a seat: a person the server runs, drawn as a soldier in a dark
+/// blue uniform. Replicated as a civilian is.
+pub const KIND_OFFICER: u8 = 52;
+/// An ambulance medic on foot or in a seat: a person the server runs, drawn as a soldier in green
+/// and yellow. Replicated as a civilian is.
+pub const KIND_MEDIC: u8 = 53;
 
 /// Fixed simulation rate, in ticks per second.
 pub const TICK_RATE: u32 = 60;
@@ -440,6 +453,23 @@ pub const MAX_SEATS: usize = 13;
 pub const MAX_VEHICLES: usize = 512;
 /// A player can enter a vehicle whose centre is within this distance of their capsule centre.
 pub const ENTER_RADIUS: f32 = 4.0;
+/// How far a car's door swings open, radians, and the damage it takes before it comes off (DOORS.md).
+pub const DOOR_SWING: f32 = 1.1;
+pub const DOOR_HP: u8 = 120;
+/// How long a door takes to swing open or shut, seconds: who gets out waits for it to open first.
+pub const DOOR_OPEN_S: f32 = 0.25;
+/// How long getting out of a seat by its door takes, once the door is open, seconds; getting in
+/// takes as long, the same moves the other way round.
+pub const STEP_OUT_S: f32 = 0.8;
+/// How long after they are out someone shuts the door behind them, seconds.
+pub const DOOR_SHUT_S: f32 = 0.25;
+/// Where someone who got out by a door stands: this far out from the side of the body, metres, and
+/// this share of the way back along the door from its hinge, in the gap between the open door and the car.
+pub const STEP_OUT_SIDE: f32 = 0.55;
+pub const STEP_OUT_BACK: f32 = 0.7;
+/// Leaving a car going faster than this, m/s, is bailing out: no door, no climbing out, but falling out
+/// onto the road at the car's speed, knocked down.
+pub const BAIL_SPEED: f32 = 6.0;
 
 /// Gravity acting on vehicle bodies. Soldiers use `GRAVITY`; the ray-cast suspension is tuned
 /// around the real-world value.

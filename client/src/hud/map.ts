@@ -89,8 +89,14 @@ export function paintMap(g: CanvasRenderingContext2D, tiles: MapTiles, cx: numbe
       continue
     }
     if (bx < edge || by < edge || bx > width - edge || by > height - edge) continue
-    g.globalAlpha = blip.kind === 'ally' ? 1 : 0.25 + 0.75 * blip.strength
-    if (blip.kind === 'shot') {
+    g.globalAlpha = blip.kind === 'shot' ? 0.25 + 0.75 * blip.strength : 1
+    if (blip.kind === 'police' || blip.kind === 'ambulance') {
+      // A square, upright, where an ally is a disc and a shot a diamond.
+      g.fillStyle = '#fff'
+      g.fillRect(bx - 5.5 * scale, by - 5.5 * scale, 11 * scale, 11 * scale)
+      g.fillStyle = blip.color
+      g.fillRect(bx - 4 * scale, by - 4 * scale, 8 * scale, 8 * scale)
+    } else if (blip.kind === 'shot') {
       g.save()
       g.translate(bx, by)
       g.rotate(Math.PI / 4)

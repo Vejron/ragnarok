@@ -309,3 +309,42 @@ fn tanks_drive_the_fixture_city() {
         );
     }
 }
+
+#[test]
+fn the_tank_gunner_leaves_civilians_and_the_police_alone() {
+    let mut game = game(false, Vec::new());
+    let (_, [_, gunner]) = crew(&mut game, [0.0, 0.0], vec![[0.0, 0.0]]);
+    // Someone to see them, or the civilian is gone.
+    let watcher = join(&mut game);
+    put(&mut game, watcher, [-200.0, -200.0]);
+    let id = game.world.alloc_id();
+    game.world.traffic_calls.push(crate::mechanics::TrafficCall::Afoot { driver: id, feet: [30.0, 0.0, 0.0], yaw: 0.0, hands_up: 0, threat: [60.0, 0.0, 0.0] });
+    for _ in 0..(4 * TICK_RATE) {
+        put(&mut game, watcher, [100.0, -100.0]);
+        game.step();
+    }
+    assert!(game.world.entities.has::<crate::mechanics::Civilian>(id));
+    assert_eq!(game.world.entities.of::<Bot>(gunner).sight.target, None, "a civilian is nobody's target");
+}
+
+#[test]
+fn a_tank_on_its_route_goes_round_a_house_in_its_way_instead_of_into_it() {
+    // A house 10 m square right on the line between its two waypoints.
+    let v = |x: i32, y: i32, z: i32| [x * 100, y * 100, z * 100];
+    let vertices = vec![v(15, 0, -5), v(25, 0, -5), v(25, 0, 5), v(15, 0, 5), v(15, 6, -5), v(25, 6, -5), v(25, 6, 5), v(15, 6, 5)];
+    let triangles = vec![[0, 1, 5], [0, 5, 4], [1, 2, 6], [1, 6, 5], [2, 3, 7], [2, 7, 6], [3, 0, 4], [3, 4, 7], [4, 5, 6], [4, 6, 7], [0, 2, 1], [0, 3, 2]];
+    let map = WorldFile { version: WORLD_VERSION, half_extent: 30_000, spawns: vec![[-25_000, -25_000]], collision: CollisionMesh { vertices, triangles }, ..Default::default() };
+    let mut game = Game::new(map, 0).unwrap();
+    game.world.clear_pickups();
+    let (vid, [driver, _]) = crew(&mut game, [0.0, 0.0], vec![[0.0, 0.0], [45.0, 0.0]]);
+    let mut reversed = false;
+    for _ in 0..(40 * TICK_RATE) {
+        game.step();
+        reversed |= tank(&game, vid).forward_speed < -1.0;
+        if game.world.entities.of::<Bot>(driver).next == 0 {
+            assert!(!reversed, "it went round without backing out");
+            return;
+        }
+    }
+    panic!("never got past the house: at {:?}", tank(&game, vid).position);
+}

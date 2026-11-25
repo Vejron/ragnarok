@@ -180,12 +180,14 @@ pub enum BotMode {
     Surrender,
     /// Lying still, waiting for someone to come close.
     PlayDead,
+    /// Getting away from what it cannot fight, or broken with nowhere to hide (`bots::evade`).
+    Evade,
 }
 
 impl BotMode {
     /// Whether it is set on this, and neither what it hears nor whom it sees changes that.
     pub fn committed(self) -> bool {
-        matches!(self, Self::Cover | Self::Surrender | Self::PlayDead)
+        matches!(self, Self::Cover | Self::Surrender | Self::PlayDead | Self::Evade)
     }
 }
 
@@ -251,9 +253,11 @@ pub struct Bot {
     pub aim: Aim,
     /// The hotbar slot it holds.
     pub slot: u8,
-    /// Which way it sidesteps while it stands and fights (-1, 0 or 1), and for how many more ticks.
+    /// Which way it sidesteps while it stands and fights (-1, 0 or 1), for how many more ticks, and
+    /// which way it stepped last.
     pub strafe: i8,
     pub strafe_left: u32,
+    pub strafe_last: i8,
     /// Where the last hit it took came from (the attacker, or a blast's centre), until it has
     /// turned that way.
     pub hit_from: Option<[f32; 3]>,
@@ -282,6 +286,29 @@ pub struct Bot {
     /// Ticks left of stopping to look about at a waypoint, and its walking pace there, an axis value.
     pub pause_left: u32,
     pub pace: i8,
+    /// Ticks left of getting out of the way of a vehicle, and the heading it runs on meanwhile.
+    pub dodge: u32,
+    pub dodge_yaw: f32,
+    /// Advancing on someone in bounds: ticks left of this bound, and whether it is running in it (or
+    /// down and firing). Keeping away from a tank (`BotMode::Evade`): ticks left of this spell, and
+    /// whether it is one of firing on it (or of waiting).
+    pub bound: u32,
+    pub bounding: bool,
+    /// A spot to the side it is moving to before it fires again, and ticks before it next moves.
+    pub shift: Option<[f32; 3]>,
+    pub shift_wait: u32,
+    /// Driving: the side it last steered round something on (`steering::avoid`).
+    pub lean: f32,
+}
+
+/// What someone a bot sees is to it: a soldier, someone in a vehicle a rifle can reach (through its
+/// glass or over its sides), or someone in armour a rifle cannot.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Threat {
+    #[default]
+    Infantry,
+    Soft,
+    Armour,
 }
 
 /// What a bot knows of whom it is after.
@@ -297,6 +324,11 @@ pub struct Sight {
     pub sees: bool,
     /// How far it has taken in whoever is in view, 0 to 1: at 1 it has seen them (see `bots::senses`).
     pub aware: f32,
+    /// What they are to it, the vehicle they were in when last seen, and the point of them it aims
+    /// at: a soldier's centre, a rider's head, or an armoured hull's middle.
+    pub threat: Threat,
+    pub vehicle: Option<u32>,
+    pub mark: [f32; 3],
 }
 
 /// How a bot finds its way.
@@ -371,6 +403,7 @@ impl Bot {
             slot: 0,
             strafe: 0,
             strafe_left: 0,
+            strafe_last: 0,
             hit_from: None,
             crew: None,
             temper: Temper::EVEN,
@@ -387,6 +420,13 @@ impl Bot {
             flanked: false,
             pause_left: 0,
             pace: 127,
+            dodge: 0,
+            dodge_yaw: 0.0,
+            bound: 0,
+            bounding: false,
+            shift: None,
+            shift_wait: 0,
+            lean: 0.0,
         }
     }
 }
@@ -510,6 +550,36 @@ pub struct Vehicle {
     pub lamp: bool,
     /// The driver's `BUTTON_LAMP` was down last tick: holding it switches the lamps once.
     pub lamp_held: bool,
+    /// Its siren sounds and the beacons of its light bar flash (`FLAG_SIREN`): a police car's or an
+    /// ambulance's on a call. Off until whoever sends it on a call switches it on.
+    pub siren: bool,
+    /// Its doors (`VehicleDef::doors`): what each has taken, which stand open, and which have come off.
+    pub doors: DoorState,
+}
+
+/// What a vehicle's doors are doing, by the index of each in `VehicleDef::doors` (DOORS.md).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct DoorState {
+    /// The damage each door has taken; it comes off at its `DoorDef::hp`.
+    pub damage: [u8; 2],
+    /// Bit `n` is set while door `n` stands open.
+    pub open: u8,
+    /// Bit `n` is set once door `n` has come off.
+    pub gone: u8,
+    /// Ticks until each open door is pulled shut, 0 for one that stays as it is.
+    pub shut_in: [u16; 2],
+}
+
+impl DoorState {
+    /// Whether door `n` is off.
+    pub fn off(&self, n: usize) -> bool {
+        self.gone & (1 << n) != 0
+    }
+
+    /// Whether door `n` stands open.
+    pub fn ajar(&self, n: usize) -> bool {
+        self.open & (1 << n) != 0
+    }
 }
 
 impl Vehicle {
@@ -524,6 +594,7 @@ impl Vehicle {
         self.damage = [0; shared::protocol::DAMAGE_SLOTS];
         self.turret_hp = shared::consts::TANK_TURRET_HP;
         self.parts = Vehicle::fresh_parts(self.kind);
+        self.doors = DoorState::default();
     }
 }
 
@@ -784,6 +855,12 @@ pub struct World {
     /// How many cars of traffic there are for each kilometre of lane that they drive
     /// (`mechanics::Traffic`); 0 for none.
     pub traffic: f32,
+    /// The police cars and ambulances: what is asked of them and where they are (`mechanics::Traffic`
+    /// drives them).
+    pub fleet: crate::mechanics::Fleet,
+    /// What the emergency services ask of the room: their people to put on their feet and to take
+    /// away. Drained every tick.
+    pub emergency_calls: Vec<crate::mechanics::EmergencyCall>,
 }
 
 impl World {
@@ -1042,6 +1119,8 @@ pub struct Fresh {
     pub built: FreshBuilt,
     /// Messages for everyone (`NOTICE_SAY`): a golf ball holed.
     pub said: Vec<String>,
+    /// Messages for one player each (`NOTICE_SAY`): that the police have arrested them.
+    pub told: Vec<(u32, String)>,
     /// Gates opened or shut: the building, the gate's number among its openings, and whether it is open now.
     pub gates: Vec<(ObjId, u32, bool)>,
 }

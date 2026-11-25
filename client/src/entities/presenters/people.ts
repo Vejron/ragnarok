@@ -1,5 +1,5 @@
 import type { Character } from '@/render/character'
-import { FLAG_CLAWING, FLAG_CROUCHING, FLAG_DEAD, FLAG_GROUNDED, FLAG_HELD_MASK, FLAG_HELD_SHIFT, KIND_CIVILIAN, KIND_SOLDIER, KIND_ZOMBIE } from '@/net/codec'
+import { FLAG_CLAWING, FLAG_CROUCHING, FLAG_DEAD, FLAG_GROUNDED, FLAG_HELD_MASK, FLAG_HELD_SHIFT, KIND_CIVILIAN, KIND_MEDIC, KIND_OFFICER, KIND_SOLDIER, KIND_ZOMBIE } from '@/net/codec'
 import { CARRY_BACKPACK, CARRY_PARCEL, CARRY_LAMP, CARRY_POLING, CARRY_SKIS, SLIDE_MIN_SPEED, STANCE_CHUTE, STANCE_DIVE, STANCE_DOWN, STANCE_PRONE, STANCE_RISE, STANCE_SURRENDER, STANCE_SWIM } from '@/sim/consts'
 import type { Avatars } from '../avatars'
 import { ghostly } from './ghosts'
@@ -14,6 +14,12 @@ export interface Nearby {
   y: number
   z: number
 }
+
+/**
+ * The kinds drawn as a soldier with nothing in hand who is nobody's kill: a driver of the traffic out
+ * of their car, a police officer and an ambulance medic.
+ */
+const BYSTANDERS = new Set([KIND_CIVILIAN, KIND_OFFICER, KIND_MEDIC])
 
 export interface PeopleWorld {
   avatars: Avatars
@@ -41,7 +47,8 @@ export interface PeopleWorld {
 /**
  * Everyone else on foot: their soldier, running, crouching, lying down or hanging from a parachute as
  * their flags say, holding what they hold. A zombie is a soldier too, drawn in rags and clawing when
- * its flags say so, and a driver of the traffic who is out of their car is one with nothing in hand. A ghost is drawn by `Ghosts` instead. The local player is drawn from their prediction instead,
+ * its flags say so, and a driver of the traffic who is out of their car is one with nothing in hand, as
+ * are a police officer and an ambulance medic. A ghost is drawn by `Ghosts` instead. The local player is drawn from their prediction instead,
  * riders by `Riders`, in their seats, and those on a ski lift by `LiftRiders`, on its chairs.
  */
 export class Soldiers implements Presenter<Frame> {
@@ -49,13 +56,13 @@ export class Soldiers implements Presenter<Frame> {
   readonly nearby: Nearby[] = []
   /** The ids drawn on foot this frame. */
   readonly inView: number[] = []
-  /** Everyone drawn as a civilian so far: nobody's kill, and no one to list on the board. */
+  /** Everyone drawn as a civilian, an officer or a medic so far: nobody's kill, and no one to list on the board. */
   readonly civilians = new Set<number>()
 
   constructor(private readonly world: PeopleWorld) {}
 
   wants(entity: Entity, id: number, frame: Frame) {
-    return id !== frame.localId && (entity.kind?.kind === KIND_SOLDIER || entity.kind?.kind === KIND_ZOMBIE || entity.kind?.kind === KIND_CIVILIAN) && entity.orientation === undefined && entity.place !== undefined && entity.flags !== undefined && entity.lifted === undefined && !ghostly(entity.flags.stance)
+    return id !== frame.localId && (entity.kind?.kind === KIND_SOLDIER || entity.kind?.kind === KIND_ZOMBIE || (entity.kind !== undefined && BYSTANDERS.has(entity.kind.kind))) && entity.orientation === undefined && entity.place !== undefined && entity.flags !== undefined && entity.lifted === undefined && !ghostly(entity.flags.stance)
   }
 
   begin() {
@@ -86,7 +93,7 @@ export class Soldiers implements Presenter<Frame> {
     const swim = stance === STANCE_DIVE ? 2 : stance === STANCE_SWIM ? 1 : 0
     avatar.swim = dead ? 0 : swim
     avatar.dead = dead
-    if (entity.kind!.kind === KIND_CIVILIAN) this.civilians.add(id)
+    if (BYSTANDERS.has(entity.kind!.kind)) this.civilians.add(id)
     avatar.held = (flags & FLAG_HELD_MASK) >> FLAG_HELD_SHIFT
     const worn = entity.carry?.what ?? 0
     avatar.pack = (worn & CARRY_BACKPACK) !== 0

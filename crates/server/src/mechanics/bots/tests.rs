@@ -339,7 +339,8 @@ fn it_shoots_from_its_eye_along_its_look() {
             game.world.bullets.iter().find(|b| b.shooter == bot).copied()
         })
         .expect("fired");
-    let eye = feet(&game, bot)[1] + EYE_HEIGHT;
+    // Kneeling or standing: its eye, wherever that is.
+    let eye = game.world.entities.of::<Player>(bot).eye()[1];
     assert!((shared::quant::from_cm(spawn.y) - eye).abs() < 0.3, "from {} m, eye at {eye} m", shared::quant::from_cm(spawn.y));
     assert!(spawn.vx.unsigned_abs() < spawn.vz.unsigned_abs() / 10, "straight down its look: {spawn:?}");
 }
@@ -653,14 +654,16 @@ fn broken_by_the_end_of_a_wall_it_gets_behind_it_and_reloads_there() {
 }
 
 #[test]
-fn the_far_side_of_a_wall_too_long_to_get_round_is_no_cover() {
+fn the_far_side_of_a_wall_too_long_to_get_round_is_no_cover_and_a_coward_runs_instead() {
     for seed in 1..=8 {
         let mut game = game(true);
         game.world.rng = crate::rng::Rng::from_seed(seed);
         let bot = broken_bot(&mut game, [8.0, 0.0], [-10.0, 0.0]);
+        let start = feet(&game, bot);
         run(&mut game, 2.0);
         assert_ne!(game.world.entities.of::<Bot>(bot).mode, BotMode::Cover, "seed {seed}");
-        assert!(game.world.entities.of::<Player>(bot).character.prone, "seed {seed}: flat where it is");
+        assert_eq!(game.world.entities.of::<Bot>(bot).mode, BotMode::Evade, "seed {seed}: it runs");
+        assert!(distance_2d(start, feet(&game, bot)) > 4.0, "seed {seed}: away from where it was");
     }
 }
 
@@ -788,11 +791,17 @@ fn only_a_few_of_a_crowd_attack_and_the_rest_keep_busy() {
 }
 
 #[test]
-fn a_squad_no_bigger_than_its_tokens_all_attack() {
+fn two_bots_on_one_target_split_into_an_attacker_and_one_that_flanks_or_keeps_heads_down() {
     let mut game = game(false);
     let (human, bots) = crowd_on(&mut game, 2);
     keep_alive(&mut game, human, 2.0);
-    assert_eq!(with_role(&game, &bots, Role::Attacker).len(), 2);
+    assert_eq!(with_role(&game, &bots, Role::Attacker).len(), 1);
+    assert_eq!(with_role(&game, &bots, Role::Flanker).len() + with_role(&game, &bots, Role::Suppressor).len(), 1);
+    // One on its own attacks.
+    let mut game = self::game(false);
+    let (human, bots) = crowd_on(&mut game, 1);
+    keep_alive(&mut game, human, 2.0);
+    assert_eq!(with_role(&game, &bots, Role::Attacker).len(), 1);
 }
 
 #[test]
@@ -1110,4 +1119,311 @@ fn the_first_flanker_goes_round_the_side_out_of_their_view() {
     let mut other = Bot::new([0.0; 2], vec![]);
     assert!(tokens::send_flanking(&game.world, &mut other, [0.0, sim::STANDING_Y, 0.0], PI / 2.0, [0.0, sim::STANDING_Y, -30.0], None));
     assert!(other.flank.unwrap()[0] > 0.0, "{:?}", other.flank);
+}
+
+/// A vehicle of `kind` standing at `[x, z]` facing `yaw`, with nobody in it.
+fn vehicle(game: &mut Game, kind: u8, [x, z]: [f32; 2], yaw: f32) -> u32 {
+    let y = game.world.map.ground.height_at(x, z) + crate::mechanics::vehicles::drop_height(kind);
+    let vid = crate::mechanics::for_tests::add_vehicle(&mut game.world, kind, [x, y, z], yaw);
+    run(game, 1.0);
+    vid
+}
+
+/// Someone who joins and sits at the wheel of `vid`, with nothing to hand.
+fn driver(game: &mut Game, vid: u32) -> u32 {
+    let id = join(game);
+    disarm(game, id);
+    assert!(crate::mechanics::seat(&mut game.world, id, vid, 0));
+    id
+}
+
+/// Gives bot `id` an AK5 and nothing else, or that and a Carl Gustaf.
+fn arm(game: &mut Game, id: u32, launcher: bool) {
+    let items = if launcher { [ITEM_AK5, ITEM_CARL_GUSTAF, 0, 0, 0] } else { [ITEM_AK5, 0, 0, 0, 0] };
+    let mut player = game.world.entities.get_mut::<Player>(id).unwrap();
+    player.hands.hotbar = crate::game::hotbar_of(items);
+}
+
+#[test]
+fn a_bot_sees_and_fires_on_a_player_driving_a_car_by_aiming_through_the_glass() {
+    let mut game = game(false);
+    let car = vehicle(&mut game, KIND_VOLVO_240, [3.0, -25.0], 0.0);
+    let bot = guard(&mut game, 1.0);
+    arm(&mut game, bot, false);
+    let target = driver(&mut game, car);
+    run(&mut game, 6.0);
+    let mind = game.world.entities.of::<Bot>(bot);
+    assert_eq!((mind.sight.target, mind.sight.vehicle, mind.sight.threat), (Some(target), Some(car), Threat::Soft));
+    let hull = game.world.physics.car_pose(car).unwrap();
+    assert!(mind.sight.mark[1] > hull.position[1], "it aims at the head over the door: {:?} against {:?} up {}", mind.sight.mark, hull.position, hull.up_y);
+    assert!(game.world.entities.of::<crate::entities::Health>(target).hp < PLAYER_MAX_HP || !game.world.entities.alive(target), "rounds went through the glass into them");
+}
+
+#[test]
+fn without_an_anti_tank_weapon_a_bot_keeps_away_from_a_tank_and_fires_on_it_now_and_then_from_there() {
+    let mut game = game(false);
+    let tank = vehicle(&mut game, KIND_TANK, [0.0, -30.0], 0.0);
+    let bot = guard(&mut game, 1.0);
+    arm(&mut game, bot, false);
+    let target = driver(&mut game, tank);
+    let (mut evaded, mut shots, mut was) = (false, 0, def(ITEM_AK5).unwrap().mag);
+    let seconds = 25;
+    for _ in 0..(seconds * TICK_RATE) {
+        game.step();
+        evaded |= game.world.entities.of::<Bot>(bot).mode == BotMode::Evade;
+        let left = rounds_left(&game, bot);
+        if left < was {
+            shots += was - left;
+            let away = distance_2d(feet(&game, bot), [0.0, 0.0, -30.0]);
+            assert!(away > 40.0, "it fired from {away} m, before it had got away");
+        }
+        was = left;
+    }
+    let mind = game.world.entities.of::<Bot>(bot);
+    assert_eq!((mind.sight.target, mind.sight.threat), (Some(target), Threat::Armour), "it knows who is in it");
+    assert!(evaded, "it got away");
+    let away = distance_2d(feet(&game, bot), [0.0, 0.0, -30.0]);
+    assert!(away > 45.0, "it is {away} m from the tank");
+    let rate = 1.0 / def(ITEM_AK5).unwrap().cooldown_ticks as f32 * TICK_RATE as f32;
+    assert!(shots > 0, "it fired on the tank all the same");
+    assert!((shots as f32) < rate * seconds as f32 / 4.0, "now and then, not all the while: {shots} rounds");
+}
+
+#[test]
+fn a_bot_with_a_carl_gustaf_too_near_a_tank_gets_away_and_then_fires_it_from_further_off() {
+    let mut game = game(false);
+    let tank = vehicle(&mut game, KIND_TANK, [0.0, -12.0], 0.0);
+    let bot = guard(&mut game, 1.0);
+    arm(&mut game, bot, true);
+    driver(&mut game, tank);
+    let mut evaded = false;
+    for _ in 0..(20 * TICK_RATE) {
+        game.step();
+        evaded |= game.world.entities.of::<Bot>(bot).mode == BotMode::Evade;
+        if game.world.entities.of::<Player>(bot).hands.hotbar[1].count < 3 {
+            break;
+        }
+    }
+    assert!(evaded, "it got away first");
+    assert!(game.world.entities.of::<Player>(bot).hands.hotbar[1].count < 3, "and fired the Carl Gustaf from further off");
+    let away = distance_2d(feet(&game, bot), [0.0, 0.0, -12.0]);
+    assert!(away > TOO_CLOSE, "fired from {away} m");
+}
+
+#[test]
+fn a_bot_with_a_carl_gustaf_fires_it_at_a_tank_and_never_at_a_soldier() {
+    let mut game = game(false);
+    let tank = vehicle(&mut game, KIND_TANK, [0.0, -45.0], 0.0);
+    let bot = guard(&mut game, 1.0);
+    arm(&mut game, bot, true);
+    driver(&mut game, tank);
+    let hp = game.world.entities.of::<crate::entities::Health>(tank).hp;
+    run(&mut game, 10.0);
+    let tube = game.world.entities.of::<Player>(bot).hands.hotbar[1];
+    assert!(tube.count < 3, "it fired the Carl Gustaf: {} left", tube.count);
+    assert_eq!(rounds_left(&game, bot), def(ITEM_AK5).unwrap().mag, "and not the rifle");
+    assert!(game.world.entities.of::<crate::entities::Health>(tank).hp < hp, "and hit the tank");
+    // A soldier on foot it fights with the rifle.
+    let mut game = self::game(false);
+    let bot = guard(&mut game, 1.0);
+    arm(&mut game, bot, true);
+    let soldier = join(&mut game);
+    disarm(&mut game, soldier);
+    put(&mut game, soldier, [0.0, -30.0]);
+    run(&mut game, 6.0);
+    assert_eq!(game.world.entities.of::<Player>(bot).hands.hotbar[1].count, 3);
+    assert!(rounds_left(&game, bot) < def(ITEM_AK5).unwrap().mag || game.world.entities.of::<Player>(bot).hands.reload_left > 0);
+}
+
+/// Player `id` presses on, as their client would send it.
+fn drive(game: &mut Game, id: u32) {
+    let seq = game.world.tick + 1;
+    let frame = InputFrame { seq, forward: 127, view: seq as u16, ..Default::default() };
+    game.handle(Command::Input(id, seq.saturating_sub(2), vec![frame]));
+}
+
+#[test]
+fn a_bot_hears_a_tank_driven_past_out_of_sight_and_goes_to_look() {
+    let mut game = game(false);
+    let tank = vehicle(&mut game, KIND_TANK, [0.0, 80.0], std::f32::consts::FRAC_PI_2);
+    let bot = guard(&mut game, 0.5);
+    let target = driver(&mut game, tank);
+    let mut heard = false;
+    for _ in 0..(6 * TICK_RATE) {
+        drive(&mut game, target);
+        game.step();
+        let mind = game.world.entities.of::<Bot>(bot);
+        heard |= mind.mode != BotMode::Patrol && distance_2d(mind.sight.last_seen, [0.0, 0.0, 80.0]) < 30.0;
+    }
+    assert!(heard, "it heard the engine 80 m off and went to look");
+}
+
+#[test]
+fn a_bot_jumps_out_of_the_way_of_a_car_driven_at_it() {
+    let mut game = game(false);
+    let bot = guard(&mut game, 0.5);
+    disarm(&mut game, bot);
+    // Driven straight at it from 45 m off with nobody at the wheel, flat out.
+    let car = vehicle(&mut game, KIND_VOLVO_240, [0.0, -45.0], std::f32::consts::PI);
+    game.world.entities.insert(car, crate::game::Autopilot(sim::CarControls { throttle: 1.0, powered: true, ..sim::CarControls::IDLE }));
+    let mut dodged = false;
+    for _ in 0..(6 * TICK_RATE) {
+        game.step();
+        dodged |= game.world.entities.of::<Bot>(bot).dodge > 0;
+    }
+    assert!(dodged, "it saw it coming");
+    assert_eq!(game.world.entities.of::<crate::entities::Health>(bot).hp, PLAYER_MAX_HP, "and was not run down");
+    assert!(feet(&game, bot)[0].abs() > 2.0, "it is off the car's line: {:?}", feet(&game, bot));
+}
+
+#[test]
+fn one_bot_in_four_carries_a_carl_gustaf_in_place_of_the_flare() {
+    let mut game = game(false);
+    let bots: Vec<u32> = (0..12).map(|n| game.add_bot([n as f32 * 3.0, 20.0], TEAM_BOTS, vec![]).unwrap()).collect();
+    let armed = bots.iter().filter(|&&id| game.world.entities.of::<Player>(id).hands.hotbar.iter().any(|slot| slot.item == ITEM_CARL_GUSTAF)).count();
+    assert_eq!(armed, 3);
+    for &id in &bots {
+        let hotbar = game.world.entities.of::<Player>(id).hands.hotbar;
+        assert_eq!(hotbar[0].item, ITEM_AK5, "the rifle is where it always is");
+    }
+}
+
+#[test]
+fn a_bot_far_off_closes_in_bounds_down_on_one_knee_to_fire_between_runs() {
+    let mut game = game(false);
+    let bot = guard(&mut game, 0.5);
+    arm(&mut game, bot, false);
+    let human = join(&mut game);
+    disarm(&mut game, human);
+    put(&mut game, human, [0.0, -45.0]);
+    let (mut ran, mut knelt_firing, mut ran_firing) = (0, 0, 0);
+    for _ in 0..(12 * TICK_RATE) {
+        put(&mut game, human, [0.0, -45.0]);
+        game.world.entities.get_mut::<crate::entities::Health>(human).unwrap().hp = PLAYER_MAX_HP;
+        game.step();
+        let input = game.world.entities.of::<Player>(bot).input;
+        let firing = input.buttons() & BUTTON_FIRE != 0;
+        if input.forward > 0 {
+            ran += 1;
+            ran_firing += u32::from(firing);
+        }
+        knelt_firing += u32::from(firing && input.buttons() & BUTTON_CROUCH != 0);
+    }
+    assert!(ran > TICK_RATE, "it ran some of the way");
+    assert!(knelt_firing > 0, "and fired kneeling");
+    assert_eq!(ran_firing, 0, "never on the run");
+    assert!(distance_2d(feet(&game, bot), [0.0, 0.0, -45.0]) < 30.0, "it got nearer");
+}
+
+#[test]
+fn standing_off_a_bot_moves_round_to_another_spot_now_and_then() {
+    let mut game = game(false);
+    let bot = guard(&mut game, 0.5);
+    arm(&mut game, bot, false);
+    let human = join(&mut game);
+    disarm(&mut game, human);
+    put(&mut game, human, [0.0, -14.0]);
+    let (mut moved, mut aside) = (false, 0.0f32);
+    for _ in 0..(15 * TICK_RATE) {
+        put(&mut game, human, [0.0, -14.0]);
+        game.world.entities.get_mut::<crate::entities::Health>(human).unwrap().hp = PLAYER_MAX_HP;
+        game.step();
+        moved |= game.world.entities.of::<Bot>(bot).shift.is_some();
+        aside = aside.max(feet(&game, bot)[0].abs());
+    }
+    assert!(moved, "it went for another spot");
+    assert!(aside > 2.0, "round to the side of them: {aside} m at the most");
+}
+
+#[test]
+fn out_of_rounds_even_an_impatient_bot_reloads_in_cover() {
+    let mut game = game(true);
+    // By the end of the wall, which it can get behind in a few steps.
+    let bot = broken_bot(&mut game, [8.0, 27.0], [-15.0, 27.0]);
+    {
+        let mut mind = game.world.entities.get_mut::<Bot>(bot).unwrap();
+        (mind.nerve, mind.temper) = (1.0, Temper { courage: 0.5, aggression: 0.5, patience: 0.0 });
+    }
+    let slot = game.world.entities.of::<Bot>(bot).slot as usize;
+    game.world.entities.get_mut::<Player>(bot).unwrap().hands.hotbar[slot].ammo = 0;
+    let mut hid = false;
+    for _ in 0..(4 * TICK_RATE) {
+        game.step();
+        hid |= game.world.entities.of::<Bot>(bot).mode == BotMode::Cover;
+    }
+    assert!(hid, "it went for cover to reload");
+}
+
+/// Not a regression test: what the bots cost a tick, 64 of them round two people, one driving a tank
+/// and one a car, on `WORLD` with traffic. Prints the `Bots` mechanic's mean and worst a tick.
+/// `WORLD=$PWD/worlds/home/world.msgpack cargo test --release -p server -- --ignored --nocapture bots_on_a_real_world`
+#[test]
+#[ignore]
+fn bots_on_a_real_world() {
+    let path = std::env::var_os("WORLD").map(std::path::PathBuf::from).expect("WORLD");
+    let (map, _) = crate::read_world(&path).unwrap();
+    let [sx, sz] = map.spawns[0].map(|v| v as f32 / 100.0);
+    let mut game = Game::new(map, 0).unwrap();
+    game.world.traffic = 2.0;
+    let (y, y2) = (game.world.map.ground.height_at(sx, sz) + 2.0, game.world.map.ground.height_at(sx + 30.0, sz) + 2.0);
+    let tank = crate::mechanics::for_tests::add_vehicle(&mut game.world, KIND_TANK, [sx, y, sz], 0.0);
+    let car = crate::mechanics::for_tests::add_vehicle(&mut game.world, KIND_JEEP, [sx + 30.0, y2, sz], 0.0);
+    for vid in [tank, car] {
+        let id = join(&mut game);
+        crate::mechanics::seat(&mut game.world, id, vid, 0);
+    }
+    for n in 0..MAX_BOTS {
+        let angle = n as f32 / MAX_BOTS as f32 * std::f32::consts::TAU;
+        let r = 25.0 + (n % 4) as f32 * 10.0;
+        game.add_bot([sx + angle.cos() * r, sz + angle.sin() * r], TEAM_BOTS, vec![]);
+    }
+    let mut parts = vec![std::time::Duration::ZERO; 64];
+    let (mut sum, mut worst, ticks) = (std::time::Duration::ZERO, std::time::Duration::ZERO, 30 * TICK_RATE);
+    for _ in 0..ticks {
+        parts.iter_mut().for_each(|part| *part = std::time::Duration::ZERO);
+        game.step_timed(Some(&mut parts));
+        sum += parts[0];
+        worst = worst.max(parts[0]);
+    }
+    println!("bots: {:?} a tick on average, {worst:?} the worst", sum / ticks);
+}
+
+#[test]
+fn a_bot_standing_to_fire_steps_aside_slowly_with_pauses_and_one_dodging_turns_to_run_the_way_it_goes() {
+    let mut game = game(false);
+    let bot = guard(&mut game, 1.0);
+    arm(&mut game, bot, false);
+    let human = join(&mut game);
+    disarm(&mut game, human);
+    let (mut aside, mut still, mut most) = (0, 0, 0i8);
+    for _ in 0..(10 * TICK_RATE) {
+        // Near enough that it stands to fire rather than kneel.
+        put(&mut game, human, [0.0, -4.0]);
+        game.world.entities.get_mut::<crate::entities::Health>(human).unwrap().hp = PLAYER_MAX_HP;
+        game.step();
+        let input = game.world.entities.of::<Player>(bot).input;
+        // Down the sights, standing off.
+        if input.buttons() & BUTTON_ALT != 0 && input.forward == 0 {
+            if input.strafe == 0 { still += 1 } else { aside += 1 }
+            most = most.max(input.strafe.saturating_abs());
+        }
+    }
+    assert!(aside > 0 && still > 0, "it stepped aside ({aside} ticks) and stood ({still})");
+    assert!(most <= 64, "at no more than half a walk: {most}");
+    // A car at it: it turns to run off its line, not crabwise.
+    let mut game = self::game(false);
+    let bot = guard(&mut game, 0.5);
+    disarm(&mut game, bot);
+    let car = vehicle(&mut game, KIND_VOLVO_240, [0.0, -45.0], std::f32::consts::PI);
+    game.world.entities.insert(car, crate::game::Autopilot(sim::CarControls { throttle: 1.0, powered: true, ..sim::CarControls::IDLE }));
+    let mut turned = None;
+    for _ in 0..(6 * TICK_RATE) {
+        game.step();
+        let mind = game.world.entities.of::<Bot>(bot);
+        if mind.dodge == 1 {
+            turned = Some(shared::quant::wrap_angle(mind.yaw - mind.dodge_yaw).abs());
+        }
+    }
+    let turned = turned.expect("it dodged");
+    assert!(turned < 0.2, "facing the way it ran by the end of it: {turned} rad off");
 }

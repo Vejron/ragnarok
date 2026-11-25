@@ -415,6 +415,7 @@ pub(super) const TITAN: VehicleDef = VehicleDef {
     board: Some(TITAN_BOARD),
     exit: Some(TITAN_EXIT),
     fittings: &[],
+    doors: NO_DOORS,
 };
 
 /// Two-bone IK, as the client bends the Titan's limbs to draw them (`bend` in

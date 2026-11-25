@@ -29,8 +29,11 @@ const STEADY_ABOVE: f32 = 0.3;
 const FROZEN: f32 = 0.08;
 /// How long it keeps a pose before thinking again, seconds.
 const POSE_TICKS: [f32; 2] = [1.5, 4.0];
-/// Past this it may crouch to shoot, and with a sniper may lie down, metres.
-const CROUCH_PAST: f32 = 10.0;
+/// Past this it may kneel to shoot, as likely as `KNEEL` and `KNEEL_PATIENT` more for full patience,
+/// and with a sniper may lie down, metres.
+const CROUCH_PAST: f32 = 5.0;
+const KNEEL: f32 = 0.6;
+const KNEEL_PATIENT: f32 = 0.4;
 const PRONE_PAST: f32 = 25.0;
 
 /// Takes `shock` from `bot`, softened by its courage.
@@ -100,7 +103,8 @@ pub(super) fn frozen(bot: &Bot) -> bool {
 }
 
 /// The stance it fights in, as buttons: flat when it has broken, or when it is a patient sniper a
-/// long way off; crouched more often the more patient it is, further out; otherwise on its feet.
+/// long way off; kneeling most of the time past a few metres, the more often the more patient it
+/// is; otherwise on its feet.
 /// It thinks again every few seconds, so its height changes between bursts.
 pub(super) fn pose(world: &mut World, bot: &mut Bot, item: u8, distance: f32) -> u16 {
     bot.pose_left = bot.pose_left.saturating_sub(1);
@@ -109,7 +113,7 @@ pub(super) fn pose(world: &mut World, bot: &mut Bot, item: u8, distance: f32) ->
         let roll = world.rng.next_f64() as f32;
         bot.pose = if pinned || (item == ITEM_SNIPER && distance > PRONE_PAST && roll < 0.5 + bot.temper.patience / 2.0) {
             BUTTON_PRONE
-        } else if distance > CROUCH_PAST && roll < 0.3 + bot.temper.patience / 2.0 {
+        } else if distance > CROUCH_PAST && roll < KNEEL + KNEEL_PATIENT * bot.temper.patience {
             BUTTON_CROUCH
         } else {
             0

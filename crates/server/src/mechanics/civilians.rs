@@ -41,18 +41,25 @@ pub struct Civilian {
     /// Ticks on their feet, and ticks lain dead.
     pub afoot: u32,
     pub lain: u32,
+    /// Hurt so badly that they stay down where they fell (EMERGENCY.md), and the ticks they have
+    /// lain so, waiting for an ambulance.
+    pub hurt: bool,
+    pub waited: u32,
+    /// An ambulance is on its way to them: they lie there until it has come.
+    pub claimed: bool,
 }
 
 impl Civilian {
     pub fn new(yaw: f32, threat: [f32; 3], hands_up: u32, slant: f32) -> Self {
-        Civilian { yaw, threat, hands_up, rising: 0, lying: None, goal: None, walk: Walk::new(), slant, afoot: 0, lain: 0 }
+        Civilian { yaw, threat, hands_up, rising: 0, lying: None, goal: None, walk: Walk::new(), slant, afoot: 0, lain: 0, hurt: false, waited: 0, claimed: false }
     }
 }
 
-/// Whether `id` is a civilian: on foot out of a car of the traffic, or driving a bus. Nobody's
-/// enemy: bots leave them be, they never come back as ghosts, and killing one is no kill.
-pub fn is_civilian(world: &World, id: u32) -> bool {
-    world.entities.has::<Civilian>(id) || world.entities.has::<super::BusDriver>(id)
+/// Whether `id` is nobody's enemy: a civilian on foot out of a car of the traffic, a bus driver, or
+/// someone of the emergency services. Bots leave them be, civilians do not run from them, they
+/// never come back as ghosts, and killing one is no kill.
+pub fn is_noncombatant(world: &World, id: u32) -> bool {
+    world.entities.has::<Civilian>(id) || world.entities.has::<super::BusDriver>(id) || super::emergency::in_services(world, id)
 }
 
 /// They look round for whom to run from about every this many ticks (4 a second), each on their own beat.
@@ -75,6 +82,16 @@ const WALK_BEYOND: f32 = 70.0;
 const UNSEEN: f32 = 150.0;
 const AFOOT_MAX: f32 = 120.0;
 const LIES: f32 = 10.0;
+/// In a world with an ambulance to come for them (`Fleet::ambulance`), the dead lie this long
+/// waiting for one, seconds, and the badly hurt stay down as long before they get up after all; with
+/// one on its way to them (`Civilian::claimed`), this long at the most.
+const LIES_WAITING: f32 = 90.0;
+const LIES_CLAIMED: f32 = 240.0;
+/// A civilian with no more than this share of their health left, or a leg gone, is badly hurt.
+const HURT_BELOW: f32 = 0.4;
+/// How long the knockdown that puts a badly hurt civilian on the ground lasts, ticks: they are
+/// kept down after it for as long as they wait.
+const HURT_DOWN: u8 = 60;
 /// How long a civilian knocked down lies there once the knockdown itself is over, seconds: at the
 /// least, more by how badly they are hurt, and more by chance.
 const STUNNED_MIN: f32 = 0.5;
@@ -96,7 +113,7 @@ fn scariest(world: &World, at: [f32; 3]) -> Option<[f32; 3]> {
     world
         .entities
         .all::<Player>()
-        .filter(|&(other, player)| world.entities.alive(other) && player.embodied() && !is_civilian(world, other))
+        .filter(|&(other, player)| world.entities.alive(other) && player.embodied() && !is_noncombatant(world, other))
         .map(|(_, player)| player.character.position)
         .filter(|&p| distance_2d(at, p) <= SCARED_WITHIN)
         .min_by(|a, b| distance_2d(at, *a).total_cmp(&distance_2d(at, *b)))
@@ -104,7 +121,7 @@ fn scariest(world: &World, at: [f32; 3]) -> Option<[f32; 3]> {
 
 /// Somewhere `LEG` metres off from `at`, away from `threat` and `slant` aside, that a soldier can
 /// stand: straight there first, then wider and wider to either side.
-fn away(world: &World, at: [f32; 3], threat: [f32; 3], slant: f32) -> Option<[f32; 3]> {
+pub(super) fn away(world: &World, at: [f32; 3], threat: [f32; 3], slant: f32) -> Option<[f32; 3]> {
     let straight = heading(threat, at) + slant;
     (0..9u32).find_map(|n| {
         let turn = n.div_ceil(2) as f32 * if n % 2 == 0 { 0.4 } else { -0.4 };
@@ -126,18 +143,51 @@ fn stunned(world: &mut World, id: u32) -> u32 {
     ((STUNNED_MIN + STUNNED_HURT * hurt + STUNNED_CHANCE * chance) * TICK_RATE as f32) as u32
 }
 
+/// Whether civilian `id` is hurt badly enough to stay down: little health left, or a leg gone.
+fn badly_hurt(world: &World, id: u32) -> bool {
+    let low = world.entities.get::<crate::entities::Health>(id).is_some_and(|health| f32::from(health.hp) <= f32::from(health.max) * HURT_BELOW);
+    low || super::limbs::lost(world, id) & shared::protocol::LIMB_LEGS != 0
+}
+
 /// One tick of civilian `id`'s fear: what they do now, as the input a player would send, and
 /// whether they are to go.
 fn think(world: &mut World, id: u32, civilian: &mut Civilian, dt: f32, viewers: &[[f32; 3]], crowd: &[(u32, [f32; 2])], budget: &mut usize) -> (InputFrame, bool) {
     let idle = InputFrame { yaw: to_mrad(civilian.yaw), view: world.tick as u16, ..Default::default() };
     let Some(player) = world.entities.get::<Player>(id) else { return (idle, true) };
     let (at, down) = (player.character.position, player.character.down);
+    let unseen = viewers.iter().all(|v| distance_2d(*v, at) > UNSEEN);
+    let ambulances = world.fleet.ambulance;
+    let waits = |claimed: bool| ((if claimed { LIES_CLAIMED } else { LIES_WAITING }) * TICK_RATE as f32) as u32;
     if !world.entities.alive(id) {
         civilian.lain += 1;
-        return (idle, civilian.lain > (LIES * TICK_RATE as f32) as u32);
+        // Where an ambulance may come they lie until it has, for as long as someone is there to see.
+        let lies = if ambulances { waits(civilian.claimed) } else { (LIES * TICK_RATE as f32) as u32 };
+        return (idle, civilian.lain > lies || (ambulances && unseen));
+    }
+    // Badly hurt, they go down and stay down until an ambulance has come for them, or none has.
+    if ambulances && !civilian.hurt && civilian.waited == 0 && badly_hurt(world, id) {
+        civilian.hurt = true;
+    }
+    if civilian.hurt {
+        civilian.waited += 1;
+        if unseen {
+            return (idle, true);
+        }
+        if civilian.waited <= waits(civilian.claimed) {
+            if let Some(mut player) = world.entities.get_mut::<Player>(id) {
+                if down == 0 {
+                    world.physics.knock_down(&mut player.character, HURT_DOWN);
+                    player.interrupt();
+                } else if down <= 1 {
+                    player.character.down = 2;
+                }
+            }
+            civilian.rising = GETUP_TICKS;
+            return (idle, false);
+        }
+        (civilian.hurt, civilian.claimed) = (false, false);
     }
     civilian.afoot += 1;
-    let unseen = viewers.iter().all(|v| distance_2d(*v, at) > UNSEEN);
     if unseen || civilian.afoot > (AFOOT_MAX * TICK_RATE as f32) as u32 {
         return (idle, true);
     }

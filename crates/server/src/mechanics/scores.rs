@@ -11,7 +11,7 @@ impl Mechanic for Scores {
     fn react(&mut self, world: &mut World) {
         let died: Vec<Died> = world.happened::<Died>().copied().collect();
         for death in died {
-            if super::is_civilian(world, death.victim) {
+            if super::is_noncombatant(world, death.victim) {
                 continue;
             }
             let Some(mut victim) = world.entities.get_mut::<Player>(death.victim) else { continue };

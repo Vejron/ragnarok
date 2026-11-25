@@ -116,6 +116,12 @@ pub(super) enum Mood {
     /// Taking a car too damaged to drive on off the road, onto the verge, for `left` more ticks
     /// at most.
     PullingOver { left: u32 },
+    /// On the verge to let a siren by, for `left` more ticks after it was last heard behind (`fleet`).
+    Yielding { left: u32 },
+    /// A unit of the emergency fleet on its way to where it was sent, siren on.
+    Responding,
+    /// A unit standing where it was sent.
+    Parked,
 }
 
 /// What a round can meet of a driver: a soldier's body, standing on their feet when they are on
@@ -144,6 +150,40 @@ enum Fright {
 pub struct Driver {
     /// The vehicle whose wheel they sit at.
     pub vehicle: u32,
+    /// What they are drawn as, `KIND_*`: a civilian, or the officer or medic whose car it is.
+    pub kind: u8,
+    /// The seat they sit in: 0 at the wheel, 1 beside it for the second of a crew.
+    pub seat: usize,
+}
+
+/// A driver of the traffic getting out of their car by its door, to be a civilian once they stand
+/// outside it: with their hands up for `hands_up` ticks first, running from `threat`.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Leaving {
+    id: u32,
+    hands_up: u32,
+    threat: [f32; 3],
+}
+
+/// Puts `id`, of `kind`, back in seat `seat` of `vehicle` as its crew, with `hp` left: climbing in by
+/// its door, and then sitting there as a driver of the traffic does, for `Traffic` to drive off with.
+pub fn seat_crew(world: &mut World, id: u32, vehicle: u32, seat: usize, kind: u8, hp: u8) {
+    let Some(pose) = world.physics.car_pose(vehicle) else { return };
+    let mut health = Health::full(PLAYER_MAX_HP);
+    health.hp = hp;
+    world.entities.spawn(id, (NetKind(kind), Transform { position: pose.position, yaw: pose.yaw() }, health, body(), Driver { vehicle, kind, seat }));
+    crate::mechanics::vehicles::doors::start_in(world, id, vehicle, seat, 0);
+}
+
+/// The crew of vehicle `vid` still in it, by seat: whoever of the traffic sits at its wheel and beside it.
+pub fn crew_of(world: &World, vid: u32) -> Vec<(u32, usize)> {
+    world.entities.all::<Driver>().filter(|(_, driver)| driver.vehicle == vid).map(|(id, driver)| (id, driver.seat)).collect()
+}
+
+/// Whether vehicle `vid` has someone of the emergency services at its wheel: a police car or an
+/// ambulance that its crew has not got out of.
+pub fn crewed(world: &World, vid: u32) -> bool {
+    world.entities.all::<Driver>().any(|(_, driver)| driver.vehicle == vid && driver.kind != KIND_CIVILIAN)
 }
 
 /// What `Traffic` asks of the room, which only it can do: drivers to put on their feet.
@@ -188,22 +228,85 @@ impl Traffic {
     pub(super) fn man(&mut self, i: usize, world: &mut World) {
         let car = self.cars[i];
         let Some(vid) = car.vid else { return };
+        if matches!(car.duty, super::Duty::OnScene) {
+            return;
+        }
         if car.driver.is_none() && car.nearest < DRIVER_WITHIN {
             let (position, d) = self.pose(i);
-            let id = world.alloc_id();
-            world.entities.spawn(id, (NetKind(KIND_CIVILIAN), Transform { position, yaw: super::yaw_of(d) }, Health::full(PLAYER_MAX_HP), body(), Driver { vehicle: vid }));
+            let kind = match (car.duty, super::Service::of(i)) {
+                (super::Duty::Civil, _) => KIND_CIVILIAN,
+                (_, super::Service::Police) => KIND_OFFICER,
+                (_, super::Service::Ambulance) => KIND_MEDIC,
+            };
+            // A crew of two in a police car or an ambulance. Those who got back in after being out
+            // of it are its crew again, the same people.
+            let seats = if kind == KIND_CIVILIAN { 1 } else { 2 };
+            let back = crew_of(world, vid);
+            let mut crew = [None; 2];
+            for (seat, slot) in crew.iter_mut().enumerate().take(seats) {
+                *slot = Some(back.iter().find(|&&(_, at)| at == seat).map_or_else(
+                    || {
+                        let id = world.alloc_id();
+                        world.entities.spawn(id, (NetKind(kind), Transform { position, yaw: super::yaw_of(d) }, Health::full(PLAYER_MAX_HP), body(), Driver { vehicle: vid, kind, seat }));
+                        id
+                    },
+                    |&(id, _)| id,
+                ));
+            }
+            let hurt = crew[0].and_then(|id| world.entities.get::<Health>(id)).map_or(PLAYER_MAX_HP, |health| health.hp);
             let car = &mut self.cars[i];
-            (car.driver, car.hp, car.hurt) = (Some(id), world.entities.get::<Health>(vid).map_or(0, |health| health.hp), PLAYER_MAX_HP);
+            (car.driver, car.mate, car.hp, car.hurt) = (crew[0], crew[1], world.entities.get::<Health>(vid).map_or(0, |health| health.hp), hurt);
         } else if car.driver.is_some() && car.nearest > DRIVER_BEYOND && car.mood == Mood::Calm {
             self.unman(i, world);
         }
     }
 
-    /// Takes the driver of car `i` out of the world with their car.
+    /// Takes the driver of car `i`, and their mate, out of the world with their car.
     pub(super) fn unman(&mut self, i: usize, world: &mut World) {
-        if let Some(id) = self.cars[i].driver.take() {
-            world.entities.despawn(id);
+        for id in [self.cars[i].driver.take(), self.cars[i].mate.take()].into_iter().flatten() {
+            if world.entities.has::<Driver>(id) {
+                world.entities.despawn(id);
+            }
         }
+    }
+
+    /// Forgets the crew of parked unit `i` once they are out of it: they are the emergency services'
+    /// own to see to now (`mechanics::emergency`), and its crew again only when they get back in.
+    pub(super) fn crew_out(&mut self, i: usize, world: &World) {
+        let car = &mut self.cars[i];
+        for slot in [&mut car.driver, &mut car.mate] {
+            if slot.is_some_and(|id| !world.entities.has::<Driver>(id)) {
+                *slot = None;
+            }
+        }
+    }
+
+    /// The drivers who were getting out by the door and now stand outside it: civilians from here
+    /// (`TrafficCall::Afoot`). One whose car went, or who was put out of it some other way, is gone.
+    pub(super) fn walk_out(&mut self, world: &mut World) {
+        if self.leaving.is_empty() {
+            return;
+        }
+        let mut still = Vec::new();
+        for leaving in std::mem::take(&mut self.leaving) {
+            let Some(&driver) = world.entities.get::<Driver>(leaving.id) else { continue };
+            if !crate::mechanics::vehicles::stepping(world, leaving.id) {
+                world.entities.despawn(leaving.id);
+                continue;
+            }
+            if !crate::mechanics::vehicles::stepped_out(world, leaving.id) {
+                still.push(leaving);
+                continue;
+            }
+            let spot = world.entities.get::<crate::game::Vehicle>(driver.vehicle).and_then(|vehicle| shared::vehicles::door_of(vehicle.kind, driver.seat)).and_then(|(_, door)| crate::mechanics::vehicles::doors::door_spot(world, driver.vehicle, door));
+            let Some((feet, yaw)) = spot else {
+                world.entities.despawn(leaving.id);
+                continue;
+            };
+            world.entities.remove::<crate::mechanics::vehicles::Stepping>(leaving.id);
+            world.traffic_calls.push(TrafficCall::Afoot { driver: leaving.id, feet, yaw, hands_up: leaving.hands_up, threat: leaving.threat });
+        }
+        self.leaving = still;
     }
 
     /// The driver of car `i` gets out and is a civilian from now on (`TrafficCall::Afoot`): with
@@ -212,7 +315,15 @@ impl Traffic {
     /// the car. A wreck's driver is gone with it.
     pub(super) fn put_out(&mut self, i: usize, world: &mut World) {
         let car = self.cars[i];
+        let mate = self.cars[i].mate.take();
         let Some(id) = self.cars[i].driver.take() else { return };
+        // The crew of a police car or an ambulance is no civilian: lost with the car, they are gone.
+        if car.duty != super::Duty::Civil {
+            for id in [Some(id), mate].into_iter().flatten() {
+                world.entities.despawn(id);
+            }
+            return;
+        }
         let pose = car.vid.filter(|&vid| !world.entities.dead(vid)).and_then(|vid| world.physics.car_pose(vid));
         let Some(pose) = pose else {
             world.entities.despawn(id);
@@ -223,6 +334,13 @@ impl Traffic {
         let nearest = self.viewers.iter().copied().min_by(|a, b| (a[0] - spot[0]).hypot(a[2] - spot[2]).total_cmp(&(b[0] - spot[0]).hypot(b[2] - spot[2])));
         let threat = if car.mood == Mood::Calm { nearest.map_or([pose.position[0], pose.position[2]], |v| [v[0], v[2]]) } else { car.threat };
         let hands_up = if car.mood == Mood::GivingUp && world.entities.alive(id) { ticks(HANDS_UP) } else { 0 };
+        // Alive, they climb out by the door, and are a civilian once they stand outside it; shut,
+        // unless they run for it.
+        let vid = car.vid.unwrap_or_default();
+        if world.entities.alive(id) && crate::mechanics::vehicles::doors::start_out(world, id, vid, 0, car.mood == Mood::Calm) {
+            self.leaving.push(Leaving { id, hands_up, threat: [threat[0], feet, threat[1]] });
+            return;
+        }
         world.traffic_calls.push(TrafficCall::Afoot { driver: id, feet: [spot[0], feet, spot[2]], yaw: pose.yaw(), hands_up, threat: [threat[0], feet, threat[1]] });
     }
 
@@ -257,6 +375,10 @@ impl Traffic {
                 } else {
                     self.abandon(i, world);
                 }
+                continue;
+            }
+            // The crew of a police car or an ambulance is not frightened off.
+            if car.duty != super::Duty::Civil {
                 continue;
             }
             if !matches!(car.mood, Mood::Calm | Mood::Hurrying { .. }) {
@@ -334,13 +456,14 @@ impl Traffic {
     /// in earshot makes them hurry, and a blast right by them or a round going past the car
     /// frightens them.
     pub(super) fn hear(&mut self, world: &mut World) {
-        let noises: Vec<Noise> = self.heard.read(world.events::<Noise>()).copied().collect();
+        // What the police fire frightens no driver: it is not at them.
+        let noises: Vec<Noise> = self.heard.read(world.events::<Noise>()).copied().filter(|noise| !noise.by.is_some_and(|by| crate::mechanics::emergency::in_services(world, by))).collect();
         if noises.is_empty() || self.shown == 0 {
             return;
         }
         for i in 0..self.cars.len() {
             let car = self.cars[i];
-            if car.vid.is_none() || !matches!(car.mood, Mood::Calm | Mood::Hurrying { .. }) {
+            if car.vid.is_none() || car.duty != super::Duty::Civil || !matches!(car.mood, Mood::Calm | Mood::Hurrying { .. }) {
                 continue;
             }
             let (p, _) = self.pose(i);
@@ -380,7 +503,8 @@ impl Traffic {
     pub(super) fn nerves(&mut self, i: usize, world: &mut World) {
         let car = self.cars[i];
         match car.mood {
-            Mood::Calm => {}
+            Mood::Calm | Mood::Responding | Mood::Parked => {}
+            Mood::Yielding { left } => self.cars[i].mood = if left <= 1 { Mood::Calm } else { Mood::Yielding { left: left - 1 } },
             // Stopped: out they get, and the car is anyone's.
             Mood::GivingUp => {
                 if car.speed.abs() < 0.5 {

@@ -13,7 +13,7 @@ use crate::consts::*;
 use crate::mounts::{Aim, Ammo, Dial, Eye, Fire, MountDef, Muzzle, Need, Refill, Show};
 use crate::items::*;
 use crate::protocol::{
-    KIND_AIR_AMBULANCE, KIND_AMV, KIND_BUS, KIND_CB90, KIND_DRONE, KIND_EPA, KIND_SAAB_900, KIND_SAAB_9000, KIND_VOLVO_240, KIND_VOLVO_740, KIND_GTI, KIND_TRANSPORTER, KIND_KADETT, KIND_OMEGA, KIND_SIERRA, KIND_ESCORT, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MISSILE, KIND_MORTAR, KIND_PAK, KIND_PBV, KIND_PLANE, KIND_RAFT, KIND_ROADSTER, KIND_SEAPLANE, KIND_SHIP, KIND_SHIP_GUN, KIND_SNOWMOBILE, KIND_SNOWRACER, KIND_SPORTS, KIND_STRF, KIND_STRV, KIND_SUBMARINE, KIND_TANK, KIND_TECHNICAL, KIND_TITAN, KIND_TUPP, KIND_WALKER, PROJECTILE_AMV_BOMB, PROJECTILE_BALL, PROJECTILE_BOMB, PROJECTILE_CANNON, PROJECTILE_CANNON_AP,
+    KIND_AIR_AMBULANCE, KIND_AMBULANCE, KIND_POLICE_CAR, KIND_AMV, KIND_BUS, KIND_CB90, KIND_DRONE, KIND_EPA, KIND_SAAB_900, KIND_SAAB_9000, KIND_VOLVO_240, KIND_VOLVO_740, KIND_GTI, KIND_TRANSPORTER, KIND_KADETT, KIND_OMEGA, KIND_SIERRA, KIND_ESCORT, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MISSILE, KIND_MORTAR, KIND_PAK, KIND_PBV, KIND_PLANE, KIND_RAFT, KIND_ROADSTER, KIND_SEAPLANE, KIND_SHIP, KIND_SHIP_GUN, KIND_SNOWMOBILE, KIND_SNOWRACER, KIND_SPORTS, KIND_STRF, KIND_STRV, KIND_SUBMARINE, KIND_TANK, KIND_TECHNICAL, KIND_TITAN, KIND_TUPP, KIND_WALKER, PROJECTILE_AMV_BOMB, PROJECTILE_BALL, PROJECTILE_BOMB, PROJECTILE_CANNON, PROJECTILE_CANNON_AP,
     PROJECTILE_EGG, PROJECTILE_HE, PROJECTILE_MORTAR, PROJECTILE_ROTARY, PROJECTILE_SHELL, WEAPON_AUTOCANNON, WEAPON_DRONE, WEAPON_LASER, WEAPON_LOITER, WEAPON_MG, WEAPON_MISSILE, WEAPON_ROCKET, WEAPON_SHELL,
 };
 
@@ -60,6 +60,8 @@ pub mod kadett;
 pub mod omega;
 pub mod sierra;
 pub mod escort;
+pub mod police_car;
+pub mod ambulance;
 
 pub use spec::{Airframe, Arms, Boat, Boost, BOOST_DRAIN, BOOST_FULL, BOOST_REFILL, Buttons, Feet, Floats, Gait, Jets, Lift, Role, Rotorcraft, Runners, Shape, Skim, Solid, Spec, Springs, Step, Swim, STEER_FADE};
 pub use crate::armor::{ALLOY, Armor, Box3, Module, On, Part, Pen, Plate, SHEET, SOFT, Zone};
@@ -103,6 +105,67 @@ pub struct VehicleDef {
     pub exit: Option<[f32; 3]>,
     /// The vehicles fixed to it, which come and go with it: a ship's guns.
     pub fittings: &'static [Fitting],
+    /// The side doors its crew get in and out by, opening and shutting as they do (DOORS.md): a
+    /// saloon's two front doors. A seat with no door of its own is got in and out of at once.
+    pub doors: &'static [DoorDef],
+}
+
+/// A side door, hung on its front edge, that whoever sits in `seat` gets in and out by (DOORS.md).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DoorDef {
+    /// The seat it is the door of.
+    pub seat: usize,
+    /// Its hinge: the door's front edge on the outside of the body, at its bottom, in the hull frame,
+    /// metres. A door on the left has a negative x, and swings out to the left.
+    pub hinge: [f32; 3],
+    /// How far it reaches back from its hinge, metres.
+    pub length: f32,
+    /// How tall it is from its bottom to the top of its window, metres.
+    pub height: f32,
+    /// How far it swings open, radians.
+    pub swing: f32,
+    /// The damage it takes before it comes off.
+    pub hp: u8,
+}
+
+/// A kind with no doors to open: everyone gets in and out of it at once.
+pub const NO_DOORS: &[DoorDef] = &[];
+
+impl DoorDef {
+    /// A front door on the left for the driver, hung at `hinge`, `length` long and `height` tall, which
+    /// opens as far as a car's does and takes what one takes.
+    pub const fn front(hinge: [f32; 3], length: f32, height: f32) -> Self {
+        DoorDef { seat: 0, hinge, length, height, swing: DOOR_SWING, hp: DOOR_HP }
+    }
+
+    /// The same door on the right, for the passenger in seat 1.
+    pub const fn mirrored(self) -> Self {
+        DoorDef { seat: 1, hinge: [-self.hinge[0], self.hinge[1], self.hinge[2]], ..self }
+    }
+
+    /// Which way it opens: -1 out to the left, 1 to the right.
+    pub fn side(&self) -> f32 {
+        if self.hinge[0] < 0.0 { -1.0 } else { 1.0 }
+    }
+
+    /// Where someone who has got out by it stands, on the ground under the hinge's height, in the
+    /// hull frame: in the opening, outside the body, between the open door and the car (`STEP_OUT_SIDE`
+    /// out from the body, `STEP_OUT_BACK` of the way back along the door).
+    pub fn spot(&self) -> [f32; 3] {
+        [self.hinge[0] + self.side() * STEP_OUT_SIDE, self.hinge[1], self.hinge[2] + self.length * STEP_OUT_BACK]
+    }
+
+    /// Whether the point `p` in the hull frame is on the door as it hangs shut, `margin` metres
+    /// either side of its skin: where a round or a crash meets it.
+    pub fn holds(&self, p: [f32; 3], margin: f32) -> bool {
+        let across = (p[0] - self.hinge[0]) * self.side();
+        across.abs() < margin && p[1] >= self.hinge[1] - margin && p[1] <= self.hinge[1] + self.height + margin && p[2] >= self.hinge[2] - margin && p[2] <= self.hinge[2] + self.length + margin
+    }
+}
+
+/// The door of `kind` whose seat is `seat`, with its index among the kind's doors.
+pub fn door_of(kind: u8, seat: usize) -> Option<(usize, &'static DoorDef)> {
+    vehicle_def(kind).doors.iter().enumerate().find(|(_, door)| door.seat == seat)
 }
 
 /// A vehicle of `kind` fixed to another one at `at` (its middle, in the other's hull frame), facing
@@ -305,6 +368,8 @@ pub static VEHICLES: &[VehicleDef] = &[
     omega::OMEGA,
     sierra::SIERRA,
     escort::ESCORT,
+    police_car::POLICE_CAR,
+    ambulance::AMBULANCE,
 ];
 
 /// Where each kind id's definition is in `VEHICLES`: 0, the jeep's, for ids that are not a vehicle.
@@ -367,6 +432,29 @@ pub fn vehicle_def(kind: u8) -> &'static VehicleDef {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_door_hangs_on_its_cars_side_by_a_front_seat_and_opens_onto_the_ground_beside_it() {
+        let with_doors: Vec<&VehicleDef> = VEHICLES.iter().filter(|def| !def.doors.is_empty()).collect();
+        assert_eq!(with_doors.len(), 13, "every saloon has its front doors");
+        for def in with_doors {
+            let [hx, hy, hz] = def.spec.half_extents;
+            assert_eq!(def.doors.len(), 2, "{}", def.name);
+            for (seat, door) in def.doors.iter().enumerate() {
+                assert_eq!(door.seat, seat, "{}: the driver's door, then the passenger's", def.name);
+                assert_eq!(door_of(def.kind, seat).map(|(index, _)| index), Some(seat));
+                let head = def.seat_heads[seat];
+                assert_eq!(door.side(), head[0].signum(), "{}: the door is on its seat's side", def.name);
+                assert!((door.hinge[0].abs() - hx).abs() < 0.1, "{}: the hinge is on the side of the body", def.name);
+                assert!(door.hinge[2] > -hz && door.hinge[2] + door.length < hz, "{}: the door is within the body's length", def.name);
+                // The head may be a little behind the door's rear edge, over the pillar behind it.
+                assert!(door.hinge[2] < head[2] && door.hinge[2] + door.length > head[2] - 0.3, "{}: the door is beside its seat", def.name);
+                assert!(door.hinge[1] < 0.0 && door.hinge[1] + door.height > hy, "{}: the door runs from the sill to above the waist", def.name);
+                let spot = door.spot();
+                assert!(spot[0].abs() > hx + 0.3, "{}: whoever gets out stands clear of the body", def.name);
+            }
+        }
+    }
 
     #[test]
     fn every_kind_has_a_distinct_definition() {
@@ -451,7 +539,7 @@ mod tests {
     #[test]
     fn only_the_wheeled_cars_have_a_swept_underside_and_it_leaves_a_flat_floor_between() {
         for def in VEHICLES {
-            let swept = [KIND_JEEP, KIND_SPORTS, KIND_ROADSTER, KIND_GOLF_CART, KIND_TECHNICAL, KIND_BUS, KIND_EPA, KIND_SAAB_900, KIND_SAAB_9000, KIND_VOLVO_240, KIND_VOLVO_740, KIND_GTI, KIND_TRANSPORTER, KIND_KADETT, KIND_OMEGA, KIND_SIERRA, KIND_ESCORT].contains(&def.kind);
+            let swept = [KIND_JEEP, KIND_SPORTS, KIND_ROADSTER, KIND_GOLF_CART, KIND_TECHNICAL, KIND_BUS, KIND_EPA, KIND_SAAB_900, KIND_SAAB_9000, KIND_VOLVO_240, KIND_VOLVO_740, KIND_GTI, KIND_TRANSPORTER, KIND_KADETT, KIND_OMEGA, KIND_SIERRA, KIND_ESCORT, KIND_POLICE_CAR, KIND_AMBULANCE].contains(&def.kind);
             assert_eq!(def.spec.sweep > 0.0, swept, "{}", def.name);
             // A hull has one shape: a sweep goes with no outline, bow or nose of its own.
             assert!(!swept || (def.spec.profile.is_empty() && def.spec.bow == 0.0 && def.spec.nose == 0.0), "{}", def.name);

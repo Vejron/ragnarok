@@ -132,6 +132,9 @@ pub struct Graph {
     pub lengths: Vec<(Way, f32)>,
     /// At how many points of the map roads end on more than one level, and so do not meet.
     pub split: usize,
+    /// The edges that pass through each square of a grid over the map, for looking up the road
+    /// nearest a place (`route::locate`).
+    pub(super) cells: HashMap<(i32, i32), Vec<u32>>,
 }
 
 /// The point of a quadratic curve from `a` by `c` to `b` at `t`, and the unit direction it runs there.
@@ -366,6 +369,7 @@ impl Graph {
         }
         graph.split = nodes_at.values().filter(|levels| levels.len() > 1).count();
         graph.settle();
+        graph.index();
         graph
     }
 

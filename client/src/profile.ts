@@ -32,6 +32,9 @@ export function setPlayer(id: number, name: string, color: number, team = 0, bot
   known.set(id, { name, color, team, bot })
 }
 
+/** Whether the server has told us who `id` is. */
+export const knownPlayer = (id: number) => known.has(id)
+
 export function forgetPlayer(id: number) {
   known.delete(id)
 }

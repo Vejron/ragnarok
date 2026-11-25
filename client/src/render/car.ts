@@ -1,12 +1,13 @@
-import { Group, Mesh, type Material, type Node, Matrix4, Vector3 } from '@ragnarok/engine'
+import { Color, Group, Material, Mesh, type Node, Matrix4, Vector3 } from '@ragnarok/engine'
 import { parseToonModel, unlitMaterial } from './models'
 import { toonMaterial } from './toon'
 import {
   AMV_MAX_STEER, AMV_SEATS, AMV_WHEEL_RADIUS, BUS_MAX_STEER, BUS_SEATS, BUS_WHEEL_RADIUS, EPA_MAX_STEER, EPA_SEATS, EPA_WHEEL_RADIUS, GOLF_CART_MAX_STEER, GOLF_CART_SEATS, GOLF_CART_WHEEL_RADIUS, TECHNICAL_MAX_STEER, TECHNICAL_SEATS, TECHNICAL_WHEEL_RADIUS, JEEP_MAX_STEER, JEEP_WHEEL_RADIUS, ROADSTER_MAX_STEER, ROADSTER_SEATS, ROADSTER_WHEEL_RADIUS, SNOWMOBILE_MAX_STEER, SNOWMOBILE_SEATS, SNOWMOBILE_WHEEL_RADIUS, SNOWRACER_MAX_STEER, SNOWRACER_SEATS, SNOWRACER_WHEEL_RADIUS, SPORTS_MAX_STEER, SPORTS_SEATS,
   SPORTS_WHEEL_RADIUS, CAR_SEATS,
   SAAB_900_MAX_STEER, SAAB_900_SEATS, SAAB_900_WHEEL_RADIUS, SAAB_9000_MAX_STEER, SAAB_9000_SEATS, SAAB_9000_WHEEL_RADIUS, VOLVO_240_MAX_STEER, VOLVO_240_SEATS, VOLVO_240_WHEEL_RADIUS, VOLVO_740_MAX_STEER, VOLVO_740_SEATS, VOLVO_740_WHEEL_RADIUS, GTI_MAX_STEER, GTI_SEATS, GTI_WHEEL_RADIUS, TRANSPORTER_MAX_STEER, TRANSPORTER_SEATS, TRANSPORTER_WHEEL_RADIUS, KADETT_MAX_STEER, KADETT_SEATS, KADETT_WHEEL_RADIUS, OMEGA_MAX_STEER, OMEGA_SEATS, OMEGA_WHEEL_RADIUS, SIERRA_MAX_STEER, SIERRA_SEATS, SIERRA_WHEEL_RADIUS, ESCORT_MAX_STEER, ESCORT_SEATS, ESCORT_WHEEL_RADIUS,
+  POLICE_CAR_MAX_STEER, POLICE_CAR_SEATS, POLICE_CAR_WHEEL_RADIUS, AMBULANCE_MAX_STEER, AMBULANCE_SEATS, AMBULANCE_WHEEL_RADIUS,
 } from '@/sim/consts'
-import { KIND_AMV, KIND_BUS, KIND_EPA, KIND_SAAB_900, KIND_SAAB_9000, KIND_VOLVO_240, KIND_VOLVO_740, KIND_GTI, KIND_TRANSPORTER, KIND_KADETT, KIND_OMEGA, KIND_SIERRA, KIND_ESCORT, KIND_GOLF_CART, KIND_JEEP, KIND_TECHNICAL, KIND_ROADSTER, KIND_SNOWMOBILE, KIND_SNOWRACER, KIND_SPORTS, THRUST_BOOST, THRUST_LIFT } from '@/net/codec'
+import { KIND_AMV, KIND_BUS, KIND_EPA, KIND_SAAB_900, KIND_SAAB_9000, KIND_VOLVO_240, KIND_VOLVO_740, KIND_GTI, KIND_TRANSPORTER, KIND_KADETT, KIND_OMEGA, KIND_SIERRA, KIND_ESCORT, KIND_POLICE_CAR, KIND_AMBULANCE, KIND_GOLF_CART, KIND_JEEP, KIND_TECHNICAL, KIND_ROADSTER, KIND_SNOWMOBILE, KIND_SNOWRACER, KIND_SPORTS, THRUST_BOOST, THRUST_LIFT } from '@/net/codec'
 import type { Arms, Turret } from '@/entities/units'
 import { CarWear } from './carwear'
 import type { Debris } from './debris'
@@ -27,7 +28,7 @@ export interface VehicleModel {
   dispose(): void
 }
 
-export type CarKind = 'jeep' | 'sports' | 'roadster' | 'snowmobile' | 'golf_cart' | 'technical' | 'snowracer' | 'bus' | 'amv' | 'epa' | 'saab_900' | 'saab_9000' | 'volvo_240' | 'volvo_740' | 'gti' | 'transporter' | 'kadett' | 'omega' | 'sierra' | 'escort'
+export type CarKind = 'jeep' | 'sports' | 'roadster' | 'snowmobile' | 'golf_cart' | 'technical' | 'snowracer' | 'bus' | 'amv' | 'epa' | 'saab_900' | 'saab_9000' | 'volvo_240' | 'volvo_740' | 'gti' | 'transporter' | 'kadett' | 'omega' | 'sierra' | 'escort' | 'police_car' | 'ambulance'
 
 /**
  * Per-body facts the model needs: its vehicle kind, where its mesh is, how big its wheels are and how far
@@ -72,9 +73,16 @@ const KINDS: Record<CarKind, { kind: number; url: string; wheelRadius: number; m
   sierra: { kind: KIND_SIERRA, url: `${import.meta.env.BASE_URL}models/sierra.glb`, wheelRadius: SIERRA_WHEEL_RADIUS, maxSteer: SIERRA_MAX_STEER, seats: SIERRA_SEATS, palette: [0x2b4f86, 0x9fa3a6, 0x7c1c20, 0xe6e2d6, 0x1a1b1d], glass: 0.4 },
   // Sand, pale blue, red, white and green.
   escort: { kind: KIND_ESCORT, url: `${import.meta.env.BASE_URL}models/escort.glb`, wheelRadius: ESCORT_WHEEL_RADIUS, maxSteer: ESCORT_MAX_STEER, seats: ESCORT_SEATS, palette: [0xc9b98d, 0x6f8e9e, 0xa7201f, 0xeeebe3, 0x3f5b3a], glass: 0.4 },
+  // Police white, every one of them, under the blue stripe of its model.
+  police_car: { kind: KIND_POLICE_CAR, url: `${import.meta.env.BASE_URL}models/police_car.glb`, wheelRadius: POLICE_CAR_WHEEL_RADIUS, maxSteer: POLICE_CAR_MAX_STEER, seats: POLICE_CAR_SEATS, paint: 0xf1f0ea, glass: 0.4 },
+  // Signal yellow below its white top and red stripe.
+  ambulance: { kind: KIND_AMBULANCE, url: `${import.meta.env.BASE_URL}models/ambulance.glb`, wheelRadius: AMBULANCE_WHEEL_RADIUS, maxSteer: AMBULANCE_MAX_STEER, seats: AMBULANCE_SEATS, paint: 0xf2c81e, glass: 0.4 },
 }
 
 const BODY_COLORS = [0xff9f1c, 0x2ec4b6, 0xe71d36, 0x5aa9e6, 0xb5e48c, 0xf15bb5, 0xffd23f, 0x9d4edd]
+
+/** A lens of a light bar while it flashes: bright blue and unlit, so it shows lit by night and by day. */
+const BEACON_LIT = new Material({ color: Color.hex(0x5a9cff), name: 'beacon_lit', lit: false })
 
 const assets = new Map<CarKind, Node>()
 
@@ -171,6 +179,12 @@ export class CarModel implements VehicleModel {
   /** Where the headlights shine from in the car's frame: just ahead of the middle of the front lamps. */
   private readonly lamps: Vector3 | null
   private readonly beam = { at: new Vector3(), direction: new Vector3() }
+  /**
+   * The lenses of its light bar, the left one (`beacon_L`) then the right (`beacon_R`): each one's
+   * meshes with what they are drawn with unlit, and its middle in the car's frame. Empty for a car without a bar.
+   */
+  private readonly beacons: { meshes: { mesh: Mesh; dark: Material }[]; at: Vector3 }[] = []
+  private readonly beaconAt = new Vector3()
 
   /** `name` is which of the car bodies it is. */
   constructor(name: CarKind, id: number) {
@@ -194,6 +208,15 @@ export class CarModel implements VehicleModel {
 
     this.damage = new CarWear(this.root, model, halfExtentsOf(kind), wheelRadius, paint)
     this.lamps = frontLamps(model)
+    for (const name of ['beacon_L', 'beacon_R']) {
+      const lens = model.getObjectByName(name)
+      if (!lens) continue
+      const meshes: { mesh: Mesh; dark: Material }[] = []
+      lens.traverse((node) => {
+        if (node instanceof Mesh) meshes.push({ mesh: node, dark: node.material })
+      })
+      this.beacons.push({ meshes, at: new Vector3(lens.position.x, lens.position.y, lens.position.z) })
+    }
 
     for (let seat = 0; seat < seats; seat++) {
       const marker = model.getObjectByName(`seat_${seat}`)!.position
@@ -249,6 +272,25 @@ export class CarModel implements VehicleModel {
     return this.beam
   }
 
+  /** Whether it has a light bar to flash: a police car or an ambulance. */
+  get hasBeacons(): boolean {
+    return this.beacons.length === 2
+  }
+
+  /**
+   * Shows the light bar with lens `lit` alight (0 the left, 1 the right) and the other dark, or both dark
+   * for null. Returns where the lit lens is in the world, where the car was last placed, for the light it
+   * throws: null with none lit, or for a car without a bar. The vector is reused by the next call.
+   */
+  flash(lit: 0 | 1 | null): Vector3 | null {
+    this.beacons.forEach((lens, side) => {
+      for (const { mesh, dark } of lens.meshes) mesh.material = side === lit ? BEACON_LIT : dark
+    })
+    const lens = lit === null ? undefined : this.beacons[lit]
+    if (!lens) return null
+    return this.beaconAt.copy(lens.at).applyQuaternion(this.root.quaternion).add(this.root.position)
+  }
+
   /** The colour it was painted, for flying chips of it. */
   get paintColor(): number {
     return this.paint.color.getHex()
@@ -262,6 +304,16 @@ export class CarModel implements VehicleModel {
   /** Shows crash `damage` and `hp` as the snapshot has them; parts that come off go into `debris`. */
   wear(damage: readonly number[], hp: number, debris: Debris | null, velocity: Vector3) {
     this.damage.update(damage, hp, debris, velocity)
+  }
+
+  /** Swings its doors open or shut (`Doors.open`) and throws off those that have come off (`Doors.gone`). */
+  swingDoors(open: number, gone: number, dt: number, debris: Debris | null, velocity: Vector3) {
+    this.damage.swingDoors(open, gone, dt, debris, velocity)
+  }
+
+  /** How far each of its doors is open, radians: for tests. */
+  get doorsOpen(): readonly number[] {
+    return this.damage.doorsOpen
   }
 
   /** Frees what this car owns; the model's geometry and other materials are shared by every car of its kind. */

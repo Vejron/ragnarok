@@ -95,4 +95,5 @@ pub(super) const EPA: VehicleDef = VehicleDef {
     board: None,
     exit: None,
     fittings: &[],
+    doors: NO_DOORS,
 };

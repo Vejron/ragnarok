@@ -45,6 +45,8 @@ const HEN_FOOT = 0.4
 
 /** Damage parts of a vehicle that is not hurt. */
 const UNHURT: readonly number[] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+/** Doors all shut and on. */
+const SHUT = { open: 0, gone: 0 }
 
 /** A vehicle as drawn this frame: where (predicted, for the one the local player drives), and its parts. */
 export interface Placed {
@@ -69,6 +71,8 @@ export interface Placed {
   hp: number
   /** `VehicleState::damage`'s parts; all 0 while unhurt. */
   damage: readonly number[]
+  /** Its doors standing open and come off, by their index (`Doors`, DOORS.md). */
+  doors: { open: number; gone: number }
   /** `THRUST_*` nozzles firing, as drawn: the driver's own at once, from their prediction. */
   jets: number
   /** Air, stamina or battery left, 0..1, if it has any. */
@@ -334,7 +338,7 @@ export class Vehicles implements Presenter<Frame> {
     }
     const placed: Placed = {
       kind, x, y, z, yaw: Math.atan2(-forward.x, -forward.z), rotation, steer, seats, manned: this.seating.manned(id), turret, pintle, arms, sub: entity.sub ?? null,
-      hp: entity.health?.hp ?? 0, damage: entity.damage?.parts ?? UNHURT, jets, air: entity.thrust?.air ?? null, throttle,
+      hp: entity.health?.hp ?? 0, damage: entity.damage?.parts ?? UNHURT, doors: entity.doors ?? SHUT, jets, air: entity.thrust?.air ?? null, throttle,
     }
     this.placed.set(id, placed)
     this.tyres(id, placed, frame.dt, entity.arms ? (entity.arms.flags & ARMS_CUT) !== 0 : false)

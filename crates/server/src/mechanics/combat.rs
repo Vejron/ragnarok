@@ -236,6 +236,7 @@ fn burst(world: &mut World, blast: Blast, direct: Option<Direct>, spare: Option<
             super::armor::damage_turret(world, vid, amount, blast.attacker);
         }
         super::vehicles::shoot_wheels(world, vid, blast.point, dealt, super::vehicles::WHEEL_REACH);
+        super::vehicles::doors::blast_doors(world, vid, blast.point, dealt, blast.radius);
     }
     for object in world.physics.objects_near(blast.point, blast.radius) {
         let (distance, scale) = match object {
@@ -466,6 +467,10 @@ pub fn damage_vehicle_at(world: &mut World, vid: u32, amount: u8, attacker: Opti
     let Some(seated) = world.entities.get::<Seats>(vid).map(|seats| seats.riders().collect::<Vec<u32>>()) else { return };
     // A crew's own side spares it, as it spares them on foot.
     if attacker.is_some_and(|by| seated.iter().any(|&rider| rider != by && same_team(world, by, rider))) {
+        return;
+    }
+    // An officer's fire is for the vehicle their suspect is in alone.
+    if attacker.is_some_and(|by| super::emergency::misses(world, by, vid)) {
         return;
     }
     // What is left of the hit on a kind built to take it (`Body::tough`): nothing at all, of a small one.
@@ -1000,6 +1005,7 @@ pub fn land(world: &mut World, flight: &Flight, met: &Strike, round: &Round) {
                 }
                 damage_vehicle_at(world, car, (f32::from(base) * scale).round().max(1.0) as u8, attacker, Some(point));
                 super::vehicles::shoot_wheels(world, car, point, f32::from(round.damage), super::vehicles::BULLET_WHEEL_REACH);
+                super::vehicles::doors::shoot_doors(world, car, point, f32::from(round.damage));
             }
         }
     } else if wall.is_some() {

@@ -65,7 +65,7 @@ describe('codec', () => {
         {
           id: 1, cleared: 0,
           set: {
-            place: { x: 25, y: 0, z: 0 }, heading: { yaw: -120 }, motion: { vy: 650, knock_x: 0, knock_z: 0 }, vitals: { hp: 73, progress: 128, spent: 0, winded: 0, parts: [50, 40, 40, 0, 40], down: 0, strain: 0, breath: 255, ghost: 0, block: 0 },
+            place: { x: 25, y: 0, z: 0 }, heading: { yaw: -120 }, motion: { vy: 650, knock_x: 0, knock_z: 0 }, vitals: { hp: 73, progress: 128, spent: 0, winded: 0, parts: [50, 40, 40, 0, 40], down: 0, strain: 0, breath: 255, ghost: 0, block: 0, wanted: 0 },
             hotbar: { slots: [{ item: 2, count: 1, ammo: 17 }, { item: 0, count: 0, ammo: 0 }, { item: 3, count: 2, ammo: 0 }, { item: 0, count: 0, ammo: 0 }, { item: 0, count: 0, ammo: 0 }] },
           },
         },
@@ -78,7 +78,7 @@ describe('codec', () => {
         },
         { id: 12, cleared: 1 << 12, set: {} },
         // Someone sitting in the tank: no longer anywhere, but in their seat, looking about.
-        { id: 13, cleared: 1 << 0 | 1 << 2, set: { heading: { yaw: 900 }, flags: { flags: 4, stance: 0 }, seated: { vehicle: 12, seat: 1 }, look: { pitch: -60 } } },
+        { id: 13, cleared: 1 << 0 | 1 << 2, set: { heading: { yaw: 900 }, flags: { flags: 4, stance: 0 }, seated: { vehicle: 12, seat: 1, step: 0 }, look: { pitch: -60 } } },
       ],
       removed: [3, 11],
       shots: [

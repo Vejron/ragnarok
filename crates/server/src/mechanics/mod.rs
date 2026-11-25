@@ -12,6 +12,7 @@ mod buses;
 mod combat;
 mod deliveries;
 mod drones;
+mod emergency;
 mod gates;
 mod ghosts;
 mod golf;
@@ -26,16 +27,17 @@ mod pickups;
 mod projectiles;
 mod scores;
 mod spawn;
+mod steering;
 mod structure;
 mod submarines;
 mod titans;
 mod traffic;
-mod vehicles;
+pub(crate) mod vehicles;
 mod wildlife;
 mod zombies;
 
 pub use breath::Breath;
-pub use civilians::{CIVILIAN_SLANT, Civilian, Civilians, is_civilian};
+pub use civilians::{CIVILIAN_SLANT, Civilian, Civilians, is_noncombatant};
 pub use buses::{Bus, BusCall, BusDriver, Buses};
 pub use bots::{Bots, DRIVER, GUNNER, nearest_waypoint, road_route};
 pub use combat::{Combat, bearing, position_of};
@@ -65,8 +67,9 @@ pub use spawn::{Spawn, usable as spawn_usable};
 pub use structure::Structure;
 pub use submarines::{Sub, Submarines};
 pub use titans::{Head as TitanHead, Titans, held_in as held_in_fist};
-pub use traffic::{Driver, Traffic, TrafficCall};
-pub use vehicles::{Vehicles, add_tank, remove_vehicle, seat};
+pub use emergency::{Emergency, EmergencyCall, MEDIC_KIND, Medic, OFFICER_KIND, Officer, TEAM_SERVICES, officer_loadout, wanted_byte};
+pub use traffic::{Driver, Fleet, Traffic, TrafficCall, seat_crew};
+pub use vehicles::{Vehicles, add_tank, remove_vehicle, seat, step_byte};
 pub use wildlife::{Wildlife, fell, grazing};
 pub use zombies::{Zombie, Zombies, clawing, is_zombie, rising, start_rising};
 pub(crate) use bots::darkness;
@@ -121,10 +124,14 @@ pub fn register_components(ecs: &mut bevy_ecs::world::World) {
     ecs.register_component::<traffic::TrafficCar>();
     ecs.register_component::<traffic::Abandoned>();
     ecs.register_component::<traffic::Driver>();
+    ecs.register_component::<vehicles::Stepping>();
     ecs.register_component::<crate::game::Player>();
     ecs.register_component::<crate::game::Bot>();
     ecs.register_component::<zombies::Zombie>();
     ecs.register_component::<civilians::Civilian>();
+    ecs.register_component::<emergency::Medic>();
+    ecs.register_component::<emergency::Officer>();
+    ecs.register_component::<emergency::Wanted>();
     ecs.register_component::<ghosts::Ghost>();
     ecs.register_component::<limbs::Wounds>();
     ecs.register_component::<limbs::Struck>();
@@ -140,11 +147,12 @@ pub fn register_components(ecs: &mut bevy_ecs::world::World) {
 /// a fist holds boards nothing.
 ///
 /// More on the order: `Bots` and `Zombies` go first: they write their input, which
-/// everything after reads as it reads anyone's, and `Buses` likewise for its drivers. `Traffic` goes before
+/// everything after reads as it reads anyone's, and `Emergency` and `Buses` likewise for their people. `Emergency` goes before `Civilians`,
+/// which keeps down those it has said an ambulance is coming for. `Traffic` goes before
 /// `Vehicles`, which steps the cars it places and drives. `Life` brings the dead back before `Npcs` and `Wildlife` move them.
 /// `Ghosts` goes before `Movement`, so that a ghost that starts taking shape is not flown that tick.
 pub fn default_mechanics() -> Vec<Box<dyn Mechanic>> {
-    vec![Box::<Bots>::default(), Box::<Zombies>::default(), Box::<Civilians>::default(), Box::<Buses>::default(), Box::new(Spawn), Box::<Titans>::default(), Box::<Lifts>::default(), Box::new(Pickups), Box::new(Submarines), Box::new(Drones), Box::new(Gates::seated()), Box::<Traffic>::default(), Box::new(Vehicles), Box::<Gates>::default(), Box::new(Gunnery), Box::new(Ghosts), Box::new(Movement), Box::new(Breath), Box::<Mend>::default(), Box::new(Backpack), Box::new(Deliveries), Box::new(Life), Box::new(Npcs), Box::<Wildlife>::default(), Box::new(Combat), Box::new(Golf), Box::new(Structure), Box::new(Scores)]
+    vec![Box::<Bots>::default(), Box::<Zombies>::default(), Box::<Emergency>::default(), Box::<Civilians>::default(), Box::<Buses>::default(), Box::new(Spawn), Box::<Titans>::default(), Box::<Lifts>::default(), Box::new(Pickups), Box::new(Submarines), Box::new(Drones), Box::new(Gates::seated()), Box::<Traffic>::default(), Box::new(Vehicles), Box::<Gates>::default(), Box::new(Gunnery), Box::new(Ghosts), Box::new(Movement), Box::new(Breath), Box::<Mend>::default(), Box::new(Backpack), Box::new(Deliveries), Box::new(Life), Box::new(Npcs), Box::<Wildlife>::default(), Box::new(Combat), Box::new(Golf), Box::new(Structure), Box::new(Scores)]
 }
 
 /// What tests outside the mechanics reach in for: setting up a busy room without playing it.

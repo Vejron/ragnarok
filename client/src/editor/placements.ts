@@ -81,6 +81,9 @@ export const VEHICLE_KINDS: { kind: number; name: string; icon: string }[] = [
   { kind: 47, name: 'Opel Omega', icon: '7' },
   { kind: 48, name: 'Ford Sierra', icon: '8' },
   { kind: 49, name: 'Ford Escort', icon: '9' },
+  // Every letter and digit is taken: a star for the police, and a heart for the ambulance, the air ambulance having the cross.
+  { kind: 50, name: 'Police car', icon: '★' },
+  { kind: 51, name: 'Ambulance', icon: '♥' },
   // Parked, with nobody driving it: the buses that run a world's lines come with the lines.
   { kind: 31, name: 'Bus', icon: 'O' },
   { kind: 32, name: 'Pbv 302', icon: 'A' },

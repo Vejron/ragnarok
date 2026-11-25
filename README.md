@@ -30,6 +30,7 @@ The docs are in [docs/](docs/).
 - [BOTS.md](docs/BOTS.md): server-run enemy soldiers, tank crews, and scenarios with squads, triggers, waves, objectives and a win or a loss
 - [ARMOR.md](docs/ARMOR.md): armor zones, ricochets, weak spots, turret loss and the Strv S
 - [LIMBS.md](docs/LIMBS.md): limb loss and part health
+- [DOORS.md](docs/DOORS.md): getting in and out of a car by its doors, which swing open, bailing out of one going fast, police and ambulance crews who are the same people in the car and out of it, and doors shot or crashed off
 - [KNOCKDOWN.md](docs/KNOCKDOWN.md): blasts, cars and ragdolls; every death a ragdoll thrown by the blow, with joint limits, that loses limbs and freezes where it lies
 - [GHOSTS.md](docs/GHOSTS.md): coming back from death as a flying shadow that takes shape again, never right beside an enemy
 - [SWIMMING.md](docs/SWIMMING.md): swimming, diving where you look, holding your breath and drowning
@@ -79,6 +80,7 @@ The docs are in [docs/](docs/).
 - [GRAVEYARDS.md](docs/GRAVEYARDS.md): tombstones of three kinds in every cemetery and churchyard from OpenStreetMap, stood in rows along the yard's paths or in rows of their own where it has none, solid and unbreakable like rocks
 - [LIFTS.md](docs/LIFTS.md): ski lifts from OpenStreetMap, every one built as a chair lift whose chairs run on the server's clock, boarded with E at a station and ridden round until you jump off
 - [TRAFFIC.md](docs/TRAFFIC.md): traffic, a scenario option: a thousand cars that drive the world's roads by a road network the server makes of them, each a row in a table until a player is near enough to see it, and a real car only beside one, with a driver who can be dragged out, or held up at gunpoint to give the car up, flee or run you down
+- [EMERGENCY.md](docs/EMERGENCY.md): police and ambulances, a scenario option: an ambulance whose medics carry off the dead and the badly hurt, a wanted level of one to five stars for a player who hurts civilians, police cars that plan their way by road with the traffic pulling over for the siren, and officers who arrest at first and shoot once it has gone far enough
 - [BUSES.md](docs/BUSES.md): public transport, a world option like winter: bus lines found along the major roads, with stops, and buses the server drives along them that anyone can ride, or take once the driver is gone
 - [HEADLIGHTS.md](docs/HEADLIGHTS.md): every vehicle's lamps, which its driver switches with L: headlights along the nose, a helicopter's searchlight under its gun and a Titan's in its visor
 - [GERSTNER-SEA.md](docs/GERSTNER-SEA.md): a rough sea of Gerstner waves: the water goes round as each swell passes, gathering under sharp crests that break white and spreading over flat troughs, and carries boats and swimmers to and fro with it

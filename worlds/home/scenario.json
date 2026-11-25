@@ -1,1 +1,1 @@
-{ "deliveries": {}, "traffic": { "per_km": 2 } }
+{ "deliveries": {}, "traffic": { "per_km": 2 }, "emergency": { "patrols": 2, "police": true, "ambulance": true } }

@@ -62,7 +62,7 @@ fn a_driver_out_of_their_car_is_a_civilian_where_they_got_out_seen_as_one() {
     assert!(!player.character.chute, "out of a car, not under a canopy");
     assert!(player.character.position[0].abs() < 0.5 && player.character.position[2].abs() < 0.5, "beside the car: {:?}", player.character.position);
     assert!(game.seen_people(KIND_CIVILIAN).iter().any(|(seen, _)| *seen == id));
-    assert!(is_civilian(&game.world, id));
+    assert!(is_noncombatant(&game.world, id));
 }
 
 const TEAM_NONE_FOR_TESTS: u8 = crate::game::TEAM_NONE;

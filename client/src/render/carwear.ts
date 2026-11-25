@@ -1,6 +1,7 @@
 import { Geometry, Group, Mesh, Color, type Material, type Node, Matrix4, Quaternion, Vector3 } from '@ragnarok/engine'
 import { toonMaterial } from './toon'
 import { DAMAGE_FRONT, DAMAGE_LEFT, DAMAGE_REAR, DAMAGE_RIGHT, DAMAGE_WHEELS, WHEEL_GONE } from '@/net/codec'
+import { DOOR_OPEN_S, DOOR_SWING } from '@/sim/consts.generated'
 import type { Debris } from './debris'
 
 /**
@@ -32,6 +33,8 @@ const DULL = Color.hex(0x4a4744)
 const CHARRED = Color.hex(0x1a1817)
 
 const WHEELS = ['wheel_FL', 'wheel_FR', 'wheel_RL', 'wheel_RR'] as const
+/** A saloon's front doors, by their index in `VehicleDef.doors`: the driver's on the left, then the passenger's. */
+const DOORS = ['door_FL', 'door_FR'] as const
 
 interface BodyPart {
   mesh: Mesh
@@ -73,6 +76,10 @@ export class CarWear {
   private readonly impacts: { point: Vector3; at: number }[] = []
   private readonly gone = new Set<string>()
   private readonly wheelGone = [false, false, false, false]
+  /** The doors that swing on their hinges (DOORS.md), how far open each is, radians, and which have come off. */
+  private readonly doors: (Node | null)[]
+  private readonly doorAngle = [0, 0]
+  private readonly doorGone = [false, false]
   private readonly baseColor: Color
   private hurt = false
 
@@ -94,13 +101,55 @@ export class CarWear {
       this.parts.push({ mesh: node, shared: node.geometry, own: null, toRoot, fromRoot: toRoot.clone().invert(), material: node.material })
     })
     this.wheels = WHEELS.map((name) => model.getObjectByName(name) ?? null)
+    this.doors = DOORS.map((name) => model.getObjectByName(name) ?? null)
     const [hx, hy, hz] = half
-    this.panels = [
+    const panels: Panel[] = [
       { name: 'bumper_F', side: DAMAGE_FRONT, threshold: BUMPER_FALLS, inside: (p) => p.z < -hz + 0.3 && p.y < hy * 0.2, away: new Vector3(0, 0.4, -1) },
       { name: 'bumper_R', side: DAMAGE_REAR, threshold: BUMPER_FALLS, inside: (p) => p.z > hz - 0.3 && p.y < hy * 0.2, away: new Vector3(0, 0.4, 1) },
       { name: 'door_L', side: DAMAGE_LEFT, threshold: DOOR_FALLS, inside: (p) => p.x < -hx + 0.18 && Math.abs(p.z) < hz * 0.4 && p.y > -hy, away: new Vector3(-1, 0.4, 0) },
       { name: 'door_R', side: DAMAGE_RIGHT, threshold: DOOR_FALLS, inside: (p) => p.x > hx - 0.18 && Math.abs(p.z) < hz * 0.4 && p.y > -hy, away: new Vector3(1, 0.4, 0) },
     ]
+    // A car whose doors hang on hinges loses them as the server says (`swingDoors`), not cut out of its body.
+    this.panels = this.doors.some((door) => door) ? panels.filter((panel) => !panel.name.startsWith('door_')) : panels
+  }
+
+  /**
+   * Swings each door towards open or shut (bit `n` of `open`) over `dt` seconds, at the pace the server
+   * opens them, and throws off into `debris` any whose bit of `gone` is set; one put back by a repair
+   * hangs again.
+   */
+  swingDoors(open: number, gone: number, dt: number, debris: Debris | null, velocity: Vector3) {
+    const pace = (DOOR_SWING / DOOR_OPEN_S) * dt
+    this.doors.forEach((door, n) => {
+      if (!door) return
+      if (gone & (1 << n)) {
+        if (!this.doorGone[n]) this.shed(n, debris, velocity)
+        return
+      }
+      if (this.doorGone[n]) {
+        this.doorGone[n] = false
+        door.visible = true
+      }
+      const want = open & (1 << n) ? DOOR_SWING : 0
+      const angle = this.doorAngle[n]!
+      this.doorAngle[n] = angle + Math.max(-pace, Math.min(pace, want - angle))
+      // The left door swings out to the left, a turn the other way about +Y from the right one's.
+      door.rotation.y = (n === 0 ? -1 : 1) * this.doorAngle[n]!
+    })
+  }
+
+  /** How far each door is open, radians: for tests. */
+  get doorsOpen(): readonly number[] {
+    return this.doorAngle
+  }
+
+  /** Hides door `n` and throws a copy of it off, out to its side. */
+  private shed(n: number, debris: Debris | null, velocity: Vector3) {
+    this.doorGone[n] = true
+    const door = this.doors[n]!
+    door.visible = false
+    if (!debris) return
+    this.throwNode(door, new Vector3(n === 0 ? -1 : 1, 0.4, 0), 0.05, debris, velocity)
   }
 
   /** A crash event at `world`: the next dent on that side goes there. */
@@ -266,17 +315,21 @@ export class CarWear {
     const wheel = this.wheels[index]!
     wheel.visible = false
     if (!debris) return
-    const loose = wheel.clone()
+    this.throwNode(wheel, new Vector3(index % 2 === 0 ? -1 : 1, 0.6, 0), this.wheelRadius, debris, velocity)
+  }
+
+  /** Throws a copy of `node`, as it hangs on the car now, towards `away`; it comes to rest `rest` metres up. */
+  private throwNode(node: Node, away: Vector3, rest: number, debris: Debris, velocity: Vector3) {
+    const loose = node.clone()
     loose.visible = true
     const holder = new Group()
-    wheel.updateWorldMatrix(true, false)
+    node.updateWorldMatrix(true, false)
     // In the car's frame, so `throwPiece` can place it with the car.
     holder.add(loose)
-    const at = this.root.worldToLocal(wheel.getWorldPosition(new Vector3()))
+    const at = this.root.worldToLocal(node.getWorldPosition(new Vector3()))
     loose.position.set(at.x, at.y, at.z)
-    loose.quaternion.copy(this.root.quaternion).invert().multiply(wheel.getWorldQuaternion(new Quaternion()))
-    const away = new Vector3(index % 2 === 0 ? -1 : 1, 0.6, 0)
-    this.throwPiece(holder, away, debris, velocity, this.wheelRadius, [])
+    loose.quaternion.copy(this.root.quaternion).invert().multiply(node.getWorldQuaternion(new Quaternion()))
+    this.throwPiece(holder, away, debris, velocity, rest, [])
   }
 
   /** Places `piece` (built in the car's frame) where the car is and throws it towards `away`. */

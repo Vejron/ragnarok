@@ -30,6 +30,10 @@ const ARMOR: Armor = Armor {
     canvas: false,
 };
 
+/// The driver's door, measured off the model (`build_car.py` prints it): its hinge, length and height.
+/// The passenger's is its mirror.
+pub const VOLVO_240_DOOR: DoorDef = DoorDef::front([-0.86, -0.316, -1.28], 1.03, 1.22);
+
 pub(super) const VOLVO_240: VehicleDef = VehicleDef {
     kind: KIND_VOLVO_240,
     name: "Volvo 240",
@@ -93,4 +97,5 @@ pub(super) const VOLVO_240: VehicleDef = VehicleDef {
     board: None,
     exit: None,
     fittings: &[],
+    doors: &[VOLVO_240_DOOR, VOLVO_240_DOOR.mirrored()],
 };

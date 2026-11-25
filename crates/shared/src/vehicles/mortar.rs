@@ -103,6 +103,7 @@ pub(super) const MORTAR: VehicleDef = VehicleDef {
     board: None,
     exit: None,
     fittings: &[],
+    doors: NO_DOORS,
 };
 
 /// Its range dial, out to the longest lob of its bomb.

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { airCut, echoImpulse, echoLevel, VehicleSounds } from '@/vehicleaudio'
+import { airCut, echoImpulse, echoLevel, sirenTone, VehicleSounds } from '@/vehicleaudio'
 import type { SoundInput } from '@/sim/engine'
 import { KIND_HELI, KIND_JEEP, KIND_PLANE, KIND_TANK, KIND_WALKER } from '@/net/codec'
 import { assumeWorklet } from '@/sound/worklet'
@@ -225,6 +225,31 @@ describe('VehicleSounds', () => {
       s.endFlights()
       expect(s.flightCount).toBe(0)
       expect(ctx.log.sources.every((node) => node.started === 1 && node.stopped === 1)).toBe(true)
+    })
+
+    it('sounds a siren for each vehicle that reports one in earshot, the nearest three at most, and stops it when it is off', () => {
+      const { ctx, sounds: s } = sounds()
+      s.beginSirens()
+      for (let id = 1; id <= 5; id++) s.siren(id, [id * 20, 0, 0], [10, 0, 0])
+      // One far off is not heard.
+      s.siren(6, [900, 0, 0], [0, 0, 0])
+      s.endSirens()
+      expect(s.sirenCount).toBe(3)
+      expect(ctx.log.sources.filter((node) => node.kind === 'osc' && node.type === 'square')).toHaveLength(3)
+      s.dropSiren(1)
+      expect(s.sirenCount).toBe(2)
+      // Nobody reports one the next frame: they all stop.
+      s.beginSirens()
+      s.endSirens()
+      expect(s.sirenCount).toBe(0)
+      expect(ctx.log.sources.every((node) => node.started === 1 && node.stopped === 1)).toBe(true)
+    })
+
+    it('alternates a siren between its low and its high tone by the audio clock', () => {
+      expect(sirenTone(0)).toBe(435)
+      expect(sirenTone(0.5)).toBe(435)
+      expect(sirenTone(0.6)).toBe(580)
+      expect(sirenTone(1.2)).toBe(435)
     })
 
     it('splashes, cracks, strikes and breaks only within earshot', () => {

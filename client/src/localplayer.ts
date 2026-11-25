@@ -34,6 +34,9 @@ export class LocalPlayer {
   breath = 1
   /** Whole seconds left as a ghost (`Vitals::ghost`), 0 when they are not one (GHOSTS.md). */
   ghostLeft = 0
+  /** How wanted by the police they are (`Vitals::wanted`, EMERGENCY.md): the stars, 0 to 5, and whether no police see them now. */
+  wanted = 0
+  unseen = false
   /** Why the ghost may not take shape here and now (`GHOST_BLOCK_*`). */
   ghostBlock = GHOST_BLOCK_NONE
   /** Flying as a ghost, as their own stance says. */
@@ -58,6 +61,8 @@ export class LocalPlayer {
     this.lamp = false
     this.breath = 1
     this.ghostLeft = 0
+    this.wanted = 0
+    this.unseen = false
     this.ghostBlock = GHOST_BLOCK_NONE
     this.ghost = false
     this.forming = false
@@ -71,6 +76,8 @@ export class LocalPlayer {
       this.parts = own.vitals.parts
       this.breath = own.vitals.breath / 255
       this.ghostLeft = own.vitals.ghost
+      this.wanted = own.vitals.wanted & 7
+      this.unseen = (own.vitals.wanted & 0x80) !== 0
       this.ghostBlock = own.vitals.block
     }
     this.ghost = own.flags?.stance === STANCE_GHOST

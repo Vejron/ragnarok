@@ -152,4 +152,5 @@ pub(super) const AIR_AMBULANCE: VehicleDef = VehicleDef {
     board: None,
     exit: None,
     fittings: &[],
+    doors: NO_DOORS,
 };

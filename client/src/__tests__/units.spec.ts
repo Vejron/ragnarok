@@ -28,8 +28,8 @@ describe('replicated components in the game’s units', () => {
     expect(tank.orientation).toEqual({ qx: 0, qy: 0, qz: 0, qw: 1 })
     const plane = toGame({ kind: { kind: KIND_PLANE }, arms: { shots: 17, heat: 255, rear_heat: 51, bombs: 3, flags: ARMS_CUT } })
     expect(plane.arms).toEqual({ shots: 17, heat: 1, rear_heat: 0.2, bombs: 3, flags: ARMS_CUT })
-    const gunner = toGame({ kind: { kind: 0 }, seated: { vehicle: 70000, seat: 1 }, heading: { yaw: 1571 }, look: { pitch: -100 } })
-    expect(gunner).toEqual({ kind: { kind: 0 }, seated: { vehicle: 70000, seat: 1 }, heading: { yaw: 1.571 }, look: { pitch: -0.1 } })
+    const gunner = toGame({ kind: { kind: 0 }, seated: { vehicle: 70000, seat: 1, step: 0 }, heading: { yaw: 1571 }, look: { pitch: -100 } })
+    expect(gunner).toEqual({ kind: { kind: 0 }, seated: { vehicle: 70000, seat: 1, step: 0 }, heading: { yaw: 1.571 }, look: { pitch: -0.1 } })
   })
 
   it('keep steering within full lock', () => {
@@ -41,8 +41,8 @@ describe('replicated components in the game’s units', () => {
     expect(game(2)).toMatchObject({ kind: { kind: KIND_ROOSTER }, flags: { flags: FLAG_GROUNDED | FLAG_CROWING } })
     expect(game(5).turret!.flags & TURRET_STOWED).toBe(TURRET_STOWED)
     expect(game(6)).toMatchObject({ arms: { bombs: 4 } })
-    expect(game(12)).toMatchObject({ seated: { vehicle: 6, seat: 1 }, look: { pitch: -0.04 } })
-    expect(game(13)).toMatchObject({ seated: { vehicle: 7, seat: 0 }, place: { x: 0.4 } })
+    expect(game(12)).toMatchObject({ seated: { vehicle: 6, seat: 1, step: 0 }, look: { pitch: -0.04 } })
+    expect(game(13)).toMatchObject({ seated: { vehicle: 7, seat: 0, step: 0 }, place: { x: 0.4 } })
     expect(game(8).health!.hp).toBe(0)
     expect(game(9)).toMatchObject({ projectile: { kind: 0 }, place: { x: 0.01, y: 20, z: 0.03 }, velocity: { vx: -40, vy: 0.5, vz: 0 } })
     expect(game(10)).toMatchObject({ pickup: { item: 7 }, place: { x: -0.05, y: 0.3, z: 0.05 } })
@@ -93,12 +93,12 @@ describe('blending two snapshots', () => {
   })
 
   it('turns a rider’s look, and takes their seat from the nearer snapshot', () => {
-    const rider = (seat: number, yaw: number, pitch: number) => ({ seated: { vehicle: 4, seat }, heading: { yaw }, look: { pitch } })
+    const rider = (seat: number, yaw: number, pitch: number) => ({ seated: { vehicle: 4, seat, step: 0 }, heading: { yaw }, look: { pitch } })
     const a = rider(0, 0, 0)
     const b = rider(1, 1, 0.4)
     expect(blend(a, b, 0.25)).toMatchObject({ seated: { seat: 0 }, heading: { yaw: 0.25 } })
     expect(blend(a, b, 0.25).look!.pitch).toBeCloseTo(0.1)
-    expect(blend(a, b, 0.75).seated).toEqual({ vehicle: 4, seat: 1 })
+    expect(blend(a, b, 0.75).seated).toEqual({ vehicle: 4, seat: 1, step: 0 })
   })
 
   it('takes a component only one snapshot has from the nearer one', () => {

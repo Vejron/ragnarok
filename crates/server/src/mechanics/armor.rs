@@ -40,6 +40,13 @@ pub const HE_BLOCKED_SHARE: f32 = 0.15;
 /// An armoured vehicle (`Armor::armoured`) takes this much of a blast's splash: the rest is turned by
 /// its plates.
 pub const SPLASH_ARMOURED: f32 = 0.2;
+/// A shaped charge (a Carl Gustaf's rocket) that gets through does a share of its damage in proportion
+/// to what it had to spare, up to all of it through nothing; stopped, or with little to spare, it does
+/// what a plain rocket's blast does to armour (`shaped_share`). Inside, it goes on as a round with
+/// `SHAPED_INSIDE` of what it had to spare, and does `SHAPED_CREW` to a person in its way.
+pub const SHAPED_LEAST: f32 = SPLASH_ARMOURED;
+pub const SHAPED_INSIDE: f32 = 0.05;
+pub const SHAPED_CREW: u8 = 40;
 /// How shallow an angle the thickness is reckoned at, at most: past it the plate counts as this thick.
 const MIN_COS: f32 = 0.1;
 
@@ -80,6 +87,16 @@ impl Outcome {
             Outcome::Ricochet { .. } => None,
             Outcome::Blocked { at, .. } | Outcome::Pierced { at, .. } => Some(at),
         }
+    }
+}
+
+/// How much of its damage a shaped charge that goes through `pen` mm does to the vehicle, for what
+/// the armour made of it: the more the thinner the plate, so a tank gives way to a few and the
+/// heaviest plate takes many.
+pub fn shaped_share(outcome: &Outcome, pen: f32) -> f32 {
+    match *outcome {
+        Outcome::Ricochet { .. } | Outcome::Blocked { .. } => SHAPED_LEAST,
+        Outcome::Pierced { residual, .. } => (residual / pen.max(1.0)).max(SHAPED_LEAST),
     }
 }
 

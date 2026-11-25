@@ -329,7 +329,7 @@ replicated! {
     Motion { vy: i16 as cm, knock_x: i16 as cm, knock_z: i16 as cm }
 
     set 3 flags
-    /// `FLAG_*` bits and the `STANCE_*`. A vehicle has it only while its lamps are on (`FLAG_LAMP`).
+    /// `FLAG_*` bits and the `STANCE_*`. A vehicle has it only while its lamps (`FLAG_LAMP`) or its siren (`FLAG_SIREN`) are on.
     Flags { flags: u8, stance: u8 }
 
     diff 4 orientation
@@ -401,7 +401,7 @@ replicated! {
     /// an edge (`Character::ski_strain`), for their prediction. `breath` is the air they have left,
     /// 0..=255 of `BREATH_FULL`. `ghost` is the whole seconds a ghost has left as one (GHOSTS.md), 0 for
     /// none, and `block` why it may not take shape here and now (`GHOST_BLOCK_*`).
-    Vitals { hp: u8, progress: u8 as byte, spent: u16, winded: u8, parts: [u8; 5], down: u8, strain: u8, breath: u8 as byte, ghost: u8, block: u8 }
+    Vitals { hp: u8, progress: u8 as byte, spent: u16, winded: u8, parts: [u8; 5], down: u8, strain: u8, breath: u8 as byte, ghost: u8, block: u8, wanted: u8 }
 
     set 18 hotbar [owner]
     /// A player's own hotbar.
@@ -416,8 +416,10 @@ replicated! {
     set 20 seated
     /// A player sitting in seat `seat` of vehicle `vehicle` (0 drives). They have no `place` of their
     /// own unless their body stays behind (a drone's pilot): they are where the kind's seat puts them.
-    /// Id 10 was the vehicle's `seats`, which this replaced.
-    Seated { vehicle: u32, seat: u8 }
+    /// Id 10 was the vehicle's `seats`, which this replaced. `step` is how far they are through
+    /// getting out by the seat's door, 0 in the seat and 1 standing outside it (DOORS.md): getting in
+    /// runs it back from 1 to 0.
+    Seated { vehicle: u32, seat: u8, step: u8 as byte }
 
     diff 21 look
     /// How far a rider whose crew show looks up (+) or down, milliradians; their `heading` is where
@@ -472,6 +474,11 @@ replicated! {
     /// A soldier held in a fist of Titan `vehicle` (hand 0 is its left): they are carried where it is,
     /// which is where their `place` is too, until it lets go.
     Held { vehicle: u32, hand: u8 }
+
+    set 30 doors
+    /// A car's doors (`VehicleDef::doors`), by their index: bit `n` of `open` is set while door `n`
+    /// stands open, and of `gone` once it has come off. Left out while every door is shut and on.
+    Doors { open: u8, gone: u8 }
 }
 
 /// The structs a component field can hold a list of, with their fields in wire order and each one's

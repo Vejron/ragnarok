@@ -39,6 +39,8 @@ still while they get up (`GETUP_TICKS`).
 | HE shell (7 m, 18 m/s) | 10.9 m |
 | Mortar (11 m, 30 m/s) | 19.3 m |
 
+- **Bailing out of a car.** Leaving a car with four wheels going faster than 6 m/s (`BAIL_SPEED`) throws the soldier out at its speed, with a push away from its side, knocked down for as long as that speed would knock them, and hurt from 10 m/s up (DOORS.md).
+
 ## What it takes away
 
 While `Character::down > 0` (`crates/sim/src/lib.rs`):

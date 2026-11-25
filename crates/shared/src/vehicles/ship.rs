@@ -132,4 +132,5 @@ pub(super) const SHIP: VehicleDef = VehicleDef {
         Fitting { kind: KIND_SHIP_GUN, at: SHIP_GUN_SLOTS[4].0, yaw: SHIP_GUN_SLOTS[4].1 },
         Fitting { kind: KIND_SHIP_GUN, at: SHIP_GUN_SLOTS[5].0, yaw: SHIP_GUN_SLOTS[5].1 },
     ],
+    doors: NO_DOORS,
 };

@@ -1,7 +1,7 @@
 import { Animator, Group, Mesh, SkinnedMesh, parseGlb, type AnimationClip, type Geometry, type Material, type Node, Matrix4, Quaternion, Vector3 } from '@ragnarok/engine'
 import { Canopy } from './canopy'
 import { toonMaterial } from './toon'
-import { CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS, GETUP_TICKS, PRONE_CENTRE, RUN_SPEED, SKI_BOOST_TOP, STAND_CENTRE, TICK_RATE, WALK_SPEED, ZOMBIE_RISE_TICKS } from '@/sim/consts'
+import { CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS, GETUP_TICKS, PRONE_CENTRE, RUN_SPEED, SKI_BOOST_TOP, STAND_CENTRE, STEP_OUT_S, TICK_RATE, WALK_SPEED, ZOMBIE_RISE_TICKS } from '@/sim/consts'
 import { ITEM_AK5, ITEM_AT_RIFLE, ITEM_BANDAGE, ITEM_BRICKS, ITEM_CARL_GUSTAF, ITEM_FLARE, ITEM_GRENADE, ITEM_REVOLVER, ITEM_SHOTGUN, ITEM_SNIPER, fillsHands, itemDef, type ItemDef } from '@/sim/items'
 import { type Limb, poseLimb, splitLimbs } from './gibs'
 import { colorFor } from '@/profile'
@@ -241,6 +241,15 @@ const RECOIL_DECAY = 14
  * (`SIT_DROP` in build_character.py). A seated player is placed so their head lands on the seat's head point.
  */
 export const SIT_HEAD = 1.22
+/** Where in the climb out of a car (`car_out`, 0..1) the body moves from over the seat to over the door's spot: between these. */
+const STEP_ACROSS = [0.1, 0.8] as const
+
+/** Someone getting in or out of a seat by its door (DOORS.md): how far through it (`Seated.step`), which way it opens (-1 left), and where they stand once out, in the world. */
+export interface DoorStep {
+  step: number
+  side: number
+  spot: Vector3
+}
 /** Height of the head's middle above the model's origin standing: `SIT_HEAD` with the hips back up `SIT_DROP`. */
 const STAND_HEAD = SIT_HEAD + 0.42
 /** How far a seated body turns at the waist and chest towards where it aims, either way, radians. */
@@ -430,6 +439,7 @@ function toSegment(p: Vector3, a: Vector3, b: Vector3): number {
 
 const SCRATCH = {
   at: new Vector3(),
+  out: new Vector3(),
   one: new Vector3(1, 1, 1),
   size: new Vector3(),
   matrix: new Matrix4(),
@@ -481,6 +491,8 @@ export class Character {
   /** Walk/run cycle position, 0..1, shared by every locomotion clip so blends stay in step. */
   private phase = 0
   private idleTime = 0
+  /** How far through getting in or out by a door it is drawn, 0..1 (`DoorStep`), and 0 for anyone sitting still. */
+  private stepShown = 0
   private air = 0
   private crouch = 0
   /** How far lying down, 0 standing to 1 prone. */
@@ -1258,29 +1270,35 @@ export class Character {
    * Sits the character in a vehicle seat: its head on `head` (world), the body turned with the
    * vehicle's `rotation`, and the chest twisted towards `yaw` and leaning with `pitch`, where it aims.
    */
-  seat(head: Vector3, rotation: Quaternion, yaw: number, pitch: number, dt: number, standing = false) {
+  seat(head: Vector3, rotation: Quaternion, yaw: number, pitch: number, dt: number, standing = false, door: DoorStep | null = null) {
     this.position.copy(head)
     this.pitch = pitch
     this.fadeFlash(dt)
     if (!this.shown || this.gibbed) return
 
+    // Getting in or out by a door: how far through it, eased between the snapshots that say, and
+    // taken as it is when it starts (getting in starts outside, at 1).
+    const stepping = door !== null && door.step > 0
+    this.stepShown = !stepping ? 0 : this.stepShown === 0 ? door.step : chase(this.stepShown, door.step, 1.5 / STEP_OUT_S, dt)
     // Every other clip gives way to sitting, or standing still for a seat stood in, in the stance of the item in hand.
-    const pose = standing ? 'idle' : 'sit'
+    // Climbing in or out, the climb is all there is: it starts as sitting does and ends as standing does.
+    const pose = stepping ? (door.side < 0 ? 'car_out' : 'car_out_r') : standing ? 'idle' : 'sit'
     const sit = this.clip(pose)
     let sum = 0
     for (const name of this.actions.keys()) {
-      const next = chase(this.weights.get(name) ?? 0, name === sit ? 1 : 0, BLEND_RATE, dt)
+      const next = stepping ? (name === sit ? 1 : 0) : chase(this.weights.get(name) ?? 0, name === sit ? 1 : 0, BLEND_RATE, dt)
       this.weights.set(name, next)
       sum += next
     }
     if (sum > 0) for (const [name, w] of this.weights) this.weights.set(name, w / sum)
     const clip = this.actions.get(sit)
-    if (clip) this.idleTime = (this.idleTime + dt) % clip.clip.duration
+    if (clip && !stepping) this.idleTime = (this.idleTime + dt) % clip.clip.duration
     for (const [name, action] of this.actions) {
       const w = this.weights.get(name)!
       action.enabled = w > 0.0005 || name === sit
       action.weight = w
-      if (name.endsWith(pose)) action.time = this.idleTime
+      if (stepping && name === sit) action.time = this.stepShown * (action.clip.duration - 1e-4)
+      else if (name.endsWith(pose)) action.time = this.idleTime
     }
     this.animator.update(dt)
     this.head?.scale.setScalar(this.headless ? 0.001 : 1)
@@ -1291,13 +1309,23 @@ export class Character {
     // The legs stay with the seat; the waist and chest turn towards the aim, as far as a body turns.
     const forward = SCRATCH.forward.set(0, 0, -1).applyQuaternion(rotation)
     const facing = Math.atan2(-forward.x, -forward.z)
-    const twist = Math.max(-SIT_TWIST, Math.min(SIT_TWIST, Math.atan2(Math.sin(yaw - facing), Math.cos(yaw - facing))))
+    // Climbing out, the body turns as the climb has it, not after the aim.
+    const twist = stepping ? 0 : Math.max(-SIT_TWIST, Math.min(SIT_TWIST, Math.atan2(Math.sin(yaw - facing), Math.cos(yaw - facing))))
     this.turn(this.spine, twist * SIT_SPINE, AXIS_Y)
     this.turn(this.chest, twist * (1 - SIT_SPINE), AXIS_Y)
 
     // The model faces +Z; the vehicle's nose is its -Z.
     this.object.quaternion.copy(rotation).multiply(SCRATCH.turn.setFromAxisAngle(AXIS_Y, Math.PI))
-    this.object.position.copy(head).sub(SCRATCH.axis.set(0, standing ? STAND_HEAD : SIT_HEAD, 0).applyQuaternion(rotation))
+    const up = SCRATCH.axis.set(0, 1, 0).applyQuaternion(rotation)
+    this.object.position.copy(head).addScaledVector(up, -(standing && !stepping ? STAND_HEAD : SIT_HEAD))
+    if (stepping) {
+      // The clip rises from the seat itself; the body is moved out to the door's spot level with the
+      // seat, mostly while it ducks under the roof in the middle of the climb.
+      const out = SCRATCH.out.copy(door.spot).sub(this.object.position)
+      out.addScaledVector(up, -out.dot(up))
+      const t = Math.min(1, Math.max(0, (this.stepShown - STEP_ACROSS[0]) / (STEP_ACROSS[1] - STEP_ACROSS[0])))
+      this.object.position.addScaledVector(out, t * t * (3 - 2 * t))
+    }
     this.placed = true
     this.object.visible = this.shown && !this.gibbed
   }

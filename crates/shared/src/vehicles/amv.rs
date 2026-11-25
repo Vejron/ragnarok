@@ -171,6 +171,7 @@ pub(super) const AMV: VehicleDef = VehicleDef {
     board: None,
     exit: Some(AMV_DOOR_EXIT),
     fittings: &[],
+    doors: NO_DOORS,
 };
 
 /// The dial of its tubes, out to the longest lob of its bomb.

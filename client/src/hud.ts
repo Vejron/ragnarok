@@ -104,6 +104,8 @@ export interface HudStats {
    * and whether it is taking shape now; null while not one.
    */
   ghost: { left: number; block: number; forming: boolean } | null
+  /** Wanted by the police (EMERGENCY.md): the stars, 1 to 5, and whether no police see them now; null when not. */
+  wanted: { stars: number; unseen: boolean } | null
   /** Looking down a gun sight: the reticle is drawn in the scene, and the on-screen aim marks are hidden. */
   sight: boolean
   /** Looking down a scope: the scope overlay replaces the crosshair. */

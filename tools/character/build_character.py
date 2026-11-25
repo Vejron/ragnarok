@@ -26,7 +26,11 @@ Conventions
     (up off the ground after a knockdown, through a squat). The crawl is an army
     crawl lying face down along -Y, resting on the ground at the origin's height. `sit` is a seat in a
     vehicle: hips dropped by `SIT_DROP`, thighs level and shins down, so the head ends up `SIT_HEAD`
-    above the origin (the client places a seated player by it). Clips loop with a duplicated last key so the mixer wraps without a hitch.
+    above the origin (the client places a seated player by it). `car_out` and `car_out_r` (per stance,
+    played once over `CAR_OUT_FRAMES`) get out of a car's front seat to the soldier's left and right: from
+    `sit`, swivel towards the door, the outer leg out to the ground, duck under a roof line `CAR_ROOF` over
+    the ground, and stand into `idle`. The root stays put (the client carries the body out of the seat);
+    the hips rise by `SIT_DROP` within the clip. Played backwards it gets in. Clips loop with a duplicated last key so the mixer wraps without a hitch.
   * Swimming clips, shared by every stance as the gun is put away: swim_tread (upright, the head out),
     swim_fwd (a breaststroke tipped forward about `SWIM_PIVOT`), dive_idle and dive_fwd (flat under the
     water about `DIVE_PIVOT`, near the capsule centre, which the client tips towards where it swims).
@@ -1029,6 +1033,81 @@ def sit(t):
         pose_rot(f"foot_{side}", 0.72, 0, 0)
 
 
+# Getting out of a car's front seat through the side door (`car_out`, to the soldier's left, and
+# `car_out_r`, to the right), played once forward to get out and backward to get in. It starts in `sit`
+# and ends in `idle`, with the root kept still: the client carries the body from the seat to beside the
+# door, while the clip raises the hips by `SIT_DROP` from seated to standing.
+CAR_OUT_FRAMES = 48
+# How high the top of the door opening is over the ground, metres: the head ducks under it on the way out.
+CAR_ROOF = 1.25
+THIGH = HIP_Z - KNEE_Z
+SHIN = KNEE_Z - ANKLE_Z
+
+
+def planted(drop, pitch, ahead, lift=0.0):
+    """A leg with its foot flat `lift` metres over the ground and `ahead` metres in front of the hip, the
+    knee forward, with the hips dropped by `drop` and pitched forward by `pitch` (rad): the thigh's,
+    shin's and foot's turns about x for `pose_rot`."""
+    down = HIP_Z + drop - ANKLE_Z - lift
+    length = min(math.hypot(ahead, down), (THIGH + SHIN) * 0.999)
+    along = math.atan2(ahead, down)
+    at_hip = math.acos((THIGH**2 + length**2 - SHIN**2) / (2 * THIGH * length))
+    at_ankle = math.acos((SHIN**2 + length**2 - THIGH**2) / (2 * SHIN * length))
+    thigh, shin = along + at_hip, along - at_ankle
+    return -thigh - pitch, thigh - shin, shin
+
+
+def car_out_key(t, yaw, drop, hips, spine, chest, head, twist, look, outer, inner):
+    """One key of `CAR_OUT_KEYS`: each leg is `(thigh x, thigh y, thigh out, shin, foot)`, the y and the
+    out (a turn about the hips' z, away from the body's middle) as on the soldier's left."""
+    return (t, (yaw, drop, hips, spine, chest, head, twist, look) + outer + inner)
+
+
+def leg(drop, pitch, ahead, y=0.0, out=0.0, lift=0.0):
+    """A leg for `car_out_key` with its foot flat `lift` metres over the ground, `ahead` metres in front of the hip."""
+    thigh, shin, foot = planted(drop, pitch, ahead, lift)
+    return (thigh, y, out, shin, foot)
+
+
+CAR_OUT_KEYS = [
+    # Sat as `sit` sits.
+    car_out_key(0.0, 0.0, -SIT_DROP, -0.05, 0.03, 0.02, -0.02, 0.0, 0.0, (-1.52, -0.1, 0.0, 0.72, 0.72), (-1.52, 0.1, 0.0, 0.72, 0.72)),
+    # Swivelling on the seat towards the door: the outer leg swings out over the sill, its foot just off the ground,
+    # the chest lagging and the head turning to look out.
+    car_out_key(0.24, 0.75, -SIT_DROP, -0.02, 0.06, 0.06, 0.12, -0.25, 0.25, leg(-SIT_DROP, -0.02, 0.5, -0.1, 0.35, lift=0.06), (-1.5, 0.1, 0.0, 0.9, 0.5)),
+    # The outer foot is down outside and the body leans out over it, ducking under the roof; the inner
+    # leg follows, its foot still up on the car's floor.
+    car_out_key(0.44, 1.0, -0.40, 0.4, 0.2, 0.15, 0.3, -0.15, 0.1, leg(-0.40, 0.4, 0.42, -0.05, 0.25), leg(-0.40, 0.4, 0.34, 0.05, 0.1, lift=0.14)),
+    # Rising on both feet, still bent double under the roof line.
+    car_out_key(0.64, 0.8, -0.24, 0.6, 0.25, 0.15, 0.2, -0.05, 0.0, leg(-0.24, 0.6, 0.26, 0.0, 0.12), leg(-0.24, 0.6, 0.18, 0.0, 0.0)),
+    # Clear of the car and nearly up, turning back square.
+    car_out_key(0.84, 0.25, -0.06, 0.15, 0.05, 0.03, 0.0, 0.0, 0.0, leg(-0.06, 0.15, 0.08, 0.03, 0.02), leg(-0.06, 0.15, 0.06, -0.03, 0.0)),
+    # Stood as `idle` stands.
+    car_out_key(1.0, 0.0, -0.015, -0.03, 0.01, 0.01, -0.02, 0.0, 0.0, (0.05, 0.06, 0.0, 0.08, -0.11), (0.05, -0.06, 0.0, 0.08, -0.11)),
+]
+
+
+def car_out(s):
+    """Out of a car seat to the soldier's left (`s` 1) or right (`s` -1), mirrored by turning the
+    other way and swapping which leg leads."""
+    outer, inner = ("L", "R") if s > 0 else ("R", "L")
+
+    def fn(t):
+        v = track(t, CAR_OUT_KEYS)
+        yaw, drop, hips, spine, chest, head, twist, look = v[:8]
+        pose_loc("hips", (0, 0, drop))
+        pose_rot("hips", hips, 0, s * yaw)
+        pose_rot("spine", spine, 0, s * twist * 0.5)
+        pose_rot("chest", chest, 0, s * twist * 0.5)
+        pose_rot("head", head, 0, s * look)
+        for side, (tx, ty, out, shin, foot) in ((outer, v[8:13]), (inner, v[13:18])):
+            pose_rot(f"thigh_{side}", tx, s * ty, s * out)
+            pose_rot(f"shin_{side}", shin, 0, 0)
+            pose_rot(f"foot_{side}", foot, 0, 0)
+
+    return fn
+
+
 # --------------------------------------------------------------------------------------------------
 # On skis. Forward is -Y. The hands are placed by `reach`, the poles being drawn in them by the client.
 # --------------------------------------------------------------------------------------------------
@@ -1721,6 +1800,8 @@ def build_actions():
         bake(f"{prefix}slide", 120, slide)
         bake(f"{prefix}jump_air", 60, jump_air)
         bake(f"{prefix}sit", 120, sit)
+        bake(f"{prefix}car_out", CAR_OUT_FRAMES, car_out(1), loop=False)
+        bake(f"{prefix}car_out_r", CAR_OUT_FRAMES, car_out(-1), loop=False)
         # On skis with the poles stowed: the stance's grip on the skier's legs.
         bake(f"{prefix}armed_glide", 120, armed_glide)
         bake(f"{prefix}armed_skate", 54, armed_skate)
@@ -1906,6 +1987,29 @@ def preview(directory):
         for i in range(2):
             at(clip, i * (18 if "fwd" in clip or "right" in clip else 60))
             shoot(f"{clip}_{view}_{i}", view)
+    # Out of a car: the roof line as a slab over the seat, its edge where the door opening is, and the
+    # top of the head through the clip printed against it.
+    if "car_out".startswith(ONLY) or ONLY.startswith("car_out"):
+        bpy.ops.mesh.primitive_cube_add(size=1.0, location=(-0.25, -0.2, CAR_ROOF + 0.005), scale=(1.1, 1.6, 0.01))
+        roof = bpy.context.active_object
+        bpy.ops.mesh.primitive_cube_add(size=1.0, location=(0, 0, -0.005), scale=(2.0, 2.0, 0.01))
+        ground = bpy.context.active_object
+        for clip in ("car_out", "car_out_r", "pistol_car_out"):
+            tops, feet = [], []
+            for frame in range(CAR_OUT_FRAMES + 1):
+                at(clip, frame)
+                bones = arm_obj.pose.bones
+                tops.append(round(bones["head"].tail.z, 2))
+                feet.append(round(min(bones[f"foot_{n}"].tail.z for n in ("L", "R")), 2))
+            print(f"{clip} head top:", tops)
+            print(f"{clip} lowest toe:", feet)
+            roof.location.x = -0.25 if not clip.endswith("_r") else 0.25
+            for frame in range(0, CAR_OUT_FRAMES + 1, 8):
+                at(clip, frame)
+                for view in ("side", "front", "three"):
+                    shoot(f"{clip}_{frame:02d}_{view}", view)
+        bpy.data.objects.remove(roof)
+        bpy.data.objects.remove(ground)
     # Lying down in each stance: still from three sides, and a crawl cycle in four steps.
     for stance, item in (("", "ak5"), ("pistol_", "revolver"), ("hold_", "grenade"), ("shoulder_", "carl_gustaf")):
         for obj in weapon_objects:

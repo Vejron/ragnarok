@@ -104,6 +104,7 @@ pub(super) const TUPP: VehicleDef = VehicleDef {
     board: None,
     exit: None,
     fittings: &[],
+    doors: NO_DOORS,
 };
 
 /// The laser eyes: the head turns to the driver's look.

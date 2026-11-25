@@ -67,6 +67,11 @@ pub struct Strikes {
     pub lost_below: bool,
 }
 
+/// A rocket with a shaped charge (a Carl Gustaf's): it strikes through a vehicle's armour with its
+/// launcher's `Pen` (`Strikes::armor`), where a plain rocket bursts on whatever it meets.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct Shaped(pub Pen);
+
 /// Bounces off what it meets, keeping `keep` of its speed, as a ball of `radius` metres; bursts when
 /// its time runs out or it falls out of the world, or at once if it lands faster than `smash` m/s.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
@@ -275,7 +280,11 @@ fn prefab(kind: u8, round: Round, entity: &mut bevy_ecs::world::EntityWorldMut) 
     let burst = burst_for(kind, round.item);
     match kind {
         PROJECTILE_ROCKET => {
-            entity.insert((Motor { accel: ROCKET_ACCEL, top: ROCKET_MAX_SPEED }, Strikes { bodies: true, armor: false, lost_below: false }));
+            let shaped = def(round.item).map(|item| item.pen).filter(|pen| pen.near > 0.0);
+            entity.insert((Motor { accel: ROCKET_ACCEL, top: ROCKET_MAX_SPEED }, Strikes { bodies: true, armor: shaped.is_some(), lost_below: false }));
+            if let Some(pen) = shaped {
+                entity.insert(Shaped(pen));
+            }
         }
         PROJECTILE_SHELL | PROJECTILE_HE | PROJECTILE_CANNON | PROJECTILE_CANNON_AP | PROJECTILE_BOMB | PROJECTILE_MORTAR | PROJECTILE_AMV_BOMB | PROJECTILE_ROTARY | PROJECTILE_BALL => {
             entity.insert((Gravity(1.0), SHELL, GunStage));
@@ -523,9 +532,17 @@ fn step_striking(world: &mut World, id: u32, dt: f32, strikes: Strikes) {
         // A vehicle was hit first: its armor decides whether it bursts on it or glances off.
         let mut direct = None;
         if let (true, None, Some((_, Some(vid)))) = (strikes.armor, body, hit) {
-            let pen = pen_of(world.entities.get::<Projectile>(id).map_or(0, |p| p.kind));
+            let shaped = world.entities.get::<Shaped>(id).map(|shaped| shaped.0);
+            let pen = shaped.unwrap_or_else(|| pen_of(world.entities.get::<Projectile>(id).map_or(0, |p| p.kind)));
             let attacker = world.entities.has::<Player>(s.owner).then_some(s.owner);
-            match armor::armor_of(world, vid, s.position, dir, step, pen.near) {
+            let judged = armor::armor_of(world, vid, s.position, dir, step, pen.near);
+            // A shaped charge goes off on the plate it meets, however shallow the angle: one that would
+            // glance off is stopped by it.
+            let judged = judged.map(|outcome| match outcome {
+                Outcome::Ricochet { at, .. } if shaped.is_some() => Outcome::Blocked { turret: false, plate: "glancing", mm: 0.0, at },
+                outcome => outcome,
+            });
+            match judged {
                 Some(outcome @ Outcome::Ricochet { normal, at }) => {
                     // It comes off the plate where it met it, which on a tracked hull's swept-up end is
                     // the face of its armour box rather than the hull it drives on.
@@ -549,13 +566,16 @@ fn step_striking(world: &mut World, id: u32, dt: f32, strikes: Strikes) {
                     let mut done = outcome.at().map_or_else(armor::Inside::default, |at| armor::on_outside(world, vid, at, pen.calibre, damage, attacker));
                     // ...and one that went through goes on into what is inside.
                     if let (Outcome::Pierced { residual, slit, at, .. }, Some(pose)) = (outcome, world.physics.car_pose(vid)) {
-                        let entry = armor::Entry { at, dir: pose.local_dir(dir), residual, calibre: pen.calibre, kind: pen.kind, slit, crew: PLAYER_MAX_HP, weapon, attacker };
+                        // A shaped charge's jet does less inside than a shell that comes in whole.
+                        let (residual, crew) = if shaped.is_some() { (residual * armor::SHAPED_INSIDE, armor::SHAPED_CREW) } else { (residual, PLAYER_MAX_HP) };
+                        let entry = armor::Entry { at, dir: pose.local_dir(dir), residual, calibre: pen.calibre, kind: pen.kind, slit, crew, weapon, attacker };
                         done.add(armor::inside(world, vid, entry));
                     }
                     armor::report(world, vid, &outcome, point, dir, pen.calibre, done, attacker);
                     // Stopped or through, the round's whole knock goes into the vehicle where it met it.
                     world.physics.strike_car(vid, dir, point, hit_knock);
-                    direct = Some(Direct { vehicle: vid, scale: outcome.share(pen.kind), turret: outcome.turret() });
+                    let scale = if shaped.is_some() { armor::shaped_share(&outcome, pen.near) } else { outcome.share(pen.kind) };
+                    direct = Some(Direct { vehicle: vid, scale, turret: outcome.turret() });
                 }
                 None => {}
             }

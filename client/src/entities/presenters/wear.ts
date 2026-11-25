@@ -5,6 +5,7 @@ import { CarModel } from '@/render/car'
 import { TankModel } from '@/render/tank'
 import type { Frame, Presenter } from '../presenter'
 import type { Entity } from '../units'
+import type { Sampled } from '../store'
 import type { VehicleWorld, Vehicles } from './vehicles'
 
 /** A vehicle with no motion on record. */
@@ -24,11 +25,15 @@ export class Wear implements Presenter<Frame> {
     return entity.orientation !== undefined
   }
 
-  update(id: number) {
+  update(id: number, _sampled: Sampled, frame: Frame) {
     const model = this.vehicles.model(id)
     const placed = this.vehicles.placed.get(id)
     if (!model || !placed) return
-    if (model instanceof CarModel) model.wear(placed.damage, placed.hp, this.world.debris, this.vehicles.fx(id)?.velocity ?? STILL)
+    if (model instanceof CarModel) {
+      const velocity = this.vehicles.fx(id)?.velocity ?? STILL
+      model.wear(placed.damage, placed.hp, this.world.debris, velocity)
+      model.swingDoors(placed.doors.open, placed.doors.gone, frame.dt, this.world.debris, velocity)
+    }
     if (model instanceof TankModel && vehicleDef(placed.kind).shedsTurret) {
       if (placed.damage[DAMAGE_TURRET] === TURRET_GONE) this.shedTurret(id)
       else if (this.shed.delete(id)) model.setTurret(true)

@@ -124,4 +124,5 @@ pub(super) const SUBMARINE: VehicleDef = VehicleDef {
     board: Some(SUB_HATCH),
     exit: Some(SUB_EXIT),
     fittings: &[],
+    doors: NO_DOORS,
 };
