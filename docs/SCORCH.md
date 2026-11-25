@@ -92,7 +92,7 @@ Not seen in a played game yet: the look of the thrown earth, and the glow under 
 
 - Every explosive now digs (CRATERS.md): rockets 4 m, grenades 3.5 m, autocannon rounds 2 m, hen's eggs 5 m of radius. Craters under `SMOULDER_MIN_RADIUS` (3 m, so the autocannon's) glow but do not smoke, so a burst of them does not put out a shell's smoke.
 
-- Marks fade: a crater's marks (slope, earth, char, soil, ink, the grass's lean and burn) fade out over the last 30% of `CRATER_FADE` (30 minutes) from its birth, and `Craters.expire` then takes it out of the grid. A joiner's craters are born `age` seconds ago. The hole stays in the ground (CRATERS.md, "Lasting ground"). The example has one half-faded crater.
+- Marks fade: a crater's marks (slope, earth, char, soil, ink, the grass's lean and burn) fade out over the last 30% of `CRATER_FADE` (30 minutes) from its birth, and `Craters.expire` then takes it out of the grid. A joiner's craters are born `age` seconds ago. The hole stays in the ground (CRATERS.md, "Lasting ground") until it heals, which takes its marks with it (CRATERS.md, "Healing"). The example has one half-faded crater.
 
 ## Open questions
 

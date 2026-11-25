@@ -190,7 +190,14 @@ impl Physics {
         // A building's collider is found by what it is, not by the handle it was built with: a cut
         // gives it a new one (`apply_removals`).
         let buildings: Vec<ColliderHandle> = world.building_ids.iter().filter_map(|&id| self.handles.get(&Obj::Building(id)).copied()).collect();
-        for handle in handles.into_iter().chain(buildings) {
+        // Trees grown back and pieces mended since the tile came have colliders of their own (`regrow`).
+        let restored: Vec<ColliderHandle> = self
+            .handles
+            .iter()
+            .filter(|(object, handle)| matches!(object, Obj::Tree(id) | Obj::Line(id) if (id.col, id.row) == (col, row)) && !handles.contains(handle))
+            .map(|(_, &handle)| handle)
+            .collect();
+        for handle in handles.into_iter().chain(buildings).chain(restored) {
             if let Some(object) = self.objects.remove(&handle) {
                 self.handles.remove(&object);
             }
@@ -198,7 +205,18 @@ impl Physics {
         }
         self.removals.retain(|object| self.handles.contains_key(object));
         self.replacements.retain(|(object, _)| self.handles.contains_key(object));
+        self.restorations.retain(|(object, _)| !matches!(object, Obj::Tree(id) | Obj::Line(id) if (id.col, id.row) == (col, row)));
         self.refresh();
+    }
+
+    /// Gives tree or fence-and-wall piece `object` of a tile here its collider back (`restore`): whole,
+    /// or for a young tree `scale` of its size (REGROWTH.md). False when its tile is not here or it has
+    /// no collider to give.
+    pub fn regrow(&mut self, object: Obj, scale: f32) -> bool {
+        let (Obj::Tree(id) | Obj::Line(id)) = object else { return false };
+        let Some(collider) = self.tiles.get(&(id.col, id.row)).and_then(|tile| crate::regrown_collider(&tile.world, object, scale)) else { return false };
+        self.restore(object, collider);
+        true
     }
 
     /// Makes solid the buildings waiting for it (`add_tile`) within `near` metres of `(x, z)`, all of

@@ -993,7 +993,7 @@ impl Physics {
     /// colliders. With no car the pipeline does not run otherwise, and the broad-phase would keep
     /// pointing at colliders that are gone, so it is stepped here then. Returns whether it was.
     pub(crate) fn apply_removals(&mut self) -> bool {
-        if self.removals.is_empty() && self.replacements.is_empty() && self.construct_shapes.is_empty() && self.terrain_shapes.is_empty() {
+        if self.removals.is_empty() && self.replacements.is_empty() && self.restorations.is_empty() && self.construct_shapes.is_empty() && self.terrain_shapes.is_empty() {
             return false;
         }
         for (block, collider) in std::mem::take(&mut self.terrain_shapes) {
@@ -1040,6 +1040,17 @@ impl Physics {
                 self.objects.remove(&handle);
                 self.colliders.remove(handle, &mut self.islands, &mut self.bodies, &mut self.soft_bodies, false);
             }
+        }
+        for (object, collider) in std::mem::take(&mut self.restorations) {
+            if let Some(old) = self.handles.remove(&object) {
+                self.mark_changed(old);
+                self.objects.remove(&old);
+                self.colliders.remove(old, &mut self.islands, &mut self.bodies, &mut self.soft_bodies, false);
+            }
+            let handle = self.colliders.insert(collider);
+            self.mark_changed(handle);
+            self.objects.insert(handle, object);
+            self.handles.insert(object, handle);
         }
         if self.cars.is_empty() {
             self.step_pipeline();

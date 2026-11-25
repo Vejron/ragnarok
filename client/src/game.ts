@@ -889,6 +889,12 @@ export class Game {
       case 'dug':
         this.view.dug(message.tiles)
         break
+      case 'healed':
+        this.view.healed(message.tiles)
+        break
+      case 'regrown':
+        this.view.regrown(message.objects)
+        break
       case 'built':
         this.view.built(message)
         break

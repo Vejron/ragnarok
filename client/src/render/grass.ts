@@ -747,6 +747,17 @@ export class Grass {
     }
   }
 
+  /** The ground of the crater `dent` was told of has healed: the grass grows over it again. */
+  heal(x: number, z: number, radius: number) {
+    if (!this.craters.delete(`${x},${z},${radius}`)) return
+    this.rescan = true
+    for (const [chunkAt, chunk] of this.chunks) {
+      const cx = (chunkAt % 65536) - 32768, cz = Math.floor(chunkAt / 65536) - 32768
+      if ((cx + 1) * GRASS_CHUNK < x - radius || cx * GRASS_CHUNK > x + radius || (cz + 1) * GRASS_CHUNK < z - radius || cz * GRASS_CHUNK > z + radius) continue
+      chunk.stale = true
+    }
+  }
+
   /** Which way the wind blows, a unit `[x, z]`: the blades lean along it, the trees and the smoke alike. */
   blowing(direction: readonly [number, number]) {
     const wind = this.material.uniforms.wind as number[]

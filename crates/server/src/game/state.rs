@@ -832,8 +832,8 @@ pub struct World {
     pub(super) buildings_by_id: HashMap<ObjId, usize>,
     /// Health left on buildings and trees that have been hurt but still stand.
     pub object_hp: HashMap<Obj, u16>,
-    /// Everything destroyed so far with the yaw it fell at, oldest first. A joiner is told all of it.
-    pub destroyed: Vec<(Obj, i16)>,
+    /// Everything destroyed so far and not yet grown back or mended, oldest first. A joiner is told all of it.
+    pub destroyed: Vec<Felled>,
     /// `destroyed`, to ask of: a blast asks it of everything it reaches.
     pub felled: std::collections::HashSet<Obj>,
     /// Buildings that have had cells blasted out of them: how they are cut and what is gone.
@@ -854,8 +854,9 @@ pub struct World {
     /// The ground as the importer left it, copied when the first crater lands: what `CRATER_MAX_DEPTH`
     /// is measured from, and what a joiner's `Dug` is the difference from.
     pub pristine: Vec<i32>,
-    /// The tiles `(col, row)` whose ground a crater changed.
-    pub dug_tiles: std::collections::BTreeSet<(u16, u16)>,
+    /// The tiles `(col, row)` whose ground a crater changed and has not healed, with the tick the last
+    /// crater changed each.
+    pub dug_tiles: std::collections::BTreeMap<(u16, u16), u32>,
     /// The cubes players have placed with bricks (`game/construct.rs`).
     pub construct: shared::construct::Construct,
     /// Chunks of cubes whose colliders are out of date, rebuilt once a tick however many cubes changed.
@@ -1139,6 +1140,19 @@ pub struct Fresh {
     pub told: Vec<(u32, String)>,
     /// Gates opened or shut: the building, the gate's number among its openings, and whether it is open now.
     pub gates: Vec<(ObjId, u32, bool)>,
+}
+
+/// Something of the static world brought down: a tree felled, a piece of fence or wall broken, a building
+/// gone. Trees grow back and pieces are mended (REGROWTH.md).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Felled {
+    pub object: Obj,
+    /// The way it fell, milliradians (`look`'s convention: 0 faces -Z).
+    pub yaw: i16,
+    /// The tick it came down.
+    pub since: u32,
+    /// How far it has grown back (`GROWN_*`): `GROWN_LOG` when it has just come down.
+    pub stage: u8,
 }
 
 /// A building hurt: its identity, its damage stage and where a blast marked it.

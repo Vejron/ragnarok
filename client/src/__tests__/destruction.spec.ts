@@ -3,7 +3,8 @@ import { Geometry, Group, InstancedMesh, Mesh, Vector3 } from '@ragnarok/engine'
 import { encode } from '@msgpack/msgpack'
 import { decodeServer, OBJ_TREE } from '@/net/codec'
 import { BuildingDamage, span } from '@/render/damage'
-import { buildTrees } from '@/render/trees'
+import { buildTrees, showTreeInstance } from '@/render/trees'
+import { GROWN_YOUNG, TREE_SAPLING_SCALE, TREE_YOUNG_SCALE } from '@/sim/consts'
 import { FallingTrees } from '@/render/falling'
 import { TREE_PINE, type TileData, type Tree } from '@/world'
 import fixture from './messages.fixture.json'
@@ -15,7 +16,7 @@ describe('destroyed message', () => {
     // `messages.fixture.json` holds every message as the Rust tests encode it.
     expect(decodeServer(new Uint8Array(fixture.destroyed))).toEqual({
       type: 'destroyed',
-      objects: [{ kind: OBJ_TREE, col: 2, row: 3, index: 70000, yaw: -1.571, force: 0.2 }],
+      objects: [{ kind: OBJ_TREE, col: 2, row: 3, index: 70000, yaw: -1.571, force: 0.2, stage: GROWN_YOUNG }],
     })
   })
 
@@ -76,6 +77,38 @@ describe('felling a tree', () => {
       return landed
     }
     expect(landedAfter(1)).toBeLessThan(landedAfter(0) / 2)
+  })
+
+  it('grows back from where it stood: the log goes, a sapling, a young tree, then whole', () => {
+    const group = scene()
+    const falling = new FallingTrees()
+    const mesh = group.children[0] as InstancedMesh
+    const whole = mesh.matrices.slice(0, 16)
+    const children = group.children.length
+    falling.fell(group, tree(0, true), 0, 0, false)
+    expect(group.children.length).toBe(children + 1)
+    expect(falling.lift(group, 0)).toBe(true)
+    expect(falling.lift(group, 0)).toBe(false)
+    expect(group.children.length).toBe(children)
+    for (const scale of [TREE_SAPLING_SCALE, TREE_YOUNG_SCALE, 1]) {
+      expect(showTreeInstance(group, 0, scale)).toBe(true)
+      // Its size (the x axis's length) grows; its foot stays where it stood.
+      expect(mesh.matrices[0]).toBeCloseTo(whole[0]! * scale)
+      expect([...mesh.matrices.slice(12, 15)]).toEqual([...whole.slice(12, 15)])
+    }
+    expect([...mesh.matrices.slice(0, 16)]).toEqual([...whole])
+  })
+
+  it('cannot fell a sapling, but can fell a young tree again', () => {
+    const group = scene()
+    const falling = new FallingTrees()
+    falling.fell(group, tree(0, true), 0, 0, false)
+    falling.lift(group, 0)
+    showTreeInstance(group, 0, TREE_SAPLING_SCALE)
+    expect(falling.fell(group, tree(0, true), 0, 0, false)).toBe(false)
+    showTreeInstance(group, 0, TREE_YOUNG_SCALE)
+    expect(falling.fell(group, tree(0, true), 0, 0, false)).toBe(true)
+    expect((group.children[0] as InstancedMesh).matrices[0]).toBe(0)
   })
 
   it('lies down at once when told it already fell', () => {

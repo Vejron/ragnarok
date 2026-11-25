@@ -1,5 +1,5 @@
 import { CRATER_FADE, Group, type Mesh, type Scene, type Vector3 } from '@ragnarok/engine'
-import { OBJ_LINE, OBJ_TREE, type Built, type CarvedBuilding, type GateState, type CraterEntry, type DamagedBuilding, type DestroyedObject, type DugTile } from './net/codec'
+import { OBJ_LINE, OBJ_TREE, type Built, type CarvedBuilding, type GateState, type CraterEntry, type DamagedBuilding, type DestroyedObject, type DugTile, type HealedTile, type RegrownObject } from './net/codec'
 import type { Effects } from './render/effects'
 import { FallingTrees, type TreeFx, type TreeNoise } from './render/falling'
 import { BuildingDamage } from './render/damage'
@@ -22,7 +22,8 @@ import { CELL } from './sim/carve'
 import type { SimMotor } from './sim/motor'
 import type { Surfaces } from './sim/surface'
 import type { Waters } from './sim/waters'
-import { CRATER_MAX_DEPTH } from './sim/consts.generated'
+import { CRATER_MAX_DEPTH, GROWN_LOG, GROWN_SAPLING, GROWN_WHOLE, GROWN_YOUNG, TREE_SAPLING_SCALE, TREE_YOUNG_SCALE } from './sim/consts.generated'
+import { showTreeInstance } from './render/trees'
 import { digCrater, groundOf, type Terrain, type TileGround } from './sim/terrain'
 import type { Grass } from './render/grass'
 import type { CropLid } from './render/croplid'
@@ -147,8 +148,11 @@ export class WorldView {
   private readonly groups = new Map<number, Group>()
   /** The tiles drawn now, with the salt their colours were picked with. */
   private readonly loaded = new Map<number, { tile: TileData; salt: number }>()
-  /** Trees that fell, by tile then index, with the way they fell: replayed onto tiles that stream in later. */
-  private readonly fellTrees = new Map<number, Map<number, number>>()
+  /**
+   * Trees that fell, by tile then index, with the way they fell and how far they have grown back since
+   * (`GROWN_*`, REGROWTH.md): replayed onto tiles that stream in later.
+   */
+  private readonly fellTrees = new Map<number, Map<number, { yaw: number; stage: number }>>()
   /** The pieces of fences and walls that are broken (`linePieceIndex`), by tile. Kept like `fellTrees`. */
   private readonly brokenLines = new Map<number, Set<number>>()
   private readonly fallingTrees = new FallingTrees()
@@ -175,6 +179,11 @@ export class WorldView {
   private readonly dugTiles = new Map<number, Int32Array>()
   /** The craters dug since this player joined, in order: replayed onto tiles that stream in later, after their `Dug`. */
   private readonly craters: CraterEntry[] = []
+  /**
+   * The tiles whose ground has healed (CRATERS.md, "Healing"), with how many of `craters` had been dug
+   * when it did: only the ones after are dug into the tile again when it streams in.
+   */
+  private readonly healedAt = new Map<number, number>()
   /** Every crater told of, the joiner's still marked ones too: the grass is cleared from their bowls on tiles that stream in later. */
   private readonly marked: CraterEntry[] = []
   /** Bumped by every change to the ground (a crater, a `Dug` tile). */
@@ -493,7 +502,7 @@ export class WorldView {
     const own = { ...ground, heights: ground.heights.slice() }
     const runs = this.dugTiles.get(tileKey(ref.col, ref.row))
     if (runs) layDug(own, tile.ground, runs)
-    for (const crater of this.craters) if (reaches(own, crater)) digInto(own, tile.ground, crater)
+    this.digSince(own, tile.ground, tileKey(ref.col, ref.row))
     return own
   }
 
@@ -513,16 +522,68 @@ export class WorldView {
       // From the file again, so the craters since joining are dug on top of it, as on a tile streaming in.
       ground.heights.set(loaded.tile.ground)
       layDug(ground, loaded.tile.ground, runs)
-      for (const crater of this.craters) if (reaches(ground, crater)) digInto(ground, loaded.tile.ground, crater)
-      this.motor?.setTileGround({ col, row }, centimetres(ground.heights))
-      this.grass?.regrowTile({ col, row })
-      this.crops?.regrowTile({ col, row })
-      this.cropLid?.regrowTile({ col, row })
-      this.stones?.regrowTile({ col, row })
-      this.forestFloor?.regrowTile({ col, row })
-      this.gardens?.regrowTile({ col, row })
-      this.reground(key)
+      this.digSince(ground, loaded.tile.ground, key)
+      this.groundMoved(key)
     }
+  }
+
+  /** Digs into `ground` (tile `key`, whose file has `pristine`) the craters since joining that it has not healed from. */
+  private digSince(ground: TileGround, pristine: Float32Array, key: number) {
+    for (let i = this.healedAt.get(key) ?? 0; i < this.craters.length; i++) {
+      const crater = this.craters[i]!
+      if (reaches(ground, crater)) digInto(ground, pristine, crater)
+    }
+  }
+
+  /** Tile `key`'s ground changed in place: the physics is given it, and what grows on it and its drawing are made again. */
+  private groundMoved(key: number) {
+    const { col, row } = tileOf(key)
+    const ground = this.terrain?.get(col, row)
+    if (ground) this.motor?.setTileGround({ col, row }, centimetres(ground.heights))
+    this.grass?.regrowTile({ col, row })
+    this.crops?.regrowTile({ col, row })
+    this.cropLid?.regrowTile({ col, row })
+    this.stones?.regrowTile({ col, row })
+    this.forestFloor?.regrowTile({ col, row })
+    this.gardens?.regrowTile({ col, row })
+    this.reground(key)
+  }
+
+  /**
+   * The ground of these tiles has healed back to their files' heights (CRATERS.md, "Healing"): nobody
+   * was near enough to see it. The craters centred on them are forgotten, with their marks, and the
+   * grass and the rest grow in them again; a crater dug later digs them anew.
+   */
+  healed(tiles: readonly HealedTile[]) {
+    const keys = new Set(tiles.map(({ col, row }) => tileKey(col, row)))
+    for (const key of keys) {
+      this.dugTiles.delete(key)
+      this.healedAt.set(key, this.craters.length)
+      this.groundEdits++
+      const loaded = this.loaded.get(key)
+      const { col, row } = tileOf(key)
+      const ground = this.terrain?.get(col, row)
+      if (!loaded || !ground) continue
+      ground.heights.set(loaded.tile.ground)
+      this.groundMoved(key)
+    }
+    const world = this.world
+    if (!world) return
+    const tileAt = (v: number) => Math.floor((v + world.halfExtent) / world.tileSize)
+    const gone = (x: number, z: number) => keys.has(tileKey(tileAt(x), tileAt(z)))
+    for (let i = this.marked.length - 1; i >= 0; i--) {
+      const crater = this.marked[i]!
+      const [x, z, radius] = [crater.x / 100, crater.z / 100, crater.radius / 100]
+      if (!gone(x, z)) continue
+      this.marked.splice(i, 1)
+      this.grass?.heal(x, z, radius)
+      this.crops?.heal(x, z, radius)
+      this.cropLid?.heal(x, z, radius)
+      this.stones?.heal(x, z, radius)
+      this.forestFloor?.heal(x, z, radius)
+      this.gardens?.heal(x, z, radius)
+    }
+    this.scene.craters.forget(gone)
   }
 
   /**
@@ -704,7 +765,7 @@ export class WorldView {
       for (const index of this.gateView.opened(key)) this.motor?.setGates(ref.col, ref.row, index, this.gateView.shut(key, index))
       if (this.damage.carved(key).size > 0) this.reshapeBuildings(key)
       // Trees that fell before this tile streamed in (or while it was away) are already down.
-      for (const [index, yaw] of this.fellTrees.get(key) ?? []) this.fellTree(key, index, yaw, false)
+      for (const index of this.fellTrees.get(key)?.keys() ?? []) this.placeTree(key, index, false)
       // So are the pieces of its fences and walls that broke.
       const broken = this.brokenLines.get(key)
       if (broken) {
@@ -775,16 +836,49 @@ export class WorldView {
         continue
       }
       if (object.kind !== OBJ_TREE) continue
-      const fell = this.fellTrees.get(key) ?? new Map<number, number>()
+      const fell = this.fellTrees.get(key) ?? new Map<number, { yaw: number; stage: number }>()
       this.fellTrees.set(key, fell)
-      if (fell.has(object.index)) continue
-      fell.set(object.index, object.yaw)
-      this.fellTree(key, object.index, object.yaw, animate, object.force)
+      const was = fell.get(object.index)
+      // Already down; but a young tree growing back can be felled again.
+      if (was && was.stage !== GROWN_YOUNG) continue
+      fell.set(object.index, { yaw: object.yaw, stage: object.stage })
+      this.placeTree(key, object.index, animate, object.force, was ? TREE_YOUNG_SCALE : 1)
     }
     for (const key of redraw) {
       const { col, row } = tileOf(key)
       const [group, loaded] = [this.groups.get(key), this.loaded.get(key)]
       if (group && loaded) rebuildLines(group, loaded.tile, this.terrain?.get(col, row) ?? null, this.brokenLines.get(key)!)
+    }
+  }
+
+  /**
+   * The server says these felled trees have grown back a stage and these broken pieces of fences and
+   * walls are mended (REGROWTH.md), where this player could not see it happen.
+   */
+  regrown(objects: readonly RegrownObject[]) {
+    const redraw = new Set<number>()
+    for (const object of objects) {
+      const key = tileKey(object.col, object.row)
+      if (object.kind === OBJ_LINE) {
+        if (!this.brokenLines.get(key)?.delete(object.index)) continue
+        if (this.brokenLines.get(key)!.size === 0) this.brokenLines.delete(key)
+        this.motor?.mendLine(object.col, object.row, object.index)
+        if (this.groups.has(key)) redraw.add(key)
+        continue
+      }
+      if (object.kind !== OBJ_TREE) continue
+      const fell = this.fellTrees.get(key) ?? new Map<number, { yaw: number; stage: number }>()
+      this.fellTrees.set(key, fell)
+      fell.set(object.index, { yaw: fell.get(object.index)?.yaw ?? 0, stage: object.stage })
+      this.placeTree(key, object.index, false)
+      if (object.stage !== GROWN_WHOLE) continue
+      fell.delete(object.index)
+      if (fell.size === 0) this.fellTrees.delete(key)
+    }
+    for (const key of redraw) {
+      const { col, row } = tileOf(key)
+      const [group, loaded] = [this.groups.get(key), this.loaded.get(key)]
+      if (group && loaded) rebuildLines(group, loaded.tile, this.terrain?.get(col, row) ?? null, this.brokenLines.get(key) ?? new Set())
     }
   }
 
@@ -892,7 +986,8 @@ export class WorldView {
         if (!loaded) continue
         const felled = this.fellTrees.get(tileKey(col, row))
         loaded.tile.trees.forEach((tree, index) => {
-          if (tree.kind === TREE_BUSH || tree.kind === TREE_FLAG || felled?.has(index)) return
+          // A sapling does not make a wood; a young tree does.
+          if (tree.kind === TREE_BUSH || tree.kind === TREE_FLAG || (felled?.get(index)?.stage ?? GROWN_WHOLE) < GROWN_YOUNG) return
           if ((tree.x - x) ** 2 + (tree.z - z) ** 2 <= r2) count++
         })
       }
@@ -977,6 +1072,7 @@ export class WorldView {
     this.reshape.clear()
     this.unconfirmed.clear()
     this.dugTiles.clear()
+    this.healedAt.clear()
     this.craters.length = 0
     this.marked.length = 0
     this.groundEdits++
@@ -1002,18 +1098,31 @@ export class WorldView {
   }
 
   /**
-   * Fells tree number `index` of tile `key` if that tile is loaded: it leaves the tile's drawing
-   * and falls, and its trunk stops being solid in both simulations.
+   * Draws tree number `index` of tile `key`, if that tile is loaded, as it is now (`fellTrees`), and
+   * makes it as solid as that in the prediction's physics: a log lying (falling first when
+   * `animate`, as hard as `force`, and `size` of a whole one for a young tree felled), a sapling, a
+   * young tree, or whole again.
    */
-  private fellTree(key: number, index: number, yaw: number, animate: boolean, force = 0) {
+  private placeTree(key: number, index: number, animate: boolean, force = 0, size = 1) {
     const group = this.groups.get(key)
     const loaded = this.loaded.get(key)
     const tree = loaded?.tile.trees[index]
     if (!group || !loaded || !tree) return
-    this.fallingTrees.fell(group, tree, index, yaw, animate, force)
     const { col, row } = tileOf(key)
-    this.motor?.fellTree(col, row, index)
+    const { yaw, stage } = this.fellTrees.get(key)?.get(index) ?? { yaw: 0, stage: GROWN_WHOLE }
+    if (stage === GROWN_LOG) {
+      const felled = size === 1 ? tree : { ...tree, height: tree.height * size, crown: tree.crown * size }
+      this.fallingTrees.fell(group, felled, index, yaw, animate, force)
+      this.motor?.fellTree(col, row, index)
+      return
+    }
+    // Growing back: the log has rotted away.
+    this.fallingTrees.lift(group, index)
+    const scale = stage === GROWN_SAPLING ? TREE_SAPLING_SCALE : stage === GROWN_YOUNG ? TREE_YOUNG_SCALE : 1
+    showTreeInstance(group, index, scale)
+    this.motor?.growTree(col, row, index, stage === GROWN_SAPLING ? 0 : scale)
   }
+
 
   /** Throws the debris of piece `index` (`linePieceIndex`) of tile `key`'s fences and walls, if the tile is loaded. */
   private shatterLine(key: number, index: number, yaw: number, force: number) {

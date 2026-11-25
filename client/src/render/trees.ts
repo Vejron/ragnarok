@@ -16,6 +16,7 @@ import { buildRocks, isRock } from './rocks'
 import type { Shore } from './shore'
 import { winter } from './season'
 import { WIND_HEADING } from '@/sim/wind'
+import { TREE_YOUNG_SCALE } from '@/sim/consts'
 
 /**
  * The tree archetypes. Each prototype is built in unit space (foot at the origin, `y` 0..1 over the
@@ -1389,22 +1390,58 @@ export function standaloneTree(tree: Tree): { pivot: Group; mesh: Mesh } {
 }
 
 /**
- * Takes tree number `index` of its tile (the `Destroyed` index) out of the tile's instanced
- * meshes, by shrinking it to nothing. False if it is not there, or already gone.
+ * Tree number `index` of a tile drawn in `group` as it stands: its instance's slot and the matrix it was
+ * built with, and the share of its size it is drawn at (1 whole, 0 gone, between for a tree growing
+ * back). Null for one not drawn here.
+ */
+function treeInstance(group: Node, index: number): { mesh: InstancedMesh; slot: number; original: Float32Array; scales: Map<number, number> } | null {
+  for (const child of group.children) {
+    const slot = (child.userData.treeSlots as Map<number, number> | undefined)?.get(index)
+    if (slot === undefined || !(child instanceof InstancedMesh)) continue
+    const originals = (child.userData.treeOriginals ??= new Map<number, Float32Array>()) as Map<number, Float32Array>
+    const scales = (child.userData.treeScales ??= new Map<number, number>()) as Map<number, number>
+    let original = originals.get(index)
+    if (!original) {
+      original = child.matrices.slice(slot * 16, slot * 16 + 16)
+      originals.set(index, original)
+    }
+    return { mesh: child, slot, original, scales }
+  }
+  return null
+}
+
+/**
+ * Takes tree number `index` out of a tile's instanced trees drawn in `group`, to be felled. Returns
+ * false if it is not standing there (felled already, or a sapling, which nothing fells).
  */
 export function removeTreeInstance(group: Node, index: number): boolean {
-  for (const child of group.children) {
-    const slots = child.userData.treeSlots as Map<number, number> | undefined
-    const slot = slots?.get(index)
-    if (slot === undefined || !(child instanceof InstancedMesh)) continue
-    slots!.delete(index)
-    // Scaled to nothing where it stood, so the mesh's bounds do not stretch to the origin.
-    const at = child.matrices
-    child.setMatrixAt(slot, mat4.compose(mat4.create(), at[slot * 16 + 12]!, at[slot * 16 + 13]!, at[slot * 16 + 14]!, 0, 0, 0, 1, 0, 0, 0))
-    child.needsUpdate()
-    return true
-  }
-  return false
+  const tree = treeInstance(group, index)
+  if (!tree || (tree.scales.get(index) ?? 1) < TREE_YOUNG_SCALE) return false
+  setTreeScale(tree, index, 0)
+  return true
+}
+
+/**
+ * Draws tree number `index` of a tile drawn in `group` again, at `scale` of its size about its foot:
+ * a sapling or a young tree growing back, or 1 for whole (REGROWTH.md). Returns false if the tile
+ * does not draw it.
+ */
+export function showTreeInstance(group: Node, index: number, scale: number): boolean {
+  const tree = treeInstance(group, index)
+  if (!tree) return false
+  setTreeScale(tree, index, scale)
+  return true
+}
+
+function setTreeScale(tree: NonNullable<ReturnType<typeof treeInstance>>, index: number, scale: number) {
+  const m = tree.original.slice()
+  // The upper 3 × 3 is turn and size; the foot (the translation) stays, so a tree felled is shrunk to
+  // nothing where it stood and the mesh's bounds do not stretch to the origin.
+  for (const k of [0, 1, 2, 4, 5, 6, 8, 9, 10]) m[k]! *= scale
+  tree.mesh.setMatrixAt(tree.slot, m)
+  tree.mesh.needsUpdate()
+  if (scale >= 1) tree.scales.delete(index)
+  else tree.scales.set(index, scale)
 }
 
 /**

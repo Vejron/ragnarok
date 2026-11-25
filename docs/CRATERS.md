@@ -12,7 +12,7 @@ Status: branch `feat/craters`. Phases 1-4 are written and tested (Rust and Vites
 - A landing shell lowers the heightfield in a smooth bowl, with a slight raised lip. The server's physics, the client's prediction, the drawn mesh and every height lookup (`Ground::height_at`, `heightIn`) agree on the new surface.
 - Late joiners and streamed-in tiles see the craters that already exist.
 - Cheap on the wire: a crater is a few bytes, and both sides apply the same deterministic function.
-- Not in scope: persistence across server restarts (craters reset with the world), water, digging through building floors, filling craters back in.
+- Not in scope: persistence across server restarts (craters reset with the world), water, digging through building floors. (Craters do fill back in: see "Healing".)
 
 ## How a crater works
 
@@ -112,3 +112,15 @@ Phases:
 2. Server: `dug_tiles` kept in `apply_crater`, `dug_ground` for the joiner, the crater list pruned by age, the join sends `Dug` before the marks. Tests: a joiner's patched ground equals the server's after more craters than `CRATER_MAX_KEPT`; marks older than the fade are not sent.
 3. Client: `WorldView.dug`, `groundFor` laying the patch, catch-up craters as marks only, with their age. Tests: a late joiner's ground from `Dug` equals an early one's.
 4. Engine: the fade in `craterMarks` and `craterGrass`, `Craters.expire`.
+
+## Healing
+
+Dug ground goes back to what the importer left, so a long session does not end on a moonscape. Protocol 98.
+
+- **When.** A tile's ground may heal `CRATER_HEAL_SECONDS` (7 minutes) after the last crater that changed it. The server keeps that tick per tile (`World::dug_tiles`, now a map) and looks once every `HEAL_CHECK_TICKS` (`Game::heal_craters`).
+- **Patches.** Dug tiles that share a dug sample on an edge or a corner heal together (`World::patch_of`), and only when every tile of the patch is ready: a crater over a seam never heals on one side only and leaves a cliff. Craters on neighbouring tiles that do not meet heal each on its own.
+- **Nobody sees it.** A patch waits while any player with a connection (their soldier, and what they drive or fly) is within `HEAL_CLEAR` (400 m) of any of its tiles, so no crater fills in in view. Bots do not hold it back.
+- **Nothing is buried.** It also waits while anything stands within `CRATER_HEAL_MARGIN` (4 m) of dug ground in it: a soldier (bots too), a vehicle, any entity with a place (items, pickups, creatures), a placed cube. Something on the same tile away from the bowls does not.
+- **Healing** copies `World::pristine` over the patch's tiles, edges included, gives the physics the new heightfields (`Physics::dig_ground`), takes them out of `dug_tiles`, and forgets the craters centred on them (`World::craters`, the joiner's marks). Everyone is told `Healed` with the tiles.
+- **The client** (`WorldView.healed`) drops the tile's `Dug` ground, lays the file's heights on it, gives the physics it, grows the grass, crops, stones, forest floor and gardens again and redraws it. It notes how many live craters it had been told of (`healedAt`), so a tile that streams in later is dug only by the craters since. The marks of the craters centred on healed tiles leave the shader's grid (`Craters.forget`), and the vegetation's bowls are filled (`heal` on each layer).
+- **The scorch** still fades over `CRATER_FADE_SECONDS` (30 minutes) where the ground cannot heal because players stay near; on healed ground it goes with the hole.

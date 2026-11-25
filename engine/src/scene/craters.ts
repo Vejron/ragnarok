@@ -124,6 +124,22 @@ export class Craters {
     }
   }
 
+  /**
+   * Takes out of the grid every crater kept whose middle and radius (metres) `gone` picks: their
+   * ground has healed (CRATERS.md, "Healing"). Each is left with no radius, so it is picked only once.
+   */
+  forget(gone: (x: number, z: number, radius: number) => boolean) {
+    for (let order = Math.max(this.first, this.added - CRATER_CAPACITY); order < this.added; order++) {
+      const slot = order % CRATER_CAPACITY
+      const o = slot * CRATER_FLOATS
+      if (this.data[o + 2]! <= 0 || !gone(this.data[o]!, this.data[o + 1]!, this.data[o + 2]!)) continue
+      this.unlist(slot)
+      this.data[o + 2] = 0
+      this.dirtySlots.add(slot)
+      this.version++
+    }
+  }
+
   /** The crater slots and buckets changed since the last call (`all` after a `clear`), and forgets them. */
   takeDirty(): { all: boolean; slots: number[]; buckets: number[] } {
     const dirty = { all: this.cleared, slots: [...this.dirtySlots], buckets: [...this.dirtyBuckets] }

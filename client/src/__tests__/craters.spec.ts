@@ -130,6 +130,35 @@ describe('craters', () => {
     }
   })
 
+  it('heal away with their marks when the server says their tiles healed, and stay healed when the tiles stream in again', () => {
+    const pristine = city()
+    for (const [ref, tile] of pristine.tiles) pristine.view.attachTile(ref, tile)
+    const tileAt = (v: number) => Math.floor((v + pristine.world.halfExtent) / pristine.world.tileSize)
+    // One crater over a seam, healed with both its tiles; another well away, on a tile that did not heal.
+    const { halfExtent, tileSize } = pristine.world
+    const [x, z] = [-halfExtent + Math.round((halfExtent - 50) / tileSize) * tileSize, 20]
+    const healed = [{ col: tileAt(x - 1), row: tileAt(z) }, { col: tileAt(x + 1), row: tileAt(z) }]
+    let [far, farZ] = [x + 60, z]
+    while (healed.some((t) => t.col === tileAt(far))) far += 60
+    expect(healed[0]).not.toEqual(healed[1])
+
+    for (const attachFirst of [true, false]) {
+      const { view, tiles, scene } = city()
+      if (attachFirst) for (const [ref, tile] of tiles) view.attachTile(ref, tile)
+      view.cratered([crater(x, z), crater(far, farZ)], true)
+      view.healed(healed)
+      if (!attachFirst) for (const [ref, tile] of tiles) view.attachTile(ref, tile)
+      for (const [dx, dz] of [[0, 0], [-1, 0], [1, 2]] as const) expect(view.terrain!.heightAt(x + dx, z + dz)).toBe(pristine.view.terrain!.heightAt(x + dx, z + dz))
+      expect(pristine.view.terrain!.heightAt(far, farZ) - view.terrain!.heightAt(far, farZ)).toBeGreaterThan(0.3)
+      // Its marks are gone from the shader's grid; the other's are not.
+      expect(scene.craters.data[2]).toBe(0)
+      expect(scene.craters.data[8 + 2]).toBe(6)
+      // A crater dug there later digs it again.
+      view.cratered([crater(x, z)], true)
+      expect(pristine.view.terrain!.heightAt(x, z) - view.terrain!.heightAt(x, z)).toBeGreaterThan(0.3)
+    }
+  })
+
   it('are not dug a second time when the session that told of them comes back', () => {
     const [x, z] = [-50, 20]
     const { view, tiles } = city()

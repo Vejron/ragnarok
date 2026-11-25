@@ -126,7 +126,7 @@ impl Mechanic for Gates {
         for id in pressed {
             let at = world.entities.of::<Player>(id).character.position;
             let Some(site) = self.nearest(at, GATE_REACH) else { continue };
-            if world.destroyed.iter().any(|&(object, _)| object == Obj::Building(site.id)) {
+            if world.destroyed.iter().any(|felled| felled.object == Obj::Building(site.id)) {
                 continue;
             }
             let Some(shut) = world.gate_shut(site.id, site.opening) else { continue };

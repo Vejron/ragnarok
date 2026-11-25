@@ -2,7 +2,7 @@
 // change the Rust and run `npm run gen:consts`. Client-only constants live in consts.ts.
 
 /** Wire schema version. Bumped on any incompatible protocol or world-format change. */
-export const PROTOCOL_VERSION = 97
+export const PROTOCOL_VERSION = 99
 
 /** Why a page closes its session (`Bye`): the tab is closing or reloading. */
 export const BYE_LEAVING = 0
@@ -794,6 +794,59 @@ export const CRATER_MAX_KEPT = 2000
 
 /** A crater's scorch fades out over this long, seconds; then it is forgotten. Its hole stays. */
 export const CRATER_FADE_SECONDS = 30 * 60
+
+/**
+ * Craters heal (CRATERS.md, "Healing"): ground a crater dug goes back to what the importer left this
+ * long after the last crater that dug it, seconds, once nobody can see it happen.
+ */
+export const CRATER_HEAL_SECONDS = 7 * 60
+
+/**
+ * The world does not heal (craters filling in, trees growing back, fences mended) where a player is
+ * nearer than this, metres on the ground plane, so that nobody sees it happen.
+ */
+export const HEAL_CLEAR = 400.0
+
+/**
+ * Ground does not heal while anything (a soldier, a vehicle, an item, a placed cube) is within this
+ * of it, metres, so that nothing is buried as the ground rises.
+ */
+export const CRATER_HEAL_MARGIN = 4.0
+
+/** How often the server looks for ground to heal and trees to grow, ticks. */
+export const HEAL_CHECK_TICKS = 60
+
+/**
+ * Regrowth (REGROWTH.md): a felled tree grows back through stages, each taken only where nobody can
+ * see it. `GROWN_LOG`: it lies felled. `GROWN_SAPLING`: the log has rotted and a sapling stands, not
+ * solid. `GROWN_YOUNG`: a young tree, solid, which can be felled again. `GROWN_WHOLE`: as it was.
+ * A broken piece of fence or wall goes from `GROWN_LOG` (broken) straight to `GROWN_WHOLE`.
+ */
+export const GROWN_LOG = 0
+export const GROWN_SAPLING = 1
+export const GROWN_YOUNG = 2
+export const GROWN_WHOLE = 3
+
+/**
+ * How big a sapling and a young tree are, as a share of the tree they grow into: drawn, and for a
+ * young tree its trunk and its health too.
+ */
+export const TREE_SAPLING_SCALE = 0.25
+export const TREE_YOUNG_SCALE = 0.6
+
+/** When each stage may come, seconds after the tree was felled. */
+export const REGROW_SAPLING_SECONDS = 4 * 60
+export const REGROW_YOUNG_SECONDS = 9 * 60
+export const REGROW_WHOLE_SECONDS = 15 * 60
+
+/** When a broken piece of fence or wall may be mended, seconds after it broke. */
+export const LINE_MEND_SECONDS = 15 * 60
+
+/**
+ * What becomes solid again waits while anything is within this of it, metres: a tree's trunk, a piece
+ * of fence or wall.
+ */
+export const REGROW_CLEARANCE = 1.0
 
 /** The tank gun. */
 export const SHELL_COOLDOWN_TICKS = 90

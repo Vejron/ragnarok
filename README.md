@@ -39,7 +39,8 @@ The docs are in [docs/](docs/).
 - [ZOMBIES.md](docs/ZOMBIES.md): zombies that rise in hordes at night, shamble after you and claw, and can be shot apart limb by limb
 - [BUILDING.md](docs/BUILDING.md): placing cubes with bricks
 - [INTERIORS.md](docs/INTERIORS.md): floors and stairs inside every house big enough, worked out from its footprint, with its door open and its floors blasted like its walls
-- [CRATERS.md](docs/CRATERS.md) and [SCORCH.md](docs/SCORCH.md): shells digging the ground, and the marks they leave
+- [CRATERS.md](docs/CRATERS.md) and [SCORCH.md](docs/SCORCH.md): shells digging the ground, and the marks they leave; the ground heals where nobody is near
+- [REGROWTH.md](docs/REGROWTH.md): felled trees grow back through a sapling and a young tree, and broken fences and walls are mended, where nobody can see it
 - [CROPS.md](docs/CROPS.md): wheat on the farmland, high enough to hide a crouched soldier from other players and from the bots
 - [GUNSMOKE.md](docs/GUNSMOKE.md): a shell leaving the barrel: fire, a bank of smoke sized to the gun, brake jets, sparks, dust and a barrel that goes on smoking, with smoke that churns, leans with the wind and is lit by flashes and lamps; small arms smoke too, every gun has a shaped muzzle flare, and the sniper kicks down its scope
 - [HULL-DAMAGE.md](docs/HULL-DAMAGE.md): what a round leaves on a vehicle: dents, soot, holes ringed with blued steel and gouges, drawn by the mesh's own shader, and the blow that rocks it, a Titan too

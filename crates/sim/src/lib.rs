@@ -29,6 +29,8 @@ mod ragdoll;
 mod stream;
 mod vehicle;
 pub use stream::Ram;
+/// A collider of the static world, as `tree_collider` and `fences::piece_collider` build them.
+pub use rapier3d::prelude::Collider;
 pub use ragdoll::{PARTS as RAGDOLL_PARTS, POSE_FLOATS as RAGDOLL_POSE_FLOATS, Ragdolls, SEGMENT_FLOATS as RAGDOLL_SEGMENT_FLOATS};
 pub use vehicle::{Breach, CarCondition, CarControls, CarImpact, CarMotion, CarPose, Hand, LIMB_GROUP, LimbsPose, Strike, breach, breach_velocity, half_extents};
 
@@ -114,6 +116,9 @@ pub struct Physics {
     /// Buildings to be given a new shape (`solid_of`), or taken out when nothing is left of them,
     /// at the start of the next step.
     replacements: Vec<(Obj, Option<SharedShape>)>,
+    /// Trees and pieces of fences and walls grown back or mended (`restore`): given these colliders,
+    /// in place of any they have, at the start of the next step.
+    restorations: Vec<(Obj, Collider)>,
     /// The collider of each chunk of placed cubes (`shared::construct`), by chunk, and the other way
     /// round. They are not destructible objects: what a blast does to them is the construct's business.
     constructs: HashMap<[i32; 3], ColliderHandle>,
@@ -342,13 +347,7 @@ pub(crate) fn static_object_colliders(world: &WorldFile) -> Result<Vec<(Collider
     }
     // A tree is solid up to the crown: an upright cylinder on the ground at its foot.
     for (index, tree) in world.trees.iter().enumerate().filter(|(_, tree)| tree.solid) {
-        let half_height = from_cm(tree.trunk_height()) / 2.0;
-        let mut cylinder = ColliderBuilder::cylinder(half_height, from_cm(tree.trunk_radius()))
-            .translation(Vector::new(from_cm(tree.x), from_cm(tree.base) + half_height, from_cm(tree.z)));
-        if tree.destructible() {
-            cylinder = cylinder.collision_groups(InteractionGroups::new(TREE_GROUP, Group::ALL, InteractionTestMode::And));
-        }
-        let cylinder = cylinder.build();
+        let cylinder = tree_collider(tree, 1.0);
         // A rock is solid but is no `Obj`: nothing damages or fells it.
         let object = if tree.destructible() { world.tree_ids.get(index).map(|&id| Obj::Tree(id)) } else { None };
         colliders.push((cylinder, object));
@@ -360,6 +359,32 @@ pub(crate) fn static_object_colliders(world: &WorldFile) -> Result<Vec<(Collider
     colliders.extend(fences::piece_colliders(&world.lines).into_iter().map(|(piece, object)| (piece, Some(object))));
     colliders.extend(world.graves.iter().map(|grave| (grave_collider(grave), None)));
     Ok(colliders)
+}
+
+/// A tree's collider, solid up to the crown: an upright cylinder on the ground at its foot, its height
+/// and radius times `scale` (a young tree growing back, REGROWTH.md, is smaller).
+pub fn tree_collider(tree: &shared::world::Tree, scale: f32) -> Collider {
+    let half_height = from_cm(tree.trunk_height()) * scale / 2.0;
+    let mut cylinder = ColliderBuilder::cylinder(half_height, from_cm(tree.trunk_radius()) * scale)
+        .translation(Vector::new(from_cm(tree.x), from_cm(tree.base) + half_height, from_cm(tree.z)));
+    if tree.destructible() {
+        cylinder = cylinder.collision_groups(InteractionGroups::new(TREE_GROUP, Group::ALL, InteractionTestMode::And));
+    }
+    cylinder.build()
+}
+
+/// The collider `object` has in `world` when standing whole, or as a young tree `scale` of its size:
+/// what a tree growing back or a piece of fence or wall mended is given (`Physics::restore`). None
+/// for anything else, or what `world` does not hold.
+pub fn regrown_collider(world: &WorldFile, object: Obj, scale: f32) -> Option<Collider> {
+    match object {
+        Obj::Tree(id) => {
+            let index = world.tree_ids.iter().position(|&tree| tree == id)?;
+            world.trees.get(index).filter(|tree| tree.solid).map(|tree| tree_collider(tree, scale))
+        }
+        Obj::Line(id) => shared::world::line_pieces(&world.lines).iter().find(|piece| piece.id == id).map(fences::piece_collider),
+        Obj::Building(_) => None,
+    }
 }
 
 /// How deep a tombstone is sunk into the ground, metres, so it stands on a slope.
@@ -652,6 +677,7 @@ impl Physics {
             handles: HashMap::new(),
             removals: Vec::new(),
             replacements: Vec::new(),
+            restorations: Vec::new(),
             constructs: HashMap::new(),
             construct_chunks: HashMap::new(),
             construct_shapes: Vec::new(),
@@ -746,6 +772,15 @@ impl Physics {
             self.removals.push(object);
         }
         there
+    }
+
+    /// Puts `object` back in the world with `collider` (`regrown_collider`), in place of any it has:
+    /// a tree growing back or a piece of a fence or wall mended (REGROWTH.md). Like `destroy`, it
+    /// takes effect at the start of the next `step_cars`.
+    pub fn restore(&mut self, object: Obj, collider: Collider) {
+        self.removals.retain(|&queued| queued != object);
+        self.restorations.retain(|(queued, _)| *queued != object);
+        self.restorations.push((object, collider));
     }
 
     /// Gives building `object` the collider `shape` (`solid_of`) in place of the one it has: a

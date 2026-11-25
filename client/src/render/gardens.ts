@@ -180,6 +180,14 @@ export class Gardens {
     this.layer.staleOver(x - radius, z - radius, x + radius, z + radius)
   }
 
+  /** The ground of a crater `dent` was told of has healed: what grew in it grows again. */
+  heal(x: number, z: number, radius: number) {
+    const at = this.craters.findIndex((c) => c.x === x && c.z === z && c.radius === radius)
+    if (at < 0) return
+    this.craters.splice(at, 1)
+    this.layer.staleOver(x - radius, z - radius, x + radius, z + radius)
+  }
+
   /** Which way the wind blows, a unit `[x, z]`. */
   blowing(direction: readonly [number, number]) {
     const wind = this.layer.material.uniforms.wind as number[]

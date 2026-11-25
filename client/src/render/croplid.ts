@@ -296,6 +296,11 @@ export class CropLid {
     }
   }
 
+  /** The ground of the crater `dent` was told of has healed: the lids it reached are laid whole again with their tiles (`regrowTile`). */
+  heal(x: number, z: number, radius: number) {
+    this.craters.delete(`${x},${z},${radius}`)
+  }
+
   removeTile(ref: Pick<TileRef, 'col' | 'row'>) {
     const tile = this.tiles.get(this.key(ref))
     if (!tile) return

@@ -23,7 +23,7 @@ const GUARDRAIL_FRICTION: f32 = 0.05;
 
 /// The collider of one piece of a fence or wall: a box from under the ground (`SUNK`) to its top,
 /// turned to the piece's line and tilted to the slope it stands on.
-fn piece_collider(piece: &LinePiece) -> Collider {
+pub fn piece_collider(piece: &LinePiece) -> Collider {
     let def = piece.def;
     let across = [piece.b[0] - piece.a[0], piece.base[1] - piece.base[0], piece.b[1] - piece.a[1]];
     let flat = across[0].hypot(across[2]);

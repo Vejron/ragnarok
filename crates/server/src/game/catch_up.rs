@@ -39,7 +39,7 @@ impl Game {
         out.push(encode(&Scores { tag: S_SCORES, scores }));
         // Always sent, even empty: the client takes the first one after the welcome as the catch-up
         // (not news to animate), and snapshots on the datagram channel can overtake it.
-        out.push(encode(&Destroyed { tag: S_DESTROYED, objects: world.destroyed.iter().map(|&(object, yaw)| destroyed_entry(object, yaw, 0)).collect() }));
+        out.push(encode(&Destroyed { tag: S_DESTROYED, objects: world.destroyed.iter().map(|felled| destroyed_entry(felled.object, felled.yaw, 0, felled.stage)).collect() }));
         let hurt: Vec<_> = world
             .object_hp
             .keys()

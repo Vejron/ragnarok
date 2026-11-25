@@ -32,6 +32,8 @@ export const S_BACKPACK = 18
 export const S_GATES = 19
 export const S_JOBS = 20
 export const S_DELIVERED = 21
+export const S_HEALED = 22
+export const S_REGROWN = 23
 
 export interface BulletSpawn {
   id: number
@@ -191,6 +193,7 @@ export interface DestroyedObject {
   index: number
   yaw: number
   force: number
+  stage: number
 }
 
 export interface Destroyed {
@@ -291,6 +294,29 @@ export interface Dug {
   tiles: DugTile[]
 }
 
+export interface RegrownObject {
+  kind: number
+  col: number
+  row: number
+  index: number
+  stage: number
+}
+
+export interface Regrown {
+  type: 'regrown'
+  objects: RegrownObject[]
+}
+
+export interface HealedTile {
+  col: number
+  row: number
+}
+
+export interface Healed {
+  type: 'healed'
+  tiles: HealedTile[]
+}
+
 export interface Marks {
   type: 'marks'
   tick: number
@@ -373,7 +399,7 @@ export interface Rtc {
   json: string
 }
 
-export type ServerMessage = Welcome | Snapshot | Pong | Leave | Kill | Scores | Profiles | Notice | Destroyed | Damaged | Carved | Built | Gates | Cratered | Dug | Marks | Backpack | Jobs | Delivered | Armor | Hit | Rtc
+export type ServerMessage = Welcome | Snapshot | Pong | Leave | Kill | Scores | Profiles | Notice | Destroyed | Damaged | Carved | Built | Gates | Cratered | Dug | Regrown | Healed | Marks | Backpack | Jobs | Delivered | Armor | Hit | Rtc
 
 function decodeBulletSpawn(r: unknown): BulletSpawn | undefined {
   if (!Array.isArray(r) || r.length !== 10) return undefined
@@ -441,15 +467,16 @@ function decodeProfileEntry(r: unknown): ProfileEntry | undefined {
 }
 
 function decodeDestroyedObject(r: unknown): DestroyedObject | undefined {
-  if (!Array.isArray(r) || r.length !== 6) return undefined
+  if (!Array.isArray(r) || r.length !== 7) return undefined
   const kind = w.int(r[0])
   const col = w.int(r[1])
   const row = w.int(r[2])
   const index = w.int(r[3])
   const yaw = w.int(r[4])
   const force = w.int(r[5])
-  if (kind === undefined || col === undefined || row === undefined || index === undefined || yaw === undefined || force === undefined) return undefined
-  return { kind, col, row, index, yaw: yaw / 1000, force: force / 255 }
+  const stage = w.int(r[6])
+  if (kind === undefined || col === undefined || row === undefined || index === undefined || yaw === undefined || force === undefined || stage === undefined) return undefined
+  return { kind, col, row, index, yaw: yaw / 1000, force: force / 255, stage }
 }
 
 function decodeDamagedBuilding(r: unknown): DamagedBuilding | undefined {
@@ -528,6 +555,25 @@ function decodeDugTile(r: unknown): DugTile | undefined {
   const runs = w.ints(r[2])
   if (col === undefined || row === undefined || runs === undefined) return undefined
   return { col, row, runs }
+}
+
+function decodeRegrownObject(r: unknown): RegrownObject | undefined {
+  if (!Array.isArray(r) || r.length !== 5) return undefined
+  const kind = w.int(r[0])
+  const col = w.int(r[1])
+  const row = w.int(r[2])
+  const index = w.int(r[3])
+  const stage = w.int(r[4])
+  if (kind === undefined || col === undefined || row === undefined || index === undefined || stage === undefined) return undefined
+  return { kind, col, row, index, stage }
+}
+
+function decodeHealedTile(r: unknown): HealedTile | undefined {
+  if (!Array.isArray(r) || r.length !== 2) return undefined
+  const col = w.int(r[0])
+  const row = w.int(r[1])
+  if (col === undefined || row === undefined) return undefined
+  return { col, row }
 }
 
 function decodeJobOffer(r: unknown): JobOffer | undefined {
@@ -686,6 +732,20 @@ function decodeDug(r: readonly unknown[]): Dug | undefined {
   return { type: 'dug', tiles }
 }
 
+function decodeRegrown(r: readonly unknown[]): Regrown | undefined {
+  if (r.length !== 2) return undefined
+  const objects = w.list(r[1], decodeRegrownObject)
+  if (objects === undefined) return undefined
+  return { type: 'regrown', objects }
+}
+
+function decodeHealed(r: readonly unknown[]): Healed | undefined {
+  if (r.length !== 2) return undefined
+  const tiles = w.list(r[1], decodeHealedTile)
+  if (tiles === undefined) return undefined
+  return { type: 'healed', tiles }
+}
+
 function decodeMarks(r: readonly unknown[]): Marks | undefined {
   if (r.length !== 3) return undefined
   const tick = w.int(r[1])
@@ -796,6 +856,10 @@ export function decodeMessage(r: readonly unknown[]): ServerMessage | undefined 
       return decodeCratered(r)
     case S_DUG:
       return decodeDug(r)
+    case S_REGROWN:
+      return decodeRegrown(r)
+    case S_HEALED:
+      return decodeHealed(r)
     case S_MARKS:
       return decodeMarks(r)
     case S_BACKPACK:

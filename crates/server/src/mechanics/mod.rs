@@ -42,7 +42,7 @@ pub use buses::{Bus, BusCall, BusDriver, Buses};
 pub use bots::{Bots, DRIVER, GUNNER, nearest_waypoint, road_route};
 pub use combat::{Combat, bearing, position_of};
 #[cfg(test)]
-pub use combat::damage_vehicle;
+pub use combat::{damage_object, damage_vehicle};
 #[cfg(test)]
 pub(crate) use combat::CARVE_REACH;
 pub(crate) use backpack::{carries, lying as backpack_lying};

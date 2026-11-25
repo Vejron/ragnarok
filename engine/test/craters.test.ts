@@ -28,6 +28,22 @@ describe('Craters', () => {
     expect(craters.takeDirty()).toEqual({ all: false, slots: [], buckets: [] })
   })
 
+  it('forgets the craters whose ground healed, from every cell they reached, and only those', () => {
+    const craters = new Craters()
+    craters.add(-20, 37, 8, 1.6, 0)
+    craters.add(200, 37, 4, 1, 0)
+    craters.takeDirty()
+    craters.forget((x) => x < 0)
+    for (let z = 37 - 12; z <= 37 + 12; z += 2) {
+      for (let x = -32; x <= -8; x += 2) expect(craters.listed(bucketAt(x, z))).not.toContain(0)
+    }
+    expect(craters.listed(bucketAt(200, 37))).toContain(1)
+    expect(craters.takeDirty().slots).toEqual([0])
+    let asked = 0
+    craters.forget(() => ++asked > 0)
+    expect(asked).toBe(1)
+  })
+
   it('keeps the newest craters of a full bucket', () => {
     const craters = new Craters()
     const n = CRATER_SLOTS + 5

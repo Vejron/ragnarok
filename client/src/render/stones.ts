@@ -209,6 +209,17 @@ export class Stones {
     }
   }
 
+  /** The ground of a crater `dent` was told of has healed: stones lie in it again. */
+  heal(x: number, z: number, radius: number) {
+    const at = this.craters.findIndex((c) => c.x === x && c.z === z && c.radius === radius)
+    if (at < 0) return
+    this.craters.splice(at, 1)
+    for (const [key, chunk] of this.chunks) {
+      const [cx, cz] = this.chunkAt(key)
+      if (x + radius >= cx * CHUNK && x - radius <= (cx + 1) * CHUNK && z + radius >= cz * CHUNK && z - radius <= (cz + 1) * CHUNK) chunk.stale = true
+    }
+  }
+
   /** The level of the water near `(x, z)`, NaN where there is none. */
   private waterAt(x: number, z: number): number {
     const shore = this.shores.get(this.tileKey(Math.floor((x + this.halfExtent) / this.tileSize), Math.floor((z + this.halfExtent) / this.tileSize)))

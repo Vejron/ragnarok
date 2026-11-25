@@ -56,6 +56,8 @@ const GIVE_ANGLE = 0.12
  */
 export class FallingTrees {
   private readonly falling: Falling[] = []
+  /** The logs lying, by the tile group they lie in, then by tree number: taken away as they rot (`lift`). */
+  private readonly logs = new WeakMap<Node, Map<number, Group>>()
   /** The debris of fence and wall pieces broken since the last `update`, thrown then. */
   private readonly bursts: ((fx: TreeFx) => void)[] = []
 
@@ -73,6 +75,9 @@ export class FallingTrees {
     if (!removeTreeInstance(group, index)) return false
     const { pivot } = standaloneTree(tree)
     group.add(pivot)
+    const logs = this.logs.get(group) ?? new Map<number, Group>()
+    this.logs.set(group, logs)
+    logs.set(index, pivot)
     // Where it falls to: yaw 0 faces -Z, so the direction is (-sin, -cos). Tipping over about
     // up × direction takes the top that way.
     const dx = -Math.sin(yaw)
@@ -163,6 +168,20 @@ export class FallingTrees {
       fall.pivot.quaternion.setFromAxisAngle(fall.axis, LANDED - bounce * (1 - k))
       if (k >= 1) this.falling.splice(i, 1)
     }
+  }
+
+  /**
+   * Takes away the log of tree number `index` lying in `group`: it has rotted, and a sapling stands
+   * where it grew (REGROWTH.md). Returns whether there was one.
+   */
+  lift(group: Node, index: number): boolean {
+    const pivot = this.logs.get(group)?.get(index)
+    if (!pivot) return false
+    this.logs.get(group)!.delete(index)
+    group.remove(pivot)
+    const at = this.falling.findIndex((fall) => fall.pivot === pivot)
+    if (at >= 0) this.falling.splice(at, 1)
+    return true
   }
 
   /** Forgets the animations in flight, for a tile group that is going away. */

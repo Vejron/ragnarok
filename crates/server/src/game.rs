@@ -31,6 +31,7 @@ const OFFICER_COURAGE: f32 = 0.7;
 mod catch_up;
 mod construct;
 mod craters;
+mod regrowth;
 pub use construct::{HALF_CUBE, cube_centre};
 pub use craters::Strike;
 pub(crate) mod feedback;
@@ -41,14 +42,14 @@ mod state;
 pub use crate::events::{Damaged, Died, Noise};
 pub use state::*;
 
-/// `object` as a `Destroyed` entry.
-fn destroyed_entry(object: Obj, yaw: i16, force: u8) -> DestroyedObject {
+/// `object` as a `Destroyed` entry, grown back to `stage` (`GROWN_*`).
+fn destroyed_entry(object: Obj, yaw: i16, force: u8, stage: u8) -> DestroyedObject {
     let (kind, id) = match object {
         Obj::Tree(id) => (OBJ_TREE, id),
         Obj::Building(id) => (OBJ_BUILDING, id),
         Obj::Line(id) => (OBJ_LINE, id),
     };
-    DestroyedObject { kind, col: id.col, row: id.row, index: id.index, yaw, force }
+    DestroyedObject { kind, col: id.col, row: id.row, index: id.index, yaw, force, stage }
 }
 
 /// Player `id`'s `Profiles` entry: who they are, and which side.
@@ -592,6 +593,7 @@ impl Game {
         self.broadcast_damaged();
         self.broadcast_carved();
         self.broadcast_cratered();
+        self.heal();
         self.broadcast_built();
         self.broadcast_gates();
         self.broadcast_backpack();
@@ -643,7 +645,7 @@ impl Game {
         if self.world.fresh.destroyed.is_empty() {
             return;
         }
-        let entries = self.world.fresh.destroyed.drain(..).map(|(object, yaw, force)| destroyed_entry(object, yaw, force)).collect();
+        let entries = self.world.fresh.destroyed.drain(..).map(|(object, yaw, force)| destroyed_entry(object, yaw, force, GROWN_LOG)).collect();
         self.broadcast(encode(&Destroyed { tag: S_DESTROYED, objects: entries }));
     }
 
@@ -664,6 +666,45 @@ impl Game {
         }
         let craters = std::mem::take(&mut self.world.fresh.craters);
         self.broadcast(encode(&Cratered { tag: S_CRATERED, live: true, craters }));
+    }
+
+    /// Once every `HEAL_CHECK_TICKS`, heals the dug ground (CRATERS.md, "Healing") and grows back the
+    /// felled trees and mends the broken fences and walls (REGROWTH.md) that nobody can see and
+    /// nothing stands on, and tells everyone what changed.
+    fn heal(&mut self) {
+        if !self.world.tick.is_multiple_of(HEAL_CHECK_TICKS) || (self.world.dug_tiles.is_empty() && !self.world.regrowing()) {
+            return;
+        }
+        let (eyes, things) = self.watchers();
+        let tiles = self.world.heal_craters(&eyes, &things);
+        if !tiles.is_empty() {
+            self.broadcast(encode(&Healed { tag: S_HEALED, tiles }));
+        }
+        let objects = self.world.regrow(&eyes, &things);
+        if !objects.is_empty() {
+            self.broadcast(encode(&Regrown { tag: S_REGROWN, objects }));
+        }
+    }
+
+    /// Where the players at a screen look from, `(x, z)` metres: their soldier, and what they sit in or
+    /// fly. Then where everything stands that the world healing would bury or grow through: every
+    /// soldier, bots too, every vehicle, and every other thing placed in the world.
+    fn watchers(&self) -> (Vec<[f32; 2]>, Vec<[f32; 2]>) {
+        let world = &self.world;
+        let flat = |p: [f32; 3]| [p[0], p[2]];
+        let eyes: Vec<[f32; 2]> = self
+            .outboxes
+            .keys()
+            .filter_map(|&id| world.entities.get::<Player>(id))
+            .flat_map(|player| {
+                let seat = player.seat.as_ref().and_then(|seat| world.physics.car_pose(seat.vehicle)).map(|pose| flat(pose.position));
+                std::iter::once(flat(player.character.position)).chain(seat)
+            })
+            .collect();
+        let mut things: Vec<[f32; 2]> = world.entities.all::<Player>().map(|(_, player)| flat(player.character.position)).collect();
+        things.extend(world.entities.ids::<With<Vehicle>>().into_iter().filter_map(|id| world.physics.car_pose(id)).map(|pose| flat(pose.position)));
+        things.extend(world.entities.all::<crate::entities::Transform>().map(|(_, t)| flat(t.position)));
+        (eyes, things)
     }
 
     /// Gives the cubes that changed this tick their colliders, and tells everyone what changed, as one message.
@@ -909,8 +950,106 @@ mod tests {
         let mut game = Game::new(map, 0).unwrap();
         // On the seam x = 0 between tiles (0, 0) and (1, 0).
         assert!(game.world.dig_crater([0.0, 3.0, -30.0], 5.6, 1.0, Strike::DOWN));
-        assert_eq!(game.world.dug_tiles.iter().copied().collect::<Vec<_>>(), vec![(0, 0), (1, 0)]);
+        assert_eq!(game.world.dug_tiles.keys().copied().collect::<Vec<_>>(), vec![(0, 0), (1, 0)]);
         assert_eq!(game.world.dug_ground().iter().map(|t| (t.col, t.row)).collect::<Vec<_>>(), vec![(0, 0), (1, 0)]);
+    }
+
+    /// A 200 m square of ground 3 m up, samples 5 m apart, cut into four tiles 100 m a side.
+    fn four_tile_game() -> Game {
+        let ground = shared::terrain::Ground { origin: -10_000, cell: 500, side: 41, heights: vec![300; 41 * 41] };
+        let map = WorldFile { version: WORLD_VERSION, half_extent: 10_000, spawns: vec![[0, 0]], tile_size: 10_000, ground, ..Default::default() };
+        Game::new(map, 0).unwrap()
+    }
+
+    /// How long a crater takes to be ready to heal, ticks.
+    const HEAL_WAIT: u32 = CRATER_HEAL_SECONDS * TICK_RATE;
+    /// Somewhere well out of sight of the four tiles.
+    const FAR: [f32; 2] = [2_000.0, 2_000.0];
+
+    #[test]
+    fn a_crater_heals_back_to_the_imported_ground_after_its_wait_with_nobody_near() {
+        let mut game = four_tile_game();
+        let pristine = game.world.map.ground.clone();
+        assert!(game.world.dig_crater([-50.0, 3.0, -50.0], 5.6, 1.0, Strike::DOWN));
+        game.world.tick += HEAL_WAIT - 1;
+        assert!(game.world.heal_craters(&[FAR], &[]).is_empty(), "not yet");
+        game.world.tick += 1;
+        assert_eq!(game.world.heal_craters(&[FAR], &[]), vec![HealedTile { col: 0, row: 0 }]);
+        assert_eq!(game.world.map.ground, pristine);
+        assert!(game.world.dug_tiles.is_empty());
+        assert!(game.world.craters.is_empty(), "its marks are forgotten with it");
+        assert!(game.world.dug_ground().is_empty());
+    }
+
+    #[test]
+    fn a_crater_does_not_heal_while_a_player_could_see_it_or_something_stands_in_it() {
+        let mut game = four_tile_game();
+        assert!(game.world.dig_crater([-50.0, 3.0, -50.0], 5.6, 1.0, Strike::DOWN));
+        game.world.tick += HEAL_WAIT;
+        // A player 300 m off the tile's edge.
+        assert!(game.world.heal_craters(&[[-50.0, 300.0]], &[]).is_empty());
+        // A vehicle parked at its rim.
+        assert!(game.world.heal_craters(&[FAR], &[[-46.0, -50.0]]).is_empty());
+        // A cube built in it.
+        let cube = shared::construct::cell_at([-50.0, 2.5, -50.0]);
+        game.world.construct.place(cube, shared::construct::Cube { colour: 0, material: 0 });
+        assert!(game.world.heal_craters(&[FAR], &[]).is_empty());
+        game.world.construct.remove(cube);
+        // Something on the same tile but away from the bowl, and something in another tile's crater.
+        assert!(game.world.dig_crater([50.0, 3.0, 50.0], 5.6, 1.0, Strike::DOWN));
+        assert_eq!(game.world.heal_craters(&[[-50.0, 600.0]], &[[-80.0, -80.0], [50.0, 50.0]]), vec![HealedTile { col: 0, row: 0 }], "out of sight, with nothing in it");
+    }
+
+    #[test]
+    fn a_crater_on_a_seam_heals_both_tiles_together_or_not_at_all() {
+        let mut game = four_tile_game();
+        let pristine = game.world.map.ground.clone();
+        // Over the seam x = 0 between tiles (0, 0) and (1, 0), then later one in (1, 0) alone.
+        assert!(game.world.dig_crater([0.0, 3.0, -30.0], 5.6, 1.0, Strike::DOWN));
+        game.world.tick += HEAL_WAIT / 2;
+        assert!(game.world.dig_crater([50.0, 3.0, -50.0], 5.6, 1.0, Strike::DOWN));
+        game.world.tick += HEAL_WAIT / 2;
+        assert!(game.world.heal_craters(&[FAR], &[]).is_empty(), "tile (0, 0) waits for the crater it shares with (1, 0)");
+        game.world.tick += HEAL_WAIT / 2;
+        assert_eq!(game.world.heal_craters(&[FAR], &[]), vec![HealedTile { col: 0, row: 0 }, HealedTile { col: 1, row: 0 }]);
+        assert_eq!(game.world.map.ground, pristine);
+    }
+
+    #[test]
+    fn craters_apart_on_neighbouring_tiles_heal_each_on_its_own() {
+        let mut game = four_tile_game();
+        assert!(game.world.dig_crater([-50.0, 3.0, -50.0], 5.6, 1.0, Strike::DOWN));
+        game.world.tick += HEAL_WAIT / 2;
+        assert!(game.world.dig_crater([50.0, 3.0, -50.0], 5.6, 1.0, Strike::DOWN));
+        game.world.tick += HEAL_WAIT / 2;
+        assert_eq!(game.world.heal_craters(&[FAR], &[]), vec![HealedTile { col: 0, row: 0 }]);
+        assert_eq!(game.world.map.ground.height_at(50.0, -50.0), 2.0, "the younger one is still there");
+        assert_eq!(game.world.craters.len(), 1);
+    }
+
+    #[test]
+    fn healed_ground_is_told_to_everyone_but_not_while_a_player_is_near() {
+        let mut game = four_tile_game();
+        let (id, mut player) = join(&mut game);
+        assert!(game.world.dig_crater([-50.0, 3.0, -50.0], 5.6, 1.0, Strike::DOWN));
+        game.world.tick = (game.world.tick + HEAL_WAIT).next_multiple_of(HEAL_CHECK_TICKS);
+        drain(&mut player);
+        game.heal();
+        assert_eq!(game.world.dug_tiles.len(), 1, "the player stands beside it");
+        game.world.entities.of_mut::<Player>(id).character.position = [2_000.0, 0.0, 2_000.0];
+        game.heal();
+        let healed: Vec<Healed> = drain(&mut player)
+            .into_iter()
+            .filter_map(|out| match out {
+                Outgoing::Reliable(bytes) if peek_tag(&bytes) == Some(S_HEALED) => decode::<Healed>(&bytes),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(healed.len(), 1);
+        assert_eq!(healed[0].tiles, vec![HealedTile { col: 0, row: 0 }]);
+        let (_, mut late) = join(&mut game);
+        let caught_up = drain(&mut late);
+        assert!(dug(&caught_up).is_empty() && cratered(caught_up).is_empty(), "a joiner hears of neither the hole nor its marks");
     }
 
     #[test]

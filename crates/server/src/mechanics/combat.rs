@@ -7,7 +7,7 @@ use super::spawn;
 use super::projectiles::{self, Flying, Stage};
 use crate::entities::{Health, HurtBy, Respawn, With};
 use crate::events::Hooks;
-use crate::game::{Bot, Damaged, Died, Drone, Player, Seats, TEAM_NONE, Vehicle, World, Wreck};
+use crate::game::{Bot, Damaged, Died, Drone, Felled, Player, Seats, TEAM_NONE, Vehicle, World, Wreck};
 use sim::Obj;
 use shared::consts::*;
 use shared::armor::Pen;
@@ -390,12 +390,15 @@ const FORCE_PER_HEALTH: f32 = 64.0;
 /// building never comes down: its health stops at 1, the worst damage stage, which it shows by colour.
 /// Returns whether this destroyed it.
 pub fn damage_object(world: &mut World, object: Obj, amount: u16, from: [f32; 3]) -> bool {
-    if amount == 0 || world.felled.contains(&object) {
+    // A young tree growing back (REGROWTH.md) stands, and can be felled again.
+    let young = world.felled.contains(&object) && world.destroyed.iter().any(|felled| felled.object == object && felled.stage == GROWN_YOUNG);
+    if amount == 0 || (world.felled.contains(&object) && !young) {
         return false;
     }
     // Full health and where it stands, in metres.
     let (full, at) = match object {
         Obj::Tree(id) => match world.tree(id) {
+            Some(tree) if young => (((f32::from(tree.hp()) * TREE_YOUNG_SCALE) as u16).max(1), [tree.x as f32 / 100.0, tree.z as f32 / 100.0]),
             Some(tree) => (tree.hp(), [tree.x as f32 / 100.0, tree.z as f32 / 100.0]),
             None => return false,
         },
@@ -436,7 +439,12 @@ pub fn damage_object(world: &mut World, object: Obj, amount: u16, from: [f32; 3]
     }
     // `look`'s convention: yaw 0 faces -Z.
     let yaw = to_mrad((-(at[0] - from[0])).atan2(-(at[1] - from[2])));
-    world.destroyed.push((object, yaw));
+    let felled = Felled { object, yaw, since: world.tick, stage: GROWN_LOG };
+    match world.destroyed.iter_mut().find(|felled| felled.object == object) {
+        // A young tree felled again starts over.
+        Some(again) => *again = felled,
+        None => world.destroyed.push(felled),
+    }
     world.felled.insert(object);
     // How hard it was hit, for the way it falls: a killing blow of its own health is 64, and
     // four times that or more is the most violent a client shows.

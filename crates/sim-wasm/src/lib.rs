@@ -165,6 +165,20 @@ impl ClientSim {
         self.physics.destroy(Obj::Tree(ObjId { col, row, index }))
     }
 
+    /// Tree `index` of tile `(col, row)` has grown back (REGROWTH.md): solid again at `scale` of its
+    /// size (1 whole), or not solid at all for 0 (a sapling). Takes effect at the next `refresh`.
+    #[wasm_bindgen(js_name = growTree)]
+    pub fn grow_tree(&mut self, col: u16, row: u16, index: u32, scale: f32) -> bool {
+        let tree = Obj::Tree(ObjId { col, row, index });
+        if scale <= 0.0 { self.physics.destroy(tree) } else { self.physics.regrow(tree, scale) }
+    }
+
+    /// Mends piece `index` of the fences and walls of tile `(col, row)`; takes effect at the next `refresh`.
+    #[wasm_bindgen(js_name = mendLine)]
+    pub fn mend_line(&mut self, col: u16, row: u16, index: u32) -> bool {
+        self.physics.regrow(Obj::Line(ObjId { col, row, index }), 1.0)
+    }
+
     /// Breaks piece `index` of the fences and walls of tile `(col, row)` (`shared::world::line_pieces`);
     /// takes effect at the next `refresh`.
     #[wasm_bindgen(js_name = breakLine)]

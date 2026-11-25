@@ -46,7 +46,7 @@ pub use crate::vehicles::police_car::*;
 pub use crate::vehicles::ambulance::*;
 
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
-pub const PROTOCOL_VERSION: u8 = 97;
+pub const PROTOCOL_VERSION: u8 = 99;
 
 /// Why a page closes its session (`Bye`): the tab is closing or reloading.
 pub const BYE_LEAVING: u8 = 0;
@@ -557,6 +557,39 @@ pub const CRATER_MAX_DEPTH: f32 = 4.0;
 pub const CRATER_MAX_KEPT: usize = 2000;
 /// A crater's scorch fades out over this long, seconds; then it is forgotten. Its hole stays.
 pub const CRATER_FADE_SECONDS: u32 = 30 * 60;
+/// Craters heal (CRATERS.md, "Healing"): ground a crater dug goes back to what the importer left this
+/// long after the last crater that dug it, seconds, once nobody can see it happen.
+pub const CRATER_HEAL_SECONDS: u32 = 7 * 60;
+/// The world does not heal (craters filling in, trees growing back, fences mended) where a player is
+/// nearer than this, metres on the ground plane, so that nobody sees it happen.
+pub const HEAL_CLEAR: f32 = 400.0;
+/// Ground does not heal while anything (a soldier, a vehicle, an item, a placed cube) is within this
+/// of it, metres, so that nothing is buried as the ground rises.
+pub const CRATER_HEAL_MARGIN: f32 = 4.0;
+/// How often the server looks for ground to heal and trees to grow, ticks.
+pub const HEAL_CHECK_TICKS: u32 = 60;
+
+/// Regrowth (REGROWTH.md): a felled tree grows back through stages, each taken only where nobody can
+/// see it. `GROWN_LOG`: it lies felled. `GROWN_SAPLING`: the log has rotted and a sapling stands, not
+/// solid. `GROWN_YOUNG`: a young tree, solid, which can be felled again. `GROWN_WHOLE`: as it was.
+/// A broken piece of fence or wall goes from `GROWN_LOG` (broken) straight to `GROWN_WHOLE`.
+pub const GROWN_LOG: u8 = 0;
+pub const GROWN_SAPLING: u8 = 1;
+pub const GROWN_YOUNG: u8 = 2;
+pub const GROWN_WHOLE: u8 = 3;
+/// How big a sapling and a young tree are, as a share of the tree they grow into: drawn, and for a
+/// young tree its trunk and its health too.
+pub const TREE_SAPLING_SCALE: f32 = 0.25;
+pub const TREE_YOUNG_SCALE: f32 = 0.6;
+/// When each stage may come, seconds after the tree was felled.
+pub const REGROW_SAPLING_SECONDS: u32 = 4 * 60;
+pub const REGROW_YOUNG_SECONDS: u32 = 9 * 60;
+pub const REGROW_WHOLE_SECONDS: u32 = 15 * 60;
+/// When a broken piece of fence or wall may be mended, seconds after it broke.
+pub const LINE_MEND_SECONDS: u32 = 15 * 60;
+/// What becomes solid again waits while anything is within this of it, metres: a tree's trunk, a piece
+/// of fence or wall.
+pub const REGROW_CLEARANCE: f32 = 1.0;
 
 /// The tank gun.
 pub const SHELL_COOLDOWN_TICKS: u32 = 90;

@@ -865,7 +865,7 @@ fn rifle_rounds_wear_a_tree_down_until_it_falls_away_from_the_shooter() {
     damage_object(&mut game.world, tree, 12, [0.0, 1.5, 0.0]);
     assert_eq!(game.world.destroyed.len(), 1);
     // The shooter is at x = 0 and the tree at x = +10, so it falls towards +X: yaw -90°.
-    let yaw = from_mrad(game.world.destroyed[0].1);
+    let yaw = from_mrad(game.world.destroyed[0].yaw);
     assert!((yaw + std::f32::consts::FRAC_PI_2).abs() < 0.01, "{yaw}");
     // Nothing happens twice.
     damage_object(&mut game.world, tree, 255, [0.0, 1.5, 0.0]);
@@ -941,7 +941,7 @@ fn a_blast_breaks_the_pieces_near_it_and_a_late_joiner_is_told_which_are_gone() 
     // Against the wall, by its second piece (z -3 to 0): that piece goes and the far ones stand.
     blast(&mut game.world, Blast { point: [9.5, 0.5, -1.5], radius: 4.0, damage: 100.0, knock: 0.0, dir: [0.0, 1.0, 0.0], attacker: Some(id), weapon: WEAPON_ROCKET });
     game.step();
-    let gone: Vec<u32> = game.world.destroyed.iter().map(|(object, _)| match object { Obj::Line(id) => id.index, other => panic!("{other:?}") }).collect();
+    let gone: Vec<u32> = game.world.destroyed.iter().map(|felled| match felled.object { Obj::Line(id) => id.index, other => panic!("{other:?}") }).collect();
     assert!(gone.contains(&1) && !gone.contains(&3), "{gone:?}");
     assert!(gone.iter().all(|index| index >> 16 == 0), "the fence 10 m off stands: {gone:?}");
     // The gap lets a ray through, and the piece beside it does not.
@@ -962,7 +962,7 @@ fn a_blast_breaks_the_pieces_near_it_and_a_late_joiner_is_told_which_are_gone() 
     assert!(told(&mut late).contains(&(OBJ_LINE, 2, 3, 1)), "a late joiner was not told");
     // A blast by the fence takes its pieces out too: wire and posts go easily.
     blast(&mut game.world, Blast { point: [19.0, 0.5, 0.0], radius: 4.0, damage: 40.0, knock: 0.0, dir: [0.0, 1.0, 0.0], attacker: Some(id), weapon: WEAPON_ROCKET });
-    assert!(game.world.destroyed.iter().any(|(object, _)| matches!(object, Obj::Line(id) if id.index >> 16 == 1)));
+    assert!(game.world.destroyed.iter().any(|felled| matches!(felled.object, Obj::Line(id) if id.index >> 16 == 1)));
 }
 
 #[test]

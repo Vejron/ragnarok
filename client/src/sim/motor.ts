@@ -228,6 +228,20 @@ export class SimMotor {
     })
   }
 
+  /** Tree `index` of tile `(col, row)` has grown back: solid at `scale` of its size, or not at all for 0 (a sapling). */
+  growTree(col: number, row: number, index: number, scale: number) {
+    timed(() => {
+      if (this.sim.growTree(col, row, index, scale)) this.refresh()
+    })
+  }
+
+  /** Mends piece `index` of the fences and walls of tile `(col, row)`. */
+  mendLine(col: number, row: number, index: number) {
+    timed(() => {
+      if (this.sim.mendLine(col, row, index)) this.refresh()
+    })
+  }
+
   /**
    * Gives each of the tile's `carved` buildings its shape without the cells listed for it, as the
    * server has them.

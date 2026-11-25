@@ -47,6 +47,8 @@ pub const S_BACKPACK: u8 = 18;
 pub const S_GATES: u8 = 19;
 pub const S_JOBS: u8 = 20;
 pub const S_DELIVERED: u8 = 21;
+pub const S_HEALED: u8 = 22;
+pub const S_REGROWN: u8 = 23;
 
 /// `Hit` roles: whose feedback it is.
 /// You hurt something.
@@ -462,9 +464,10 @@ messages! {
 
     /// A building or tree that is gone. `kind` is `OBJ_*`; `(col, row, index)` is the object's `ObjId`;
     /// `yaw` is the way a tree falls, or the direction a blast came from for a building; `force` how
-    /// violently it went (0 for a joiner's catch-up).
+    /// violently it went (0 for a joiner's catch-up); `stage` how far it has grown back since
+    /// (`GROWN_*`, REGROWTH.md): `GROWN_LOG` when it has just gone.
     #[derive(Eq)]
-    [] DestroyedObject { kind: u8, col: u16, row: u16, index: u32, yaw: i16 as mrad, force: u8 as byte }
+    [] DestroyedObject { kind: u8, col: u16, row: u16, index: u32, yaw: i16 as mrad, force: u8 as byte, stage: u8 }
 
     /// Sent on a reliable stream: to everyone when buildings or trees are destroyed, and to a player who
     /// just joined with all that already are.
@@ -549,6 +552,26 @@ messages! {
     /// ground was dug, in batches (CRATERS.md, "Lasting ground").
     #[derive(Eq)]
     [S_DUG] Dug { tiles: Vec<DugTile> }
+
+    /// A felled tree or a broken piece of fence or wall that has grown back a stage: `kind` is `OBJ_*`,
+    /// `(col, row, index)` its `ObjId`, `stage` the `GROWN_*` it is at now. `GROWN_WHOLE` is as it was.
+    #[derive(Copy, Eq)]
+    [] RegrownObject { kind: u8, col: u16, row: u16, index: u32, stage: u8 }
+
+    /// Sent on a reliable stream to everyone when felled trees grow back a stage or broken fences and
+    /// walls are mended (REGROWTH.md), nowhere a player could see it happen.
+    #[derive(Eq)]
+    [S_REGROWN] Regrown { objects: Vec<RegrownObject> }
+
+    /// A tile whose ground has healed back to its file's heights (`HealedTile`).
+    #[derive(Copy, Eq)]
+    [] HealedTile { col: u16, row: u16 }
+
+    /// Sent on a reliable stream to everyone when craters have healed (CRATERS.md, "Healing"): these
+    /// tiles' ground is as the importer left it again, and the craters that reached only them, or
+    /// tiles never dug, are forgotten with their marks.
+    #[derive(Eq)]
+    [S_HEALED] Healed { tiles: Vec<HealedTile> }
 
     /// Sent on a reliable stream to the one player it is about, once per tick per `(role, kind)` with
     /// the amounts summed. `role` is `HIT_*`: dealt (you hurt something) or taken (something hurt you

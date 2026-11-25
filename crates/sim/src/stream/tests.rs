@@ -232,6 +232,33 @@ fn a_felled_tree_and_a_fallen_building_stop_colliding() {
 }
 
 #[test]
+fn a_tree_grown_back_and_a_fence_mended_collide_again_and_go_with_their_tile() {
+    let (manifest, tiles) = fixture();
+    let mut physics = streamed(&manifest, &tiles);
+    let regrowable: Vec<Obj> = physics.handles.keys().copied().filter(|o| matches!(o, Obj::Tree(_) | Obj::Line(_))).collect();
+    assert!(regrowable.iter().any(|o| matches!(o, Obj::Tree(_))));
+    for object in &regrowable {
+        assert!(physics.destroy(*object));
+    }
+    physics.refresh();
+    for object in &regrowable {
+        // A young tree first, then whole: the second takes the first's place.
+        assert!(physics.regrow(*object, 0.6));
+        assert!(physics.regrow(*object, 1.0));
+    }
+    physics.refresh();
+    let mut back: Vec<Obj> = physics.handles.keys().copied().filter(|o| matches!(o, Obj::Tree(_) | Obj::Line(_))).collect();
+    back.sort_by_key(|o| format!("{o:?}"));
+    let mut wanted = regrowable.clone();
+    wanted.sort_by_key(|o| format!("{o:?}"));
+    assert_eq!(back, wanted);
+    for (col, row) in tiles.iter().map(|(col, row, _)| (*col, *row)).collect::<Vec<_>>() {
+        physics.remove_tile(col, row);
+    }
+    assert!(physics.handles.is_empty(), "the colliders grown back went with their tiles");
+}
+
+#[test]
 fn vehicles_are_solid_where_the_snapshot_puts_them_and_a_tank_loses_its_turret() {
     let manifest = Manifest { half_extent: 5_000, tile_size: 10_000, ..Default::default() };
     let mut physics = Physics::streamed(&manifest);

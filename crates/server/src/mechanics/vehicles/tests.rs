@@ -822,7 +822,7 @@ fn drive_into_a_line(kind: u8, speed: f32, line: u8) -> Option<(f32, f32, f32)> 
         Vehicles.on_tick(&mut game.world, TICK_DT);
         let after = flat(game.world.physics.car_pose(vid)?.velocity);
         if !game.world.destroyed.is_empty() {
-            assert!(game.world.destroyed.iter().all(|(object, _)| matches!(object, Obj::Line(id) if (id.col, id.row) == (2, 3))));
+            assert!(game.world.destroyed.iter().all(|felled| matches!(felled.object, Obj::Line(id) if (id.col, id.row) == (2, 3))));
             return Some((before, after, braked));
         }
         braked = before - after;
