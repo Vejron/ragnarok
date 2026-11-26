@@ -82,12 +82,15 @@ pub struct Plate {
     pub slit: bool,
     /// The way it looks out: its face, even when it can be struck from any (a shield's sight gap).
     pub towards: Zone,
+    /// Glass, a slit as far as a round goes: it goes straight through and the glass breaks, but the
+    /// vehicle itself takes no harm and is not told of it as a slit.
+    pub glass: bool,
 }
 
 impl Plate {
     /// A plain plate of `mm` on a whole `face` of the hull.
     pub const fn hull(name: &'static str, face: Zone, mm: f32) -> Plate {
-        Plate { name, on: On::Hull, face: Some(face), region: None, mm, slope: 0.0, ricochet: 75.0, slit: false, towards: face }
+        Plate { name, on: On::Hull, face: Some(face), region: None, mm, slope: 0.0, ricochet: 75.0, slit: false, towards: face, glass: false }
     }
 
     /// The same plate on solid `index` instead.
@@ -114,7 +117,13 @@ impl Plate {
 
     /// A slit in `face` of the hull at `region`.
     pub const fn slit(name: &'static str, face: Zone, region: Box3) -> Plate {
-        Plate { name, on: On::Hull, face: Some(face), region: Some(region), mm: 0.0, slope: 0.0, ricochet: 91.0, slit: true, towards: face }
+        Plate { name, on: On::Hull, face: Some(face), region: Some(region), mm: 0.0, slope: 0.0, ricochet: 91.0, slit: true, towards: face, glass: false }
+    }
+
+    /// Glass all round solid `index` (a car's cabin, its roof included): a round goes straight through
+    /// it to whoever sits behind, breaking it, and does the car no harm.
+    pub const fn glass(index: u8) -> Plate {
+        Plate { name: "glass", on: On::Solid(index), face: None, region: None, mm: 0.0, slope: 0.0, ricochet: 91.0, slit: true, towards: Zone::Front, glass: true }
     }
 
     /// The same plate looking out `towards` rather than square to its face: a visor in a sloping glacis,
@@ -301,7 +310,7 @@ pub struct Armor {
 
 /// Unarmoured: a sheet of something everywhere, which any round goes through.
 const fn skin(name: &'static str, mm: f32, ricochet: f32) -> Plate {
-    Plate { name, on: On::Any, face: None, region: None, mm, slope: 0.0, ricochet, slit: false, towards: Zone::Front }
+    Plate { name, on: On::Any, face: None, region: None, mm, slope: 0.0, ricochet, slit: false, towards: Zone::Front, glass: false }
 }
 
 /// A slit as the client draws it: a dark gap on the model, and a glint behind it while someone looks out.
@@ -373,6 +382,8 @@ pub const ARMOURED_MM: f32 = 8.0;
 
 /// A car's pressed steel: any bullet goes through, and only the most grazing glances off.
 pub const SHEET: Armor = Armor { plates: &[skin("body", 1.5, 82.0)], modules: &[], canvas: false };
+/// A car with a cabin (`spec.solids[0]`, a `Solid::cabin`): glass all round it, and pressed steel below.
+pub const GLAZED: Armor = Armor { plates: &[Plate::glass(0), skin("body", 1.5, 82.0)], modules: &[], canvas: false };
 /// A helicopter's or a walker's light alloy skin: a little more than a car's.
 pub const ALLOY: Armor = Armor { plates: &[skin("skin", 3.0, 82.0)], modules: &[], canvas: false };
 /// Canvas and wood: nothing glances off.

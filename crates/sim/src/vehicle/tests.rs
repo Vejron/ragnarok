@@ -3338,3 +3338,27 @@ fn a_car_out_of_fuel_has_no_power_whatever_its_health() {
     assert_eq!((dry.power, dry.turn), (0.0, 0.0), "its engine gives nothing");
     assert_eq!(dry.wheels, whole.wheels, "and nothing else about it changes");
 }
+
+#[test]
+fn a_round_meets_a_cars_cabin_above_its_hull_where_nothing_else_does() {
+    let mut physics = Physics::new(&flat()).unwrap();
+    physics.add_car(1, KIND_VOLVO_240, [0.0, 1.0, 0.0], 0.0);
+    for _ in 0..60 {
+        physics.step_cars(TICK_DT);
+    }
+    let pose = physics.car_pose(1).unwrap();
+    // Through the side glass, above the hull's top.
+    let inside = pose.world_point([0.0, 0.7, 0.0]);
+    let from = [inside[0] - 10.0, inside[1], inside[2]];
+    let dir = [1.0, 0.0, 0.0];
+    let (t, hit) = physics.cast_round(from, dir, 20.0, 99).expect("the cabin stops a round");
+    assert_eq!(hit, Some(1));
+    // The glass leans in towards the roof, so at this height it is narrower than at the beltline.
+    assert!(t > 10.0 - 0.82 && t < 10.0 - 0.75, "{t}");
+    assert!(physics.cast_ray_hit(from, dir, 20.0, 99).is_none(), "nothing but a round meets it");
+    let strike = physics.armor_strike(from, dir, 20.0, 1).expect("armour judges it");
+    assert_eq!(strike.solid, Some(0), "the cabin is the kind's first solid");
+    assert!(strike.point[1] > 0.6 && strike.point[1] < 0.8, "{strike:?}");
+    // A round that starts inside it, from a soldier who has climbed in, goes out through the glass.
+    assert!(physics.cast_round(inside, dir, 20.0, 99).is_none());
+}

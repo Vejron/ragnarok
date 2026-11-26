@@ -19,9 +19,13 @@ pub const SIERRA_MAX_SPEED: f32 = 40.0;
 /// The driver on the left, then the passengers, front to back.
 pub const SIERRA_SEAT_HEADS: [[f32; 3]; 5] = [[-0.38, 0.71, 0.0], [0.38, 0.71, 0.0], [-0.4, 0.69, 0.88], [0.4, 0.69, 0.88], [0.0, 0.69, 0.88]];
 
+/// Its cabin over the hull box, measured off the model's glass: what a round meets above the hull,
+/// from the beltline to the roof. It is glass (`GLAZED`): a round goes through it to whoever sits behind.
+const CABIN: Solid = Solid::cabin(SIERRA_HALF_EXTENTS[1], 0.94, [-1.20, 2.08], [-0.75, 1.05], [0.80, 0.65]);
+
 /// The engine under the bonnet and the fuel tank under the boot floor; the crew sit behind glass.
 const ARMOR: Armor = Armor {
-    plates: SHEET.plates,
+    plates: GLAZED.plates,
     modules: &[
         Module::new(Part::Engine, [0.0, 0.05, -1.55], [0.4, 0.25, 0.4], 110),
         Module::new(Part::Fuel, [0.0, -0.15, 1.55], [0.4, 0.12, 0.3], 90),
@@ -69,7 +73,7 @@ pub(super) const SIERRA: VehicleDef = VehicleDef {
         buttons: Buttons::Boost,
         boost: Some(Boost::CAR),
         aims: false,
-        solids: &[],
+        solids: &[CABIN],
         tongue: 0.0,
         slide: 0.0,
         roll: 0.0,

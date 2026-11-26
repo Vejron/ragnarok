@@ -59,8 +59,9 @@ pub enum Outcome {
     /// It is stopped by `plate`, which was `mm` thick along the way it came, at `at` (the hull frame).
     Blocked { turret: bool, plate: &'static str, mm: f32, at: [f32; 3] },
     /// It goes through at `at` (the hull frame), for `scale` of its damage, with `residual` mm of
-    /// penetration left over. `slit`: through a gap rather than a plate.
-    Pierced { turret: bool, plate: &'static str, scale: f32, residual: f32, slit: bool, at: [f32; 3] },
+    /// penetration left over. `slit`: through a gap rather than a plate; `glass`: that gap was glass, which
+    /// it broke.
+    Pierced { turret: bool, plate: &'static str, scale: f32, residual: f32, slit: bool, glass: bool, at: [f32; 3] },
 }
 
 impl Outcome {
@@ -124,7 +125,7 @@ pub fn judge(kind: u8, strike: &Strike, dir: [f32; 3], pen: f32, turret_yaw: f32
     let len = dot(strike.normal, strike.normal).sqrt();
     // A shot that began inside a solid has no surface to glance off, and nothing to get through.
     if len < 0.5 {
-        return Outcome::Pierced { turret, plate: "inside", scale: 1.0, residual: pen, slit: false, at: strike.point };
+        return Outcome::Pierced { turret, plate: "inside", scale: 1.0, residual: pen, slit: false, glass: false, at: strike.point };
     }
     let at = strike.point;
     let (mut normal, mut point, mut dir) = (strike.normal.map(|v| v / len), strike.point, dir);
@@ -137,10 +138,10 @@ pub fn judge(kind: u8, strike: &Strike, dir: [f32; 3], pen: f32, turret_yaw: f32
         dir = yawed(dir, -turret_yaw);
     }
     let Some(plate) = def.armor.plate(strike.solid, Zone::of(normal), point) else {
-        return Outcome::Pierced { turret, plate: "bare", scale: 1.0, residual: pen, slit: false, at };
+        return Outcome::Pierced { turret, plate: "bare", scale: 1.0, residual: pen, slit: false, glass: false, at };
     };
     if plate.slit {
-        return Outcome::Pierced { turret, plate: plate.name, scale: 1.0, residual: pen, slit: true, at };
+        return Outcome::Pierced { turret, plate: plate.name, scale: 1.0, residual: pen, slit: true, glass: plate.glass, at };
     }
     // A sloped plate leans back from its face: its normal is turned up by the slope.
     let mut effective = normal;
@@ -161,7 +162,7 @@ pub fn judge(kind: u8, strike: &Strike, dir: [f32; 3], pen: f32, turret_yaw: f32
         return Outcome::Blocked { turret, plate: plate.name, mm, at };
     }
     let residual = pen - mm;
-    Outcome::Pierced { turret, plate: plate.name, scale: 0.5 + 0.5 * residual / pen.max(1e-3), residual, slit: false, at }
+    Outcome::Pierced { turret, plate: plate.name, scale: 0.5 + 0.5 * residual / pen.max(1e-3), residual, slit: false, glass: false, at }
 }
 
 /// What vehicle `vid`'s armor makes of a shot from `origin` along the unit `dir` that reaches it within
@@ -210,6 +211,8 @@ pub fn report(world: &mut World, vid: u32, outcome: &Outcome, point: [f32; 3], d
     let (result, style) = match *outcome {
         Outcome::Ricochet { .. } => (ARMOR_RICOCHET, MARK_GLANCE),
         Outcome::Blocked { .. } => (ARMOR_BLOCKED, MARK_SCUFF),
+        // Through a car's glass, which breaks: a hole in it, told as one through its skin is.
+        Outcome::Pierced { glass: true, .. } => (ARMOR_PIERCED, hole),
         Outcome::Pierced { slit: true, .. } => (ARMOR_SLIT, hole),
         Outcome::Pierced { .. } => (ARMOR_PIERCED, hole),
     };

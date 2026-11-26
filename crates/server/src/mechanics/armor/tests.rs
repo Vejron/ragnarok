@@ -731,3 +731,64 @@ fn a_carl_gustaf_takes_many_hits_on_the_heaviest_plate_and_two_on_light_armour()
         assert!(hits <= 2, "kind {kind}: {hits}");
     }
 }
+
+/// A Volvo 240 and a technical, parked along the road.
+fn cars() -> Game {
+    let spawns: Vec<[i32; 2]> = [[-25_000, 0], [25_000, 0]].into_iter().chain((0..8).map(|i| [i * 2700 - 12_000, 0])).collect();
+    let map = WorldFile {
+        version: WORLD_VERSION,
+        half_extent: 30_000,
+        placed_vehicles: crate::mechanics::for_tests::parked(&spawns, &[shared::protocol::KIND_VOLVO_240, shared::protocol::KIND_TECHNICAL]),
+        spawns,
+        roads: vec![Road { width: 800, kind: 0, carried: false, points: vec![[-30_000, 0], [30_000, 0]], ..Default::default() }],
+        ..Default::default()
+    };
+    let mut game = Game::new(map, 0).unwrap();
+    for _ in 0..90 {
+        game.step();
+    }
+    game
+}
+
+#[test]
+fn a_rifle_round_through_a_cars_side_window_breaks_the_glass_and_does_the_car_no_harm() {
+    let mut game = cars();
+    let vid = of_kind(&game, shared::protocol::KIND_VOLVO_240);
+    let full = game.world.entities.of::<Health>(vid).hp;
+    // Through the rear side window, above the hull box, with nobody behind it.
+    rifle_at(&mut game, vid, [0.0, 0.7, 0.9], [-1.0, 0.0, 0.0]);
+    assert_eq!(game.world.entities.of::<Health>(vid).hp, full, "glass is not the car");
+    let (mark, _) = game.world.marks[0];
+    assert_eq!((mark.vehicle, mark.style), (vid, shared::protocol::MARK_HOLE));
+    assert!(f32::from(mark.y) / 100.0 > shared::vehicles::volvo_240::VOLVO_240_HALF_EXTENTS[1], "on the glass, above the hull: {mark:?}");
+    assert!(game.world.armor_hits.is_empty(), "nothing to call out");
+}
+
+#[test]
+fn a_rifle_round_through_a_cars_window_hits_whoever_sits_behind_it_and_breaks_the_glass() {
+    let mut game = cars();
+    let vid = of_kind(&game, shared::protocol::KIND_VOLVO_240);
+    let driver = seat(&mut game, vid, 0);
+    let (before, full) = (game.world.entities.of::<Health>(driver).hp, game.world.entities.of::<Health>(vid).hp);
+    // At their chest, which is above the hull box: only the side glass is in the way.
+    let [x, y, z] = shared::vehicles::volvo_240::VOLVO_240_SEAT_HEADS[0];
+    rifle_at(&mut game, vid, [x, y - 0.25, z], [-1.0, 0.0, 0.0]);
+    assert!(game.world.entities.of::<Health>(driver).hp < before, "the glass does not shield the driver");
+    assert_eq!(game.world.entities.of::<Health>(vid).hp, full);
+    assert!(game.world.marks.iter().any(|(mark, _)| mark.vehicle == vid && mark.style == shared::protocol::MARK_HOLE), "the glass breaks where it went in: {:?}", game.world.marks);
+}
+
+#[test]
+fn rifle_rounds_into_a_technicals_gun_break_it_but_a_revolvers_do_not() {
+    let mut game = cars();
+    let vid = of_kind(&game, shared::protocol::KIND_TECHNICAL);
+    let receiver = shared::vehicles::technical::TECHNICAL_MG_PIVOT;
+    let full = part(&game, vid, Part::Breech);
+    gun_at(&mut game, shared::items::ITEM_REVOLVER, vid, receiver, [-1.0, 0.0, 0.0]);
+    assert_eq!(part(&game, vid, Part::Breech), full, "its steel stops a revolver's round");
+    assert!(game.world.marks.iter().any(|(mark, _)| mark.vehicle == vid && mark.style == shared::protocol::MARK_SCUFF), "{:?}", game.world.marks);
+    for _ in 0..2 {
+        rifle_at(&mut game, vid, receiver, [-1.0, 0.0, 0.0]);
+    }
+    assert!(part_gone(&game.world, vid, Part::Breech), "two rifle rounds break it: {}", part(&game, vid, Part::Breech));
+}

@@ -23,9 +23,13 @@ pub const EPA_MAX_SPEED: f32 = 8.33;
 /// The driver on the left and the passenger beside them, under the front of the roof.
 pub const EPA_SEAT_HEADS: [[f32; 3]; 2] = [[-0.38, 0.75, 0.1], [0.38, 0.75, 0.1]];
 
+/// Its cabin over the hull box, measured off the model's glass: what a round meets above the hull,
+/// from the beltline to the roof. It is glass (`GLAZED`): a round goes through it to whoever sits behind.
+const CABIN: Solid = Solid::cabin(EPA_HALF_EXTENTS[1], 0.96, [-0.91, 0.79], [-0.22, 0.79], [0.80, 0.80]);
+
 /// The engine under the bonnet and the fuel tank under the bed; the crew sit behind glass.
 const ARMOR: Armor = Armor {
-    plates: SHEET.plates,
+    plates: GLAZED.plates,
     modules: &[
         Module::new(Part::Engine, [0.0, 0.05, -1.6], [0.4, 0.25, 0.4], 110),
         Module::new(Part::Fuel, [0.0, -0.15, 1.6], [0.45, 0.12, 0.3], 90),
@@ -69,7 +73,7 @@ pub(super) const EPA: VehicleDef = VehicleDef {
         buttons: Buttons::Boost,
         boost: Some(Boost::GOVERNED),
         aims: false,
-        solids: &[],
+        solids: &[CABIN],
         tongue: 0.0,
         slide: 0.0,
         roll: 0.0,

@@ -23,6 +23,8 @@ export const SCAR_GOUGE = 4
 export const SCAR_SOOT = 8
 /** Glowing hot at first, cooling over `SCAR_COOL` seconds. */
 export const SCAR_HOT = 16
+/** Glass broken by a round: a hole crushed white at its edge, cracks running out from it in a star and a ring of them round it. Its pixels are drawn opaque on see-through glass. */
+export const SCAR_CRACK = 32
 /** Seconds a hot scar takes to cool from white-orange to dark: the shader's `SCAR_COOL`. */
 export const SCAR_COOL = 7
 

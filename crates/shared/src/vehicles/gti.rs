@@ -20,9 +20,13 @@ pub const GTI_MAX_SPEED: f32 = 44.0;
 /// The driver on the left, then the passengers, front to back.
 pub const GTI_SEAT_HEADS: [[f32; 3]; 4] = [[-0.38, 0.73, -0.05], [0.38, 0.73, -0.05], [-0.4, 0.71, 0.75], [0.4, 0.71, 0.75]];
 
+/// Its cabin over the hull box, measured off the model's glass: what a round meets above the hull,
+/// from the beltline to the roof. It is glass (`GLAZED`): a round goes through it to whoever sits behind.
+const CABIN: Solid = Solid::cabin(GTI_HALF_EXTENTS[1], 0.96, [-1.05, 1.86], [-0.70, 1.25], [0.80, 0.64]);
+
 /// The engine under the bonnet and the fuel tank under the boot floor; the crew sit behind glass.
 const ARMOR: Armor = Armor {
-    plates: SHEET.plates,
+    plates: GLAZED.plates,
     modules: &[
         Module::new(Part::Engine, [0.0, 0.05, -1.45], [0.4, 0.25, 0.4], 110),
         Module::new(Part::Fuel, [0.0, -0.15, 1.35], [0.4, 0.12, 0.3], 90),
@@ -70,7 +74,7 @@ pub(super) const GTI: VehicleDef = VehicleDef {
         buttons: Buttons::Boost,
         boost: Some(Boost::CAR),
         aims: false,
-        solids: &[],
+        solids: &[CABIN],
         tongue: 0.0,
         slide: 0.0,
         roll: 0.0,

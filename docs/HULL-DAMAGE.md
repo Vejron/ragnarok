@@ -17,6 +17,7 @@ with a reach, the round's way, a style and its time of birth.
 | A shell stopped (`MARK_SCUFF` + `MARK_HEAVY`) | dent, soot, hot | A deeper dent with a lip, paint flaked off its rim down to the metal, and a scorch |
 | A shell glancing off (`MARK_GLANCE` + `MARK_HEAVY`) | gouge, soot, hot | A groove torn along the way the round went, bare bright metal with fine lines along it that glint in the sun |
 | A bullet (no `MARK_HEAVY`) | gouge, dent | A chip in the paint. Chips are kept in a ring of their own, so a hail of them never wipes out a shell's dent |
+| A bullet through a car's glass (a hole on a mesh whose material is `glass`) | crack | Broken glass: a dark hole crushed white round its edge, a star of cracks running out from it and a broken ring of them round it, the same size whatever the round. Drawn opaque on see-through glass, and nothing smokes out of it |
 | A blast beside it (client side) | soot | Soot on the faces nearest an HE burst that went off within its radius of the vehicle |
 
 - **Size.** How far a scar reaches is set by the mark (`LOOKS` in `hullmarks.ts`), by the round

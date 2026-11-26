@@ -28,7 +28,7 @@ The docs are in [docs/](docs/).
 **How each feature was built**
 
 - [BOTS.md](docs/BOTS.md): server-run enemy soldiers, tank crews, and scenarios with squads, triggers, waves, objectives and a win or a loss
-- [ARMOR.md](docs/ARMOR.md): armor zones, ricochets, weak spots, turret loss and the Strv S
+- [ARMOR.md](docs/ARMOR.md): armor zones, ricochets, weak spots, turret loss and the Strv S, the car cabins whose glass rounds break on their way to the crew, and the technical's gun that can be shot out
 - [LIMBS.md](docs/LIMBS.md): limb loss and part health
 - [CHARACTER-LOOKS.md](docs/CHARACTER-LOOKS.md): the people on foot: Quaternius' low-poly men and women (CC0) dressed as soldiers, police officers, ambulance medics and civilians, on one skeleton that every clip is retargeted onto, the Universal Animation Library's hand-keyed clips among the game's own
 - [ANIMATION.md](docs/ANIMATION.md): what moves a character besides its clips: feet stood on the slope and held where they land, the left hand kept on the gun, jumps in the pose eased out, the aim followed a moment late and the head swaying with the hips

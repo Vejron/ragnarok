@@ -23,7 +23,7 @@ import type { Debris } from '@/render/debris'
 import type { Effects } from '@/render/effects'
 import type { Scorchmarks } from '@/render/scorchmarks'
 import type { Flinch } from '@/render/flinch'
-import { locate, type HullMarks, type MarkKind } from '@/render/hullmarks'
+import { locate, onGlass, type HullMarks, type MarkKind } from '@/render/hullmarks'
 import { BLASTS, explosion, type ExplosionProfile } from '@/render/explosion'
 import { LAUNCHER, PISTOL, RIFLE, SHOTGUN, smallArmsOf, type MuzzleProfile } from '@/render/gunfire'
 import type { Rockets } from '@/render/rockets'
@@ -212,6 +212,9 @@ export class Events {
       if (heavy) effects.deflect(struck.world, struck.outward, 2 * size)
       else effects.strike(struck.world)
       sounds.ricochet(at)
+    } else if (kind === 'hole' && !heavy && onGlass(struck)) {
+      // A bullet through a car's glass: it breaks, with no sparks.
+      sounds.glass(at, 1)
     } else if (kind === 'hole') {
       effects.pierce(struck.world, struck.outward, big, big ? size : 1)
       sounds.pierce(at, big)

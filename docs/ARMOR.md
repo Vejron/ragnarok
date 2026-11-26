@@ -52,9 +52,46 @@ nose is told apart from the belly the same way.
 | Strf 90 | engine cover 8 leaning back 76 deg (33 along a level shot), lower front 30, side 18, rear ramp 10, roof 10, belly 8; turret front 30 at 15 deg, turret side 20, turret roof 10 | driver's periscope (engine cover, front left), gunner's sight (beside the gun) |
 | Pbv 302 | glacis 23 lying 38 deg above level (38 along a level shot), lower front 23, side 14, rear doors 10, roof 8, belly 8; turret 12, turret roof 8 | driver's periscope (glacis, middle), gunner's sight (the turret's face) |
 | Pak 38 | shield 8, sloped 11 deg; carriage 3 | sight gap in the shield |
-| jeep, cars, drones | 1.5 sheet steel | none |
+| jeep, cars, drones | 1.5 sheet steel; a car's cabin is glass (`GLAZED`) | none |
+| technical | 1.5 sheet steel; its gun's receiver 6 | none |
 | helicopter, walker, hen, mortar | 3 light alloy | none |
 | plane | canvas: everything goes through | none |
+
+## What a round can strike
+
+A car's shape in the physics is its hull box, which reaches only up to the beltline: the cabin
+above it was never there, and a round through a window flew on as if the car were not. Rounds now
+also meet solids that are only there for them (`Role::Shot`):
+
+- **Every glazed car has its cabin**: the traffic cars, the police car, the EPA, the ambulance and the
+  Transporter. It is a `Shape::Glasshouse` (`Solid::cabin`) from the hull's top to the roof, whose
+  windscreen and back glass lean as the model's do and whose sides lean in towards the roof, measured
+  off each model's glass. It is glass all round (`Plate::glass`, the kinds' armour `GLAZED`), roof
+  included: a round goes straight through it as through a slit, breaks it, and hits whoever sits
+  behind it. The car itself takes no harm and throws no fragments, and nobody is told unless the round
+  went on to hurt a part inside (a Ball round stops in the first it meets). A shell bursts on it as on
+  any plate.
+- **The glass breaks where a round went in**, even when the round went on to hit someone in the seat
+  behind it: a round that met a car first and a body beyond it leaves its hole in the car where it went
+  in (`combat::land`), and does the car no other harm. That holds for a glazed car's doors too. On the
+  model a bullet's hole in a glass mesh is broken glass (`SCAR_CRACK`, scars.wgsl): a dark hole crushed
+  white round its edge, a star of cracks running out from it and a broken ring of them round it, drawn
+  opaque on the see-through glass. It is the same size whatever the round, nothing smokes out of it, and
+  it sounds as a window pane breaking does, with no sparks.
+- **The technical's gun has its receiver**, a drum round the gun's pivot that holds it at any bearing,
+  behind 6 mm of steel. A revolver's round is stopped; a rifle's goes through up close, and two of them
+  break the breech, so the gun cannot fire.
+
+These solids are not in the physics. A car drives, rolls and passes under a bridge as before, and a
+soldier still cannot stand on its roof. Only rays that stand for a round meet them: `Physics::cast_round`
+(a hitscan round, and bullets and shells in flight) and `Physics::armor_strike`. A round that starts
+inside one, from a soldier who has climbed into a cabin, goes out through it. The bots' line of sight,
+the floor that dropped things land on and the client's aim lines use the plain ray, as before. A round
+is tested against these solids only for a vehicle it passes near, so it costs next to nothing.
+
+The jeep, the Roadster and the technical's cab are open at the sides and have no cabin: a solid there
+would shield their crew from rounds that should reach them. The bus's body is already a solid of its
+own, in the physics.
 
 ## Rounds
 
@@ -140,6 +177,7 @@ goes in, and what it hits inside.
 | kind | parts | what a dead engine means |
 |---|---|---|
 | jeep, sports car, Roadster | engine under the bonnet (120 / 110), fuel tank at the back (100 / 90) | cannot drive |
+| technical | engine under the bonnet (130), fuel under the bed (100), the gun's receiver (60) | cannot drive; with the receiver gone, the gun cannot fire |
 | helicopter | turbine over the cabin (110), fuel under the floor (90) | the rotor stops and it falls |
 | plane | engine in the nose (90), fuel ahead of the cockpit (70) | it glides |
 | walker, hen | the pilot in the sealed cab, fuel at the back (100) | (no engine) |
@@ -172,7 +210,7 @@ A wreck coming back as new (`Vehicle::renew`) has every part whole and its fire 
 - Marks stay on the vehicle as scars on the mesh they struck (`client/src/render/hullmarks.ts`,
   [HULL-DAMAGE.md](HULL-DAMAGE.md)): a dented, sooted hole ringed with blued steel that glows and
   cools, a scorched dent where a plate stopped a shell, a gouge to bare metal where one glanced off,
-  and a chip in the paint for a bullet. The server's point is on its hull outlines, boxes and drums, which only
+  and a chip in the paint for a bullet (broken glass, on a car's glass). The server's point is on its hull outlines, boxes and drums, which only
   approximate the model. So the client follows the round's path from 0.8 m before that point to
   0.8 m past it into the model's triangles (`render/surface.ts`), and the scar goes on the mesh the
   path first meets, in that mesh's frame, so it slopes with the glacis and turns with the turret, the

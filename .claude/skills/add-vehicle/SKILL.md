@@ -30,6 +30,7 @@ Create `crates/shared/src/vehicles/<kind>.rs` with `use super::*;`. In it:
 - **Constants**, named `<KIND>_*`: `SEATS`, `HALF_EXTENTS` (half the chassis box, metres), `WHEEL_RADIUS`, `TRACK_HALF`, `AXLE_Z`, `HARD_POINT_Y`, `SUSPENSION_REST`, `RIDE_HEIGHT`, `MAX_STEER`, `MAX_SPEED` and `SEAT_HEADS`. Each gets a doc comment with its units. Write arrays as literals, because `gen-consts` cannot evaluate expressions.
 - **Frame.** Hull frame: +Y is up, the nose is −Z, and the box centre is the origin. `SEAT_HEADS` holds one head point per seat. A seat on a turning mount also gets its yaw-0 head here, so that both `seat_heads.len() == seats` and the model's seat markers hold.
 - **`ARMOR`.** Plates are usually `SHEET.plates` for a soft-skinned vehicle. Modules are `Part::Engine`, `Part::Fuel`, and `Part::Breech` for a gun that can be shot out.
+- **A cabin.** A `Glazed` car's hull box stops at the beltline, so give it a `Solid::cabin` (a `Role::Shot` solid only rounds meet) from the hull's top to the roof, measured off the model's glass, and `plates: GLAZED.plates`, or rounds fly through its windows. A gun above the hull that should be shot out needs a `Role::Shot` solid round it too, as the technical's receiver has. See [ARMOR.md](../../../docs/ARMOR.md), "What a round can strike".
 - **`pub(super) const <KIND>: VehicleDef`.** Copy the template's and fill in every field; there are no defaults.
 
 Then wire it in:

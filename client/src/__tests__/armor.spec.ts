@@ -125,3 +125,29 @@ describe('a tank\'s vision slits', () => {
     expect(glints[0]!.tint[3]).toBe(0)
   })
 })
+
+describe("a bullet through a car's glass", () => {
+  it('breaks the glass where it went in, and nothing smokes out of that hole', async () => {
+    const { Geometry, Mesh, Node, SCAR_CRACK, Vec3 } = await import('@ragnarok/engine')
+    const { toonMaterial } = await import('@/render/toon')
+    const { HullMarks, onGlass } = await import('@/render/hullmarks')
+    const added: { style: number; radius: number }[] = []
+    const scars = { alloc: () => 1, add: (_slot: number, scar: { style: number; radius: number }) => void added.push(scar), release: () => {}, setGrime: () => {} }
+    const marks = new HullMarks(scars as never)
+    const root = new Node()
+    const glass = new Mesh(new Geometry({ positions: new Float32Array(9) }), toonMaterial({ name: 'glass' }))
+    const paint = new Mesh(new Geometry({ positions: new Float32Array(9) }), toonMaterial({ name: 'paint' }))
+    root.add(glass)
+    root.add(paint)
+    const at = (parent: InstanceType<typeof Node>) => ({ parent, local: new Vec3(), normal: new Vec3(1, 0, 0), way: new Vec3(-1, 0, 0), unit: 1, world: new Vec3(), outward: new Vec3() })
+    expect(onGlass(at(glass))).toBe(true)
+    expect(onGlass(at(paint))).toBe(false)
+    // A rifle's hole in each: broken glass in the one, a hole in the paint of the other.
+    marks.mark(1, root, at(glass), 'hole', 0.4, false, 1, true)
+    marks.mark(1, root, at(paint), 'hole', 0.4, false, 1, true)
+    expect(added[0]!.style).toBe(SCAR_CRACK)
+    expect(added[1]!.style & SCAR_CRACK).toBe(0)
+    expect(added[0]!.radius).toBeGreaterThan(added[1]!.radius)
+    expect(marks.vents(1)).toHaveLength(1)
+  })
+})

@@ -19,9 +19,13 @@ pub const SPORTS_MAX_SPEED: f32 = 46.0;
 /// The driver on the left, a passenger beside them, and two more on the low back bench.
 pub const SPORTS_SEAT_HEADS: [[f32; 3]; 4] = [[-0.37, 0.72, 0.1], [0.37, 0.72, 0.1], [-0.38, 0.66, 0.85], [0.38, 0.66, 0.85]];
 
+/// Its cabin over the hull box, measured off the model's glass: what a round meets above the hull,
+/// from the beltline to the roof. It is glass (`GLAZED`): a round goes through it to whoever sits behind.
+const CABIN: Solid = Solid::cabin(SPORTS_HALF_EXTENTS[1], 0.88, [-0.75, 1.52], [-0.25, 0.95], [0.79, 0.63]);
+
 /// The engine up front and the fuel tank under the boot floor; the crew sit behind glass.
 const ARMOR: Armor = Armor {
-    plates: SHEET.plates,
+    plates: GLAZED.plates,
     modules: &[
         Module::new(Part::Engine, [0.0, 0.0, -1.6], [0.45, 0.22, 0.45], 110),
         Module::new(Part::Fuel, [0.0, -0.15, 1.7], [0.4, 0.12, 0.25], 90),
@@ -69,7 +73,7 @@ pub(super) const SPORTS: VehicleDef = VehicleDef {
         buttons: Buttons::Boost,
         boost: Some(Boost::CAR),
         aims: false,
-        solids: &[],
+        solids: &[CABIN],
         tongue: 0.0,
         slide: 0.0,
         roll: 0.0,

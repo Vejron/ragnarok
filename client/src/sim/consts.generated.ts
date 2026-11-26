@@ -3763,6 +3763,13 @@ export const TECHNICAL_MG_HEAT = 31.0
 export const TECHNICAL_SEAT_HEADS = [[-0.42, 1.0, -0.35], [0.42, 1.0, -0.35], [0.0, 1.79, 1.65]] as const
 
 /**
+ * How far round its pivot the gun's receiver reaches, and half its height, metres: it turns all the
+ * way round, so a round meets it in a drum that holds it at any bearing.
+ */
+export const TECHNICAL_RECEIVER_RADIUS = 0.3
+export const TECHNICAL_RECEIVER_HALF_HEIGHT = 0.12
+
+/**
  * The Titan (`KIND_TITAN`): a giant robot about fifty metres high, one pilot sealed in its head. Its
  * body is a single box, its torso, held up by two spring legs that are ray casts to the ground and
  * kept upright by a torque, exactly as a walker's is (its `Gait`). Its pilot moves its two fists

@@ -22,9 +22,13 @@ pub const AMBULANCE_MAX_SPEED: f32 = 34.0;
 /// The driver on the left, then the passengers, front to back.
 pub const AMBULANCE_SEAT_HEADS: [[f32; 3]; 7] = [[-0.45, 0.87, -1.25], [0.45, 0.87, -1.25], [-0.4, 0.87, 0.05], [0.4, 0.87, 0.05], [-0.5, 0.87, 1.15], [0.0, 0.87, 1.15], [0.5, 0.87, 1.15]];
 
+/// Its cabin over the hull box, measured off the model's glass: what a round meets above the hull,
+/// from the beltline to the roof. It is glass (`GLAZED`): a round goes through it to whoever sits behind.
+const CABIN: Solid = Solid::cabin(AMBULANCE_HALF_EXTENTS[1], 1.26, [-2.17, 2.25], [-1.65, 2.23], [0.87, 0.81]);
+
 /// The engine under the floor at the back and the fuel tank under the middle of the floor; the crew sit behind glass.
 const ARMOR: Armor = Armor {
-    plates: SHEET.plates,
+    plates: GLAZED.plates,
     modules: &[
         Module::new(Part::Engine, [0.0, -0.1, 1.7], [0.4, 0.25, 0.4], 110),
         Module::new(Part::Fuel, [0.0, -0.3, 0.2], [0.4, 0.12, 0.3], 90),
@@ -72,7 +76,7 @@ pub(super) const AMBULANCE: VehicleDef = VehicleDef {
         buttons: Buttons::Boost,
         boost: Some(Boost::CAR),
         aims: false,
-        solids: &[],
+        solids: &[CABIN],
         tongue: 0.0,
         slide: 0.0,
         roll: 0.0,

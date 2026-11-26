@@ -777,6 +777,11 @@ pub enum Shape {
     /// A box that narrows or widens upwards, as the Titan's builder's `taper` does: half its width (X)
     /// and its depth (Z) at the top and at the bottom, and half its height, metres.
     Frustum { top: [f32; 2], bottom: [f32; 2], half_height: f32 },
+    /// A car's glasshouse: a box whose front and back lean as a windscreen and a back glass do, and
+    /// whose sides lean in towards the roof. Along Z it runs from `foot[0]` to `foot[1]` at its foot and
+    /// from `top[0]` to `top[1]` at its top; it is `width[0]` wide (half) at its foot and `width[1]` at
+    /// its top, and `half_height` either side of its middle, metres.
+    Glasshouse { foot: [f32; 2], top: [f32; 2], width: [f32; 2], half_height: f32 },
 }
 
 /// What else a solid is, beyond something to hit.
@@ -792,4 +797,25 @@ pub enum Role {
     /// hull and its other solids, which are left to stand and walk on: see the sim's
     /// `Physics::armor_strike`.
     Hit,
+    /// Only something for a round to hit, as well as the hull and the other solids, which stay in the
+    /// physics: a car's cabin over its hull box, or a technical's gun. It is not in the physics either,
+    /// so it changes nothing about how the vehicle drives, and only rays standing for a round meet it
+    /// (the sim's `Physics::cast_round` and `Physics::armor_strike`).
+    Shot,
+}
+
+impl Role {
+    /// Whether a solid of this role is a collider in the physics, rather than a shape only rounds meet.
+    pub fn in_physics(self) -> bool {
+        !matches!(self, Role::Hit | Role::Shot)
+    }
+}
+
+impl Solid {
+    /// A car's cabin over its hull box: a `Shape::Glasshouse` from the hull's top (`hull_top`, metres
+    /// over its middle) up to its roof (`roof`), placed over the hull's middle.
+    pub const fn cabin(hull_top: f32, roof: f32, foot: [f32; 2], top: [f32; 2], width: [f32; 2]) -> Solid {
+        let half_height = (roof - hull_top) / 2.0;
+        Solid { shape: Shape::Glasshouse { foot, top, width, half_height }, at: [0.0, hull_top + half_height, 0.0], role: Role::Shot }
+    }
 }

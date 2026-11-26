@@ -21,9 +21,13 @@ pub const POLICE_CAR_MAX_SPEED: f32 = 41.5;
 /// The driver on the left, then the passengers, front to back.
 pub const POLICE_CAR_SEAT_HEADS: [[f32; 3]; 5] = [[-0.38, 0.67, 0.0], [0.38, 0.67, 0.0], [-0.4, 0.65, 0.88], [0.4, 0.65, 0.88], [0.0, 0.65, 0.88]];
 
+/// Its cabin over the hull box, measured off the model's glass: what a round meets above the hull,
+/// from the beltline to the roof. It is glass (`GLAZED`): a round goes through it to whoever sits behind.
+const CABIN: Solid = Solid::cabin(POLICE_CAR_HALF_EXTENTS[1], 0.95, [-1.35, 2.39], [-1.02, 2.34], [0.82, 0.75]);
+
 /// The engine under the bonnet and the fuel tank under the boot floor; the crew sit behind glass.
 const ARMOR: Armor = Armor {
-    plates: SHEET.plates,
+    plates: GLAZED.plates,
     modules: &[
         Module::new(Part::Engine, [0.0, 0.05, -1.7], [0.4, 0.25, 0.4], 110),
         Module::new(Part::Fuel, [0.0, -0.18, 1.7], [0.4, 0.12, 0.3], 90),
@@ -71,7 +75,7 @@ pub(super) const POLICE_CAR: VehicleDef = VehicleDef {
         buttons: Buttons::Boost,
         boost: Some(Boost::CAR),
         aims: false,
-        solids: &[],
+        solids: &[CABIN],
         tongue: 0.0,
         slide: 0.0,
         roll: 0.0,

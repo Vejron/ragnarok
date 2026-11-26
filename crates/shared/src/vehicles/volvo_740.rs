@@ -19,9 +19,13 @@ pub const VOLVO_740_MAX_SPEED: f32 = 40.0;
 /// The driver on the left, then the passengers, front to back.
 pub const VOLVO_740_SEAT_HEADS: [[f32; 3]; 5] = [[-0.38, 0.69, 0.0], [0.38, 0.69, 0.0], [-0.4, 0.67, 0.88], [0.4, 0.67, 0.88], [0.0, 0.67, 0.88]];
 
+/// Its cabin over the hull box, measured off the model's glass: what a round meets above the hull,
+/// from the beltline to the roof. It is glass (`GLAZED`): a round goes through it to whoever sits behind.
+const CABIN: Solid = Solid::cabin(VOLVO_740_HALF_EXTENTS[1], 0.93, [-1.25, 1.38], [-0.92, 1.02], [0.85, 0.76]);
+
 /// The engine under the bonnet and the fuel tank under the boot floor; the crew sit behind glass.
 const ARMOR: Armor = Armor {
-    plates: SHEET.plates,
+    plates: GLAZED.plates,
     modules: &[
         Module::new(Part::Engine, [0.0, 0.05, -1.7], [0.4, 0.25, 0.4], 110),
         Module::new(Part::Fuel, [0.0, -0.15, 1.7], [0.4, 0.12, 0.3], 90),
@@ -69,7 +73,7 @@ pub(super) const VOLVO_740: VehicleDef = VehicleDef {
         buttons: Buttons::Boost,
         boost: Some(Boost::CAR),
         aims: false,
-        solids: &[],
+        solids: &[CABIN],
         tongue: 0.0,
         slide: 0.0,
         roll: 0.0,

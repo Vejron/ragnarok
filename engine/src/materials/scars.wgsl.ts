@@ -1,11 +1,11 @@
-import { SCAR_COOL, SCAR_DENT, SCAR_GOUGE, SCAR_HOLE, SCAR_HOT, SCAR_SOOT, SCAR_STRIDE, SCAR_VEC4S } from '../scene/scars'
+import { SCAR_COOL, SCAR_CRACK, SCAR_DENT, SCAR_GOUGE, SCAR_HOLE, SCAR_HOT, SCAR_SOOT, SCAR_STRIDE, SCAR_VEC4S } from '../scene/scars'
 
 const f = (n: number) => n.toFixed(1)
 
 /**
  * Damage drawn on a mesh's own surface (HULL-DAMAGE.md, scene/scars.ts): its slot's scars, each a point
  * in the mesh's frame with a reach, the way the round came and a style. `scarLook` is what a pixel shows: the dent's slope and shade, soot and
- * char, a hole with a tempered-steel ring, gouges to bare metal, and the heat of a fresh hit. Analytic,
+ * char, a hole with a tempered-steel ring, gouges to bare metal, cracked glass, and the heat of a fresh hit. Analytic,
  * so it needs no texture and moves with the mesh. `scarDent` presses the vertices in too, where the
  * device lets the vertex stage read the list (`Renderer.vertexScars`); elsewhere the dents are in the
  * shading alone. Included in COMMON_WGSL.
@@ -20,6 +20,7 @@ const SCAR_HOLE = ${SCAR_HOLE}u;
 const SCAR_GOUGE = ${SCAR_GOUGE}u;
 const SCAR_SOOT = ${SCAR_SOOT}u;
 const SCAR_HOT = ${SCAR_HOT}u;
+const SCAR_CRACK = ${SCAR_CRACK}u;
 const SCAR_COOL = ${f(SCAR_COOL)};
 // A hole's black middle and its tempered ring's outer edge, in the scar's reach.
 const SCAR_HOLE_R = 0.3;
@@ -34,6 +35,13 @@ const SCAR_GOUGE_WIDE = 0.28;
 const SCAR_LIP = 0.22;
 const SCAR_LIP_AT = 1.08;
 const SCAR_LIP_WIDE = 0.2;
+// Broken glass, in the scar's reach: the hole, the crushed white round it, how many cracks run out in
+// its star, how wide one is at the hole, and where the ring of cracks round it lies.
+const SCAR_CRACK_HOLE = 0.05;
+const SCAR_CRACK_CRUSH = 0.2;
+const SCAR_CRACK_RAYS = 9.0;
+const SCAR_CRACK_WIDE = 0.045;
+const SCAR_CRACK_RING = 0.42;
 
 // A local point's own value noise, 0 to 1: steady on the surface, so soot and chips never shimmer. An
 // integer hash (PCG), cheaper than the usual sine.
@@ -92,6 +100,8 @@ struct ScarLook {
   char: f32,
   bare: f32,
   hole: f32,
+  // Cracks in broken glass, 0 to 1: they are drawn pale and opaque.
+  crack: f32,
   // The tempered ring's colour and how much of it shows.
   temper: vec3f,
   temperAmount: f32,
@@ -117,7 +127,7 @@ fn scarTemper(t: f32) -> vec3f {
 // What the scars of slot \`handle\` do at local \`p\` on a face with local normal \`n\` (unit), where \`up\`
 // is the world's up in the mesh's frame (unit) and \`now\` the renderer's clock, seconds.
 fn scarLook(handle: u32, p: vec3f, n: vec3f, up: vec3f, now: f32) -> ScarLook {
-  var look = ScarLook(vec3f(0.0), 1.0, 0.0, 0.0, 0.0, 0.0, vec3f(0.0), 0.0, vec3f(0.0));
+  var look = ScarLook(vec3f(0.0), 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, vec3f(0.0), 0.0, vec3f(0.0));
   let base = (handle - 1u) * SCAR_STRIDE;
   let header = scars[base];
   let count = min(u32(header.x), ${SCAR_STRIDE - 1}u / SCAR_VEC4S);
@@ -198,6 +208,26 @@ fn scarLook(handle: u32, p: vec3f, n: vec3f, up: vec3f, now: f32) -> ScarLook {
         look.soot = max(look.soot, shape * (1.0 - smoothstep(wide, wide * 2.4, abs(across))) * 0.35);
         look.shade *= 1.0 - 0.3 * groove;
       }
+    }
+    if ((style & SCAR_CRACK) != 0u && s < 1.0) {
+      // Round the hole in the face's own plane: each crack of the star runs out at its own bearing, as
+      // far as its own length, and thins as it goes. The scar's place seeds them, so no two look alike.
+      let side = normalize(cross(n, select(vec3f(1.0, 0.0, 0.0), vec3f(0.0, 1.0, 0.0), abs(n.y) < 0.9)));
+      let seed = scarHash(a.xyz * 211.0);
+      let turn = (atan2(dot(q, cross(n, side)), dot(q, side)) / 6.2831853 + 0.5) * SCAR_CRACK_RAYS + seed * SCAR_CRACK_RAYS;
+      let cell = floor(turn);
+      let wander = (scarHash(vec3f(cell, seed * 97.0, 3.0)) - 0.5) * 0.6;
+      let off = abs(fract(turn) - 0.5 - wander * 0.5);
+      let across = d * off * 6.2831853 / SCAR_CRACK_RAYS;
+      let wide = r * SCAR_CRACK_WIDE * (1.15 - s);
+      let runs = mix(0.5, 1.0, scarHash(vec3f(cell, seed * 53.0, 7.0)));
+      let ray = (1.0 - smoothstep(wide * 0.5, wide, across)) * (1.0 - smoothstep(runs * 0.85, runs, s));
+      // The ring breaks off in some sectors and wanders a little in the rest.
+      let ringAt = SCAR_CRACK_RING + (scarHash(vec3f(cell, seed * 17.0, 11.0)) - 0.5) * 0.08;
+      let ring = (1.0 - smoothstep(0.012, 0.025, abs(s - ringAt))) * step(0.35, scarHash(vec3f(cell, seed * 29.0, 13.0)));
+      let crush = 1.0 - smoothstep(SCAR_CRACK_HOLE, SCAR_CRACK_CRUSH, s);
+      look.crack = max(look.crack, max(max(ray, ring * 0.8), crush * 0.9));
+      look.hole = max(look.hole, 1.0 - smoothstep(SCAR_CRACK_HOLE * 0.6, SCAR_CRACK_HOLE, s));
     }
     if ((style & SCAR_HOT) != 0u) {
       let age = now - c.y;

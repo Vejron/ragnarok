@@ -1,4 +1,4 @@
-import { InstancedMesh, Mesh, SCAR_DENT, SCAR_GOUGE, SCAR_HOLE, SCAR_HOT, SCAR_SOOT, Scars, Vec3, type Material, type Node } from '@ragnarok/engine'
+import { InstancedMesh, Mesh, SCAR_CRACK, SCAR_DENT, SCAR_GOUGE, SCAR_HOLE, SCAR_HOT, SCAR_SOOT, Scars, Vec3, type Material, type Node } from '@ragnarok/engine'
 import { vehicleDef } from '@/sim/vehicles'
 import { nearestSurface, raySurface } from './surface'
 
@@ -37,12 +37,20 @@ interface Mark {
  * What each kind of mark is drawn as (scene/scars.ts), for a round of calibre 1 on a vehicle of size 1:
  * its reach and its dent's depth, metres, and its `SCAR_*` style. A bullet's (`light`) is a chip.
  */
-const LOOKS: Record<MarkKind | 'chip', { radius: number; depth: number; style: number }> = {
+const LOOKS: Record<MarkKind | 'chip' | 'crack', { radius: number; depth: number; style: number }> = {
   hole: { radius: 0.3, depth: 0.12, style: SCAR_DENT | SCAR_HOLE | SCAR_SOOT | SCAR_HOT },
   scuff: { radius: 0.34, depth: 0.16, style: SCAR_DENT | SCAR_SOOT | SCAR_HOT },
   glance: { radius: 0.22, depth: 0.02, style: SCAR_GOUGE | SCAR_SOOT | SCAR_HOT },
   blast: { radius: 0.9, depth: 0, style: SCAR_SOOT },
   chip: { radius: 0.05, depth: 0.004, style: SCAR_GOUGE | SCAR_DENT },
+  // A bullet through glass: the same size whatever the round, metres in the mesh's frame.
+  crack: { radius: 0.24, depth: 0, style: SCAR_CRACK },
+}
+
+/** Whether a round `struck` glass (a car's, a cracked windscreen's): its hole is drawn as broken glass. */
+export function onGlass(struck: Pick<Struck, 'parent'>) {
+  const name = struck.parent instanceof Mesh ? struck.parent.material.name : ''
+  return name === 'glass' || name === 'cracked'
 }
 
 /** Marks something else lays on a vehicle (a slit) that no round's mark should be laid on. */
@@ -148,10 +156,12 @@ export class HullMarks {
   /**
    * Marks vehicle `id`, drawn by `root`, where a round `struck` it (`locate`): a `kind` of mark, as big as
    * `calibre` (1 an ordinary shell's) on a vehicle of `size` (1 a tank, larger for a Titan). `light` is a
-   * bullet's, `vital` a hole whose round hurt a part inside.
+   * bullet's, `vital` a hole whose round hurt a part inside. A bullet's hole in glass is broken glass, which
+   * nothing comes out of.
    */
   mark(id: number, root: Node, struck: Struck, kind: MarkKind, calibre = 1, vital = false, size = 1, light = false, now = performance.now() / 1000) {
     const { parent, local, normal, way, unit } = struck
+    const glass = light && kind === 'hole' && onGlass(struck)
     let entry = this.marks.get(id)
     if (!entry || entry.root !== root) {
       if (entry) this.clear(id)
@@ -164,13 +174,13 @@ export class HullMarks {
         entry.slots.set(parent, slot)
         parent.scars = slot
       }
-      const look = LOOKS[light && kind !== 'hole' && kind !== 'blast' ? 'chip' : kind]
-      const reach = look.radius * calibre * size * unit
+      const look = LOOKS[glass ? 'crack' : light && kind !== 'hole' && kind !== 'blast' ? 'chip' : kind]
+      const reach = glass ? look.radius * unit : look.radius * calibre * size * unit
       // A blast's soot has no way it came; it spreads round the nearest face.
       const dir = kind === 'blast' ? new Vec3(-normal.x, -normal.y, -normal.z) : way
       this.scars.add(slot, { x: local.x, y: local.y, z: local.z, radius: reach, dx: dir.x, dy: dir.y, dz: dir.z, style: look.style, depth: look.depth * calibre * size * unit, birth: now }, light)
     }
-    if (kind === 'blast') return
+    if (kind === 'blast' || glass) return
     entry.marks.push({ parent, local, normal: kind === 'hole' ? normal : null, vital: kind === 'hole' && vital, age: 0 })
     if (entry.marks.length > MAX_MARKS) entry.marks.shift()
   }

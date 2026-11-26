@@ -485,7 +485,7 @@ fn step_striking(world: &mut World, id: u32, dt: f32, strikes: Strikes) {
     let speed = length(s.velocity);
     let dir = s.velocity.map(|v| v / speed);
     let mut step = speed * dt;
-    let mut hit = world.physics.cast_ray_hit(s.position, dir, step, s.source);
+    let mut hit = world.physics.cast_round(s.position, dir, step, s.source);
     let mut wall = hit.map(|(t, _)| t);
     // Soldiers and creatures are not physics bodies, so test the path against each one.
     let hurtbox = |world: &World, reach: f32| if strikes.bodies { super::life::first_hurtbox_hit(world, s.position, dir, reach, Some(s.owner), 0, None) } else { None };
@@ -501,7 +501,7 @@ fn step_striking(world: &mut World, id: u32, dt: f32, strikes: Strikes) {
         let entry: [f32; 3] = vec3::along(s.position, dir, t);
         let [x, y, z] = entry.map(to_cm);
         world.shots.push(ShotEvent { shooter: s.owner, weapon: WEAPON_SPLASH, x, y, z, yaw: SHOT_NO_YAW, dip: SHOT_NO_DIP });
-        let under = world.physics.cast_ray_hit(s.position, dir, stop, s.source).filter(|&(at, vid)| at > t && vid.is_some());
+        let under = world.physics.cast_round(s.position, dir, stop, s.source).filter(|&(at, vid)| at > t && vid.is_some());
         let met = hurtbox(world, under.map_or(stop, |(at, _)| at)).filter(|&(_, at)| at > t);
         if under.is_none() && met.is_none() {
             let burst = world.entities.get::<Burst>(id).copied();
@@ -780,7 +780,7 @@ fn step_round(world: &mut World, id: u32, dt: f32) {
     let step = speed * dt;
     let step = super::combat::water_stop(world, s.position, dir, step, ROUND_WATER_DEPTH, ROUND_WATER_PATH).map_or(step, |(_, stop)| step.max(stop + 0.01));
     // A passenger's round leaves through their own vehicle (`source`) rather than stopping in it.
-    let wall = world.physics.cast_ray_hit(s.position, dir, step, s.source);
+    let wall = world.physics.cast_round(s.position, dir, step, s.source);
     let mounted = world.entities.get::<MountRound>(id).map(|round| round.0);
     let damage = match mounted {
         Some(round) => Damage { range: step, ..round },

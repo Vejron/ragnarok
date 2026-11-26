@@ -853,7 +853,7 @@ pub struct Round {
 /// meets (see [`land`]). Returns how far it went, and whether it met anything at all before the end of
 /// its range.
 pub fn hitscan(world: &mut World, shooter: u32, origin: [f32; 3], dir: [f32; 3], round: &Round, ignore: u32, back: u32) -> (f32, bool) {
-    let wall = world.physics.cast_ray_hit(origin, dir, round.range, ignore);
+    let wall = world.physics.cast_round(origin, dir, round.range, ignore);
     let flight = Flight { origin, dir, shooter: Some(shooter), attacker: Some(shooter), back, flown: 0.0 };
     let met = strike(world, &flight, wall, round.range);
     land(world, &flight, &met, round);
@@ -900,7 +900,7 @@ const BEAM_SLACK: f32 = 4.0;
 #[allow(clippy::too_many_arguments)]
 pub fn beam(world: &mut World, shooter: u32, origin: [f32; 3], dir: [f32; 3], round: &Round, ignore: u32, back: u32, radius: f32) -> ([f32; 3], bool) {
     let flight = |origin| Flight { origin, dir, shooter: Some(shooter), attacker: Some(shooter), back, flown: 0.0 };
-    let meet = |world: &World, origin| strike(world, &flight(origin), world.physics.cast_ray_hit(origin, dir, round.range, ignore), round.range);
+    let meet = |world: &World, origin| strike(world, &flight(origin), world.physics.cast_round(origin, dir, round.range, ignore), round.range);
     let (mut from, mut met) = (origin, meet(world, origin));
     if !met.target() {
         let mut nearest = met.end + BEAM_SLACK;
@@ -981,7 +981,7 @@ pub fn strike(world: &World, flight: &Flight, wall: Option<(f32, Option<u32>)>, 
     let (wall, range) = if wet { (None, stop.unwrap_or(range)) } else { (wall, range) };
     let reach = wall.map_or(range, |(t, _)| t);
     let glazed = wall.and_then(|(_, car)| car).filter(|car| world.entities.get::<Vehicle>(*car).is_some_and(|vehicle| vehicle_def(vehicle.kind).crew == Exposure::Glazed));
-    let through = glazed.map(|car| (car, world.physics.cast_ray(origin, dir, range, car).unwrap_or(range)));
+    let through = glazed.map(|car| (car, world.physics.cast_round(origin, dir, range, car).map_or(range, |(t, _)| t)));
     let hit = first_hurtbox_hit(world, origin, dir, reach, shooter, back, through);
     let wet = wet && hit.is_none();
     Strike { wall, reach, hit, end: hit.map_or(reach, |(_, t)| t), wet }
@@ -1040,6 +1040,14 @@ pub fn land(world: &mut World, flight: &Flight, met: &Strike, round: &Round) {
         // Where on the body, for the wound to be drawn there.
         let offset = body(world, victim, back).filter(|body| body.vehicle.is_none()).map(|body| vec3::sub(point, body.anchor));
         damage_entity(world, victim, Harm::new(dealt, attacker, round.weapon).head(head).limb(limb).at(point, offset));
+        // Met beyond the vehicle it struck first, it went in through a car's glass (or its skin) to
+        // whoever sits there: it leaves its hole where it went in, and does the car no other harm.
+        if let Some((_, Some(car))) = wall
+            && reach < t
+            && let Some(outcome @ Outcome::Pierced { .. }) = super::armor::armor_of(world, car, origin, dir, reach, round.pen.at(flown + reach))
+        {
+            super::armor::report(world, car, &outcome, vec3::along(origin, dir, reach), dir, round.pen.calibre, Default::default(), attacker);
+        }
     } else if let Some((_, Some(car))) = wall {
         let canvas = world.entities.get::<Vehicle>(car).is_some_and(|vehicle| vehicle_def(vehicle.kind).armor.canvas);
         let point = vec3::along(origin, dir, reach);

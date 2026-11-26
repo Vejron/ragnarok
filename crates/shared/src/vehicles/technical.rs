@@ -45,13 +45,26 @@ pub const TECHNICAL_MG_HEAT: f32 = 31.0;
 /// (`TECHNICAL_MG_PIVOT` plus `TECHNICAL_MG_HEAD`).
 pub const TECHNICAL_SEAT_HEADS: [[f32; 3]; 3] = [[-0.42, 1.0, -0.35], [0.42, 1.0, -0.35], [0.0, 1.79, 1.65]];
 
-/// The engine under the bonnet, the fuel tank under the bed and the gun's receiver; the crew are in the open.
+/// How far round its pivot the gun's receiver reaches, and half its height, metres: it turns all the
+/// way round, so a round meets it in a drum that holds it at any bearing.
+pub const TECHNICAL_RECEIVER_RADIUS: f32 = 0.3;
+pub const TECHNICAL_RECEIVER_HALF_HEIGHT: f32 = 0.12;
+/// The gun's receiver up on its post, above the hull: a solid only rounds meet, so the gun can be shot
+/// out where it is seen.
+const RECEIVER: Solid = Solid {
+    shape: Shape::Cylinder { half_height: TECHNICAL_RECEIVER_HALF_HEIGHT, radius: TECHNICAL_RECEIVER_RADIUS },
+    at: TECHNICAL_MG_PIVOT,
+    role: Role::Shot,
+};
+
+/// The engine under the bonnet, the fuel tank under the bed and the gun's receiver, whose steel stops
+/// a pistol's rounds but not a rifle's up close; the crew are in the open.
 const ARMOR: Armor = Armor {
-    plates: SHEET.plates,
+    plates: &[Plate::hull("receiver", Zone::Front, 6.0).on(0).all_round(), SHEET.plates[0]],
     modules: &[
         Module::new(Part::Engine, [0.0, 0.2, -1.75], [0.45, 0.3, 0.5], 130),
         Module::new(Part::Fuel, [0.0, -0.25, 1.2], [0.45, 0.15, 0.35], 100),
-        Module::new(Part::Breech, TECHNICAL_MG_PIVOT, [0.1, 0.1, 0.25], 60),
+        Module::new(Part::Breech, TECHNICAL_MG_PIVOT, [0.25, 0.12, 0.25], 60),
     ],
     canvas: false,
 };
@@ -103,7 +116,7 @@ pub(super) const TECHNICAL: VehicleDef = VehicleDef {
         buttons: Buttons::Boost,
         boost: Some(Boost::CAR),
         aims: false,
-        solids: &[],
+        solids: &[RECEIVER],
         tongue: 0.0,
         slide: 0.0,
         roll: 0.0,

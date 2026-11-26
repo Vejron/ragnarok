@@ -257,7 +257,8 @@ pub struct CarPose {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Strike {
     pub distance: f32,
-    /// Which of the kind's `spec.solids` it hit (a turret, a casemate, a shield); `None` for the hull.
+    /// Which of the kind's `spec.solids` it hit (a turret, a casemate, a shield, a car's cabin); `None`
+    /// for the hull.
     pub solid: Option<u8>,
     /// Outward surface normal, in the vehicle's frame (+X right, +Y up, -Z forward).
     pub normal: [f32; 3],
@@ -346,6 +347,20 @@ pub(super) struct Car {
     /// What only rounds meet (its kind's `Role::Hit` solids), each placed in the hull frame. Not in the
     /// physics: see [`Physics::armor_strike`]. Empty for a kind shot at its hull and solids.
     hits: Vec<(SharedShape, Vector)>,
+    /// What only rounds meet as well as its hull and its other solids (its kind's `Role::Shot` solids:
+    /// a car's cabin), placed in the hull frame. Not in the physics: see [`Physics::cast_round`].
+    shots: Vec<ShotSolid>,
+}
+
+/// One of a vehicle's `Role::Shot` solids, as the sim keeps it.
+struct ShotSolid {
+    shape: SharedShape,
+    /// Where it is, in the hull frame.
+    at: Pose,
+    /// Its index in the kind's `spec.solids`.
+    index: u8,
+    /// How far from the hull's middle any of it reaches, metres: a ray that passes further off misses it.
+    reach: f32,
 }
 
 /// The turn a push of `impulse` at `point` (world) gives a legged hull `body` of half extents `half`.
@@ -601,14 +616,25 @@ impl Collide for Solid {
                     .collect();
                 SharedShape::convex_hull(&points).expect("a frustum is not flat")
             }
+            Shape::Glasshouse { foot, top, width, half_height } => {
+                let h = half_height + margin;
+                let points: Vec<Vector> = [-1.0, 1.0]
+                    .into_iter()
+                    .flat_map(|side| {
+                        [(foot[0], width[0], -h), (foot[1], width[0], -h), (top[0], width[1], h), (top[1], width[1], h)]
+                            .map(|(z, half, y)| Vector::new(side * (half + margin), y, z + margin * z.signum()))
+                    })
+                    .collect();
+                SharedShape::convex_hull(&points).expect("a glasshouse is not flat")
+            }
         }
     }
 }
 
 /// A kind's solids that are in the physics, in order: all of `spec.solids` but those only rounds meet
-/// (`Role::Hit`). A car's and a stand-in's `extra` colliders are made from these.
+/// (`Role::Hit`, `Role::Shot`). A car's and a stand-in's `extra` colliders are made from these.
 pub(crate) fn physical(spec: &Spec) -> impl Iterator<Item = &Solid> {
-    spec.solids.iter().filter(|solid| solid.role != Role::Hit)
+    spec.solids.iter().filter(|solid| solid.role.in_physics())
 }
 
 /// The handles of `extra` (a car's or a stand-in's extra solids, made from `physical(spec)` in order)
@@ -619,7 +645,22 @@ pub(crate) fn with_role<'a>(spec: &'a Spec, extra: &'a [ColliderHandle], role: R
 
 /// The index in `spec.solids` of the solid `extra[index]` was made from.
 fn solid_index(spec: &Spec, index: usize) -> Option<u8> {
-    spec.solids.iter().enumerate().filter(|(_, solid)| solid.role != Role::Hit).nth(index).map(|(at, _)| at as u8)
+    spec.solids.iter().enumerate().filter(|(_, solid)| solid.role.in_physics()).nth(index).map(|(at, _)| at as u8)
+}
+
+/// The solids of `spec` only rounds meet as well as its hull (`Role::Shot`), as a car keeps them.
+fn shot_solids(spec: &Spec) -> Vec<ShotSolid> {
+    spec.solids
+        .iter()
+        .enumerate()
+        .filter(|(_, solid)| solid.role == Role::Shot)
+        .map(|(index, solid)| {
+            let shape = solid.shape(0.0);
+            let at = Pose::from_translation(Vector::from(solid.at));
+            let reach = shape.compute_bounding_sphere(&at).radius() + Vector::from(solid.at).length();
+            ShotSolid { shape, at, index: index as u8, reach }
+        })
+        .collect()
 }
 
 impl Physics {
@@ -672,6 +713,7 @@ impl Physics {
         let extra: Vec<ColliderHandle> =
             extra_solids(kind).into_iter().map(|collider| self.colliders.insert_with_parent(collider.density(0.0).friction(0.4).build(), body, &mut self.bodies)).collect();
         let hits = spec.solids.iter().filter(|solid| solid.role == Role::Hit).map(|solid| (solid.shape(0.0), Vector::from(solid.at))).collect();
+        let shots = shot_solids(spec);
         // A helicopter has no wheels, so its controller is never updated.
         let mut controller = DynamicRayCastVehicleController::new(body);
         // Our forward is -Z, but the controller only uses this axis to sign its own speed estimate,
@@ -713,7 +755,7 @@ impl Physics {
                 }
             }
         }
-        self.cars.insert(id, Car { spec, body, collider, extra, controller, steer: 0.0, turn: 0.0, spin: 0.0, flight: CarControls::IDLE, air: (0.0, 0.0), condition: CarCondition::NEW, towed_by: None, tank: spec.tank, firing: 0, mounted: None, rails: false, limbs: None, hits });
+        self.cars.insert(id, Car { spec, body, collider, extra, controller, steer: 0.0, turn: 0.0, spin: 0.0, flight: CarControls::IDLE, air: (0.0, 0.0), condition: CarCondition::NEW, towed_by: None, tank: spec.tank, firing: 0, mounted: None, rails: false, limbs: None, hits, shots });
         self.add_limbs(id);
     }
 
@@ -1462,6 +1504,44 @@ impl Physics {
         nearest
     }
 
+    /// What a round from `origin` along the unit `dir` meets first within `max`, other than vehicle
+    /// `ignore` (the one it is fired from): as [`Self::cast_ray_hit`], and also the solids only rounds
+    /// meet (`Role::Shot`: a car's cabin over its hull box). A round that starts inside one of those
+    /// goes out through it.
+    pub fn cast_round(&self, origin: [f32; 3], dir: [f32; 3], max: f32, ignore: u32) -> Option<(f32, Option<u32>)> {
+        let mut nearest = self.cast_ray_hit(origin, dir, max, ignore);
+        let ray = Ray::new(Vector::from(origin), Vector::from(dir));
+        for (&id, car) in self.cars.iter().filter(|&(&id, car)| id != ignore && !car.shots.is_empty()) {
+            let reach = nearest.map_or(max, |(distance, _)| distance);
+            if let Some((hit, _)) = self.cast_shots(car, &ray, reach) {
+                nearest = Some((hit.time_of_impact, Some(id)));
+            }
+        }
+        nearest
+    }
+
+    /// Where `ray` first meets, within `max`, one of `car`'s solids only rounds meet as well as its hull
+    /// (`Role::Shot`), and which of its kind's `spec.solids` that is. One the ray starts inside is not
+    /// met. The normal is in the world.
+    fn cast_shots(&self, car: &Car, ray: &Ray, max: f32) -> Option<(RayIntersection, u8)> {
+        let pose = *self.bodies.get(car.body)?.position();
+        // How near the ray passes the hull's middle.
+        let closest = (pose.translation - ray.origin).dot(ray.dir).clamp(0.0, max);
+        let off = (ray.origin + ray.dir * closest - pose.translation).length();
+        let mut nearest: Option<(RayIntersection, u8)> = None;
+        for solid in car.shots.iter().filter(|solid| off <= solid.reach) {
+            let at = pose * solid.at;
+            if solid.shape.contains_point(&at, ray.origin) {
+                continue;
+            }
+            let reach = nearest.map_or(max, |(hit, _)| hit.time_of_impact);
+            if let Some(hit) = solid.shape.cast_ray_and_get_normal(&at, ray, reach, true) {
+                nearest = Some((hit, solid.index));
+            }
+        }
+        nearest
+    }
+
     /// Where `ray` first meets, within `max`, the hit shapes of `car` (one shot at them): its torso's
     /// `Role::Hit` solids and its limbs' bones, and with `fists_and_feet` its fists and feet too, which
     /// are colliders of their own that a query of the world meets anyway. The normal is in the world.
@@ -1495,7 +1575,8 @@ impl Physics {
 
     /// Where a ray from `origin` along the unit `dir` meets vehicle `id`'s own solids within `max`, for armor
     /// to judge: how far, which solid it was (`None` for the hull), and the surface normal and the point in
-    /// the vehicle's frame. A ray that starts inside a solid has a zero normal.
+    /// the vehicle's frame. A ray that starts inside a solid has a zero normal. The solids only rounds
+    /// meet as well as the hull (a car's cabin) count, unless the ray starts inside one.
     ///
     /// A vehicle with hit shapes (the Titan) is met only at them, at its limbs' bones and at its fists
     /// and feet, never at its hull or its other solids, and the solid is always `None`: its plates are all
@@ -1514,9 +1595,11 @@ impl Physics {
         let filter = QueryFilter::default().predicate(&mine);
         let queries = self.broad_phase.as_query_pipeline(self.narrow_phase.query_dispatcher(), &self.bodies, &self.colliders, filter);
         let ray = Ray::new(Vector::from(origin), Vector::from(dir));
-        let (collider, hit) = queries.cast_ray_and_get_normal(&ray, max, true)?;
+        let solid_hit = queries.cast_ray_and_get_normal(&ray, max, true).map(|(collider, hit)| (hit, car.extra.iter().position(|&handle| handle == collider).and_then(|index| solid_index(car.spec, index))));
+        // A solid only rounds meet (a car's cabin), if it is nearer than the hull and the others.
+        let reach = solid_hit.map_or(max, |(hit, _)| hit.time_of_impact);
+        let (hit, solid) = self.cast_shots(car, &ray, reach).map(|(hit, index)| (hit, Some(index))).or(solid_hit)?;
         let to_local = body.rotation().inverse();
-        let solid = car.extra.iter().position(|&handle| handle == collider).and_then(|index| solid_index(car.spec, index));
         let point = Vector::from(origin) + Vector::from(dir) * hit.time_of_impact;
         let mut normal = to_local * hit.normal;
         // A hull's swept underside stands in for the upright bumper and sill it is cut from, so a round
