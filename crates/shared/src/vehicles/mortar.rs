@@ -125,4 +125,5 @@ const MOUNTS: &[MountDef] = &[MountDef {
     show: Show::Turret,
     eye: None,
     sight: false,
+    stand_in: None,
 }];

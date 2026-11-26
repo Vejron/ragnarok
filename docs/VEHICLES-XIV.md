@@ -33,7 +33,7 @@ It is piloted with mouse and keyboard, or from a VR headset with the pilot's own
   - It turns on its neck (`TITAN_HEAD_PIVOT`, the top of the collar) up to 57° to either side of the way the torso faces, 69° down and 40° up (`TITAN_HEAD_TURN`, `TITAN_HEAD_DOWN`, `TITAN_HEAD_UP`), at 4 rad/s (`TITAN_HEAD_SLEW`). A look further round than that leaves it at the end of its travel.
   - The server turns it from the pilot's input (`titans::turn_head`, the `Head` component) and sends it in `titan` as `head_yaw` and `head_pitch`. Empty, it faces ahead. It turns while the Titan punches and while it lies fallen.
   - The model's `head` node is turned by `TitanModel`. The pilot's own client turns it from their look without waiting for the server (`TitanModel.lookTo`, from the `titan` camera rig).
-  - The eye in the head rides round the neck with it (`headEye`), so the visor's edges stay behind the view.
+  - The eye in the head rides round the neck with it (`headEye`), so the visor's edges stay behind the view. In the cockpit view (B) it turns with the head's yaw but not its pitch, which would sink it behind the chest plates: looking down it leans up to 3 m out of the visor instead (`cockpitEye`), and the look goes down to 83°, past where the head stops. The head the pilot sits in is not drawn for them there.
   - Rounds still meet the head where it is when it faces ahead: its `Role::Hit` solids do not turn.
 - **L switches the searchlight in its visor**, which shines the way the head faces, so it lights what the pilot looks at:
   - It is a narrow cold-white beam that reaches 320 m, at full strength in the dark and 15% of it by day (`Headlights`, `TitanModel.searchlight`).
@@ -50,7 +50,7 @@ It is piloted with mouse and keyboard, or from a VR headset with the pilot's own
   - A soldier in its way is thrown the way it is going and knocked down, and loses 6 health for every m/s: any real punch kills.
   - A vehicle is shoved by the fist itself, as by anything solid, and loses 4 health for every m/s.
   - A building or placed cubes lose a bite, as if rammed by something forty times a car's weight. A tree is felled.
-  - Another Titan is knocked where the fist lands, and hurt as a vehicle is.
+  - Another Titan is boxed with ("Titan against Titan", below).
 - **A grip** holds what the hand closes on: the nearest soldier within 4 m of the fist's middle, or else a vehicle of 60 tonnes or less (a tank, but not a ship or another Titan).
   - A held soldier stands on the fist. They can look about and shoot, but not walk, and their E does nothing.
   - A held vehicle is fixed to the fist, crew and all.
@@ -70,6 +70,18 @@ It is piloted with mouse and keyboard, or from a VR headset with the pilot's own
   - Its reactor is in its chest behind the glowing slot between its chest plates. Shot out, it has no power and falls.
   - A blast shoves it a twenty-fifth as hard as it would a walker. A great enough blow still staggers it, and it catches itself; laid flat, it gets up by itself.
   - Wrecked, it collapses, burns, and is put back at its place like any vehicle.
+
+## Titan against Titan
+
+Two Titans box.
+
+- **A fist stops where it meets another Titan.** Each tick its move is swept, half a fist's radius at a time, against the other's shape: its torso's `Role::Hit` solids, its legs and its arms bent as drawn, and its fists (`Physics::obstacles`, `step_limbs`). It is left at the last clear spot and rests there while its pilot pushes into it. What it met is reported once (`LimbsPose::contacts`, a `Contact`), and not again until the fist is drawn back 2 m clear, so following through behind a Titan it has shoved is one blow.
+- **The blow** (`Physics::land_blow`, from `spar` in `titans.rs`):
+  - A punch (closed, empty, 8 m/s or more) landing clean on its body or legs shoves it back by `TITAN_PUNCH_KNOCK` of the fist's speed and rocks it back by `TITAN_PUNCH_ROCK` times the turn of that push where it lands (`Physics::punch_car`). A full punch to the head rocks it about 9° and shoves it back at about 1.7 m/s, and it stands again. It loses 4 health a m/s, of which it feels a tenth: about 17.
+  - One landing on its guard, an arm or a fist, swings that arm away at the fist's speed (`Physics::knock_fist`; the arm comes back by itself) and passes on `TITAN_BLOCK_SHARE` (15%) of the shove and the damage: under a degree, and about 2 health.
+  - An open hand, or a fist too slow to punch, only pushes, at `TITAN_PUSH_SHARE` of a punch's shove.
+  - The puncher is pushed back by `TITAN_PUNCH_RECOIL` of what it gave.
+- **The guard** is the fists' rest under mouse and keyboard: with no button held both are up, 11 m out from the shoulders towards what the pilot looks at, which puts them between its head and an opponent it faces. A run of clean punches on one still rocking can fell it, and it gets up as from any great blow.
 
 ## Weapons
 
@@ -116,9 +128,9 @@ The right index trigger fires the gun, and pulling the left launches a missile (
 
 - **The torso is a dynamic body** held up by springs, as a walker's hull is (`Lift::Walker` and `walk()` in `crates/sim/src/vehicle/flight.rs`), and a capped torque keeps it upright, so it can be knocked over. A walker's springs are ray casts down from its hips, so it floats over the ground wherever it goes. The Titan's go to its planted feet ("The walk", below).
 - **The fists and the feet are kinematic bodies** of their own (`crates/sim/src/vehicle/limbs.rs`), which the torso does not feel.
-  - A fist goes where it is asked to within its arm's reach (6 to 24 m from the shoulder) and outside the torso's box, speeding up and slowing at 140 m/s². With nobody aboard, or fallen, or wrecked, it goes to where it hangs.
+  - A fist goes where it is asked to within its arm's reach (6 to 30 m from the shoulder: two bones of 15 m, long enough that crouched it puts a fist on the ground about 20 m ahead) and outside the torso's box, speeding up and slowing at 140 m/s². With nobody aboard, or fallen, or wrecked, it goes to where it hangs.
   - A planted foot does not move. The two step in turn ("The walk", below).
-  - They shove any dynamic body they meet. The Titan's own hull leaves their collision group (`LIMB_GROUP`) out of what it touches, so they never push it about. This also means one Titan's fist does not shove another's torso: the server knocks it instead.
+  - They shove any dynamic body they meet. The Titan's own hull leaves their collision group (`LIMB_GROUP`) out of what it touches, so they never push it about. This also means one Titan's fist does not shove another's torso: it is stopped where it meets its shape instead, and the blow is dealt then ("Titan against Titan").
 - **The arms and legs between are only drawn**, by two-bone IK on the client (`client/src/render/titan.ts`) from the fists and feet the server sends. The thighs are solids on the hull, short enough to clear the ground when it crouches.
 - **Rounds meet the model's shape, not these solids** ("Where rounds meet it", below).
 
@@ -135,6 +147,8 @@ The box it walks with is narrower than its shoulder blocks, shorter than its hea
 Every round, line of sight and probe that goes through `cast_ray_hit` sees it so. Other queries (a soldier walking into it, a car's wheels) still meet the box. A strike on any of it is a strike on the hull for its armour (`solid: None`): all its plates are on the hull, and the thighs, which used to count as a bare solid, now meet them too. A point on a limb is given in the hull frame, where the limb is at that moment.
 
 **A round's knock.** A shell, a rocket or a cannonball that strikes any vehicle gives it its `Burst::hit_knock` (`*_HIT_KNOCK`, from 0.6 m/s for an armour-piercing shell down to 0.15 m/s for an autocannon round; a glance gives `RICOCHET_KNOCK_SHARE` of it), pushed where it struck (`Physics::strike_car`), so a tank hit high on its side rocks away from it. A legged kind takes its `blast_share` of the push and its `hit_share` of the turn: the Titan's 4.5 of the turn rocks it about 2° from an armour-piercing shell on its chest, still again in under a second and a half, without sliding it back. Bullets give none.
+
+**Struck low.** The point a legged kind is turned about is first taken into its hull's box (`rocking` in `vehicle.rs`), so a round on a Titan's shin rocks it as if it struck the hip, not from 33 m below its middle. While it stands on its feet it is never twisted round its own up by a blow: its planted feet hold its heading. Before this, the cannon held on one shin for four seconds turned a Titan half round and leaned it 28°; now it leans it under 5° and turns it not at all (`rounds_at_a_titans_feet_rock_it_a_little_and_never_spin_it`).
 
 ## The walk
 
@@ -197,9 +211,10 @@ Protocol 79 ([NETWORKING.md](NETWORKING.md)): 77 brought the Titan, 78 the `step
 
 ## Tests
 
-- **`crates/sim/src/vehicle/tests_hits.rs`**: an armour-piercing shell on its chest rocks it and it stands again; a shell on a tank's side rocks it away from the hit; rounds meet its arms, its legs where they bend, its head, fin and shoulder blocks, and miss past its waist inside the box.
+- **`crates/sim/src/vehicle/tests_hits.rs`**: an armour-piercing shell on its chest rocks it and it stands again; a shell on a tank's side rocks it away from the hit; rounds held on its shin rock it a little and never spin it; rounds meet its arms, its legs where they bend, its head, fin and shoulder blocks, and miss past its waist inside the box.
 - **`crates/shared/src/vehicles/titan.rs`**: a bend keeps its bones' lengths and bends towards its pole, and matches the fixture the client's is checked against.
 - **`crates/sim/src/vehicle/tests.rs`**: it stands at its ride height with a foot under each hip; walks on one foot at a time with long slow steps, a planted foot never sliding, rising over each foot and going slowest there, stops, turns on the spot and stands again on both; walks on the same from feet put back as a snapshot has them; crouches to bring a fist to the ground and stands again; a fist stays within its reach and its arm's speed, out of its own chest, and hangs when nobody is aboard; a fist shoves a jeep, a closed one carries it off and throws it; a shell's blast barely moves it, a great blow fells it and it gets up; it leaps, its thrusters carry it up and along while the fuel lasts and no higher than its ceiling, and its feet hang; let fall from its ceiling it lands on its feet at a slam's speed, and with the thrusters fired it sets down; put back in the air as a snapshot has it, it flies on the same.
+- **Titan against Titan** (`crates/sim/src/vehicle/tests.rs`): a fist stops on another Titan and does not pass through; a punch to the head rocks it back and shoves it a step; a punch on the guard knocks the arm aside and barely rocks it. In `titans/tests.rs`: one punch is one blow, and a blocked one hurts less than a third as much.
 - **`crates/server/src/mechanics/titans/tests.rs`**: a closed hand picks a soldier up, carries them high, they still fire, and they fly when it opens; an open hand coming down on a soldier does no harm; a closed fist swung through one throws and hurts them; the arms hang unless its own pilot moves them, and when the pilot stops; a foot crushes who is under it and throws those around it, and wrecks a jeep; it feels a tenth of a shell and nothing of a rifle; a fist fells a tree and holes a house; a slam throws and hurts soldiers, shakes those further out, throws and breaks a jeep, fells the tree by it and breaks open the house, and is not felt by the Titan; one that leaps and falls slams where it lands, one set down gently does not, and whoever is in its fist comes down unhurt; a placed one stands, is boarded from between its feet, walks and sets its pilot down; a shell its chest plate stops still rocks it.
 - **`client/src/__tests__/titan.spec.ts`**: the model's fists are where the server has them, turned with the hull, on arms of the built length; it burns under both feet while its thrusters fire and reports a hard landing once; it stands on the planted feet, lifts the one in the air and reports a footfall when it comes down; a planted foot keeps pointing the way it was put down while the hull turns; the mouse-and-keyboard guard, punch, reach, grip and carry.
 

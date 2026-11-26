@@ -4,6 +4,8 @@
 //! - **A punch.** A closed fist moving at `TITAN_PUNCH_SPEED` or more throws the soldiers it meets, hurting
 //!   them by its speed, hurts the vehicles it meets (the physics shoves them), takes a bite out of a
 //!   building or placed cubes, and fells trees. An open hand only shoves, as any solid does.
+//! - **Boxing.** A fist is stopped where it meets another Titan, and the blow is dealt once (`spar`):
+//!   landing clean it rocks it back and hurts it, landing on its guard it knocks that arm aside.
 //! - **A grip.** A hand that closes on a soldier holds them: they ride on the fist, free to look about
 //!   and shoot, until it opens, and then fly off as fast as it was moving. One that closes on a vehicle
 //!   no heavier than `TITAN_LIFT_MASS` carries it off the same way.
@@ -28,7 +30,7 @@ use shared::protocol::{ClientHands, HANDS_GRIP_LEFT, HANDS_GRIP_RIGHT, HANDS_REA
 use shared::quant::{from_cm, from_mrad};
 use shared::vec3;
 use shared::vehicles::vehicle_def;
-use sim::{Hand, LimbsPose, Obj};
+use sim::{Contact, Hand, LimbsPose, Obj};
 use std::collections::BTreeMap;
 
 /// A pilot who has sent no hands for this many ticks has let go of the controls: the arms hang.
@@ -60,8 +62,6 @@ const STOMP_DV: f32 = 6.0;
 const TREE_DAMAGE_PER_SPEED: f32 = 60.0;
 /// The share of the speed a slam throws a vehicle outward with that it also throws it up with.
 const SLAM_TOSS: f32 = 0.6;
-/// The share of a fist's speed another Titan it lands on is knocked by.
-const GIANT_KNOCK: f32 = 0.06;
 
 /// What a Titan's hands were doing last tick.
 #[derive(Default)]
@@ -226,9 +226,9 @@ fn strike(world: &mut World, vid: u32, point: [f32; 3], radius: f32, velocity: [
         if world.entities.dead(car) || world.physics.held_car(vid, 0) == Some(car) || world.physics.held_car(vid, 1) == Some(car) {
             continue;
         }
-        // Another Titan does not feel a fist as a car does: it is knocked where the fist lands.
+        // Another Titan stops a fist where it meets it, and takes the blow then (`spar`).
         if world.entities.get::<Vehicle>(car).is_some_and(|vehicle| vehicle_def(vehicle.kind).spec.arms.is_some()) {
-            world.physics.knock_car(car, velocity.map(|v| v * GIANT_KNOCK), point);
+            continue;
         }
         // What it is made of is for `damage_vehicle` to weigh (`Body::tough`).
         super::combat::damage_vehicle(world, car, amount.min(255.0) as u8, pilot);
@@ -246,6 +246,22 @@ fn strike(world: &mut World, vid: u32, point: [f32; 3], radius: f32, velocity: [
         }
     }
     super::combat::ram_cubes(world, point, speed, KIND_TITAN);
+}
+
+/// A fist of Titan `vid`, `closed` or open, has come to another Titan (`contact`): a boxer's blow, which
+/// the physics deals (`Physics::land_blow`). A closed fist fast enough to be a punch also hurts it by
+/// its speed, the less for landing on its guard.
+fn spar(world: &mut World, vid: u32, contact: Contact, closed: bool, pilot: Option<u32>) {
+    if world.entities.dead(contact.giant) {
+        return;
+    }
+    let punch = closed && contact.speed >= TITAN_PUNCH_SPEED;
+    let share = world.physics.land_blow(vid, contact, punch);
+    if punch {
+        let amount = (contact.speed * TITAN_PUNCH_VEHICLE_DAMAGE * share).min(255.0) as u8;
+        super::combat::damage_vehicle(world, contact.giant, amount, pilot);
+        tracing::debug!(titan = vid, other = contact.giant, speed = contact.speed, guard = ?contact.guard, "punched a titan");
+    }
 }
 
 /// A foot of Titan `vid` comes down at `foot` (its underside).
@@ -321,6 +337,9 @@ impl Titans {
         for hand in 0..2 {
             let (fist, velocity) = (limbs.fists_world[hand], limbs.fist_velocity[hand]);
             let full = held_in(world, vid, hand).is_some() || world.physics.held_car(vid, hand).is_some();
+            if let Some(contact) = limbs.contacts[hand].filter(|_| !wrecked) {
+                spar(world, vid, contact, asked[hand].closed && !full, pilot);
+            }
             if !asked[hand].closed && full {
                 let_go(world, vid, hand, velocity, pilot);
                 continue;

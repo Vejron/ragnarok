@@ -189,6 +189,7 @@ const MOUNTS: &[MountDef] = &[
         show: Show::Turret,
         eye: Some(Eye { back: GUNNER_BACK, up: GUNNER_UP }),
         sight: true,
+        stand_in: Some(0),
     },
     MountDef {
         seat: TANK_MG_SEAT,
@@ -205,5 +206,6 @@ const MOUNTS: &[MountDef] = &[
         show: Show::Pintle,
         eye: Some(Eye { back: ROOF_AIM_BACK, up: ROOF_AIM_UP }),
         sight: false,
+        stand_in: None,
     },
 ];

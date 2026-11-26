@@ -20,7 +20,7 @@ export const STRF: VehicleKind = {
     distance: STRF_DISTANCE,
     reload: STRF_CANNON_COOLDOWN_TICKS,
     seats: [
-      { rig: DRIVE, role: 'driver', board: 'E: drive the Strf 90', chase: true, gauges: ['boost'], enclosed: true },
+      { rig: DRIVE, role: 'driver', board: 'E: drive the Strf 90', chase: true, standIn: 1, gauges: ['boost'], enclosed: true },
       // The turret turns all the way round; the gauges show the round loaded (AP or HE) and the barrel's heat.
       { rig: { name: 'gun', hull: [Math.PI, STRF_BARREL_MIN, STRF_BARREL_MAX] }, role: 'gunner', board: 'E: man the cannon', sight: true, gauges: ['ammo', 'heat'], enclosed: true },
       TROOP,

@@ -272,6 +272,7 @@ const MOUNTS: &[MountDef] = &[
         show: Show::Turret,
         eye: Some(Eye { back: GUNNER_BACK, up: GUNNER_UP }),
         sight: false,
+        stand_in: None,
     },
     MountDef {
         seat: 0,
@@ -288,5 +289,6 @@ const MOUNTS: &[MountDef] = &[
         show: Show::Pintle,
         eye: Some(Eye { back: CB90_AIM_BACK, up: CB90_AIM_UP }),
         sight: false,
+        stand_in: None,
     },
 ];

@@ -32,7 +32,7 @@ pub use stream::Ram;
 /// A collider of the static world, as `tree_collider` and `fences::piece_collider` build them.
 pub use rapier3d::prelude::Collider;
 pub use ragdoll::{PARTS as RAGDOLL_PARTS, POSE_FLOATS as RAGDOLL_POSE_FLOATS, Ragdolls, SEGMENT_FLOATS as RAGDOLL_SEGMENT_FLOATS};
-pub use vehicle::{Breach, CarCondition, CarControls, CarImpact, CarMotion, CarPose, Hand, LIMB_GROUP, LimbsPose, Strike, breach, breach_velocity, half_extents};
+pub use vehicle::{Breach, CarCondition, CarControls, CarImpact, CarMotion, CarPose, Contact, Hand, LIMB_GROUP, LimbsPose, Strike, breach, breach_velocity, half_extents};
 
 /// A destructible piece of the static world: a building, a tree or a piece of a fence or wall
 /// (`shared::world::line_pieces`), by tile and index.

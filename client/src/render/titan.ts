@@ -133,6 +133,21 @@ export function headEye(head: readonly [number, number], ahead = 0): Vector3 {
   return new Vector3(TITAN_EYE[0], TITAN_EYE[1], TITAN_EYE[2] - ahead).sub(pivot).applyQuaternion(headTurned(head)).add(pivot)
 }
 
+/** How far ahead of `TITAN_EYE` the cockpit's eye is looking level, metres: out of the visor. */
+const COCKPIT_AHEAD = 0.7
+/** How much further ahead it goes looking straight down, metres: past the chest plates, which then stay below and behind it. */
+const COCKPIT_LEAN = 3.0
+
+/**
+ * Where the cockpit view's eye is in the hull's frame for a pilot looking `pitch` radians up (+) or down
+ * from a head turned by `head`: at the visor, carried round the neck by the head's yaw but not dropped
+ * by its pitch, which would sink it behind the chest; looking down it leans out ahead instead.
+ */
+export function cockpitEye(head: readonly [number, number], pitch: number): Vector3 {
+  const down = clamp(-pitch / (Math.PI / 2), 0, 1)
+  return headEye([head[0], 0], COCKPIT_AHEAD + COCKPIT_LEAN * down)
+}
+
 /**
  * A Titan: its torso on the hull, its head turned to where its pilot looks, and its arms and legs bent by IK to where the server has its fists
  * and feet (`Titan`). Nothing here decides where a limb is: with no word from the server yet the arms
@@ -154,7 +169,7 @@ export class TitanModel implements VehicleModel {
   private readonly head: Node
   private limbs: Titan | null = null
   /** Where its own pilot looks, for the next frame drawn: the head's turn from the hull, and whether it is there at once. */
-  private gaze: { turn: readonly [number, number]; snap: boolean } | null = null
+  private gaze: { turn: readonly [number, number]; snap: boolean; inside: boolean } | null = null
   private readonly beam = { at: new Vector3(), direction: new Vector3() }
   /** How the head is turned from the hull as drawn, `[yaw, pitch]` in radians. */
   private readonly facing: [number, number] = [0, 0]
@@ -230,10 +245,11 @@ export class TitanModel implements VehicleModel {
   /**
    * Its own pilot looks so that the head is turned by `turn` (`headTurn`) in the next frame drawn, sooner
    * than the server says so. With `snap` the head is there at once, as it must be for a pilot looking out
-   * of it; without, it turns as fast as the server turns it.
+   * of it; without, it turns as fast as the server turns it. With `inside` the pilot looks out from the
+   * cockpit, and the head they sit in is not drawn for that frame.
    */
-  lookTo(turn: readonly [number, number], snap: boolean) {
-    this.gaze = { turn, snap }
+  lookTo(turn: readonly [number, number], snap: boolean, inside = false) {
+    this.gaze = { turn, snap, inside }
   }
 
   /**
@@ -335,6 +351,7 @@ export class TitanModel implements VehicleModel {
     const most = gaze && !gaze.snap ? TITAN_HEAD_SLEW * Math.min(dt, 0.1) : Infinity
     for (const axis of [0, 1] as const) this.facing[axis] += clamp(toward[axis]! - this.facing[axis], -most, most)
     this.head.quaternion.copy(headTurned(this.facing))
+    this.head.visible = !gaze?.inside
     const flags = limbs?.flags ?? 0
     const turn = new Quaternion(...rotation)
     const unturn = turn.clone().invert()

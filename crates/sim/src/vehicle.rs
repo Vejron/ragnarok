@@ -41,7 +41,7 @@ use floats::float;
 use sail::sail;
 use water::{wade, water_under};
 pub use spec::half_extents;
-pub use limbs::{Hand, LIMB_GROUP, LimbsPose};
+pub use limbs::{Contact, Hand, LIMB_GROUP, LimbsPose};
 pub(super) use spec::{Airframe, Arms, Buttons, Floats, Gait, Lift, Role, Rotorcraft, Runners, Shape, Solid, Spec, spec};
 
 
@@ -340,6 +340,22 @@ pub(super) struct Car {
     /// What only rounds meet (its kind's `Role::Hit` solids), each placed in the hull frame. Not in the
     /// physics: see [`Physics::armor_strike`]. Empty for a kind shot at its hull and solids.
     hits: Vec<(SharedShape, Vector)>,
+}
+
+/// The turn a push of `impulse` at `point` (world) gives a legged hull `body` of half extents `half`.
+/// The point is taken into the hull's box first: a blow on a leg reaches the hull at the hip, and does
+/// not swing it about from far below. Standing on its feet (`planted`), it is not twisted round its own
+/// up by a blow: its feet hold its heading.
+fn rocking(body: &RigidBody, half: Vector, planted: bool, point: [f32; 3], impulse: Vector) -> Vector {
+    let pose = body.position();
+    let local = pose.inverse() * Vector::from(point);
+    let at = *pose * local.clamp(-half, half);
+    let turn = (at - body.center_of_mass()).cross(impulse);
+    if !planted {
+        return turn;
+    }
+    let up = *body.rotation() * Vector::Y;
+    turn - up * turn.dot(up)
 }
 
 /// A vehicle fixed to another one, `on`, at `at` (its own frame), turned `yaw` there.
@@ -1590,20 +1606,38 @@ impl Physics {
     /// change of `dv` m/s to the whole of it, pushed at that point, so that it turns it as well, a hit
     /// high on a tall hull rocking it. A legged kind is shoved by its gait's `blast_share` of the push
     /// and turned by its `hit_share` of the turn: a giant rocks where it stands rather than sliding. A
-    /// round that struck a limb pushes the hull at the same point.
+    /// round that struck a leg turns it as if at the hip, and one on its feet is not twisted round
+    /// (`rocking`).
     pub fn strike_car(&mut self, id: u32, dir: [f32; 3], point: [f32; 3], dv: f32) {
         let Some(car) = self.cars.get(&id) else { return };
-        let gait = car.spec.gait;
+        let (gait, planted) = (car.spec.gait, car.limbs.as_ref().is_some_and(limbs::Limbs::standing));
+        let half = Vector::from(car.spec.half_extents);
         let Some(body) = self.bodies.get_mut(car.body) else { return };
         let impulse = Vector::from(dir).normalize_or_zero() * (dv * body.mass());
         match gait {
             Some(gait) => {
-                let lever = Vector::from(point) - body.center_of_mass();
                 body.apply_impulse(impulse * gait.blast_share, true);
-                body.apply_torque_impulse(lever.cross(impulse) * gait.hit_share, true);
+                body.apply_torque_impulse(rocking(body, half, planted, point, impulse) * gait.hit_share, true);
             }
             None => body.apply_impulse_at_point(impulse, Vector::from(point), true),
         }
+    }
+
+    /// Gives giant `id` the blow of another's fist that met it at `point` (world) going along `dir`: a
+    /// change of `dv` m/s to the whole of it, which shoves it back a step, and `rock` times the turn of
+    /// that push at the point, which rocks it, as a straight to the head does. Struck low it rocks as if struck at
+    /// the hip, and on its feet it is not twisted round. Nothing for a kind without a gait.
+    pub fn punch_car(&mut self, id: u32, dir: [f32; 3], point: [f32; 3], dv: f32, rock: f32) {
+        let Some(car) = self.cars.get(&id) else { return };
+        if car.spec.gait.is_none() {
+            return;
+        }
+        let planted = car.limbs.as_ref().is_some_and(limbs::Limbs::standing);
+        let half = Vector::from(car.spec.half_extents);
+        let Some(body) = self.bodies.get_mut(car.body) else { return };
+        let impulse = Vector::from(dir).normalize_or_zero() * (dv * body.mass());
+        body.apply_impulse(impulse, true);
+        body.apply_torque_impulse(rocking(body, half, planted, point, impulse) * rock, true);
     }
 
     pub fn car_motion(&self, id: u32) -> Option<CarMotion> {

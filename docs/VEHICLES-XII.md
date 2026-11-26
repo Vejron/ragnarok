@@ -7,7 +7,7 @@ The Strf 90 is a tracked infantry fighting vehicle, modelled on the Swedish CV90
 - **The Strf 90** (`KIND_STRF` = 28) has 180 hp; the tank has 250 and the Strv S 220.
 - **Placement.** It appears only where it is placed in the map editor (**Strf 90**, I in the palette).
 - **Seat 0 is the driver.** The controls are the tank's: it pivots on the spot. It reaches 19 m/s (about 70 km/h) against the tank's 12, and stays upright at full stick flat out.
-- **Seat 1 is the gunner**, who aims the turret all the way round with the mouse.
+- **Seat 1 is the gunner**, who aims the turret all the way round with the mouse. With nobody in that seat the driver aims and fires it, as in the tank ([VEHICLES-II](VEHICLES-II.md)).
   - The turret slews at 2 rad/s and the barrel at 1.4; the tank's slew at 1.4 and 0.9.
   - The barrel elevates from −8° to +49°, steep enough to fire at aircraft.
   - A click fires five rounds a second.

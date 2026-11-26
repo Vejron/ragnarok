@@ -79,7 +79,13 @@ fn work(world: &mut World, vid: u32, def: &MountDef, mut mount: Mount, pose: &Ca
     // A beam only goes on from here, so one that loses its driver or falls over dies with the tick.
     let (charged, burning) = (mount.charge, mount.beam);
     (mount.charge, mount.beam) = (0, 0);
-    let Some(occupant) = world.entities.get::<Seats>(vid).and_then(|seats| seats.rider(def.seat)) else { return mount };
+    // With its own seat empty, the seat that stands in works it: a driver alone in a tank aims and fires
+    // the turret. A bot steers with its look, so it never stands in.
+    let Some(occupant) = world.entities.get::<Seats>(vid).and_then(|seats| {
+        seats.rider(def.seat).or_else(|| def.stand_in.and_then(|seat| seats.rider(seat)).filter(|&driver| !world.entities.has::<Bot>(driver)))
+    }) else {
+        return mount;
+    };
     // An occupant away flying a missile they sent up from it (`Fire::Guided`) is still in its seat, but
     // their input is the missile's.
     let Some(input) = world.entities.get::<Player>(occupant).filter(|player| player.seat.is_some_and(|seat| seat.vehicle == vid)).map(|player| player.input) else { return mount };

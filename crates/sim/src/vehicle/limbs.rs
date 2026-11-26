@@ -52,6 +52,42 @@ const WALKED: f32 = 0.1;
 /// How far above the hip, and below the leg's length, a foot looks for the ground, metres.
 const GROUND_PROBE: f32 = 8.0;
 
+/// Where a fist met another giant, the tick it first did.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Contact {
+    /// The giant it met.
+    pub giant: u32,
+    /// Where on it, in the world.
+    pub point: [f32; 3],
+    /// The way the fist was going, a unit vector in the world.
+    pub way: [f32; 3],
+    /// How fast it was going, m/s, before it was stopped.
+    pub speed: f32,
+    /// The hand (0 left, 1 right) whose arm or fist it met, its guard; `None` for its body or legs.
+    pub guard: Option<usize>,
+}
+
+/// One of another giant's shapes a fist is stopped by, placed in the world.
+struct Obstacle {
+    giant: u32,
+    guard: Option<usize>,
+    shape: SharedShape,
+    pose: Pose,
+}
+
+impl Obstacle {
+    /// Whether a fist of `radius` at `at` (world) is in it.
+    fn holds(&self, at: Vector, radius: f32) -> bool {
+        self.shape.distance_to_point(&self.pose, at, true) < radius
+    }
+}
+
+/// How far, as a share of a fist's radius, it moves between the checks of its sweep for another giant.
+const SWEEP_STEP: f32 = 0.5;
+/// How far clear of another giant a fist that came to it must be drawn back, metres, before it can come
+/// to it again: following through behind one it shoved is one blow, not many.
+const DRAWN_BACK: f32 = 2.0;
+
 /// What a pilot asks of one hand.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Hand {
@@ -83,6 +119,8 @@ pub struct LimbsPose {
     pub weight: f32,
     /// How fast it was coming down when its feet met the ground in the last step, m/s; 0 in any other.
     pub impact: f32,
+    /// What each fist met of another giant in the last step, if it came to it then.
+    pub contacts: [Option<Contact>; 2],
 }
 
 struct Fist {
@@ -94,6 +132,9 @@ struct Fist {
     hand: Hand,
     /// Its velocity in the world after the last step, m/s.
     world_velocity: Vector,
+    /// It is against another giant, and what it met when it came to it (only that tick).
+    touching: bool,
+    contact: Option<Contact>,
     /// The vehicle it holds, and the joint that holds it.
     holds: Option<(u32, ImpulseJointHandle)>,
 }
@@ -144,6 +185,11 @@ impl Limbs {
     /// Its fists' and feet's colliders.
     pub(super) fn colliders(&self) -> impl Iterator<Item = ColliderHandle> + '_ {
         self.fists.iter().map(|fist| fist.collider).chain(self.feet.iter().flatten().map(|foot| foot.collider))
+    }
+
+    /// Whether it stands on its feet: they have been found under it, and it is not in the air.
+    pub(super) fn standing(&self) -> bool {
+        self.feet.is_some() && self.planted().is_some() && self.stance.step != Step::Airborne
     }
 
     /// The feet it stands on, once they have been found under it.
@@ -212,7 +258,7 @@ impl Physics {
             let at = mirrored(arms.rest, index);
             let body = self.bodies.insert(RigidBodyBuilder::kinematic_position_based().pose(Pose::from_parts(pose * at, pose.rotation)).build());
             let collider = self.colliders.insert_with_parent(ColliderBuilder::ball(arms.fist).collision_groups(limb_groups()).friction(0.8).build(), body, &mut self.bodies);
-            Fist { body, collider, at, velocity: Vector::ZERO, hand: Hand::default(), world_velocity: Vector::ZERO, holds: None }
+            Fist { body, collider, at, velocity: Vector::ZERO, hand: Hand::default(), world_velocity: Vector::ZERO, holds: None, touching: false, contact: None }
         });
         let feet = spec.gait.and_then(|gait| Some((gait, gait.feet?))).map(|(gait, feet)| {
             [0, 1].map(|index| {
@@ -266,6 +312,64 @@ impl Physics {
         limbs.stance = Stance { step, weight: weight.clamp(0.0, 1.0), impact: 0.0 };
     }
 
+    /// Knocks hand `hand` (0 left, 1 right) of giant `id` by `dv` m/s in the world, as a blow on its arm
+    /// does: it swings away and comes back to where it is held.
+    pub fn knock_fist(&mut self, id: u32, hand: usize, dv: [f32; 3]) {
+        let Some(car) = self.cars.get(&id) else { return };
+        let Some(rotation) = self.bodies.get(car.body).map(|body| *body.rotation()) else { return };
+        let Some(fist) = self.cars.get_mut(&id).and_then(|car| car.limbs.as_mut()).and_then(|limbs| limbs.fists.get_mut(hand)) else { return };
+        fist.velocity += rotation.inverse() * Vector::from(dv);
+    }
+
+    /// Giant `puncher`'s fist came to another (`contact`), as a `punch` (closed and fast enough to be one)
+    /// or not: a boxer's blow, in the physics. A punch landing clean on the other's body or legs shoves
+    /// it back at `TITAN_PUNCH_KNOCK` of the fist's speed and rocks it back by `TITAN_PUNCH_ROCK` times
+    /// the turn of that push where it lands;
+    /// one landing on its guard swings that arm away at `TITAN_BLOCK_KNOCK` of it and passes on only
+    /// `TITAN_BLOCK_SHARE` of the shove. Anything else only pushes, at `TITAN_PUSH_SHARE`. The puncher is
+    /// pushed back by `TITAN_PUNCH_RECOIL` of what it gave. Returns the share of a clean punch it was.
+    pub fn land_blow(&mut self, puncher: u32, contact: Contact, punch: bool) -> f32 {
+        let share = match (punch, contact.guard) {
+            (false, _) => TITAN_PUSH_SHARE,
+            (true, None) => 1.0,
+            (true, Some(_)) => TITAN_BLOCK_SHARE,
+        };
+        let knock = contact.speed * TITAN_PUNCH_KNOCK * share;
+        self.punch_car(contact.giant, contact.way, contact.point, knock, TITAN_PUNCH_ROCK);
+        self.punch_car(puncher, contact.way.map(|v| -v), contact.point, knock * TITAN_PUNCH_RECOIL, TITAN_PUNCH_ROCK);
+        if punch && let Some(hand) = contact.guard {
+            self.knock_fist(contact.giant, hand, contact.way.map(|v| v * contact.speed * TITAN_BLOCK_KNOCK));
+        }
+        share
+    }
+
+    /// The shapes of every giant but `but` whose hull is within `reach` of `near` (world) that another's
+    /// fist is stopped by: its torso's hit solids, its legs, and its arms and fists, which are its guard.
+    fn obstacles(&self, but: u32, near: Vector, reach: f32) -> Vec<Obstacle> {
+        let mut found = Vec::new();
+        for (&giant, car) in self.cars.iter().filter(|&(&id, car)| id != but && car.limbs.is_some()) {
+            let Some(pose) = self.bodies.get(car.body).map(|body| *body.position()) else { continue };
+            if (pose.translation - near).length() > reach {
+                continue;
+            }
+            for (shape, at) in &car.hits {
+                found.push(Obstacle { giant, guard: None, shape: shape.clone(), pose: pose * Pose::from_translation(*at) });
+            }
+            // Its bones are its arms' first, two to an arm, and then its legs'.
+            let arms = car.spec.arms.map_or(0, |_| 4);
+            for (index, (from, to, radius)) in self.bones(car).into_iter().enumerate() {
+                let guard = (index < arms).then_some(index / 2);
+                found.push(Obstacle { giant, guard, shape: SharedShape::capsule(from, to, radius), pose: Pose::IDENTITY });
+            }
+            if let (Some(limbs), Some(arms)) = (&car.limbs, car.spec.arms) {
+                for (hand, fist) in limbs.fists.iter().enumerate() {
+                    found.push(Obstacle { giant, guard: Some(hand), shape: SharedShape::ball(arms.fist), pose: Pose::from_translation(pose * fist.at) });
+                }
+            }
+        }
+        found
+    }
+
     /// What the pilot of vehicle `id` asks of its hands (left, right) from now on.
     pub fn set_hands(&mut self, id: u32, hands: [Hand; 2]) {
         let Some(limbs) = self.cars.get_mut(&id).and_then(|car| car.limbs.as_mut()) else { return };
@@ -298,6 +402,7 @@ impl Physics {
             step: limbs.stance.step,
             weight: limbs.stance.weight,
             impact: limbs.stance.impact,
+            contacts: fists.map(|fist| fist.contact),
         })
     }
 
@@ -443,6 +548,9 @@ impl Physics {
     pub(super) fn step_limbs(&mut self, dt: f32) {
         let ids: Vec<u32> = self.cars.iter().filter(|(_, car)| car.limbs.is_some()).map(|(&id, _)| id).collect();
         for id in ids {
+            let Some(car) = self.cars.get(&id) else { continue };
+            let reach = car.spec.arms.map_or(0.0, |arms| arms.reach + arms.fist) + HIT_REACH;
+            let obstacles = self.bodies.get(car.body).map_or_else(Vec::new, |hull| self.obstacles(id, hull.translation(), reach));
             let Some(car) = self.cars.get(&id) else { continue };
             let spec = car.spec;
             let Some(hull) = self.bodies.get(car.body) else { continue };
@@ -611,6 +719,36 @@ impl Physics {
                 fist.velocity += (aim - fist.velocity).clamp_length_max(arms.accel * dt);
                 let before = fist.at;
                 fist.at = within_reach(spec, &arms, shoulder, fist.at + fist.velocity * dt);
+                // Another giant stops it where it meets it: it does not go through.
+                let (from, to) = (pose * before, pose * fist.at);
+                let met = |at: Vector| obstacles.iter().find(|obstacle| obstacle.holds(at, arms.fist));
+                let travel = to - from;
+                let mut hit = None;
+                // One already in it (the other came onto it) is let out the way it goes.
+                if met(from).is_none() {
+                    let steps = (travel.length() / (SWEEP_STEP * arms.fist)).ceil().max(1.0) as u32;
+                    let mut clear = from;
+                    for step in 1..=steps {
+                        let at = from + travel * (step as f32 / steps as f32);
+                        if let Some(obstacle) = met(at) {
+                            hit = Some((obstacle, at, clear));
+                            break;
+                        }
+                        clear = at;
+                    }
+                }
+                let touching = hit.is_some() || (fist.touching && obstacles.iter().any(|obstacle| obstacle.holds(to, arms.fist + DRAWN_BACK)));
+                fist.contact = None;
+                if let Some((obstacle, at, clear)) = hit {
+                    let way = travel.normalize_or_zero();
+                    let point = obstacle.shape.project_point(&obstacle.pose, at, true).point;
+                    if !fist.touching {
+                        fist.contact = Some(Contact { giant: obstacle.giant, point: point.into(), way: way.into(), speed: travel.length() / dt, guard: obstacle.guard });
+                    }
+                    // Its speed is what it still moved, below.
+                    fist.at = pose.inverse() * clear;
+                }
+                fist.touching = touching;
                 // What the reach took off its travel is taken off its speed.
                 fist.velocity = (fist.at - before) / dt;
                 fist.world_velocity = linvel + angvel.cross(pose.rotation * fist.at) + pose.rotation * fist.velocity;

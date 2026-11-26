@@ -51,6 +51,7 @@ describe('seat hints', () => {
 
   it('put a reticle only on seats that aim at the middle of the screen', () => {
     expect(aimsReticle('gunner')).toBe(true)
+    expect(aimsReticle('tankDriver')).toBe(true)
     expect(aimsReticle('driver')).toBe(false)
     expect(aimsReticle(null)).toBe(false)
   })

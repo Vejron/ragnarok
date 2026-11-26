@@ -38,6 +38,9 @@ pub struct MountDef {
     /// Its seat has a gun sight (aim held, `BUTTON_ALT`): the reticle's camera is then the sight's eye,
     /// `SIGHT_EYE_UP` over the pivot, rather than `eye`.
     pub sight: bool,
+    /// The seat whose occupant works it while its own seat is empty: a turret's driver, alone in the
+    /// hull, aims and fires it. `None` for nobody.
+    pub stand_in: Option<usize>,
 }
 
 /// The reticle camera behind a mount: `back` metres behind the gun's pivot along the look and `up`
@@ -242,6 +245,9 @@ mod tests {
         for def in VEHICLES {
             for mount in def.mounts {
                 assert!(mount.seat < def.seats, "{}: a mount for seat {}", def.name, mount.seat);
+                if let Some(stand_in) = mount.stand_in {
+                    assert!(stand_in < def.seats && stand_in != mount.seat, "{}: seat {stand_in} stands in for seat {}", def.name, mount.seat);
+                }
             }
         }
     }

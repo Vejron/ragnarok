@@ -149,4 +149,5 @@ const MOUNTS: &[MountDef] = &[MountDef {
     show: Show::Rack,
     eye: None,
     sight: false,
+    stand_in: None,
 }];

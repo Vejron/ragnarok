@@ -203,6 +203,7 @@ const MOUNTS: &[MountDef] = &[
         show: Show::Turret,
         eye: Some(Eye { back: GUNNER_BACK, up: GUNNER_UP }),
         sight: false,
+        stand_in: None,
     },
     MountDef {
         seat: 0,
@@ -219,6 +220,7 @@ const MOUNTS: &[MountDef] = &[
         show: Show::Guns,
         eye: None,
         sight: false,
+        stand_in: None,
     },
     MountDef {
         seat: 0,
@@ -236,5 +238,6 @@ const MOUNTS: &[MountDef] = &[
         show: Show::Rack,
         eye: None,
         sight: false,
+        stand_in: None,
     },
 ];

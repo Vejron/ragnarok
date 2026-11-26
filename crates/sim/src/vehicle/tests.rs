@@ -2792,17 +2792,19 @@ fn a_titan_crouches_to_bring_a_fist_to_the_ground_and_stands_again() {
     run(&mut physics, DRIVEN, 180);
     let high = physics.limbs(1).unwrap().fists_world[1];
     assert!(high[1] > 8.0, "standing, it cannot reach the ground: {high:?}");
-    // Crouched, the same fist comes down to it. The target is given in the hull frame, which has come down too.
+    // Crouched, it reaches down to the ground ahead.
     let crouched = run(&mut physics, CarControls { lift: -1.0, ..DRIVEN }, 300);
     println!("titan crouched: {crouched:?}");
     assert!(crouched.position[1] < TITAN_RIDE_HEIGHT - 0.8 * TITAN_CROUCH, "its hull came down: {crouched:?}");
     assert!(crouched.up_y > 0.85, "it leans, but does not fall: {crouched:?}");
-    let low = [TITAN_SHOULDER[0], -crouched.position[1] + TITAN_FIST_RADIUS, -12.0];
-    physics.set_hands(1, [Hand::default(), Hand { target: Some(low), closed: false }]);
+    // The ground well out ahead, where its pilot looks, not under its chest: asked for as the client
+    // asks, a point in the world turned into the hull's frame.
+    let ground = [crouched.position[0] + TITAN_SHOULDER[0], TITAN_FIST_RADIUS, crouched.position[2] - 20.0];
+    physics.set_hands(1, [Hand::default(), Hand { target: Some(in_hull(&physics, ground)), closed: false }]);
     run(&mut physics, CarControls { lift: -1.0, ..DRIVEN }, 120);
     let fist = physics.limbs(1).unwrap().fists_world[1];
     println!("titan fist at the ground: {fist:?}");
-    assert!(fist[1] < TITAN_FIST_RADIUS + 1.0, "crouched, its fist is on the ground: {fist:?}");
+    assert!(vec3::distance(fist, ground) < 1.0, "crouched, its fist is on the ground 20 m ahead: {fist:?}");
     let stood = run(&mut physics, DRIVEN, 300);
     assert!((stood.position[1] - TITAN_RIDE_HEIGHT).abs() < 0.5 && stood.up_y > 0.99, "it stands up again: {stood:?}");
 }
@@ -2860,10 +2862,14 @@ fn a_titans_fist_shoves_a_jeep_and_a_closed_one_carries_it_off() {
     let titan_now = physics.car_pose(1).unwrap();
     assert!(titan_now.up_y > 0.85 && vec3::distance(titan_now.position, crouched.position) < 0.5, "the Titan does not feel it: {titan_now:?}");
 
-    // Closed on it, the fist lifts it.
+    // Closed on it, the fist lifts it. It comes over it first, or it would push it along before it.
+    let over = physics.car_pose(2).unwrap().position;
+    physics.set_hands(1, [Hand::default(), Hand { target: Some(in_hull(&physics, [over[0], over[1] + 6.0, over[2]])), closed: false }]);
+    run(&mut physics, crouch, 60);
     for _ in 0..90 {
+        // On top of it, as a pilot's hand reaches for it: not through it, which would press it into the ground.
         let at = physics.car_pose(2).unwrap().position;
-        physics.set_hands(1, [Hand::default(), Hand { target: Some(in_hull(&physics, at)), closed: true }]);
+        physics.set_hands(1, [Hand::default(), Hand { target: Some(in_hull(&physics, [at[0], at[1] + TITAN_FIST_RADIUS, at[2]])), closed: true }]);
         run(&mut physics, crouch, 1);
     }
     let fist = physics.limbs(1).unwrap().fists_world[1];
@@ -3221,3 +3227,105 @@ fn a_car_boosts_on_run_and_brakes_on_jump() {
     assert!(!dive.boost && dive.lift == -1.0, "{dive:?}");
 }
 
+
+/// Two Titans settled on their legs, piloted, 28 m apart and facing each other: 1 at the origin facing
+/// -Z, 2 ahead of it facing +Z.
+fn two_titans() -> Physics {
+    let mut physics = titan();
+    physics.add_car(2, KIND_TITAN, [0.0, TITAN_LEG_LENGTH + TITAN_HALF_EXTENTS[1], -28.0], std::f32::consts::PI);
+    spar(&mut physics, 300, false);
+    physics
+}
+
+/// `ticks` of two piloted Titans. Each time Titan 1's right fist comes to Titan 2 it is counted and,
+/// with `blows`, the blow is dealt as the server deals it. Returns the contacts.
+fn spar(physics: &mut Physics, ticks: u32, blows: bool) -> Vec<limbs::Contact> {
+    let mut contacts = Vec::new();
+    for _ in 0..ticks {
+        physics.drive_car(1, DRIVEN, TICK_DT);
+        physics.drive_car(2, DRIVEN, TICK_DT);
+        physics.step_cars(TICK_DT);
+        if let Some(contact) = physics.limbs(1).unwrap().contacts[1] {
+            if blows {
+                physics.land_blow(1, contact, contact.speed >= TITAN_PUNCH_SPEED);
+            }
+            contacts.push(contact);
+        }
+    }
+    contacts
+}
+
+/// Titan 1 puts its right fist up in a guard before its face, then throws it, closed, through `point` on
+/// Titan 2 (in Titan 2's frame) and on.
+fn throw_at(physics: &mut Physics, point: [f32; 3]) -> [f32; 3] {
+    physics.set_hands(1, [Hand::default(), Hand { target: Some([4.0, 9.0, -9.0]), closed: false }]);
+    spar(physics, 90, false);
+    let other = physics.car_pose(2).unwrap();
+    let at = other.world_point(point);
+    let way = vec3::sub(at, physics.car_pose(1).unwrap().world_point(TITAN_SHOULDER));
+    let beyond = std::array::from_fn(|i| at[i] + way[i] / vec3::length(way) * 10.0);
+    physics.set_hands(1, [Hand::default(), Hand { target: Some(in_hull(physics, beyond)), closed: true }]);
+    at
+}
+
+#[test]
+fn a_titans_fist_stops_on_another_titan_and_does_not_pass_through() {
+    let mut physics = two_titans();
+    // Through the chest plates on its front, 5.3 m ahead of its middle.
+    throw_at(&mut physics, [0.0, 5.4, -2.0]);
+    let front = physics.car_pose(2).unwrap().world_point([0.0, 5.4, -5.3]);
+    let mut contacts = Vec::new();
+    for _ in 0..90 {
+        contacts.extend(spar(&mut physics, 1, false));
+        let fist = physics.limbs(1).unwrap().fists_world[1];
+        assert!(fist[2] > front[2] + TITAN_FIST_RADIUS - 0.6, "the fist stays out of its chest: {fist:?} against its front at {front:?}");
+    }
+    println!("fist met the titan: {contacts:?}");
+    assert_eq!(contacts.len(), 1, "it meets it once, and rests against it: {contacts:?}");
+    assert!(contacts[0].giant == 2 && contacts[0].guard.is_none() && contacts[0].speed > TITAN_PUNCH_SPEED, "a clean punch: {contacts:?}");
+}
+
+#[test]
+fn a_titans_punch_rocks_another_back_and_shoves_it_a_step() {
+    let mut physics = two_titans();
+    // At its head.
+    throw_at(&mut physics, [0.0, 11.3, -1.0]);
+    let (mut most, mut back) = (0.0f32, 0.0f32);
+    let mut contacts = Vec::new();
+    for _ in 0..240 {
+        contacts.extend(spar(&mut physics, 1, true));
+        let other = physics.car_pose(2).unwrap();
+        most = most.max(other.up_y.clamp(-1.0, 1.0).acos());
+        back = back.min(other.velocity[2]);
+    }
+    println!("punched: {contacts:?}, rocked {:.2} degrees, shoved back at {back:.2} m/s", most.to_degrees());
+    assert!(contacts.first().is_some_and(|contact| contact.guard.is_none() && contact.speed > TITAN_PUNCH_SPEED), "a clean punch: {contacts:?}");
+    assert!((6.0..14.0).contains(&most.to_degrees()), "it rocks back, as a boxer struck on the chin: {} degrees", most.to_degrees());
+    assert!((-2.5..=-0.8).contains(&back), "and is shoved back a step: {back} m/s");
+    physics.set_hands(1, [Hand::default(); 2]);
+    spar(&mut physics, 300, false);
+    let other = physics.car_pose(2).unwrap();
+    assert!(other.up_y > 0.995, "and stands again: {other:?}");
+}
+
+#[test]
+fn a_punch_on_the_guard_knocks_the_arm_aside_and_barely_rocks_the_titan() {
+    let mut physics = two_titans();
+    // Titan 2 holds its fists up in front of its face.
+    physics.set_hands(2, [Hand { target: Some([-3.0, 10.0, -10.0]), closed: true }, Hand { target: Some([3.0, 10.0, -10.0]), closed: true }]);
+    spar(&mut physics, 120, false);
+    let guard = physics.limbs(2).unwrap().fists_world;
+    throw_at(&mut physics, [0.0, 11.3, -1.0]);
+    let (mut most, mut swung) = (0.0f32, 0.0f32);
+    let mut contacts = Vec::new();
+    for _ in 0..120 {
+        contacts.extend(spar(&mut physics, 1, true));
+        most = most.max(physics.car_pose(2).unwrap().up_y.clamp(-1.0, 1.0).acos());
+        let fists = physics.limbs(2).unwrap().fists_world;
+        swung = swung.max(vec3::distance(fists[0], guard[0]).max(vec3::distance(fists[1], guard[1])));
+    }
+    println!("blocked: {contacts:?}, rocked {:.2} degrees, guard swung {swung:.2} m", most.to_degrees());
+    assert!(contacts.first().is_some_and(|contact| contact.guard.is_some() && contact.speed > TITAN_PUNCH_SPEED), "it lands on the guard: {contacts:?}");
+    assert!(most.to_degrees() < 2.5, "the Titan behind it barely rocks: {} degrees", most.to_degrees());
+    assert!(swung > 1.5, "the arm it landed on is knocked aside: {swung} m");
+}

@@ -34,14 +34,14 @@ pub const TITAN_RIDE_HEIGHT: f32 = 33.2;
 /// Where the right shoulder is in the hull frame; the left is its mirror in X.
 pub const TITAN_SHOULDER: [f32; 3] = [8.5, 6.0, 0.0];
 /// The furthest and the nearest a fist's middle can be from its shoulder, metres, and a fist's radius.
-pub const TITAN_REACH: f32 = 24.0;
+pub const TITAN_REACH: f32 = 30.0;
 pub const TITAN_MIN_REACH: f32 = 6.0;
 pub const TITAN_FIST_RADIUS: f32 = 2.5;
 /// A fist's top speed against the hull, m/s, and how hard it speeds up and slows, m/s².
 pub const TITAN_FIST_SPEED: f32 = 45.0;
 pub const TITAN_FIST_ACCEL: f32 = 140.0;
 /// Where the right fist hangs when nobody asks anything of it, in the hull frame.
-pub const TITAN_FIST_REST: [f32; 3] = [10.0, -15.0, -3.0];
+pub const TITAN_FIST_REST: [f32; 3] = [10.5, -21.0, -3.0];
 /// The heaviest vehicle a closed fist picks up, kilograms: a tank, but not a ship.
 pub const TITAN_LIFT_MASS: f32 = 60_000.0;
 /// Half extents of a shin's column, metres, which stands where the foot is planted.
@@ -80,8 +80,8 @@ pub const TITAN_THIGH_HALF: [f32; 3] = [2.0, 3.5, 2.4];
 /// The bones of its limbs as the model is built (`UPPER`, `FORE`, `THIGH`, `SHIN` and `PAD` in
 /// `tools/vehicles/build_titan.py`): shoulder to elbow, elbow to the fist's middle, hip to knee and knee
 /// to ankle, metres, and how far the ankle is above the sole.
-pub const TITAN_UPPER_ARM_LENGTH: f32 = 12.0;
-pub const TITAN_FOREARM_LENGTH: f32 = 12.0;
+pub const TITAN_UPPER_ARM_LENGTH: f32 = 15.0;
+pub const TITAN_FOREARM_LENGTH: f32 = 15.0;
 pub const TITAN_THIGH_LENGTH: f32 = 13.5;
 pub const TITAN_SHIN_LENGTH: f32 = 13.5;
 pub const TITAN_ANKLE_HEIGHT: f32 = 1.5;
@@ -121,6 +121,21 @@ pub const TITAN_STOMP_RADIUS: f32 = 14.0;
 pub const TITAN_STOMP_KNOCK: f32 = 9.0;
 /// What a foot coming down takes off a vehicle under it.
 pub const TITAN_STOMP_VEHICLE_DAMAGE: f32 = 120.0;
+/// Titan against Titan. A fist is stopped where it meets another Titan. A closed one landing on its body
+/// or legs gives it this share of the fist's speed as a shove, m/s per m/s, pushed where it lands, so it
+/// rocks back as well as stepping back; the puncher is pushed back by `TITAN_PUNCH_RECOIL` of that.
+pub const TITAN_PUNCH_KNOCK: f32 = 0.04;
+/// How many times the turn of that shove, where it lands, a punch rocks a Titan by: its balance holds
+/// a plain push nearly upright, and a boxer struck on the chin rocks back. Measured by
+/// `a_titans_punch_rocks_another_back_and_shoves_it_a_step`.
+pub const TITAN_PUNCH_ROCK: f32 = 2.25;
+pub const TITAN_PUNCH_RECOIL: f32 = 0.25;
+/// One that lands on its guard (an arm or a fist) swings that arm away at this share of its speed, and
+/// gives the Titan behind it this share of the shove and of the damage a clean one would.
+pub const TITAN_BLOCK_KNOCK: f32 = 1.0;
+pub const TITAN_BLOCK_SHARE: f32 = 0.15;
+/// An open hand meeting another Titan only pushes it, with this share of a closed fist's shove.
+pub const TITAN_PUSH_SHARE: f32 = 0.2;
 /// A soldier thrown from a fist keeps this share of the fist's speed.
 pub const TITAN_THROW_SHARE: f32 = 1.0;
 
@@ -227,6 +242,7 @@ const MOUNTS: &[MountDef] = &[
         show: Show::Turret,
         eye: None,
         sight: false,
+        stand_in: None,
     },
     MountDef {
         seat: 0,
@@ -243,6 +259,7 @@ const MOUNTS: &[MountDef] = &[
         show: Show::Rack,
         eye: None,
         sight: false,
+        stand_in: None,
     },
 ];
 

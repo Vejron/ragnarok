@@ -3753,7 +3753,7 @@ export const TITAN_RIDE_HEIGHT = 33.2
 export const TITAN_SHOULDER = [8.5, 6.0, 0.0] as const
 
 /** The furthest and the nearest a fist's middle can be from its shoulder, metres, and a fist's radius. */
-export const TITAN_REACH = 24.0
+export const TITAN_REACH = 30.0
 export const TITAN_MIN_REACH = 6.0
 export const TITAN_FIST_RADIUS = 2.5
 
@@ -3762,7 +3762,7 @@ export const TITAN_FIST_SPEED = 45.0
 export const TITAN_FIST_ACCEL = 140.0
 
 /** Where the right fist hangs when nobody asks anything of it, in the hull frame. */
-export const TITAN_FIST_REST = [10.0, -15.0, -3.0] as const
+export const TITAN_FIST_REST = [10.5, -21.0, -3.0] as const
 
 /** The heaviest vehicle a closed fist picks up, kilograms: a tank, but not a ship. */
 export const TITAN_LIFT_MASS = 60000.0
@@ -3820,8 +3820,8 @@ export const TITAN_THIGH_HALF = [2.0, 3.5, 2.4] as const
  * `tools/vehicles/build_titan.py`): shoulder to elbow, elbow to the fist's middle, hip to knee and knee
  * to ankle, metres, and how far the ankle is above the sole.
  */
-export const TITAN_UPPER_ARM_LENGTH = 12.0
-export const TITAN_FOREARM_LENGTH = 12.0
+export const TITAN_UPPER_ARM_LENGTH = 15.0
+export const TITAN_FOREARM_LENGTH = 15.0
 export const TITAN_THIGH_LENGTH = 13.5
 export const TITAN_SHIN_LENGTH = 13.5
 export const TITAN_ANKLE_HEIGHT = 1.5
@@ -3881,6 +3881,31 @@ export const TITAN_STOMP_KNOCK = 9.0
 
 /** What a foot coming down takes off a vehicle under it. */
 export const TITAN_STOMP_VEHICLE_DAMAGE = 120.0
+
+/**
+ * Titan against Titan. A fist is stopped where it meets another Titan. A closed one landing on its body
+ * or legs gives it this share of the fist's speed as a shove, m/s per m/s, pushed where it lands, so it
+ * rocks back as well as stepping back; the puncher is pushed back by `TITAN_PUNCH_RECOIL` of that.
+ */
+export const TITAN_PUNCH_KNOCK = 0.04
+
+/**
+ * How many times the turn of that shove, where it lands, a punch rocks a Titan by: its balance holds
+ * a plain push nearly upright, and a boxer struck on the chin rocks back. Measured by
+ * `a_titans_punch_rocks_another_back_and_shoves_it_a_step`.
+ */
+export const TITAN_PUNCH_ROCK = 2.25
+export const TITAN_PUNCH_RECOIL = 0.25
+
+/**
+ * One that lands on its guard (an arm or a fist) swings that arm away at this share of its speed, and
+ * gives the Titan behind it this share of the shove and of the damage a clean one would.
+ */
+export const TITAN_BLOCK_KNOCK = 1.0
+export const TITAN_BLOCK_SHARE = 0.15
+
+/** An open hand meeting another Titan only pushes it, with this share of a closed fist's shove. */
+export const TITAN_PUSH_SHARE = 0.2
 
 /** A soldier thrown from a fist keeps this share of the fist's speed. */
 export const TITAN_THROW_SHARE = 1.0

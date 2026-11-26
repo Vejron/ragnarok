@@ -3,7 +3,7 @@ import { resolve } from 'node:path'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 import { triangleCount } from './helpers'
 import { Quaternion, Vector3 } from '@ragnarok/engine'
-import { bend, headEye, headTurn, parseTitanModel, STEP_AIRBORNE, TitanModel } from '@/render/titan'
+import { bend, cockpitEye, headEye, headTurn, parseTitanModel, STEP_AIRBORNE, TitanModel } from '@/render/titan'
 import { gazeOf } from '@/xr/headset'
 import { TitanHands } from '@/titanhands'
 import { fistsFromHands, PILOT_ARM, PILOT_SHOULDER_DOWN, PILOT_SHOULDER_OUT, reversedDepth } from '@/xr/hands'
@@ -40,9 +40,9 @@ describe('TitanModel', () => {
     const titan = kindView(KIND_TITAN).model(1)
     expect(titan).toBeInstanceOf(TitanModel)
     // Its big plates are cut into a 1.2 m grid for the scars' dents to press in (build_titan.py's
-    // DENT_GRID): about 23,000 triangles, which cost 0.06 ms more than the 3,000 of the plain boxes with
+    // DENT_GRID): about 25,000 triangles, which cost 0.06 ms more than the 3,000 of the plain boxes with
     // a Titan filling a 2268×1258 frame.
-    expect(triangleCount(titan.root)).toBeLessThan(25_000)
+    expect(triangleCount(titan.root)).toBeLessThan(26_000)
     expect(vehicleDef(KIND_TITAN).fists).toBe(true)
     expect(vehicleDef(KIND_TITAN).board).not.toBeNull()
     titan.dispose()
@@ -90,6 +90,31 @@ describe('TitanModel', () => {
     titan.dispose()
   })
 
+  it('keeps the cockpit eye at the visor and clear of its chest when its pilot looks down, and hides the head they sit in', () => {
+    // Looking level, the eye is just out of the visor.
+    const level = cockpitEye([0, 0], 0)
+    expect(level.y).toBeCloseTo(TITAN_EYE[1], 6)
+    expect(level.z).toBeLessThan(TITAN_EYE[2])
+    expect(level.z).toBeGreaterThan(TITAN_EYE[2] - 1)
+    // Looking all the way down, it stays at the visor's height and leans out ahead of the chest plates
+    // (their front is 5.3 m ahead of the hull's middle, their top 7.8 m up), rather than sinking behind them.
+    const down = cockpitEye([0, -TITAN_HEAD_DOWN], -1.45)
+    expect(down.y).toBeCloseTo(TITAN_EYE[1], 6)
+    expect(down.z).toBeLessThan(-6)
+    // Turned to the side, it still rides round the neck, over the shoulder blocks (their top 11.2 m up).
+    const side = cockpitEye([TITAN_HEAD_TURN, -TITAN_HEAD_DOWN], -1.45)
+    expect(side.x).toBeLessThan(-4)
+    expect(side.y).toBeGreaterThan(11.2)
+    // The head is not drawn for the pilot looking out of it, and is again once they are not.
+    const titan = new TitanModel(0)
+    titan.lookTo([0, -1], true, true)
+    titan.update(STANDING, IDENTITY)
+    expect(titan.root.getObjectByName('head')!.visible).toBe(false)
+    titan.update(STANDING, IDENTITY)
+    expect(titan.root.getObjectByName('head')!.visible).toBe(true)
+    titan.dispose()
+  })
+
   it('shines its searchlight from its visor the way its head faces', () => {
     const titan = new TitanModel(0)
     titan.setLimbs({ ...AT_REST, head_yaw: 0.6, head_pitch: -0.4 })
@@ -126,8 +151,8 @@ describe('TitanModel', () => {
     const shoulder = where(titan, 'upper_R')
     const elbow = where(titan, 'fore_R')
     expect(shoulder.distanceTo(new Vector3(...TITAN_SHOULDER).applyQuaternion(turn).add(new Vector3(...STANDING)))).toBeLessThan(1e-3)
-    expect(shoulder.distanceTo(elbow)).toBeCloseTo(12, 3)
-    expect(elbow.distanceTo(expected)).toBeCloseTo(12, 3)
+    expect(shoulder.distanceTo(elbow)).toBeCloseTo(TITAN_UPPER_ARM_LENGTH, 3)
+    expect(elbow.distanceTo(expected)).toBeCloseTo(TITAN_FOREARM_LENGTH, 3)
     // The closed hand shows its curled fingers, the open one its straight ones.
     expect(titan.root.getObjectByName('closed_R')!.visible).toBe(true)
     expect(titan.root.getObjectByName('open_R')!.visible).toBe(false)

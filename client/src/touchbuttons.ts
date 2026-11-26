@@ -30,7 +30,7 @@ export interface TouchContext {
 }
 
 /** Seats that aim down the middle of the screen with a sight or over the shoulder, as right mouse does. */
-const AIMS = new Set<Seat>(['gunner', 'roofgunner', 'coxswain', 'strv', 'walker', 'titan', 'tupp', 'passenger', 'periscope'])
+const AIMS = new Set<Seat>(['gunner', 'tankDriver', 'roofgunner', 'coxswain', 'strv', 'walker', 'titan', 'tupp', 'passenger', 'periscope'])
 
 /** Seats with nothing to fire, which get no fire button. */
 const UNARMED = new Set<Seat>(['airPilot', 'rider'])
@@ -38,7 +38,7 @@ const UNARMED = new Set<Seat>(['airPilot', 'rider'])
 const PILOTS = new Set<Seat>(['pilot', 'airPilot'])
 
 const jumpLabel = (seat: Seat) =>
-  seat === 'driver' || seat === 'sled' ? 'BRAKE' : seat === 'helm' ? 'ANCHOR' : seat === 'roadster' ? 'HOP' : seat === 'hen' || seat === 'tupp' ? 'FLAP' : seat === 'titan' ? 'THRUST' : seat === 'aviator' ? 'FASTER' : PILOTS.has(seat) || seat === 'drone' || seat === 'captain' ? 'UP' : 'JUMP'
+  seat === 'driver' || seat === 'tankDriver' || seat === 'sled' ? 'BRAKE' : seat === 'helm' ? 'ANCHOR' : seat === 'roadster' ? 'HOP' : seat === 'hen' || seat === 'tupp' ? 'FLAP' : seat === 'titan' ? 'THRUST' : seat === 'aviator' ? 'FASTER' : PILOTS.has(seat) || seat === 'drone' || seat === 'captain' ? 'UP' : 'JUMP'
 const fireLabel = (seat: Seat) => (seat === 'drone' || seat === 'loiter' || seat === 'missile' ? 'BOOM' : seat === 'periscope' ? 'LAUNCH' : seat === 'hen' ? 'EGG' : seat === 'tupp' ? 'LASER' : 'FIRE')
 
 /** The buttons for `seat` (null on foot), each in a cell of its own. */

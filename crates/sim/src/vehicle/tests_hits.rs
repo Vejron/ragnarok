@@ -169,3 +169,27 @@ fn a_round_at_the_titans_legs_meets_them_where_they_bend() {
     assert!(knee[2] < -1.0, "the knee is ahead of the hip: {knee:?}");
 }
 
+
+#[test]
+fn rounds_at_a_titans_feet_rock_it_a_little_and_never_spin_it() {
+    let mut physics = titan();
+    let before = physics.car_pose(1).unwrap();
+    let (mut most, mut turned) = (0.0f32, 0.0f32);
+    // Another Titan's cannon held on its left shin from straight ahead, which is off to one side of its
+    // middle and far below it: as hard a lever as a round has on it.
+    for _ in 0..10 {
+        let pose = physics.car_pose(1).unwrap();
+        let foot = physics.limbs(1).unwrap().feet[0];
+        physics.strike_car(1, pose.world_dir([0.0, 0.0, 1.0]), [foot[0], foot[1] + 4.0, foot[2]], TITAN_ROUND_HIT_KNOCK);
+        for _ in 0..TITAN_GUN_COOLDOWN {
+            let pose = run(&mut physics, PILOTED, 1);
+            most = most.max(tilt(&pose));
+            turned = turned.max((pose.yaw() - before.yaw()).abs());
+        }
+    }
+    let after = run(&mut physics, PILOTED, 240);
+    println!("titan shot at the shin: leaned {:.2} degrees, turned {:.2} degrees, rests {after:?}", most.to_degrees(), turned.to_degrees());
+    assert!(most.to_degrees() < 6.0, "it rocks a little: {} degrees", most.to_degrees());
+    assert!(turned.to_degrees() < 1.0, "it is not turned round: {} degrees", turned.to_degrees());
+    assert!(after.up_y > 0.995, "and it stands again: {after:?}");
+}

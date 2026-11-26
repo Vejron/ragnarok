@@ -91,7 +91,7 @@ import { cockpit, mountGun, pilotSights, roofGun, titanSight } from './gauges'
 import { prompt } from './prompt'
 import { Surroundings } from './surroundings'
 import { Cameras } from './cameras'
-import { rideView, seatView, type SeatView } from './seats'
+import { crewedSeatView, rideView, seatView, type SeatView } from './seats'
 import { CollectiveLever } from './sim/collective'
 import { loadRoosterModel } from './render/rooster'
 import { loadAnimalModels } from './render/animal'
@@ -227,7 +227,7 @@ const ROOM_ARM_EASE = 4
 const VR_DUCK = 0.25
 
 /** Seats that steer something along, which get a speedometer. */
-const MOVERS: ReadonlySet<SeatView['role']> = new Set(['driver', 'roadster', 'sled', 'helm', 'pilot', 'airPilot', 'aviator', 'walker', 'titan', 'hen', 'tupp', 'strv', 'drone', 'loiter', 'captain', 'missile', 'coxswain'] as const)
+const MOVERS: ReadonlySet<SeatView['role']> = new Set(['driver', 'tankDriver', 'roadster', 'sled', 'helm', 'pilot', 'airPilot', 'aviator', 'walker', 'titan', 'hen', 'tupp', 'strv', 'drone', 'loiter', 'captain', 'missile', 'coxswain'] as const)
 
 /** What the local player is up to this frame: worked out once, read by the stages of the frame. */
 interface Moment {
@@ -1323,7 +1323,7 @@ export class Game {
     this.busStops?.update(eye, this.scene.scene.fog?.far ?? Infinity, (x, z) => this.terrain?.sample(x, z) ?? null)
 
     const seat = this.seat
-    const view = seat ? seatView(seat.kind, seat.index) : null
+    const view = seat ? crewedSeatView(seat.kind, seat.index, this.vehicles.placed.get(seat.vehicle)?.seats ?? []) : null
     this.music.want(seat !== null && this.player.alive && (seat.kind === KIND_TANK || seat.kind === KIND_STRV || seat.kind === KIND_STRF || seat.kind === KIND_PBV || seat.kind === KIND_AMV || seat.kind === KIND_CB90))
     this.driven = this.driver?.pose(this.accumulator / TICK_MS, dt) ?? null
     // Everything replicated, sampled once at the render tick; each group of presenters draws its part.

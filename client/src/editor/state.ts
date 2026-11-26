@@ -25,7 +25,8 @@ export const grid = shallowRef<GridInfo>()
 export const region = ref<Region>('sweden')
 export const painted = shallowRef(new Map<string, TileId>())
 export const blocks = shallowRef(new Map<string, BlockStatus>())
-export const tool = ref<Tool>('paint')
+/** Pan by default, so a stray click never paints a tile. */
+export const tool = ref<Tool>('pan')
 export const brush = ref(1)
 export const placements = shallowRef<Placements>(emptyPlacements())
 export const vehicleKind = ref(VEHICLE_KINDS[0]!.kind)
@@ -66,8 +67,8 @@ export const scenarioTool = ref<ScenarioTool>('area')
 export const pickedSquad = ref('')
 /** The spot the route tool adds waypoints to: a squad's bot or tank, by index. */
 export const pickedSpot = ref<{ squad: string; kind: 'bots' | 'tanks'; index: number }>()
-/** Set to ask the map to centre on a place; the map clears it. */
-export const focus = ref<{ lat: number; lon: number } | undefined>()
+/** Set to ask the map to show a place, `[south, west, north, east]` in degrees; the map clears it. */
+export const focus = ref<[number, number, number, number] | undefined>()
 /** Bumped when the cache may have changed (a job ended), so the map asks again. */
 export const cacheTick = ref(0)
 
@@ -298,10 +299,18 @@ export async function openWorld(world: string) {
   placements.value = { spawns: loaded.spawns ?? [], vehicles: loaded.vehicles ?? [], items: loaded.items ?? [], bots: loaded.bots ?? [], animals: loaded.animals ?? [] }
   setTiles(new Map(tiles.map((t) => [tileKey(t.gx, t.gy), t])))
   dirty.value = false
-  const first = tiles[0]
-  if (first && grid.value) {
-    const [s, w, n, e] = rectBounds(grid.value, first.gx, first.gy)
-    focus.value = { lat: (s + n) / 2, lon: (w + e) / 2 }
+  // Show the whole world: the bounds around every painted tile.
+  const g = grid.value
+  if (tiles.length && g) {
+    const all: [number, number, number, number] = [Infinity, Infinity, -Infinity, -Infinity]
+    for (const t of tiles) {
+      const [s, w, n, e] = rectBounds(g, t.gx, t.gy)
+      all[0] = Math.min(all[0], s)
+      all[1] = Math.min(all[1], w)
+      all[2] = Math.max(all[2], n)
+      all[3] = Math.max(all[3], e)
+    }
+    focus.value = all
   }
   await loadScenario(world)
   cacheTick.value++

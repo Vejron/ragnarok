@@ -18,12 +18,12 @@ import { PlaneModel } from '@/render/plane'
 import { CAMERA_HEIGHT, PLANE_CAMERA_HEIGHT, PLANE_DISTANCE, AIM_DISTANCE_SCALE, TITAN_AIM_UP, TITAN_PIVOT_UP, type Scene } from '@/render/scene'
 import { StrvModel } from '@/render/strvs'
 import { Cb90Model } from '@/render/cb90'
-import { headEye, headTurn, TitanModel } from '@/render/titan'
+import { cockpitEye, headEye, headTurn, TitanModel } from '@/render/titan'
 import { TankModel } from '@/render/tank'
 import type { VehicleFx } from '@/render/tyres'
 import { TuppModel } from '@/render/tupp'
 import { WalkerModel } from '@/render/walker'
-import { PASSENGER_DISTANCE, ROOF_AIM_BACK, ROOF_AIM_UP, STRV_AIM_BACK, STRV_AIM_UP, WALKER_AIM_BACK, WALKER_AIM_UP, PASSENGER_HEIGHT, PASSENGER_SHOULDER, PLANE_AIM_MAX_PITCH, PLANE_CRUISE_SPEED, SIGHT_EYE_UP, STRV_BARREL_MAX, STRV_BARREL_MIN, SUB_MAST_HEIGHT, SUB_SAIL_Z, TITAN_HEAD_DOWN, TITAN_HEAD_TURN, TITAN_HEAD_UP, TUPP_HEAD_LIMIT, TUPP_HEAD_PITCH_MAX, TUPP_HEAD_PITCH_MIN, WALKER_GUN_PITCH_MAX, WALKER_GUN_PITCH_MIN, WALKER_TORSO_LIMIT } from '@/sim/consts'
+import { PASSENGER_DISTANCE, ROOF_AIM_BACK, ROOF_AIM_UP, STRV_AIM_BACK, STRV_AIM_UP, WALKER_AIM_BACK, WALKER_AIM_UP, PASSENGER_HEIGHT, PASSENGER_SHOULDER, PLANE_AIM_MAX_PITCH, PLANE_CRUISE_SPEED, SIGHT_EYE_UP, STRV_BARREL_MAX, STRV_BARREL_MIN, SUB_MAST_HEIGHT, SUB_SAIL_Z, TITAN_HEAD_TURN, TITAN_HEAD_UP, TUPP_HEAD_LIMIT, TUPP_HEAD_PITCH_MAX, TUPP_HEAD_PITCH_MIN, WALKER_GUN_PITCH_MAX, WALKER_GUN_PITCH_MIN, WALKER_TORSO_LIMIT } from '@/sim/consts'
 import type { InputController } from '@/sim/input'
 import { vehicleDef } from '@/sim/vehicles'
 import { layTube } from '@/sim/lob'
@@ -96,8 +96,8 @@ export interface Seated {
 const PERISCOPE_PITCH = 0.35
 const PERISCOPE_EYE_UP = 0.15
 
-/** How far ahead of `TITAN_EYE` the screen's eye is, metres: out of the visor, so that the brow and the cheeks are behind it. */
-const COCKPIT_AHEAD = 0.7
+/** How far down a Titan's pilot looks from its cockpit, radians: further than its head turns (69°, `TITAN_HEAD_DOWN`), to see its own feet and fists. */
+const COCKPIT_DOWN = 1.45
 
 type RigName = Rig['name']
 
@@ -409,10 +409,10 @@ export class Cameras {
         // still go to the middle of the screen.
         if (this.input.cockpit) {
           this.input.yaw = ride.yaw + clamp(wrapAngle(this.input.yaw + turned - ride.yaw), -TITAN_HEAD_TURN, TITAN_HEAD_TURN)
-          this.input.clampPitch(-TITAN_HEAD_DOWN, TITAN_HEAD_UP)
+          this.input.clampPitch(-COCKPIT_DOWN, TITAN_HEAD_UP)
           const head = headTurn(this.input.yaw, this.input.pitch, ride.rotation)
-          titan?.lookTo(head, true)
-          const eye = headEye(head, COCKPIT_AHEAD).applyQuaternion(new Quaternion(...ride.rotation))
+          titan?.lookTo(head, true, true)
+          const eye = cockpitEye(head, this.input.pitch).applyQuaternion(new Quaternion(...ride.rotation))
           this.scene.scopeFrom([ride.x + eye.x, ride.y + eye.y, ride.z + eye.z], this.input.yaw, this.input.pitch)
           return
         }

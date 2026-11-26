@@ -1,16 +1,30 @@
 import { describe, expect, it } from 'vitest'
 import { Group, Vector3 } from '@ragnarok/engine'
 import { Cameras, type Seated } from '@/cameras'
-import { KIND_DRONE, KIND_LOITER, KIND_MORTAR, KIND_TANK } from '@/net/codec'
+import { KIND_DRONE, KIND_JEEP, KIND_LOITER, KIND_MORTAR, KIND_PBV, KIND_STRF, KIND_TANK } from '@/net/codec'
 import type { Placed } from '@/entities/presenters/vehicles'
 import { MortarModel } from '@/render/mortar'
 import { TankModel } from '@/render/tank'
-import { seatView } from '@/seats'
+import { crewedSeatView, seatView } from '@/seats'
 import { MORTAR_RANGE_MAX, TANK_MG_PITCH_MAX, TANK_MG_SEAT, TANK_MG_YAW_LIMIT } from '@/sim/consts'
 
 describe('the seats table', () => {
   it('gives a seat past the last its last row', () => {
     expect(seatView(KIND_TANK, 5)).toBe(seatView(KIND_TANK, TANK_MG_SEAT))
+  })
+
+  it("gives a driver alone in a turreted hull the gunner's view, and gives it back when a gunner climbs in", () => {
+    for (const kind of [KIND_TANK, KIND_STRF, KIND_PBV]) {
+      const alone = crewedSeatView(kind, 0, [7, 0, 0])
+      expect(alone.role).toBe('tankDriver')
+      expect(alone.rig).toBe(seatView(kind, 1).rig)
+      expect(alone.sight).toBe(true)
+      expect(alone.gauges).toContain('boost')
+      expect(crewedSeatView(kind, 0, [7, 8, 0])).toBe(seatView(kind, 0))
+    }
+    // The gunner's own seat, and a car with no gun, are as they always are.
+    expect(crewedSeatView(KIND_TANK, 1, [0, 7, 0])).toBe(seatView(KIND_TANK, 1))
+    expect(crewedSeatView(KIND_JEEP, 0, [7, 0])).toBe(seatView(KIND_JEEP, 0))
   })
 })
 

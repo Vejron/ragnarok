@@ -218,6 +218,8 @@ function paintAt(event: PointerEvent) {
 function onDown(event: PointerEvent) {
   // Scenario clicks come from Leaflet's own click event, so the map can still be dragged.
   if (mode.value === 'scenario') return
+  // The zoom buttons and the attribution are the map's own controls: a click on them never paints or places.
+  if ((event.target as Element | null)?.closest?.('.leaflet-control-container')) return
   if (tool.value === 'pan' && !event.shiftKey) return
   if (event.button > 2) return
   event.preventDefault()
@@ -364,7 +366,8 @@ watch(grid, (g, before) => {
 })
 watch(focus, (at) => {
   if (!at || !map) return
-  map.setView([at.lat, at.lon], Math.max(map.getZoom(), 15))
+  const [south, west, north, east] = at
+  map.fitBounds([[south, west], [north, east]], { padding: [24, 24], maxZoom: 17 })
   focus.value = undefined
 })
 

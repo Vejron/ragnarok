@@ -14,7 +14,7 @@ The Pbv 302 is an amphibious tracked troop carrier, modelled on the Swedish Pans
   - A broken track paddles nothing, so with one gone it is pushed half as hard and turns half as fast.
   - A wreck fills and sinks to the bed, as every other kind does.
   - A frozen lake is driven across, as by every kind.
-- **Seat 1 is the gunner**, who aims the turret all the way round with the mouse.
+- **Seat 1 is the gunner**, who aims the turret all the way round with the mouse. With nobody in that seat the driver aims and fires it, as in the tank ([VEHICLES-II](VEHICLES-II.md)).
   - The turret slews at 1.8 rad/s and the barrel at 1.4.
   - The barrel elevates from −10° to +37°.
   - Holding the trigger fires ten rounds a second.

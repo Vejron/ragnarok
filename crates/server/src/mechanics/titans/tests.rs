@@ -633,3 +633,74 @@ fn a_titans_heavy_round_bites_a_wall_but_less_than_a_mortar_bomb() {
     assert!(heavy >= 8, "a hole in the wall: {heavy} cells");
     assert!(heavy * 4 < mortar, "far smaller than a mortar bomb's: {heavy} cells to {mortar}");
 }
+
+/// What a pilot sends for both fists of Titan `vid`: each at a point in the world or hanging, closed or not.
+fn both_hands(game: &Game, vid: u32, left: Option<[f32; 3]>, right: Option<[f32; 3]>, closed: [bool; 2]) -> ClientHands {
+    let [lx, ly, lz] = left.map_or([0; 3], |point| in_hull(game, vid, point));
+    let [rx, ry, rz] = right.map_or([0; 3], |point| in_hull(game, vid, point));
+    let flags = if left.is_some() { HANDS_REACH_LEFT } else { 0 } | if right.is_some() { HANDS_REACH_RIGHT } else { 0 } | if closed[0] { HANDS_GRIP_LEFT } else { 0 } | if closed[1] { HANDS_GRIP_RIGHT } else { 0 };
+    ClientHands { tag: shared::protocol::C_HANDS, lx, ly, lz, rx, ry, rz, flags }
+}
+
+/// Two piloted Titans 28 m apart and facing each other, settled: the game, and each Titan with its pilot.
+fn facing() -> (Game, [(u32, u32); 2]) {
+    let mut game = game();
+    let pilots = [join(&mut game), join(&mut game)];
+    let one = titan(&mut game);
+    let two = crate::mechanics::vehicles::add_vehicle(&mut game.world, KIND_TITAN, [0.0, TITAN_LEG_LENGTH + TITAN_HALF_EXTENTS[1], -28.0], std::f32::consts::PI);
+    assert!(crate::mechanics::seat(&mut game.world, pilots[0], one, 0) && crate::mechanics::seat(&mut game.world, pilots[1], two, 0));
+    for _ in 0..300 {
+        game.step();
+    }
+    (game, [(one, pilots[0]), (two, pilots[1])])
+}
+
+/// Titan 1 punches Titan 2 in the head with its right fist from a guard, while Titan 2 holds `guard`
+/// (its fists before its face) or not. Returns the health Titan 2 lost to each blow, tick by tick.
+fn box_once(guard: bool) -> Vec<u8> {
+    let (mut game, [(one, pilot), (two, other)]) = facing();
+    let mut seq = [0; 2];
+    let mut send = |game: &mut Game, punch: bool| {
+        let head = game.world.physics.car_pose(two).unwrap().world_point([0.0, 11.3, -1.0]);
+        let me = game.world.physics.car_pose(one).unwrap();
+        let right = if punch {
+            let shoulder = me.world_point(TITAN_SHOULDER);
+            let way = vec3::sub(head, shoulder);
+            std::array::from_fn(|i| head[i] + way[i] / vec3::length(way) * 10.0)
+        } else {
+            me.world_point([4.0, 9.0, -9.0])
+        };
+        let theirs = game.world.physics.car_pose(two).unwrap();
+        let fists = guard.then(|| (theirs.world_point([-3.0, 10.0, -10.0]), theirs.world_point([3.0, 10.0, -10.0])));
+        for (index, (pilot, hands)) in [(pilot, both_hands(game, one, None, Some(right), [false, punch])), (other, both_hands(game, two, fists.map(|f| f.0), fists.map(|f| f.1), [guard; 2]))].into_iter().enumerate() {
+            seq[index] += 1;
+            game.handle(Command::Input(pilot, 0, vec![InputFrame { seq: seq[index], strafe: 0, forward: 0, yaw: 0, buttons: 0, pitch: 0, view: 0, slot: 0, collective: 0 }]));
+            game.handle(Command::Hands(pilot, hands));
+        }
+        game.step();
+    };
+    for _ in 0..120 {
+        send(&mut game, false);
+    }
+    let mut blows = Vec::new();
+    let mut before = hp(&game, two);
+    for _ in 0..120 {
+        send(&mut game, true);
+        let now = hp(&game, two);
+        if now < before {
+            blows.push(before - now);
+        }
+        before = now;
+    }
+    blows
+}
+
+#[test]
+fn a_titan_punching_another_hurts_it_once_per_blow_and_a_blocked_one_less() {
+    let clean = box_once(false);
+    let blocked = box_once(true);
+    println!("clean {clean:?}, blocked {blocked:?}");
+    assert_eq!(clean.len(), 1, "one punch is one blow, however long the fist rests on it: {clean:?}");
+    assert!(clean[0] >= 10, "a punch to the head hurts it: {clean:?}");
+    assert!(blocked.iter().map(|&lost| u32::from(lost)).sum::<u32>() * 3 <= u32::from(clean[0]), "the guard takes most of it: {blocked:?} against {clean:?}");
+}

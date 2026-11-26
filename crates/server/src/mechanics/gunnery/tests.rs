@@ -402,14 +402,58 @@ fn firing_kicks_the_tank_backwards() {
 }
 
 #[test]
-fn nobody_in_the_gunner_seat_means_no_shooting() {
+fn a_lone_tank_driver_aims_and_fires_the_turret() {
     let mut game = game();
     let (driver, _inbox) = join(&mut game);
     let vid = tank(&game);
     seat(&mut game, driver, vid, 0);
     let mut seq = 0;
-    // The driver holds fire, but only the gunner's seat works the gun.
-    aim_and_hold(&mut game, driver, &mut seq, 0.0, 0.0, BUTTON_FIRE, 120);
+    let hull = game.world.physics.car_pose(vid).unwrap().yaw();
+    aim_and_hold(&mut game, driver, &mut seq, hull + 1.0, 0.0, 0, 180);
+    let (yaw, _) = wanted_angles(&game, vid, 0, driver);
+    assert!((yaw - 1.0).abs() < 0.05, "towards the driver's look: {yaw}");
+    assert!((turret(&game, vid).yaw - yaw).abs() < 0.02, "{:?}", turret(&game, vid));
+    aim_and_hold(&mut game, driver, &mut seq, hull + 1.0, 0.0, BUTTON_FIRE, 3);
+    assert_eq!(turret(&game, vid).shots, 1);
+}
+
+#[test]
+fn a_gunner_climbing_in_takes_the_turret_from_the_driver() {
+    let (mut game, gunner, vid, mut seq) = crewed();
+    let (driver, _inbox) = join(&mut game);
+    seat(&mut game, driver, vid, 0);
+    let hull = game.world.physics.car_pose(vid).unwrap().yaw();
+    let mut driver_seq = 0;
+    for _ in 0..120 {
+        aim_and_hold(&mut game, driver, &mut driver_seq, hull + 1.5, 0.0, BUTTON_FIRE, 1);
+        aim_and_hold(&mut game, gunner, &mut seq, hull, 0.0, 0, 1);
+    }
+    let gun = turret(&game, vid);
+    assert_eq!(gun.shots, 0, "the driver's trigger does nothing");
+    assert!(gun.yaw.abs() < 0.05, "the gun follows the gunner's look: {gun:?}");
+}
+
+#[test]
+fn a_lone_strf_driver_fires_its_cannon() {
+    let (mut game, gunner, vid, _) = strf_crewed();
+    // The gunner gets out and the driver is alone in the hull.
+    game.world.entities.get_mut::<Seats>(vid).unwrap()[1] = None;
+    game.world.entities.get_mut::<Player>(gunner).unwrap().seat = None;
+    let (driver, _inbox) = join(&mut game);
+    seat(&mut game, driver, vid, 0);
+    let mut driver_seq = 0;
+    let yaw = game.world.physics.car_pose(vid).unwrap().yaw();
+    aim_and_hold(&mut game, driver, &mut driver_seq, yaw, 0.0, BUTTON_FIRE, 3);
+    assert!(turret(&game, vid).shots >= 1);
+}
+
+#[test]
+fn an_empty_tank_does_not_fire() {
+    let mut game = game();
+    let vid = tank(&game);
+    for _ in 0..120 {
+        game.step();
+    }
     assert_eq!(turret(&game, vid).shots, 0);
 }
 
@@ -1052,6 +1096,7 @@ fn a_mount_made_of_parts_no_vehicle_has_works() {
         show: Show::Hidden,
         eye: None,
         sight: false,
+        stand_in: None,
     }];
     let mut game = game();
     let (passenger, _inbox) = join(&mut game);

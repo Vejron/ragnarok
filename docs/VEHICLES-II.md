@@ -14,7 +14,7 @@ First part of roadmap stage 3 (see [design.md §14](design.md#14-roadmap)): a ta
 
 ## The gunner is a separate mechanic
 
-`mechanics/gunnery.rs` is a new `Mechanic`, run after `Vehicles` and before `Movement`. `Vehicles` knows seats, driving and hulls; `Gunnery` only knows guns. A vehicle that has a `Gun` (`game::Gun`: turret yaw, barrel pitch, reload, shot counter, last range) gets worked by whoever sits in its seat 1. Another vehicle with a gun (a helicopter chin gun, say) would only need the same seat and a `Gun`.
+`mechanics/gunnery.rs` is a `Mechanic`, run after `Vehicles` and before `Movement`. `Vehicles` knows seats, driving and hulls; `Gunnery` only knows guns. Each gun is a `MountDef` row of the vehicle's definition, worked by whoever sits in its `seat` (the tank's cannon is seat 1's). Arming another vehicle is another row.
 
 Per tick, for each vehicle with a gun:
 
@@ -23,7 +23,7 @@ Per tick, for each vehicle with a gun:
 3. At the impact point: `Physics::blast_cars` shoves every vehicle in range, and every standing player within 7 m gets a knockback of `18 m/s × (1 − distance / 7 m)` away from the blast, plus a hop. That is the same `Character::knock` the car uses, so the client's reconciliation already knows how to replay it.
 4. The shot counter goes up, the range of the flight is saved, and the reload restarts (90 ticks). A held trigger therefore fires once per reload; the jitter buffer strips fire from repeated inputs, so an underrun cannot add a shot.
 
-Nobody in the gunner seat means nobody works the gun: a driver holding fire does nothing.
+**A driver alone works the turret.** A mount with a `stand_in` seat is worked by that seat's occupant while its own seat is empty: the tank's, the Strf 90's and the Pbv 302's turrets name the driver. The driver's input already carries the look, which a tank's drive ignores, so the turret follows the driver's mouse while W/S/A/D drive the hull under it, and fire, the sight and the round swap work as the gunner's do. A bot never stands in, as its look is how it steers. When a gunner climbs in the gun is theirs again. On the client the driver's seat names `standIn: 1`, and `crewedSeatView` gives a lone driver the gunner's camera, sight and reticle under the `tankDriver` hints; when the gunner's seat fills it gives the chase camera back. An empty tank fires nothing.
 
 ## Recoil
 

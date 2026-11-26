@@ -60,6 +60,11 @@ export interface SeatView {
   enclosed?: true
   /** The gauges the HUD shows from it. */
   gauges?: readonly ('air' | 'boost' | 'eggs' | 'cockpit' | 'range' | 'ammo' | 'pintle' | 'heat' | 'wind' | 'tubes' | 'rotor')[]
+  /**
+   * With this seat empty, its occupant works that seat's gun: a driver alone in a turreted hull aims and
+   * fires the turret, and sees and is told what its gunner would be (`MountDef::stand_in`).
+   */
+  standIn?: number
   /** The arc drawn ahead of what it fires: a mortar's bomb, or where a plane's bomb would land. */
   arc?: 'mortar' | 'bombs'
 }
@@ -88,4 +93,15 @@ export const rideView = (kind: number): RideView => kindView(kind).ride
 export function seatView(kind: number, index: number): SeatView {
   const seats = rideView(kind).seats
   return seats[Math.min(index, seats.length - 1)]!
+}
+
+/**
+ * How seat `index` of a vehicle of `kind` is presented with its crew as it is (`seats`, a rider's id per
+ * seat, 0 for an empty one): a driver alone in a turreted hull works the gun, from its gunner's view.
+ */
+export function crewedSeatView(kind: number, index: number, seats: readonly number[]): SeatView {
+  const own = seatView(kind, index)
+  if (own.standIn === undefined || (seats[own.standIn] ?? 0) !== 0) return own
+  const gun = seatView(kind, own.standIn)
+  return { ...gun, role: 'tankDriver', board: own.board, gauges: [...(own.gauges ?? []), ...(gun.gauges ?? [])] }
 }
