@@ -60,6 +60,7 @@ pub(super) const KADETT: VehicleDef = VehicleDef {
         max_suspension_force: 50_000.0,
         // About 7 m/s² away from a standstill.
         engine_force: 6_650.0,
+        drive: Drive::Front,
         max_speed: KADETT_MAX_SPEED,
         steer_lock: KADETT_MAX_STEER,
         steer_axles: Spec::FRONT_STEER,

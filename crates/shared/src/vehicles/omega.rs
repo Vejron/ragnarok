@@ -60,6 +60,7 @@ pub(super) const OMEGA: VehicleDef = VehicleDef {
         max_suspension_force: 50_000.0,
         // About 7 m/s² away from a standstill.
         engine_force: 9_450.0,
+        drive: Drive::Rear,
         max_speed: OMEGA_MAX_SPEED,
         steer_lock: OMEGA_MAX_STEER,
         steer_axles: Spec::FRONT_STEER,

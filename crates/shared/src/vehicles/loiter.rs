@@ -70,6 +70,7 @@ pub(super) const LOITER: VehicleDef = VehicleDef {
         suspension_rest: 0.0,
         max_suspension_force: 0.0,
         engine_force: 0.0,
+        drive: Drive::All,
         max_speed: 0.0,
         steer_lock: 0.0,
         steer_axles: Spec::FRONT_STEER,

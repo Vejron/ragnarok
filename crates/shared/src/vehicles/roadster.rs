@@ -78,6 +78,7 @@ pub(super) const ROADSTER: VehicleDef = VehicleDef {
         suspension_rest: ROADSTER_SUSPENSION_REST,
         max_suspension_force: 60_000.0,
         engine_force: 18_000.0,
+        drive: Drive::All,
         max_speed: ROADSTER_MAX_SPEED,
         steer_lock: ROADSTER_MAX_STEER,
         steer_axles: Spec::FRONT_STEER,

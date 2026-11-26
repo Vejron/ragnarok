@@ -60,6 +60,7 @@ pub(super) const JEEP: VehicleDef = VehicleDef {
         max_suspension_force: 60_000.0,
         // About 7.7 m/s² away from a standstill.
         engine_force: 10_000.0,
+        drive: Drive::All,
         max_speed: JEEP_MAX_SPEED,
         steer_lock: JEEP_MAX_STEER,
         steer_axles: Spec::FRONT_STEER,

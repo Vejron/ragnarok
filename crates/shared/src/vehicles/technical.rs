@@ -102,6 +102,7 @@ pub(super) const TECHNICAL: VehicleDef = VehicleDef {
         suspension_rest: TECHNICAL_SUSPENSION_REST,
         max_suspension_force: 90_000.0,
         engine_force: 13_000.0,
+        drive: Drive::All,
         max_speed: TECHNICAL_MAX_SPEED,
         steer_lock: TECHNICAL_MAX_STEER,
         steer_axles: Spec::FRONT_STEER,

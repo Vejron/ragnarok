@@ -83,6 +83,7 @@ pub(super) const BUS: VehicleDef = VehicleDef {
         max_suspension_force: 400_000.0,
         // About 3.5 m/s² away from a stop, under half a jeep's.
         engine_force: 42_000.0,
+        drive: Drive::Rear,
         max_speed: BUS_MAX_SPEED,
         steer_lock: BUS_MAX_STEER,
         steer_axles: Spec::FRONT_STEER,

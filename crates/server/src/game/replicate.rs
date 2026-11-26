@@ -259,6 +259,7 @@ impl Game {
             steer: Some(wire::Steer {
                 steer: to_axis(pose.steer),
                 throttle: driver.and_then(|_| self.world.physics.car_throttle(id)).map_or(0, to_axis),
+                spin: driver.and_then(|_| self.world.physics.car_wheelspin(id)).map_or(0, |spin| (spin.clamp(0.0, 1.0) * 255.0).round() as u8),
             }),
             turret,
             pintle,

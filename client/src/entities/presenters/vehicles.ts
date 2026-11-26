@@ -81,6 +81,8 @@ export interface Placed {
   fuel: number | null
   /** How hard its driver works the engine, -1..1 (`Steer.throttle`). */
   throttle: number
+  /** How hard its driven tyres spin, 0..1 (`Steer.spin`). */
+  spin: number
 }
 
 /** The vehicle the local player drives, which is drawn where it is predicted. */
@@ -340,7 +342,7 @@ export class Vehicles implements Presenter<Frame> {
     }
     const placed: Placed = {
       kind, x, y, z, yaw: Math.atan2(-forward.x, -forward.z), rotation, steer, seats, manned: this.seating.manned(id), turret, pintle, arms, sub: entity.sub ?? null,
-      hp: entity.health?.hp ?? 0, damage: entity.damage?.parts ?? UNHURT, doors: entity.doors ?? SHUT, jets, air: entity.thrust?.air ?? null, fuel: entity.fuel?.level ?? null, throttle,
+      hp: entity.health?.hp ?? 0, damage: entity.damage?.parts ?? UNHURT, doors: entity.doors ?? SHUT, jets, air: entity.thrust?.air ?? null, fuel: entity.fuel?.level ?? null, throttle, spin: entity.steer?.spin ?? 0,
     }
     this.placed.set(id, placed)
     this.tyres(id, placed, frame.dt, entity.arms ? (entity.arms.flags & ARMS_CUT) !== 0 : false)
@@ -373,6 +375,7 @@ export class Vehicles implements Presenter<Frame> {
     const position: [number, number, number] = [placed.x, placed.y, placed.z]
     // A towed gun has no engine, whoever sits at it, and an engine out of fuel does not run.
     const powered = (seats[0] ?? 0) !== 0 && hp > 0 && !vehicleDef(kind).towed && placed.fuel !== 0
+    fx.spin = placed.spin
     fx.update(this.world.fx(), position, placed.rotation, placed.steer, powered, dt)
     // The driver's own car is drawn from its prediction, so what is heard follows the wheel at once.
     const landing = fx.takeLanding()

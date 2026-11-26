@@ -83,6 +83,7 @@ pub(super) const SUBMARINE: VehicleDef = VehicleDef {
         suspension_rest: 0.0,
         max_suspension_force: 0.0,
         engine_force: 0.0,
+        drive: Drive::All,
         max_speed: SUB_MAX_SPEED,
         steer_lock: 0.0,
         steer_axles: Spec::FRONT_STEER,

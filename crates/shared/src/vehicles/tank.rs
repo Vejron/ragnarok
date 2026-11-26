@@ -133,6 +133,7 @@ pub(super) const TANK: VehicleDef = VehicleDef {
         suspension_rest: TANK_SUSPENSION_REST,
         max_suspension_force: 800_000.0,
         engine_force: 100_000.0,
+        drive: Drive::All,
         max_speed: TANK_MAX_SPEED,
         steer_lock: 0.0,
         steer_axles: Spec::FRONT_STEER,

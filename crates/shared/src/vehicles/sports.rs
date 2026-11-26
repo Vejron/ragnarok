@@ -60,6 +60,7 @@ pub(super) const SPORTS: VehicleDef = VehicleDef {
         max_suspension_force: 60_000.0,
         // About 12 m/s² away from a standstill: the quickest off the line.
         engine_force: 12_600.0,
+        drive: Drive::Rear,
         max_speed: SPORTS_MAX_SPEED,
         steer_lock: SPORTS_MAX_STEER,
         steer_axles: Spec::FRONT_STEER,

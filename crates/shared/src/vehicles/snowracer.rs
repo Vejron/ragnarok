@@ -71,6 +71,7 @@ pub(super) const SNOWRACER: VehicleDef = VehicleDef {
         max_suspension_force: 6_000.0,
         // About 5 m/s²: it creeps up a 20° piste, where gravity and the snow take 4.1, and stalls on a 30° one.
         engine_force: 700.0,
+        drive: Drive::All,
         max_speed: SNOWRACER_MAX_SPEED,
         steer_lock: SNOWRACER_MAX_STEER,
         steer_axles: Spec::FRONT_STEER,

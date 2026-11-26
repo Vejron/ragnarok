@@ -43,7 +43,7 @@ fn a_new_entity_brings_everything_it_has_and_decodes_back() {
         motion: Some(Motion { vy: -500, knock_x: 120, knock_z: -80 }),
         flags: Some(Flags { flags: 0b1000_0101, stance: 1 }),
         orientation: Some(Orientation { qx: -32767, qy: 5, qz: 32767 }),
-        steer: Some(Steer { steer: -127, throttle: 90 }),
+        steer: Some(Steer { steer: -127, throttle: 90, spin: 200 }),
         turret: Some(Turret { yaw: 100, pitch: -50, shots: 255, range: 65535, heat: 200, flags: 1 }),
         pintle: Some(Pintle { yaw: -1200, pitch: 300, shots: 77, heat: 200, flags: 1 }),
         fell: Some(Fell { style: 2 }),
@@ -139,8 +139,8 @@ fn a_component_the_baseline_lacks_is_sent_whole_even_one_sent_as_differences() {
 
 #[test]
 fn differences_go_through_the_whole_range_of_a_field() {
-    let base = Replicated { heading: Some(Heading { yaw: 3141 }), steer: Some(Steer { steer: -127, throttle: -127 }), orientation: Some(Orientation { qx: -32767, qy: 0, qz: 32767 }), ..Default::default() };
-    let now = Replicated { heading: Some(Heading { yaw: -3142 }), steer: Some(Steer { steer: 127, throttle: 127 }), orientation: Some(Orientation { qx: 32767, qy: 0, qz: -32767 }), ..Default::default() };
+    let base = Replicated { heading: Some(Heading { yaw: 3141 }), steer: Some(Steer { steer: -127, throttle: -127, spin: 0 }), orientation: Some(Orientation { qx: -32767, qy: 0, qz: 32767 }), ..Default::default() };
+    let now = Replicated { heading: Some(Heading { yaw: -3142 }), steer: Some(Steer { steer: 127, throttle: 127, spin: 0 }), orientation: Some(Orientation { qx: 32767, qy: 0, qz: -32767 }), ..Default::default() };
     let update = now.update(1, Some(&base)).unwrap();
     assert_eq!(update.orientation, Some([65534, 0, -65534]));
     assert_eq!(Replicated::apply(Some(&base), &round_trip(&update)), now);
@@ -339,7 +339,7 @@ fn fixture_json() -> String {
         motion: Some(Motion { vy: -500, knock_x: 120, knock_z: -80 }),
         flags: Some(Flags { flags: 0b1000_0101, stance: 1 }),
         orientation: Some(Orientation { qx: -32767, qy: 5, qz: 32767 }),
-        steer: Some(Steer { steer: -127, throttle: 90 }),
+        steer: Some(Steer { steer: -127, throttle: 90, spin: 200 }),
         turret: Some(Turret { yaw: 100, pitch: -50, shots: 255, range: 65535, heat: 200, flags: 1 }),
         pintle: Some(Pintle { yaw: -1200, pitch: 300, shots: 77, heat: 200, flags: 1 }),
         fell: Some(Fell { style: 2 }),
@@ -368,7 +368,7 @@ fn fixture_json() -> String {
     };
     let first: Scene = vec![(1, soldier(1000, 200)), (4, tank(0, 0)), (70_000, all.clone())];
     let hurt = Replicated { damage: Some(Damage { parts: [0, 0, 90, 0, 0, 0, 0, 0, 0, 0, 0] }), ..tank(40, 12) };
-    let second: Scene = vec![(1, soldier(1012, 230)), (3, soldier(-20, 7)), (4, hurt), (70_000, Replicated { heading: Some(Heading { yaw: 3141 }), steer: Some(Steer { steer: 127, throttle: -90 }), ..all.clone() })];
+    let second: Scene = vec![(1, soldier(1012, 230)), (3, soldier(-20, 7)), (4, hurt), (70_000, Replicated { heading: Some(Heading { yaw: 3141 }), steer: Some(Steer { steer: 127, throttle: -90, spin: 0 }), ..all.clone() })];
     let third: Scene = vec![(1, soldier(1012, 230)), (3, Replicated { velocity: Some(Velocity { vx: 9, vy: -9, vz: 1 }), ..soldier(-20, 7) }), (4, tank(40, 12))];
     let steps = [("everything new, against nothing", Vec::new(), first.clone()), ("moves, an arrival and new damage", first, second.clone()), ("a repair, a departure and a component gained whole", second, third)];
     let cases: Vec<String> = steps
@@ -396,7 +396,7 @@ pub(crate) fn generated(path: &str, contents: &str) {
 
 /// A scene with every family and the edge cases of each, for the client's conversion into its units.
 fn scene_fixture_json() -> String {
-    let vehicle = |kind: u8| Replicated { kind: Some(Kind { kind }), place: Some(Place { x: 500, y: 80, z: -900 }), orientation: Some(Orientation { qx: 10, qy: -2000, qz: 30 }), steer: Some(Steer { steer: 40, throttle: 127 }), health: Some(Health { hp: 100 }), ..Default::default() };
+    let vehicle = |kind: u8| Replicated { kind: Some(Kind { kind }), place: Some(Place { x: 500, y: 80, z: -900 }), orientation: Some(Orientation { qx: 10, qy: -2000, qz: 30 }), steer: Some(Steer { steer: 40, throttle: 127, spin: 0 }), health: Some(Health { hp: 100 }), ..Default::default() };
     let scene: Scene = vec![
         // Prone, knocked, crouching, holding a gun (flags carry the held item).
         (1, Replicated { motion: Some(Motion { vy: -320, knock_x: 150, knock_z: -40 }), flags: Some(Flags { flags: 0b0001_0101, stance: 1 }), ..soldier(-700, -1500) }),

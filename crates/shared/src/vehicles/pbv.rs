@@ -132,6 +132,7 @@ pub(super) const PBV: VehicleDef = VehicleDef {
         suspension_rest: PBV_SUSPENSION_REST,
         max_suspension_force: 820_000.0,
         engine_force: 110_000.0,
+        drive: Drive::All,
         max_speed: PBV_MAX_SPEED,
         steer_lock: 0.0,
         steer_axles: Spec::FRONT_STEER,

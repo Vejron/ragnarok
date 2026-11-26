@@ -116,6 +116,7 @@ pub(super) const STRF: VehicleDef = VehicleDef {
         suspension_rest: STRF_SUSPENSION_REST,
         max_suspension_force: 820_000.0,
         engine_force: 115_000.0,
+        drive: Drive::All,
         max_speed: STRF_MAX_SPEED,
         steer_lock: 0.0,
         steer_axles: Spec::FRONT_STEER,

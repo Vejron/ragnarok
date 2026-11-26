@@ -61,6 +61,7 @@ pub(super) const GTI: VehicleDef = VehicleDef {
         max_suspension_force: 50_000.0,
         // About 10.5 m/s² away from a standstill.
         engine_force: 10_000.0,
+        drive: Drive::Front,
         max_speed: GTI_MAX_SPEED,
         steer_lock: GTI_MAX_STEER,
         steer_axles: Spec::FRONT_STEER,

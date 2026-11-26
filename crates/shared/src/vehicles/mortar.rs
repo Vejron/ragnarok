@@ -67,6 +67,7 @@ pub(super) const MORTAR: VehicleDef = VehicleDef {
         suspension_rest: 0.3,
         max_suspension_force: 30_000.0,
         engine_force: 0.0,
+        drive: Drive::All,
         max_speed: 1.0,
         steer_lock: 0.0,
         steer_axles: Spec::FRONT_STEER,

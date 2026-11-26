@@ -60,6 +60,7 @@ pub(super) const ESCORT: VehicleDef = VehicleDef {
         max_suspension_force: 50_000.0,
         // About 5.5 m/s² away from a standstill.
         engine_force: 4_950.0,
+        drive: Drive::Front,
         max_speed: ESCORT_MAX_SPEED,
         steer_lock: ESCORT_MAX_STEER,
         steer_axles: Spec::FRONT_STEER,

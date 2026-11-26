@@ -101,6 +101,11 @@ const rand = (low: number, high: number) => low + Math.random() * (high - low)
 export class VehicleFx {
   private readonly fx: KindFx
   private readonly slips: number[] = []
+  /**
+   * How hard its driven tyres spin, 0..1 (`Steer.spin`): a rear-driven car floored on its boost, which
+   * smokes and marks even standing still, where its motion alone shows no slip. Set before `update`.
+   */
+  spin = 0
   private lastPosition: Vector3 | null = null
   private measured = false
   private speed = 0
@@ -320,7 +325,7 @@ export class VehicleFx {
       const sideways = (this.smoothed.x + this.turning * offset.z) * this.side.x + (this.smoothed.z - this.turning * offset.x) * this.side.z
       // Every wheel of a jeep and a tank is driven; a sports car pushes with its rear pair, and a plane with its propeller.
       const driven = this.fx.drivenFrom !== null && wheel >= this.fx.drivenFrom
-      const wanted = tyreSlip(sideways, this.speed, this.surge, driven)
+      const wanted = Math.max(tyreSlip(sideways, this.speed, this.surge, driven), driven ? this.spin : 0)
       const slip = (this.slips[wheel] ?? 0) + (wanted - (this.slips[wheel] ?? 0)) * Math.min(1, dt * SMOOTHING)
       this.slips[wheel] = slip
 

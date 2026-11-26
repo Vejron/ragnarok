@@ -339,8 +339,9 @@ replicated! {
     diff 5 steer
     /// Front wheels as a fraction of full lock, -127..=127, + is right; and how hard the driver works the
     /// engine, -127..=127 (+ ahead, - astern or braking; a helicopter's collective), 0 with nobody driving,
-    /// so every client hears it rev, lift off and launch as the driver does.
-    Steer { steer: i8 as axis, throttle: i8 as axis }
+    /// so every client hears it rev, lift off and launch as the driver does; and how hard its driven tyres
+    /// spin, 0..=255 of wholly (a rear-driven car floored), so every client sees the smoke of a burnout.
+    Steer { steer: i8 as axis, throttle: i8 as axis, spin: u8 as byte }
 
     set 6 turret
     /// A gun on a mount, as it is drawn: the turret's yaw (+ turns left) and the barrel's elevation (+ is

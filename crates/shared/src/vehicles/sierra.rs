@@ -60,6 +60,7 @@ pub(super) const SIERRA: VehicleDef = VehicleDef {
         max_suspension_force: 50_000.0,
         // About 6.5 m/s² away from a standstill.
         engine_force: 7_500.0,
+        drive: Drive::Rear,
         max_speed: SIERRA_MAX_SPEED,
         steer_lock: SIERRA_MAX_STEER,
         steer_axles: Spec::FRONT_STEER,

@@ -42,7 +42,7 @@ use sail::sail;
 use water::{wade, water_under};
 pub use spec::half_extents;
 pub use limbs::{Contact, Hand, LIMB_GROUP, LimbsPose};
-pub(super) use spec::{Airframe, Arms, Buttons, Floats, Gait, Lift, Role, Rotorcraft, Runners, Shape, Solid, Spec, spec};
+pub(super) use spec::{Airframe, Arms, Buttons, Drive, Floats, Gait, Lift, Role, Rotorcraft, Runners, Shape, Solid, Spec, spec};
 
 
 /// How quickly a tank's yaw rate follows the stick, rad/s².
@@ -82,6 +82,28 @@ const DOWNFORCE_PER_KG: f32 = 0.0001;
 /// How quickly the throttle pitches and the steering rolls a car with no wheel down, rad/s².
 const AIR_PITCH: f32 = 3.0;
 const AIR_ROLL: f32 = 3.0;
+/// How far a driven tyre's push can go, as a share of the weight on it, before it spins: a
+/// rear-driven car floored on the boost spins its rear tyres away from a standstill, and on the
+/// throttle alone barely does.
+const TRACTION: f32 = 1.3;
+/// Driven tyres spin in the low gears: wholly up to the first of these speeds (m/s), not at all from the
+/// second, so a car floored round a fast corner keeps its tail.
+const SPIN_SPEEDS: [f32; 2] = [8.0, 16.0];
+/// How far past that grip (as a share of it) a tyre is asked to push before it spins wholly.
+const SPIN_SPAN: f32 = 0.3;
+/// How much of its push a wholly spinning tyre loses: a burnout turns the car round where it stands
+/// instead of launching it.
+const SPIN_LOSS: f32 = 0.3;
+/// Side grip of wholly spinning rear tyres, against 1 normally and the handbrake's `DRIFT_GRIP`: next to
+/// nothing, so the tail swings round the front wheels.
+const SPIN_GRIP: f32 = 0.01;
+/// How much of their side grip and their push wholly spinning tyres lose with the wheels straight, as
+/// a share of what they lose at full lock: a little, so the tail squirms but the car keeps its line and
+/// still gets away.
+const SPIN_STRAIGHT: f32 = 0.2;
+/// How quickly spinning tyres bite again once they are asked for less, per second: the tail comes
+/// back over half a second rather than snapping straight and throwing the car over.
+const SPIN_FADE: f32 = 2.0;
 /// Side grip of the rear wheels and the tyres' friction, as `WheelTuning` sets them.
 const SIDE_GRIP: f32 = 1.0;
 const FRICTION_SLIP: f32 = 12.0;
@@ -229,12 +251,18 @@ impl CarControls {
         match spec.buttons {
             Buttons::Drive => CarControls { handbrake: held(BUTTON_JUMP), lift: f32::from(held(BUTTON_JUMP)) - f32::from(held(BUTTON_RUN)), ..stick },
             Buttons::Collective => CarControls { lift: input.collective(), ..stick },
-            Buttons::Stunt => CarControls { handbrake: held(BUTTON_CROUCH), boost: held(BUTTON_RUN), hop: held(BUTTON_JUMP), ..stick },
+            Buttons::Stunt => CarControls { handbrake: held(BUTTON_CROUCH), boost: held(BUTTON_RUN), hop: held(BUTTON_JUMP), ..pedal(stick, held(BUTTON_RUN)) },
             Buttons::Leap => CarControls { hop: held(BUTTON_JUMP), ..stick },
-            Buttons::Boost => CarControls { handbrake: held(BUTTON_JUMP), boost: held(BUTTON_RUN), ..stick },
+            Buttons::Boost => CarControls { handbrake: held(BUTTON_JUMP), boost: held(BUTTON_RUN), ..pedal(stick, held(BUTTON_RUN)) },
             Buttons::Stride => CarControls { lift: -f32::from(held(BUTTON_CROUCH)), hop: held(BUTTON_JUMP), ..stick },
         }
     }
+}
+
+/// The `stick` with the throttle floored while the boost is held: Run alone drives a vehicle ahead on
+/// its boost, as if forward were held too. Pulling back still brakes or reverses as it would.
+fn pedal(stick: CarControls, boost: bool) -> CarControls {
+    if boost && stick.throttle >= 0.0 { CarControls { throttle: 1.0, ..stick } } else { stick }
 }
 
 /// A car's pose as the game loop and the wire need it.
@@ -338,6 +366,9 @@ pub(super) struct Car {
     tank: Option<f32>,
     /// The `THRUST_*` nozzles that fired in the last step.
     firing: u8,
+    /// How hard a rear-driven car's rear tyres are spinning, 0..1: past their grip under full power, and
+    /// for a moment after while they bite again. Its tail swings out while they do.
+    wheelspin: f32,
     /// Where a ship's gun is fixed (`mount_car`): it is carried there after every step.
     mounted: Option<Mounted>,
     /// On rails (`set_car_rails`): put where it is told every step, with no wheels or engine of its own.
@@ -755,7 +786,7 @@ impl Physics {
                 }
             }
         }
-        self.cars.insert(id, Car { spec, body, collider, extra, controller, steer: 0.0, turn: 0.0, spin: 0.0, flight: CarControls::IDLE, air: (0.0, 0.0), condition: CarCondition::NEW, towed_by: None, tank: spec.tank, firing: 0, mounted: None, rails: false, limbs: None, hits, shots });
+        self.cars.insert(id, Car { spec, body, collider, extra, controller, steer: 0.0, turn: 0.0, spin: 0.0, flight: CarControls::IDLE, air: (0.0, 0.0), condition: CarCondition::NEW, towed_by: None, tank: spec.tank, firing: 0, wheelspin: 0.0, mounted: None, rails: false, limbs: None, hits, shots });
         self.add_limbs(id);
     }
 
@@ -1026,7 +1057,31 @@ impl Physics {
         let slip = sideways.abs().atan2(speed.abs());
         let sliding = ((slip - SLIDE_SLIP[0]) / (SLIDE_SLIP[1] - SLIDE_SLIP[0])).clamp(0.0, 1.0);
         let carve = car.spec.slide * (hard * fast * (0.6 + 0.4 * controls.throttle.max(0.0))).max(sliding);
-        let rear_grip = SIDE_GRIP * (DRIFT_GRIP / SIDE_GRIP).powf(carve);
+        // The engine's pull goes to its driven wheels alone, shared so that the total stays the same.
+        let wheels = road_wheels(car.spec);
+        let driven = |index: usize| match car.spec.drive {
+            Drive::All => true,
+            Drive::Front => index < 2,
+            Drive::Rear => (2..wheels).contains(&index),
+        };
+        let share = wheels as f32 / (0..wheels).filter(|&index| driven(index)).count().max(1) as f32;
+        // A rear-driven car's rear tyres spin when they are asked to push past what the weight on them
+        // grips, and the tail comes loose while they do.
+        let spin = if car.spec.drive == Drive::Rear && engine > 0.0 {
+            let loads: Vec<f32> = car.controller.wheels().iter().enumerate().filter(|(index, wheel)| driven(*index) && wheel.raycast_info().is_in_contact).map(|(_, wheel)| wheel.wheel_suspension_force).collect();
+            let load = loads.iter().sum::<f32>() / loads.len().max(1) as f32;
+            // In the low gears only: it fades out between the two speeds.
+            let low = 1.0 - ((speed.abs() - SPIN_SPEEDS[0]) / (SPIN_SPEEDS[1] - SPIN_SPEEDS[0])).clamp(0.0, 1.0);
+            if load > 0.0 { ((engine * share / (load * TRACTION) - 1.0) / SPIN_SPAN).clamp(0.0, 1.0) * low } else { 0.0 }
+        } else {
+            0.0
+        };
+        car.wheelspin = spin.max(car.wheelspin - SPIN_FADE * dt);
+        // Spinning tyres let the tail go as far as the wheels are turned: a burnout in a straight line
+        // smokes but holds its line, and one at full lock swings round the front wheels.
+        let turn_share = SPIN_STRAIGHT + (1.0 - SPIN_STRAIGHT) * turned.min(1.0);
+        let loose = car.wheelspin * turn_share;
+        let rear_grip = (SIDE_GRIP * (DRIFT_GRIP / SIDE_GRIP).powf(carve)).min(SIDE_GRIP * (SPIN_GRIP / SIDE_GRIP).powf(loose));
         let (spec, condition, steer) = (car.spec, car.condition, car.steer);
         for (index, wheel) in car.controller.wheels_mut().iter_mut().enumerate() {
             let front = index < front_wheels;
@@ -1040,7 +1095,8 @@ impl Physics {
             wheel.steering = if front { -steer * spec.steer_share(index / 2) } else { 0.0 } + toe;
             // Wheels are added left before right: a broken track's side is not driven, and drags.
             let side = condition.sides[index % 2];
-            wheel.engine_force = if gone { 0.0 } else { engine * side };
+            let push = if !driven(index) { 0.0 } else if front { share } else { share * (1.0 - SPIN_LOSS * spin * turn_share) };
+            wheel.engine_force = if gone { 0.0 } else { engine * push * side };
             let drag = (1.0 - side) * BROKEN_TRACK_DRAG * BRAKE_PER_KG * mass;
             wheel.brake = if gone { 0.0 } else if front { brake } else { brake.max(handbrake).max(drag) };
             wheel.side_friction_stiffness = if front { SIDE_GRIP } else if drift { DRIFT_GRIP } else { rear_grip } * (1.0 - WHEEL_GRIP_LOSS * wear);
@@ -1747,6 +1803,11 @@ impl Physics {
 
     /// How hard car `id`'s driver works its engine, -1..=1: the throttle, or a helicopter's collective.
     /// What its engine is heard to do; 0 once the controls are let go.
+    /// How hard vehicle `id`'s driven tyres are spinning, 0..1: a rear-driven car's, floored.
+    pub fn car_wheelspin(&self, id: u32) -> Option<f32> {
+        Some(self.cars.get(&id)?.wheelspin)
+    }
+
     pub fn car_throttle(&self, id: u32) -> Option<f32> {
         let car = self.cars.get(&id)?;
         let controls = car.flight;

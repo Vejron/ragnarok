@@ -51,6 +51,7 @@ pub(super) const GOLF_CART: VehicleDef = VehicleDef {
         suspension_rest: GOLF_CART_SUSPENSION_REST,
         max_suspension_force: 30_000.0,
         engine_force: 3_000.0,
+        drive: Drive::Rear,
         max_speed: GOLF_CART_MAX_SPEED,
         steer_lock: GOLF_CART_MAX_STEER,
         steer_axles: Spec::FRONT_STEER,

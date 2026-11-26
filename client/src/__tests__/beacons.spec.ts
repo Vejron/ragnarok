@@ -30,7 +30,7 @@ const NOON = DAY_SECONDS * TICK_RATE
 
 /** A vehicle of `kind` at `x` metres with `hp` left, sending `flags` if any. */
 const vehicle = (kind: number, x: number, flags = 0, hp = 100): Components => ({
-  kind: { kind }, place: { x: x * 100, y: 100, z: 0 }, orientation: { qx: 0, qy: 0, qz: 0 }, steer: { steer: 0, throttle: 0 }, health: { hp },
+  kind: { kind }, place: { x: x * 100, y: 100, z: 0 }, orientation: { qx: 0, qy: 0, qz: 0 }, steer: { steer: 0, throttle: 0, spin: 0 }, health: { hp },
   ...(flags ? { flags: { flags, stance: 0 } } : {}),
 })
 

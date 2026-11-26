@@ -63,7 +63,7 @@ pub mod escort;
 pub mod police_car;
 pub mod ambulance;
 
-pub use spec::{Airframe, Arms, Boat, Boost, BOOST_DRAIN, BOOST_FULL, BOOST_REFILL, Buttons, Feet, Floats, Gait, Jets, Lift, Role, Rotorcraft, Runners, Shape, Skim, Solid, Spec, Springs, Step, Swim, STEER_FADE};
+pub use spec::{Airframe, Arms, Boat, Boost, BOOST_DRAIN, BOOST_FULL, BOOST_REFILL, Buttons, Drive, Feet, Floats, Gait, Jets, Lift, Role, Rotorcraft, Runners, Shape, Skim, Solid, Spec, Springs, Step, Swim, STEER_FADE};
 pub use crate::armor::{ALLOY, Armor, Box3, GLAZED, Module, On, Part, Pen, Plate, SHEET, SOFT, Zone};
 
 #[derive(Clone, Copy, Debug)]

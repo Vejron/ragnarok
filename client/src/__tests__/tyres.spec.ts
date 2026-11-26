@@ -9,7 +9,8 @@ import { Particles } from '@/render/particles'
 import { VehicleFx, type FxWorld } from '@/render/tyres'
 import { JetSpray } from '@/render/jetspray'
 import { COVER_ASPHALT, COVER_FARM, COVER_WATER, RAIL_TRAIN, RAIL_TRAM, ROAD_MINOR, ROAD_PATH, NO_WATER } from '@/world'
-import { KIND_CB90, KIND_HELI, KIND_JEEP, KIND_PLANE, KIND_RAFT, KIND_SNOWMOBILE, KIND_SPORTS, KIND_TANK } from '@/net/codec'
+import { VOLVO_740_RIDE_HEIGHT } from '@/sim/consts'
+import { KIND_CB90, KIND_HELI, KIND_JEEP, KIND_VOLVO_740, KIND_PLANE, KIND_RAFT, KIND_SNOWMOBILE, KIND_SPORTS, KIND_TANK } from '@/net/codec'
 import { setIced, setWinter } from '@/render/season'
 import { JEEP_RIDE_HEIGHT, SNOWMOBILE_RIDE_HEIGHT, TANK_HALF_EXTENTS, TANK_RIDE_HEIGHT } from '@/sim/consts'
 import { SnowRoost } from '@/render/snowroost'
@@ -182,11 +183,11 @@ describe('VehicleFx', () => {
   }
 
   /** A jeep at ride height, moving with `velocity` (m/s) while pointing along -Z, for `frames` frames; unpowered, it puffs no exhaust. */
-  function slide(fx: VehicleFx, w: FxWorld, velocity: [number, number], frames: number, powered = true) {
+  function slide(fx: VehicleFx, w: FxWorld, velocity: [number, number], frames: number, powered = true, ride = 0.857) {
     const dt = 1 / 60
     const rotation = [0, 0, 0, 1] as const
     for (let i = 0; i < frames; i++) {
-      fx.update(w, [velocity[0] * i * dt, 0.857, velocity[1] * i * dt], rotation, 0, powered, dt)
+      fx.update(w, [velocity[0] * i * dt, ride, velocity[1] * i * dt], rotation, 0, powered, dt)
       w.smoke.update(dt)
     }
   }
@@ -202,6 +203,19 @@ describe('VehicleFx', () => {
     slide(new VehicleFx(1, KIND_JEEP), w, [8, -15], 120)
     expect(w.skids.laid).toBeGreaterThan(20)
     expect(w.smoke.alive).toBeGreaterThan(10)
+  })
+
+  it('smokes and marks the tarmac under a rear-driven car spinning its tyres at a crawl, and not without the spin', () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.01)
+    const w = world(SURFACE_ASPHALT)
+    const fx = new VehicleFx(1, KIND_VOLVO_740)
+    fx.spin = 1
+    slide(fx, w, [0, -1], 120, true, VOLVO_740_RIDE_HEIGHT)
+    expect(w.skids.laid).toBeGreaterThan(5)
+    expect(w.smoke.alive).toBeGreaterThan(10)
+    const still = world(SURFACE_ASPHALT)
+    slide(new VehicleFx(1, KIND_VOLVO_740), still, [0, -1], 120, true, VOLVO_740_RIDE_HEIGHT)
+    expect(still.skids.laid).toBe(0)
   })
 
   it('ruts soft ground but raises no dust rolling straight along it', () => {

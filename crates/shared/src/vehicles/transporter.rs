@@ -62,6 +62,7 @@ pub(super) const TRANSPORTER: VehicleDef = VehicleDef {
         max_suspension_force: 50_000.0,
         // About 4 m/s² away from a standstill: loaded, it crawls.
         engine_force: 6_400.0,
+        drive: Drive::Rear,
         max_speed: TRANSPORTER_MAX_SPEED,
         steer_lock: TRANSPORTER_MAX_STEER,
         steer_axles: Spec::FRONT_STEER,

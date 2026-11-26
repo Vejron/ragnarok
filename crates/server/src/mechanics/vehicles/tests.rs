@@ -1171,3 +1171,32 @@ fn a_wrecked_tank_burns_where_it_stands_and_is_not_thrown() {
     assert!(fastest_turn < 1.0, "it was not sent tumbling ({fastest_turn} rad/s)");
     assert!(pose.up_y > 0.9 && (pose.position[0] - start[0]).hypot(pose.position[2] - start[2]) < 0.5, "it lies where it stood, upright: {pose:?}");
 }
+
+#[test]
+fn run_alone_spins_a_740_round_and_everyone_is_told_its_tyres_spin() {
+    let spawns: Vec<[i32; 2]> = vec![[0, 0], [2500, 0]];
+    let map = WorldFile {
+        version: WORLD_VERSION,
+        half_extent: 30_000,
+        placed_vehicles: vec![shared::world::PlacedVehicle { kind: KIND_VOLVO_740, at: [0, 2500], yaw: 0.0 }],
+        spawns,
+        ..Default::default()
+    };
+    let mut game = Game::new(map, 0).unwrap();
+    let (driver, _a) = join(&mut game);
+    let (watcher, _b) = join(&mut game);
+    let mut seq = 0;
+    idle(&mut game, driver, &mut seq, 3);
+    // On its left, the driver's side.
+    let (vid, _) = game.world.entities.all::<Vehicle>().next().unwrap();
+    game.world.entities.get_mut::<Player>(driver).unwrap().character.position = [-2.0, STANDING_Y, 25.0];
+    press(&mut game, driver, &mut seq, (0, 0), BUTTON_USE, 1);
+    // Through its door and into the seat.
+    idle(&mut game, driver, &mut seq, 120);
+    assert_eq!(game.world.entities.of::<Seats>(vid)[0], Some(driver), "the driver is at the wheel");
+    // Run held and the wheel hard over, with the stick not pushed ahead.
+    press(&mut game, driver, &mut seq, (127, 0), BUTTON_RUN, 60);
+    let steer = game.told(watcher, vid).and_then(|car| car.steer).expect("the watcher sees the car's steering");
+    assert!(steer.throttle > 100, "Run alone floors it: {steer:?}");
+    assert!(steer.spin > 128, "its tyres spin: {steer:?}");
+}

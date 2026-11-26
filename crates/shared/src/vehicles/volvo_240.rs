@@ -61,6 +61,7 @@ pub(super) const VOLVO_240: VehicleDef = VehicleDef {
         max_suspension_force: 50_000.0,
         // About 5 m/s² away from a standstill: it takes its time.
         engine_force: 7_250.0,
+        drive: Drive::Rear,
         max_speed: VOLVO_240_MAX_SPEED,
         steer_lock: VOLVO_240_MAX_STEER,
         steer_axles: Spec::FRONT_STEER,

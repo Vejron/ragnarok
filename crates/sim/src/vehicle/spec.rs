@@ -1,7 +1,7 @@
 //! The tuning of each vehicle kind that the physics reads, which is part of its definition
 //! (`shared::vehicles`).
 
-pub(crate) use shared::vehicles::{Airframe, Arms, Buttons, Floats, Gait, Lift, Role, Rotorcraft, Runners, Shape, Solid, Spec};
+pub(crate) use shared::vehicles::{Airframe, Arms, Buttons, Drive, Floats, Gait, Lift, Role, Rotorcraft, Runners, Shape, Solid, Spec};
 use shared::vehicles::vehicle_def;
 
 /// The spec for a vehicle kind. Unknown kinds are jeeps.

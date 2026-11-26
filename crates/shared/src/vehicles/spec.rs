@@ -138,6 +138,18 @@ impl Boost {
 /// The speed at which a car's steering lock has halved, m/s: the usual `Spec::steer_fade`.
 pub const STEER_FADE: f32 = 20.0;
 
+/// Which of a wheeled vehicle's wheels its engine turns.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Drive {
+    /// Every wheel: a jeep, a truck, a tank's tracks, and anything that is not a road car.
+    All,
+    /// The front axle's: a hatchback that pulls itself round a corner.
+    Front,
+    /// The rear axle's: a saloon or a van that pushes. Floored, especially on the boost, its rear
+    /// tyres spin and its tail comes round.
+    Rear,
+}
+
 /// How the physics moves a kind.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Spec {
@@ -154,6 +166,8 @@ pub struct Spec {
     pub max_suspension_force: f32,
     /// Total engine force over all wheels, newtons.
     pub engine_force: f32,
+    /// Which wheels that force turns: it is shared among them alone, so the total is the same.
+    pub drive: Drive,
     pub max_speed: f32,
     /// Steering lock of the front axle at standstill, radians. Zero for a tank, which turns by `turn_rate`.
     pub steer_lock: f32,

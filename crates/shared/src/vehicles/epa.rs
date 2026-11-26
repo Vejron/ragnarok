@@ -61,6 +61,7 @@ pub(super) const EPA: VehicleDef = VehicleDef {
         // About 6 m/s² away from a standstill: a saloon's engine in a low gear, so it is at its top speed
         // in under two seconds.
         engine_force: 8_000.0,
+        drive: Drive::Rear,
         max_speed: EPA_MAX_SPEED,
         steer_lock: EPA_MAX_STEER,
         steer_axles: Spec::FRONT_STEER,

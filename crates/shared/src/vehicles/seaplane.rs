@@ -104,6 +104,7 @@ pub(super) const SEAPLANE: VehicleDef = VehicleDef {
         max_suspension_force: 40_000.0,
         // The wheels only roll and steer; the propeller is a force on the body.
         engine_force: 0.0,
+        drive: Drive::All,
         max_speed: 0.0,
         steer_lock: SEAPLANE_MAX_STEER,
         steer_axles: Spec::FRONT_STEER,

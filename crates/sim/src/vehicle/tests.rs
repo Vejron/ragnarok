@@ -83,10 +83,10 @@ const SCRIPTED_CHECKPOINTS: [(u8, u32, [f32; 3]); 16] = [
     (KIND_JEEP, 210, [2.5239, 0.8564, -22.4112]),
     (KIND_JEEP, 300, [30.2642, 0.8562, -23.7819]),
     (KIND_JEEP, 480, [59.2548, 0.8568, -59.0352]),
-    (KIND_SPORTS, 90, [-0.0004, 0.4175, -1.5324]),
-    (KIND_SPORTS, 210, [4.4973, 0.4166, -34.9608]),
-    (KIND_SPORTS, 300, [42.8601, 0.4161, -25.5642]),
-    (KIND_SPORTS, 480, [93.0031, 0.4166, -71.6836]),
+    (KIND_SPORTS, 90, [-0.0004, 0.4175, -1.4404]),
+    (KIND_SPORTS, 210, [4.3031, 0.4166, -33.5761]),
+    (KIND_SPORTS, 300, [42.5857, 0.4161, -25.1887]),
+    (KIND_SPORTS, 480, [91.5085, 0.4166, -72.6119]),
     (KIND_TANK, 90, [0.0, 1.1300, -0.9490]),
     (KIND_TANK, 210, [0.5394, 1.1300, -17.9451]),
     (KIND_TANK, 300, [10.8795, 1.1300, -28.9229]),
@@ -210,7 +210,8 @@ fn a_golf_cart_potters_along_and_stays_on_its_wheels_at_full_lock() {
     }
     let turned = (yaw(&physics.car_pose(1).unwrap()) - start).rem_euclid(std::f32::consts::TAU);
     assert!(worst > 0.8, "flat out at full lock it stays on its wheels: {worst}");
-    assert!(turned > 0.3, "and turns: {turned}");
+    // Pushed from its rear wheels, it runs a little wide.
+    assert!(turned > 0.25, "and turns: {turned}");
 }
 
 #[test]
@@ -3120,7 +3121,8 @@ fn every_period_car_nears_its_own_top_speed_and_stays_on_its_wheels_flat_out_at_
         let (_, late, worst, turned) = flat_out(kind);
         assert!(late > top * 0.85 && late <= top + 0.5, "kind {kind} gets near {top} m/s and no further: {late}");
         assert!(worst > 0.9, "kind {kind} stays on its wheels: {worst}");
-        assert!(turned > 0.7, "kind {kind} turns: {turned}");
+        // A rear-driven one pushed round runs a little wider than a front-driven one is pulled.
+        assert!(turned > 0.65, "kind {kind} turns: {turned}");
     }
 }
 
@@ -3361,4 +3363,91 @@ fn a_round_meets_a_cars_cabin_above_its_hull_where_nothing_else_does() {
     assert!(strike.point[1] > 0.6 && strike.point[1] < 0.8, "{strike:?}");
     // A round that starts inside it, from a soldier who has climbed in, goes out through the glass.
     assert!(physics.cast_round(inside, dir, 20.0, 99).is_none());
+}
+
+/// How car `kind` goes held at full lock from a standstill for 3 s, on its boost or not: how far it
+/// ended up from where it started (metres), how far it turned (radians), its mean slip angle over the
+/// last 2 s (radians), the lowest its roof came (`up_y`), and its wheelspin at the end.
+fn donut(kind: u8, boost: bool) -> (f32, f32, f32, f32, f32) {
+    let mut physics = Physics::new(&WorldFile { version: WORLD_VERSION, half_extent: 100_000, ..Default::default() }).unwrap();
+    physics.add_car(1, kind, [0.0, 1.5, 0.0], 0.0);
+    let start = run(&mut physics, COAST, 60);
+    let (mut turned, mut heading, mut worst, mut slips) = (0.0_f32, yaw(&start), 1.0_f32, 0.0_f32);
+    for tick in 0..60 * 3 {
+        let pose = run(&mut physics, CarControls { throttle: 1.0, steer: -1.0, boost, ..CarControls::IDLE }, 1);
+        let now = yaw(&pose);
+        turned += (now - heading + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+        heading = now;
+        worst = worst.min(pose.up_y);
+        if tick >= 60 {
+            slips += slip_angle(&pose) / 120.0;
+        }
+    }
+    let pose = physics.car_pose(1).unwrap();
+    let away = (pose.position[0] - start.position[0]).hypot(pose.position[2] - start.position[2]);
+    (away, turned.abs(), slips, worst, physics.car_wheelspin(1).unwrap())
+}
+
+#[test]
+fn a_740_on_the_boost_at_full_lock_spins_round_where_it_stands_and_stays_on_its_wheels() {
+    let (away, turned, slip, worst, spin) = donut(KIND_VOLVO_740, true);
+    assert!(spin > 0.5, "its rear tyres spin: {spin}");
+    assert!(slip > 0.5, "its tail is out: {slip}");
+    assert!(turned > 5.0 && away < 10.0, "it turns most of a circle in 3 s without going far: {turned} rad, {away} m");
+    assert!(worst > 0.9, "it stays on its wheels: {worst}");
+}
+
+#[test]
+fn a_740_on_the_throttle_alone_at_full_lock_grips_and_drives_a_circle() {
+    let (away, _, slip, _, spin) = donut(KIND_VOLVO_740, false);
+    assert!(spin == 0.0 && slip < 0.25, "its tyres grip: {spin}, {slip}");
+    assert!(away > 12.0, "it drives round a circle: {away} m");
+}
+
+#[test]
+fn every_rear_driven_car_spins_round_on_the_boost_and_front_driven_ones_do_not() {
+    for kind in [KIND_VOLVO_240, KIND_POLICE_CAR, KIND_OMEGA, KIND_SIERRA] {
+        let (_, _, slip, worst, spin) = donut(kind, true);
+        assert!(spin > 0.5 && slip > 0.4 && worst > 0.9, "kind {kind} spins round on its wheels: {spin}, {slip}, {worst}");
+    }
+    for kind in [KIND_GTI, KIND_KADETT, KIND_SAAB_900] {
+        let (_, _, slip, _, spin) = donut(kind, true);
+        assert!(spin == 0.0 && slip < 0.25, "kind {kind} keeps its tail: {spin}, {slip}");
+    }
+}
+
+#[test]
+fn a_740_floored_in_a_straight_line_on_the_boost_holds_its_line() {
+    let mut physics = Physics::new(&WorldFile { version: WORLD_VERSION, half_extent: 100_000, ..Default::default() }).unwrap();
+    physics.add_car(1, KIND_VOLVO_740, [0.0, 1.5, 0.0], 0.0);
+    run(&mut physics, COAST, 60);
+    let pose = run(&mut physics, CarControls { throttle: 1.0, boost: true, ..CarControls::IDLE }, 60 * 3);
+    assert!(pose.position[0].abs() < 1.0 && yaw(&pose).abs() < 0.1, "it goes straight: {pose:?}");
+    assert!(pose.forward_speed > 15.0, "and gets away: {pose:?}");
+}
+
+#[test]
+fn letting_off_the_boost_mid_spin_the_740_catches_it_and_stays_on_its_wheels() {
+    let mut physics = Physics::new(&WorldFile { version: WORLD_VERSION, half_extent: 100_000, ..Default::default() }).unwrap();
+    physics.add_car(1, KIND_VOLVO_740, [0.0, 1.5, 0.0], 0.0);
+    run(&mut physics, COAST, 60);
+    run(&mut physics, CarControls { throttle: 1.0, steer: -1.0, boost: true, ..CarControls::IDLE }, 60 * 2);
+    let mut worst = 1.0_f32;
+    for _ in 0..60 * 2 {
+        worst = worst.min(run(&mut physics, FORWARD, 1).up_y);
+    }
+    let pose = physics.car_pose(1).unwrap();
+    assert!(worst > 0.9, "it stays on its wheels: {worst}");
+    assert!(physics.car_wheelspin(1) == Some(0.0) && slip_angle(&pose) < 0.2, "its tyres bite again: {pose:?}");
+}
+
+#[test]
+fn run_alone_floors_the_throttle_on_the_boost_and_pulling_back_still_brakes() {
+    use shared::protocol::InputFrame;
+    let mut input = InputFrame { seq: 1, strafe: 0, forward: 0, yaw: 0, buttons: BUTTON_RUN, pitch: 0, view: 0, slot: 0, collective: 0 };
+    let controls = CarControls::driven(KIND_VOLVO_740, &input);
+    assert!(controls.boost && controls.throttle == 1.0, "{controls:?}");
+    input.forward = -127;
+    let controls = CarControls::driven(KIND_VOLVO_740, &input);
+    assert!(controls.throttle < 0.0, "{controls:?}");
 }

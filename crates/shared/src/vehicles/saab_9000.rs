@@ -60,6 +60,7 @@ pub(super) const SAAB_9000: VehicleDef = VehicleDef {
         max_suspension_force: 50_000.0,
         // About 8.5 m/s² away from a standstill.
         engine_force: 11_500.0,
+        drive: Drive::Front,
         max_speed: SAAB_9000_MAX_SPEED,
         steer_lock: SAAB_9000_MAX_STEER,
         steer_axles: Spec::FRONT_STEER,

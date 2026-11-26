@@ -2,7 +2,7 @@
 // change the Rust and run `npm run gen:consts`. Client-only constants live in consts.ts.
 
 /** Wire schema version. Bumped on any incompatible protocol or world-format change. */
-export const PROTOCOL_VERSION = 100
+export const PROTOCOL_VERSION = 101
 
 /** Why a page closes its session (`Bye`): the tab is closing or reloading. */
 export const BYE_LEAVING = 0

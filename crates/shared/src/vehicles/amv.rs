@@ -134,6 +134,7 @@ pub(super) const AMV: VehicleDef = VehicleDef {
         max_suspension_force: 400_000.0,
         // About 5 m/s² from a standstill: a big diesel, slower off the line than a car.
         engine_force: 120_000.0,
+        drive: Drive::All,
         max_speed: AMV_MAX_SPEED,
         steer_lock: AMV_MAX_STEER,
         steer_axles: AMV_STEER_AXLES,
