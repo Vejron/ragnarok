@@ -51,6 +51,7 @@ import { type FxWorld } from './render/tyres'
 import { splash } from './render/splash'
 import { Debris } from './render/debris'
 import { Gore } from './render/gore'
+import { spatterCar } from './render/carblood'
 import { Ragdolls } from './sim/ragdoll'
 import { Surfaces, SURFACE_GRASS } from './sim/surface'
 import { Waters } from './sim/waters'
@@ -531,7 +532,10 @@ export class Game {
     this.scene = new Scene(container)
     this.scene.onRendererReplaced = () => void this.redrawWorld()
     this.hullMarks = new HullMarks(this.scene.scene.scars)
-    this.bodies = new Bodies(this.avatars, this.gore, this.callouts, this.chase)
+    this.bodies = new Bodies(this.avatars, this.gore, this.callouts, this.chase, (vehicle, at, from, amount, head) => {
+      const model = this.vehicles.model(vehicle)
+      if (model) spatterCar(this.hullMarks, vehicle, model.root, at, from, amount, head)
+    })
     this.perf = new PerfReadout(() => this.scene.renderer, () => `quality ${resolveQuality(this.qualitySetting)}${this.qualitySetting === 'auto' ? ' (auto)' : ''}   msaa ${this.scene.quality.msaa}x   scale ${this.scene.renderScale.toFixed(2)}`)
     this.screenshots = new Screenshots({
       canvas: this.scene.canvas,

@@ -1481,6 +1481,22 @@ fn a_helicopters_gunner_is_shot_through_the_glass() {
 }
 
 #[test]
+fn a_round_through_a_cars_windscreen_tells_where_on_the_drivers_head_it_struck() {
+    let (mut game, _, rider) = rider_in(KIND_VOLVO_240, 0);
+    let (_, head) = game.world.seated_head(rider).unwrap();
+    let (shooter, inbox) = join(&mut game);
+    std::mem::forget(inbox);
+    // From 10 m ahead of the car (it faces -Z), level with the driver's head, through the windscreen.
+    hitscan(&mut game.world, shooter, [head[0], head[1], head[2] - 10.0], [0.0, 0.0, 1.0], &round(), 0, 0);
+    let struck = *game.world.entities.get::<crate::mechanics::Struck>(rider).expect("the round reached the driver");
+    assert_eq!(struck.part, shared::protocol::PART_HEAD, "{struck:?}");
+    // Told from the head, as a seated soldier is drawn from it: on its front, near it, not all zero.
+    assert_ne!(struck.at, [0; 3], "{struck:?}");
+    assert!(struck.at[2] < 0, "the front of the head, towards the shooter: {struck:?}");
+    assert!(struck.at.iter().all(|cm| cm.abs() < 30), "{struck:?}");
+}
+
+#[test]
 fn a_seated_players_head_is_rewound_like_a_standing_ones() {
     let (game, _, rider) = rider_in(shared::protocol::KIND_JEEP, 1);
     let (_, now) = game.world.seated_head(rider).unwrap();

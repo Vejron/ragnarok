@@ -74,7 +74,7 @@ const BLAST_OF: ReadonlyMap<number, { radius: number; profile: ExplosionProfile;
   [WEAPON_DRONE, { radius: DRONE_BLAST_RADIUS, profile: BLASTS.grenade, sound: 'small' }],
   [WEAPON_LOITER, { radius: LOITER_BLAST_RADIUS, profile: BLASTS.shell, sound: 'explosion' }],
   [WEAPON_MISSILE, { radius: MISSILE_BLAST_RADIUS, profile: BLASTS.shell, sound: 'explosion' }],
-  [WEAPON_AUTOCANNON, { radius: CANNON_RADIUS, profile: BLASTS.cannon, sound: 'small' }],
+  [WEAPON_AUTOCANNON, { radius: CANNON_RADIUS, profile: BLASTS.autocannon, sound: 'small' }],
   // A hen's egg goes off like a plane's bomb, and as wide.
   [WEAPON_BOMB, { radius: BOMB_RADIUS, profile: BLASTS.bomb, sound: 'explosion' }],
   [WEAPON_EGG, { radius: BOMB_RADIUS, profile: BLASTS.bomb, sound: 'explosion' }],
@@ -558,7 +558,8 @@ export class Events {
     const reach = Math.min(2, Math.max(0.6, radius / 5))
     scene.scene.lights.flash(at.x, at.y + 1.5, at.z, { color: 0xffa040, intensity: 5 * reach, radius: radius * 8, life: 0.6 })
     const ground = scene.groundAt(at.x, at.z)
-    if (at.y - ground < radius) {
+    // A rapid-fire gun's rounds throw no ring: one each round would repeat the same pattern several times a second.
+    if (at.y - ground < radius && (profile.ring ?? true)) {
       effects.shockwave({ x: at.x, y: ground + 0.25, z: at.z }, radius)
       surroundings.grass?.blast(at.x, at.z, radius)
       surroundings.crops?.blast(at.x, at.z, radius)

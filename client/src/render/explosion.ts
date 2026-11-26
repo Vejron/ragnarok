@@ -18,6 +18,11 @@ export interface ExplosionProfile {
   chunks: number
   /** Dark, greasy smoke and metal rather than dirt. */
   wreck?: boolean
+  /**
+   * False for a rapid-fire gun's small rounds: their dust is thrown out in a ragged spray rather than an
+   * even ring, and no shockwave races over the ground, or the same ring repeats with every round.
+   */
+  ring?: boolean
 }
 
 export const BLASTS = {
@@ -25,6 +30,8 @@ export const BLASTS = {
   rocket: { fire: 1, sparks: 1.2, smoke: 1.2, dirt: 1, chunks: 0.7 },
   shell: { fire: 1.3, sparks: 1.3, smoke: 1.5, dirt: 1.6, chunks: 1.2 },
   cannon: { fire: 0.6, sparks: 1.6, smoke: 0.6, dirt: 0.6, chunks: 0.3 },
+  /** An autocannon's 20-40 mm rounds, landing several a second: sparks and a puff of earth, no ring. */
+  autocannon: { fire: 0.5, sparks: 1.4, smoke: 0.5, dirt: 0.45, chunks: 0.2, ring: false },
   bomb: { fire: 1.5, sparks: 1.4, smoke: 1.8, dirt: 1.8, chunks: 1.5 },
   wreck: { fire: 1.2, sparks: 1.1, smoke: 2, dirt: 0.5, chunks: 1, wreck: true },
 } as const satisfies Record<string, ExplosionProfile>
@@ -146,11 +153,13 @@ export function explosion(world: FxWorld, debris: Debris, at: Vector3, radius: n
     })
   }
 
-  // Dust ring: low puffs thrown out along the ground, tinted by what it is.
+  // Dust ring: low puffs thrown out along the ground, tinted by what it is. Without a ring they go out
+  // at random headings, slower and unevenly, so rounds landing one after another never draw the same shape.
+  const ring = profile.ring ?? true
   for (let i = 0; i < count(12, profile.dirt); i++) {
-    const heading = (i / 12) * Math.PI * 2 + rand(-0.2, 0.2)
+    const heading = ring ? (i / 12) * Math.PI * 2 + rand(-0.2, 0.2) : rand(0, Math.PI * 2)
     // The ring is pushed out furthest ahead of the shell and hardly at all behind it.
-    const speed = rand(4, 9) * Math.sqrt(scale) * (1 + 0.9 * ahead(heading))
+    const speed = (ring ? rand(4, 9) : rand(1, 6)) * Math.sqrt(scale) * (1 + 0.9 * ahead(heading))
     world.smoke.spawn({
       position: [at.x, world.groundAt(at.x, at.z) + 0.3, at.z],
       velocity: [Math.cos(heading) * speed, rand(0.2, 1.2), Math.sin(heading) * speed],

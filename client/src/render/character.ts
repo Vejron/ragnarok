@@ -696,6 +696,8 @@ export class Character {
   private readonly springs = Object.fromEntries(SPRINGS.map((name) => [name, new Spring()])) as Record<SpringName, Spring>
   /** The `struck` count last seen, null until the first word. */
   private struckCount: number | null = null
+  /** Drawn in a seat (`seat`) the last time it was placed: `position` is then its head, not its middle. */
+  seated = false
   /** Drawn as a zombie: in rags, grey-green, shambling with its arms out. */
   private undead = false
   /** Seconds into a zombie's claw, or -1 when it is not clawing; and whether the server said so last. */
@@ -908,6 +910,7 @@ export class Character {
     position: readonly number[], yaw: number, vx: number, vz: number, grounded: boolean, dt: number, pitch = 0, crouching = false, sliding = false, prone = false, chute = false, vy = 0,
   ) {
     this.position.set(position[0]!, position[1]!, position[2]!)
+    this.seated = false
     this.pitch = pitch
     this.fadeFlash(dt)
     if (!this.shown || this.gibbed) return this.unlayer()
@@ -1493,6 +1496,7 @@ export class Character {
    */
   seat(head: Vector3, rotation: Quaternion, yaw: number, pitch: number, dt: number, standing = false, door: DoorStep | null = null) {
     this.position.copy(head)
+    this.seated = true
     this.pitch = pitch
     this.fadeFlash(dt)
     if (!this.shown || this.gibbed) return this.unlayer()
@@ -1729,6 +1733,7 @@ export class Character {
     // The model's root goes along over the pelvis, so it is drawn where the body is.
     this.object.position.set(pose[0]!, pose[1]! - STAND_CENTRE, pose[2]!)
     this.position.set(pose[0]!, pose[1]!, pose[2]!)
+    this.seated = false
     this.object.updateWorldMatrix(true, true)
     for (const { bone, part, offset } of this.ragdoll.bones) this.setWorld(bone, partMatrix(pose, part, SCRATCH.matrix).multiply(offset))
   }

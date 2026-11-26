@@ -29,5 +29,5 @@ export { AnimationClip, sampleTrack, type Track, type TrackPath, type Interpolat
 export { Animator, Action } from './animation/animator'
 export { parseGlb, loadGlb, type Gltf } from './assets/gltf'
 export { Craters, CRATER_CAPACITY, CRATER_EMBER_LIFE, CRATER_FADE, CRATER_PLUMB, type CraterStrike } from './scene/craters'
-export { Scars, SCAR_COOL, SCAR_CRACK, SCAR_DENT, SCAR_GOUGE, SCAR_HOLE, SCAR_HOT, SCAR_POINTS, SCAR_SLOTS, SCAR_SOOT, type Scar } from './scene/scars'
+export { Scars, SCAR_BLOOD, SCAR_COOL, SCAR_CRACK, SCAR_DENT, SCAR_GOUGE, SCAR_HOLE, SCAR_HOT, SCAR_POINTS, SCAR_SLOTS, SCAR_SOOT, type Scar } from './scene/scars'
 export { HudLayer } from './hud/layer'

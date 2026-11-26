@@ -83,7 +83,8 @@ The legs' effects are `legged()` in `crates/sim/src/lib.rs`. The server copies t
 - `struck` (component 23, public, absent until the first hit of a life): the hits so far this life, the
   part (`PART_TORSO`, `PART_HEAD` or a `LIMB_*` bit), how much it lost, the bearing it came from, and
   where on the body a round struck (`x, y, z`, cm from the soldier's `place`, as it stood when struck
-  after lag rewind; all zero for a blast or a hit in a seat). Protocol 54.
+  after lag rewind, or from their head in a seat, where a rider is drawn from; all zero for a blast).
+  Protocol 54. The drivers of the traffic at their wheel carry it too, as players do.
   - Every client makes the soldier flinch there (`Character.flinch`).
   - Every client draws the wound there (`Gore.hit`): a puff of spray at the entry, a few drops kicked
     back towards the shooter, and a cone of blood out of the far side that stains the ground behind. The
@@ -93,6 +94,13 @@ The legs' effects are `legged()` in `crates/sim/src/lib.rs`. The server copies t
     centre. Their damage number and a pinpoint white flash sit on it, and the soldier only faintly
     whitens.
   - Several pellets in one tick show as one wound, the last one's.
+  - Shot in a seat (through a car's glass, say), the blood also lands on the inside of the vehicle
+    (`spatterCar`, `render/carblood.ts`): up to three splats out of the far side of the wound onto the
+    windows behind within 3 m, and two smaller ones thrown back onto the glass the round came through.
+    Only glass takes it: a splat whose way meets a seat or the body first is not laid, since on the thin
+    body it would show outside too. Each is a `blood` hull mark (`HullMarks`), drawn by the scar
+    shader as `SCAR_BLOOD`: a ragged splat with spikes and drops thrown the way it flew and runs down
+    the face. It is opaque on see-through glass, as a crack is, and goes when the vehicle is put back as new.
 - A lost limb is shrunk away at its root bone (`Character.setLimbs`). With the right arm gone the
   right hand is grown back to size, because the gun is skinned to it: the gun stays in hand at the
   shoulder.

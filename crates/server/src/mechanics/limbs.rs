@@ -262,8 +262,8 @@ pub struct Struck {
     pub amount: u8,
     /// Where it came from, the bearing in the world (`combat::bearing`'s).
     pub yaw: i16,
-    /// Where on the body it struck, cm from the point the soldier is drawn from; all zero when not
-    /// known (a blast, or a hit in a seat).
+    /// Where on the body it struck, cm from the point the soldier is drawn from (their head, in a
+    /// seat); all zero when not known (a blast).
     pub at: [i16; 3],
 }
 

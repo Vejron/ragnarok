@@ -1,7 +1,8 @@
+import type { Vector3 } from '@ragnarok/engine'
 import type { Avatars } from './entities/avatars'
 import type { Sampled } from './entities/store'
 import type { Callouts } from './callouts'
-import { FLAG_DEAD, LIMB_ALL, LIMB_LEGS } from './net/codec'
+import { FLAG_DEAD, LIMB_ALL, LIMB_LEGS, PART_HEAD } from './net/codec'
 import { STANCE_DOWN } from './sim/consts'
 import type { ChaseCam } from './render/chase'
 import type { Gore } from './render/gore'
@@ -37,6 +38,8 @@ export class Bodies {
     private readonly gore: Gore,
     private readonly callouts: Callouts,
     private readonly chase: ChaseCam,
+    /** Lays the blood of someone shot in seat of vehicle `vehicle` on its inside (`spatterCar`). */
+    private readonly inCar: (vehicle: number, at: Vector3, from: number, amount: number, head: boolean) => void = () => {},
   ) {}
 
   clear() {
@@ -67,7 +70,12 @@ export class Bodies {
       if (id === null || !avatar) continue
       const entity = sampled.get(id)?.entity
       const struck = entity?.struck
-      if (avatar.setStruck(struck) && struck && avatar.visible) this.gore.hit(avatar, struck.part, struck.yaw, struck.amount, struck)
+      if (avatar.setStruck(struck) && struck && avatar.visible) {
+        const at = this.gore.hit(avatar, struck.part, struck.yaw, struck.amount, struck)
+        // Shot in a seat, the blood lands on the inside of the vehicle too.
+        const seated = entity?.seated
+        if (seated && avatar.seated) this.inCar(seated.vehicle, at, struck.yaw, struck.amount, struck.part === PART_HEAD)
+      }
       const wire = entity?.limbs?.lost ?? 0
       const gained = avatar.setLimbs(wire)
       if (gained) {

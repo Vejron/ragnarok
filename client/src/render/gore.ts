@@ -26,6 +26,8 @@ const HIT_STAIN_SCALE = 1.6
 const WOUND_STAIN_SHARE = 0.15
 /** A soldier lies down this long after it is killed before its pool starts to spread, seconds. */
 const POOL_AFTER = 1.2
+/** How far below a seated soldier's head their chest is, metres. */
+const SEATED_CHEST = 0.45
 /** Metres across a crawler's smear. */
 const SMEAR_WIDTH = 0.45
 /** The pieces (`limbOf` keys) each `LIMB_*` bit takes off: the whole arm or leg. */
@@ -141,17 +143,19 @@ export class Gore {
    * (0 faces -Z) for `amount`, at `offset` from where it is drawn from when the round found the spot
    * (all zero or none: guessed from the part). A puff of spray at the entry, drops kicked back toward
    * the shooter, a cone of blood out of the far side that spatters the ground behind, and the wound
-   * goes on trickling a moment, moving with the body.
+   * goes on trickling a moment, moving with the body. Answers where the wound is, until the next hit.
    */
-  hit(avatar: Character, part: number, from: number, amount: number, offset: { x: number; y: number; z: number } | null = null) {
+  hit(avatar: Character, part: number, from: number, amount: number, offset: { x: number; y: number; z: number } | null = null): Vector3 {
     const at = this.point
+    // In a seat it is drawn from its head, on foot from its middle.
     if (offset && (offset.x || offset.y || offset.z)) at.copy(avatar.position).add(offset)
-    else if (part === PART_HEAD) at.copy(avatar.position).y += 0.75
-    else if (part === PART_TORSO) at.copy(avatar.position).y += 0.25
+    else if (part === PART_HEAD) at.copy(avatar.position).y += avatar.seated ? 0 : 0.75
+    else if (part === PART_TORSO) at.copy(avatar.position).y += avatar.seated ? -SEATED_CHEST : 0.25
     else avatar.stump(part, at)
     const head = part === PART_HEAD
     const through = head ? 0.18 : part === PART_TORSO ? 0.28 : 0.1
     this.struck(at, from, amount, through, head ? 1.5 : 1, avatar.pin(at))
+    return at
   }
 
   /**

@@ -25,6 +25,8 @@ export const SCAR_SOOT = 8
 export const SCAR_HOT = 16
 /** Glass broken by a round: a hole crushed white at its edge, cracks running out from it in a star and a ring of them round it. Its pixels are drawn opaque on see-through glass. */
 export const SCAR_CRACK = 32
+/** Blood thrown onto it: a ragged splat with spikes and drops out of it, longer the way the scar's way says it was thrown, and runs down the face. Opaque on see-through glass, as cracks are. */
+export const SCAR_BLOOD = 64
 /** Seconds a hot scar takes to cool from white-orange to dark: the shader's `SCAR_COOL`. */
 export const SCAR_COOL = 7
 

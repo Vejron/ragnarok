@@ -438,8 +438,8 @@ replicated! {
     /// The last hit a soldier took this life, so everyone sees it flinch: the hits so far, modulo 256 (a
     /// new one is a change), the part struck (`PART_*`, a limb by its `LIMB_*` bit), how much it lost,
     /// the bearing it came from, in the world, and where on the body it struck, from the point the
-    /// soldier is drawn from (`Place`), all zero when not known (a blast). Absent until the first hit
-    /// of a life.
+    /// soldier is drawn from (`Place`, or their head in a seat), all zero when not known (a blast).
+    /// Absent until the first hit of a life.
     Struck { count: u8, part: u8, amount: u8, yaw: i16 as mrad, x: i16 as cm, y: i16 as cm, z: i16 as cm }
 
     set 24 pintle

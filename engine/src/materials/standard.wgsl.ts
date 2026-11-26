@@ -65,6 +65,8 @@ const SCAR_CHAR = vec3f(0.018, 0.016, 0.014);
 const SCAR_HOLE_RGB = vec3f(0.004, 0.003, 0.003);
 // Cracks in broken glass (scars.wgsl): pale, as the light catches them.
 const SCAR_CRACK_RGB = vec3f(0.82, 0.86, 0.88);
+// Blood thrown onto a surface (scars.wgsl): dark, nearly dried red.
+const SCAR_BLOOD_RGB = vec3f(0.22, 0.012, 0.01);
 // How strongly a dent's slope shades it against the sun, beyond what the toon ramp's bands show.
 const SCAR_RELIEF = 2.4;
 
@@ -158,7 +160,7 @@ ${edges ? `    if (!asphalt.keep) {
   // Scars (scars.wgsl): a damaged mesh's dents, soot, holes and gouges, worked out in its own frame.
   let scarObject = objects[in.ids.z];
   let scarred = scarObject.misc.w != 0u && scarObject.misc.z == 0u;
-  var scar = ScarLook(vec3f(0.0), 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, vec3f(0.0), 0.0, vec3f(0.0));
+  var scar = ScarLook(vec3f(0.0), 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, vec3f(0.0), 0.0, vec3f(0.0));
   // The dents' slope in the world: the cofactor matrix over the determinant is the inverse-transpose.
   var scarSlope = vec3f(0.0);
   if (scarred) {
@@ -175,6 +177,7 @@ ${edges ? `    if (!asphalt.keep) {
     rgb = mix(rgb, SCAR_CHAR, scar.char);
     rgb = mix(rgb, scar.temper, scar.temperAmount);
     rgb = mix(rgb, SCAR_CRACK_RGB, scar.crack);
+    rgb = mix(rgb, SCAR_BLOOD_RGB, scar.blood);
     rgb = mix(rgb, SCAR_HOLE_RGB, scar.hole);
     // The dent's relief: the side of it turned to the sun lit, the far side in shade, past the ramp's bands.
     rgb *= scar.shade * clamp(1.0 - SCAR_RELIEF * dot(scarSlope, frame.sunDir.xyz), 0.35, 1.8);
@@ -231,7 +234,7 @@ ${edges ? `    if (!asphalt.keep) {
   }
   rgb = rgb * (1.0 - marks.ink * CRATER_INK) + CRATER_EMBER * marks.heat + CRATER_GLOW * marks.glow + scar.heat;
   // Broken glass is opaque where it is cracked or holed, however clear the pane round it.
-  let alpha = max(in.color.a * texel.a, max(scar.crack * 0.9, scar.hole));
+  let alpha = max(in.color.a * texel.a, max(max(scar.crack * 0.9, scar.blood * 0.85), scar.hole));
   return vec4f(applyFog(rgb, flags, in.viewDepth, in.world), alpha);
 }
 `

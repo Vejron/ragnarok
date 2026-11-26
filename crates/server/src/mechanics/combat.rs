@@ -1037,8 +1037,8 @@ pub fn land(world: &mut World, flight: &Flight, met: &Strike, round: &Round) {
         let head = is_headshot(world, victim, origin, dir, t, back);
         let point = vec3::along(origin, dir, t);
         let limb = if head { None } else { super::limbs::limb_struck(world, victim, point, back) };
-        // Where on the body, for the wound to be drawn there.
-        let offset = body(world, victim, back).filter(|body| body.vehicle.is_none()).map(|body| vec3::sub(point, body.anchor));
+        // Where on the body, for the wound to be drawn there: from a seated rider's head, as they are drawn from too.
+        let offset = body(world, victim, back).map(|body| vec3::sub(point, body.anchor));
         damage_entity(world, victim, Harm::new(dealt, attacker, round.weapon).head(head).limb(limb).at(point, offset));
         // Met beyond the vehicle it struck first, it went in through a car's glass (or its skin) to
         // whoever sits there: it leaves its hole where it went in, and does the car no other harm.

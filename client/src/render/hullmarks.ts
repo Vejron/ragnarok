@@ -1,4 +1,4 @@
-import { InstancedMesh, Mesh, SCAR_CRACK, SCAR_DENT, SCAR_GOUGE, SCAR_HOLE, SCAR_HOT, SCAR_SOOT, Scars, Vec3, type Material, type Node } from '@ragnarok/engine'
+import { InstancedMesh, Mesh, SCAR_BLOOD, SCAR_CRACK, SCAR_DENT, SCAR_GOUGE, SCAR_HOLE, SCAR_HOT, SCAR_SOOT, Scars, Vec3, type Material, type Node } from '@ragnarok/engine'
 import { vehicleDef } from '@/sim/vehicles'
 import { nearestSurface, raySurface } from './surface'
 
@@ -20,8 +20,8 @@ export interface Vent {
 
 type V = { x: number; y: number; z: number }
 
-/** What a round left: a hole through, a scuff where the plate stopped it, a glance it tore along, or a blast's scorch beside it. */
-export type MarkKind = 'hole' | 'scuff' | 'glance' | 'blast'
+/** What a round left: a hole through, a scuff where the plate stopped it, a glance it tore along, a blast's scorch beside it, or the blood of someone it struck inside. */
+export type MarkKind = 'hole' | 'scuff' | 'glance' | 'blast' | 'blood'
 
 interface Mark {
   /** The node it is on, where it is there, and out of the surface there; none for anything but a hole, which nothing comes out of. */
@@ -42,6 +42,8 @@ const LOOKS: Record<MarkKind | 'chip' | 'crack', { radius: number; depth: number
   scuff: { radius: 0.34, depth: 0.16, style: SCAR_DENT | SCAR_SOOT | SCAR_HOT },
   glance: { radius: 0.22, depth: 0.02, style: SCAR_GOUGE | SCAR_SOOT | SCAR_HOT },
   blast: { radius: 0.9, depth: 0, style: SCAR_SOOT },
+  // Blood thrown onto the inside of a car from someone shot in it: its middle a hand's breadth across at `calibre` 1, spikes and runs well beyond.
+  blood: { radius: 0.2, depth: 0, style: SCAR_BLOOD },
   chip: { radius: 0.05, depth: 0.004, style: SCAR_GOUGE | SCAR_DENT },
   // A bullet through glass: the same size whatever the round, metres in the mesh's frame.
   crack: { radius: 0.24, depth: 0, style: SCAR_CRACK },
@@ -139,6 +141,20 @@ export function locate(kind: number, root: Node, point: V, dir: V, before = BEFO
 }
 
 /**
+ * Where on the model under `root` blood thrown from world `from` along the unit world `dir` lands: the
+ * first of its surfaces within `max` metres (a window, a seat, the roof's lining), or null if it meets
+ * none. Shaped as `locate`'s answer, for `HullMarks.mark`.
+ */
+export function splashed(root: Node, from: V, dir: V, max: number): Struck | null {
+  const surface = raySurface(root, from, dir, max, (mesh) => MARKS.has(mesh.material))
+  if (!surface) return null
+  const parent = surface.mesh
+  const local = new Vec3(...surface.point)
+  const normal = unitOf(new Vec3(...surface.normal))
+  return { parent, local, normal, way: unitOf(toLocalDir(parent, dir)), unit: 1 / surface.scale, world: toWorld(parent, local), outward: unitOf(toWorld(parent, normal, true)) }
+}
+
+/**
  * Where rounds have struck armoured vehicles (HULL-DAMAGE.md): each mark is a scar on the mesh it struck
  * (scene/scars.ts), drawn by that mesh's own shader, so it slopes with the glacis and turns with the turret
  * or a Titan's arm. A hole is pressed in, black at its middle, ringed with blued steel and glowing as it
@@ -180,7 +196,8 @@ export class HullMarks {
       const dir = kind === 'blast' ? new Vec3(-normal.x, -normal.y, -normal.z) : way
       this.scars.add(slot, { x: local.x, y: local.y, z: local.z, radius: reach, dx: dir.x, dy: dir.y, dz: dir.z, style: look.style, depth: look.depth * calibre * size * unit, birth: now }, light)
     }
-    if (kind === 'blast' || glass) return
+    // Nothing smokes or burns out of soot, broken glass or blood.
+    if (kind === 'blast' || kind === 'blood' || glass) return
     entry.marks.push({ parent, local, normal: kind === 'hole' ? normal : null, vital: kind === 'hole' && vital, age: 0 })
     if (entry.marks.length > MAX_MARKS) entry.marks.shift()
   }

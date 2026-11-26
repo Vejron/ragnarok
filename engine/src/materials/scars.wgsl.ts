@@ -1,11 +1,11 @@
-import { SCAR_COOL, SCAR_CRACK, SCAR_DENT, SCAR_GOUGE, SCAR_HOLE, SCAR_HOT, SCAR_SOOT, SCAR_STRIDE, SCAR_VEC4S } from '../scene/scars'
+import { SCAR_BLOOD, SCAR_COOL, SCAR_CRACK, SCAR_DENT, SCAR_GOUGE, SCAR_HOLE, SCAR_HOT, SCAR_SOOT, SCAR_STRIDE, SCAR_VEC4S } from '../scene/scars'
 
 const f = (n: number) => n.toFixed(1)
 
 /**
  * Damage drawn on a mesh's own surface (HULL-DAMAGE.md, scene/scars.ts): its slot's scars, each a point
  * in the mesh's frame with a reach, the way the round came and a style. `scarLook` is what a pixel shows: the dent's slope and shade, soot and
- * char, a hole with a tempered-steel ring, gouges to bare metal, cracked glass, and the heat of a fresh hit. Analytic,
+ * char, a hole with a tempered-steel ring, gouges to bare metal, cracked glass, blood, and the heat of a fresh hit. Analytic,
  * so it needs no texture and moves with the mesh. `scarDent` presses the vertices in too, where the
  * device lets the vertex stage read the list (`Renderer.vertexScars`); elsewhere the dents are in the
  * shading alone. Included in COMMON_WGSL.
@@ -21,6 +21,7 @@ const SCAR_GOUGE = ${SCAR_GOUGE}u;
 const SCAR_SOOT = ${SCAR_SOOT}u;
 const SCAR_HOT = ${SCAR_HOT}u;
 const SCAR_CRACK = ${SCAR_CRACK}u;
+const SCAR_BLOOD = ${SCAR_BLOOD}u;
 const SCAR_COOL = ${f(SCAR_COOL)};
 // A hole's black middle and its tempered ring's outer edge, in the scar's reach.
 const SCAR_HOLE_R = 0.3;
@@ -42,6 +43,13 @@ const SCAR_CRACK_CRUSH = 0.2;
 const SCAR_CRACK_RAYS = 9.0;
 const SCAR_CRACK_WIDE = 0.045;
 const SCAR_CRACK_RING = 0.42;
+// Blood, in the scar's reach: the splat's middle, how many spikes are thrown out of it, how wide one
+// is at its root, and how far apart the runs down the face may start and the longest of them.
+const SCAR_BLOOD_CORE = 0.42;
+const SCAR_BLOOD_RAYS = 13.0;
+const SCAR_BLOOD_WIDE = 0.07;
+const SCAR_BLOOD_RUN_EVERY = 0.13;
+const SCAR_BLOOD_RUN_LONG = 2.3;
 
 // A local point's own value noise, 0 to 1: steady on the surface, so soot and chips never shimmer. An
 // integer hash (PCG), cheaper than the usual sine.
@@ -102,6 +110,8 @@ struct ScarLook {
   hole: f32,
   // Cracks in broken glass, 0 to 1: they are drawn pale and opaque.
   crack: f32,
+  // Blood thrown onto it, 0 to 1: drawn dark red and opaque.
+  blood: f32,
   // The tempered ring's colour and how much of it shows.
   temper: vec3f,
   temperAmount: f32,
@@ -127,7 +137,7 @@ fn scarTemper(t: f32) -> vec3f {
 // What the scars of slot \`handle\` do at local \`p\` on a face with local normal \`n\` (unit), where \`up\`
 // is the world's up in the mesh's frame (unit) and \`now\` the renderer's clock, seconds.
 fn scarLook(handle: u32, p: vec3f, n: vec3f, up: vec3f, now: f32) -> ScarLook {
-  var look = ScarLook(vec3f(0.0), 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, vec3f(0.0), 0.0, vec3f(0.0));
+  var look = ScarLook(vec3f(0.0), 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, vec3f(0.0), 0.0, vec3f(0.0));
   let base = (handle - 1u) * SCAR_STRIDE;
   let header = scars[base];
   let count = min(u32(header.x), ${SCAR_STRIDE - 1}u / SCAR_VEC4S);
@@ -228,6 +238,49 @@ fn scarLook(handle: u32, p: vec3f, n: vec3f, up: vec3f, now: f32) -> ScarLook {
       let crush = 1.0 - smoothstep(SCAR_CRACK_HOLE, SCAR_CRACK_CRUSH, s);
       look.crack = max(look.crack, max(max(ray, ring * 0.8), crush * 0.9));
       look.hole = max(look.hole, 1.0 - smoothstep(SCAR_CRACK_HOLE * 0.6, SCAR_CRACK_HOLE, s));
+    }
+    if ((style & SCAR_BLOOD) != 0u) {
+      // In the face's own plane, against the way the spray went over it (any way, for blood that struck square).
+      let qp = q - n * dot(q, n);
+      let dp = length(qp) / r;
+      let side = normalize(cross(n, select(vec3f(1.0, 0.0, 0.0), vec3f(0.0, 1.0, 0.0), abs(n.y) < 0.9)));
+      let seed = scarHash(a.xyz * 173.0);
+      let thrown = dir - n * dot(dir, n);
+      let lean = clamp(length(thrown) * 1.5, 0.0, 1.0);
+      let t = select(side, thrown / max(length(thrown), 1e-4), lean > 0.15);
+      let b = cross(n, t);
+      let along = dot(qp, t) / r;
+      let athwart = dot(qp, b) / r;
+      // The middle: a ragged blob, drawn out a little the way it was thrown.
+      let blob = length(vec2f((along - 0.2 * lean) / (1.0 + 0.7 * lean), athwart));
+      var blood = 1.0 - smoothstep(SCAR_BLOOD_CORE * 0.8, SCAR_BLOOD_CORE, blob + (lo - 0.5) * 0.3 + (hi - 0.5) * 0.12);
+      // Spikes out of it at their own bearings, longest the way it was thrown, each with a drop at its end.
+      let bearing = atan2(athwart, along);
+      let turn = (bearing / 6.2831853 + 0.5) * SCAR_BLOOD_RAYS + seed * SCAR_BLOOD_RAYS;
+      let cell = floor(turn);
+      let pick = scarHash(vec3f(cell, seed * 41.0, 5.0));
+      let runs = mix(0.55, 1.25, pick) * (1.0 + lean * max(0.0, cos(bearing)) * 1.1);
+      let across = dp * abs(fract(turn) - 0.5) * 6.2831853 / SCAR_BLOOD_RAYS;
+      let wide = SCAR_BLOOD_WIDE * max(0.15, 1.0 - dp / runs);
+      let spike = (1.0 - smoothstep(wide * 0.5, wide, across)) * (1.0 - smoothstep(runs * 0.85, runs, dp)) * step(0.35, pick);
+      let drop = (1.0 - smoothstep(0.045, 0.07, length(vec2f(dp - runs * 1.12, across)))) * step(0.5, pick);
+      blood = max(blood, max(spike, drop));
+      // Runs down the face from the splat's lower edge, where the face is not lying flat.
+      let fall = length(rise);
+      if (fall > 0.3) {
+        let down = -rise / fall;
+        let sideways = cross(n, down);
+        let x = dot(qp, sideways) / r;
+        let y = dot(qp, down) / r;
+        let column = floor(x / SCAR_BLOOD_RUN_EVERY);
+        let k = scarHash(vec3f(column, seed * 67.0, 17.0));
+        let middle = (column + 0.5 + (scarHash(vec3f(column, seed * 31.0, 19.0)) - 0.5) * 0.5) * SCAR_BLOOD_RUN_EVERY;
+        let long = mix(0.5, SCAR_BLOOD_RUN_LONG, k * k) * fall;
+        let width = 0.022 * (1.0 + 0.8 * smoothstep(long * 0.8, long, y));
+        let run = (1.0 - smoothstep(width * 0.6, width, abs(x - middle))) * step(0.0, y) * (1.0 - smoothstep(long * 0.97, long, y)) * step(0.45, k) * step(abs(middle), SCAR_BLOOD_CORE * 0.8);
+        blood = max(blood, run);
+      }
+      look.blood = max(look.blood, blood);
     }
     if ((style & SCAR_HOT) != 0u) {
       let age = now - c.y;

@@ -17,6 +17,12 @@ use shared::mounts::{Refill, Show};
 use shared::replicated::{self as wire, Replicated, Scene};
 use shared::vehicles::{crew_shows, vehicle_def};
 
+/// The last hit entity `id` took this life, as `struck` replicates it: a soldier's, a driver's at
+/// the wheel or a wild animal's.
+fn struck_of(world: &World, id: u32) -> Option<wire::Struck> {
+    world.entities.get::<Struck>(id).map(|s| wire::Struck { count: s.count, part: s.part, amount: s.amount, yaw: s.yaw, x: s.at[0], y: s.at[1], z: s.at[2] })
+}
+
 impl Game {
     /// Everything replicated, ordered by id.
     pub fn replicated(&self) -> Scene {
@@ -27,7 +33,7 @@ impl Game {
             let one_arm = crate::mechanics::limbs_lost(&self.world, id) & LIMB_ARMS != 0;
             let wounds = self.world.entities.get::<Wounds>(id).copied();
             let limbs = wounds.filter(|wounds| wounds.lost != 0).map(|wounds| wire::Limbs { lost: wounds.wire() });
-            let struck = self.world.entities.get::<Struck>(id).map(|s| wire::Struck { count: s.count, part: s.part, amount: s.amount, yaw: s.yaw, x: s.at[0], y: s.at[1], z: s.at[2] });
+            let struck = struck_of(&self.world, id);
             let parts = wounds.unwrap_or_default().left();
             let c = &player.character;
             let poling = c.skis && c.grounded && c.down == 0 && !c.winded && !shared::items::fills_hands(player.held().item) && player.input.forward > 0 && player.input.buttons() & (BUTTON_RUN | BUTTON_CROUCH | BUTTON_ALT) == BUTTON_RUN;
@@ -136,7 +142,7 @@ impl Game {
                         place: Some(wire::Place { x, y, z }),
                         heading: Some(wire::Heading { yaw: to_mrad(transform.yaw) }),
                         flags: Some(wire::Flags { flags: FLAG_GROUNDED | calling | if entities.dead(id) { FLAG_DEAD } else { 0 }, stance: STANCE_STANDING }),
-                        struck: entities.get::<Struck>(id).map(|s| wire::Struck { count: s.count, part: s.part, amount: s.amount, yaw: s.yaw, x: s.at[0], y: s.at[1], z: s.at[2] }),
+                        struck: struck_of(&self.world, id),
                         fell: crate::mechanics::fell(&self.world, id).map(|style| wire::Fell { style }),
                         ..Default::default()
                     },
@@ -161,6 +167,7 @@ impl Game {
                         heading: Some(wire::Heading { yaw: to_mrad(pose.yaw()) }),
                         look: Some(wire::Look { pitch: 0 }),
                         flags: Some(wire::Flags { flags: FLAG_CROUCHING | if entities.dead(id) { FLAG_DEAD } else { 0 }, stance: STANCE_STANDING }),
+                        struck: struck_of(&self.world, id),
                         ..Default::default()
                     },
                 ))

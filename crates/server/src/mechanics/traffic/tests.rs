@@ -782,6 +782,20 @@ fn a_driver_at_the_wheel_is_hit_by_a_round_aimed_at_them_and_panics() {
 }
 
 #[test]
+fn a_driver_hit_at_the_wheel_is_seen_struck_by_everyone() {
+    let mut game = highway(24);
+    let id = join(&mut game);
+    stand(&mut game, id, 0.0, 9.0);
+    let i = manned_car_near(&mut game, 40.0);
+    let driver = traffic(&game).cars[i].driver.unwrap();
+    crate::mechanics::damage_entity(&mut game.world, driver, crate::mechanics::Harm::new(10, Some(id), shared::protocol::WEAPON_BULLET));
+    let scene = game.replicated();
+    let (_, shown) = scene.iter().find(|(who, _)| *who == driver).expect("the driver is replicated");
+    assert!(shown.seated.is_some(), "at the wheel");
+    assert_eq!(shown.struck.as_ref().map(|struck| struck.count), Some(1), "and the hit is told, for the blood to be drawn");
+}
+
+#[test]
 fn a_driver_shot_dead_at_speed_is_carried_on_by_the_car_until_it_stops_and_then_falls_out() {
     let mut game = highway(24);
     let id = join(&mut game);

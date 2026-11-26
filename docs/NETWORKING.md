@@ -196,7 +196,7 @@ What each carries today:
 |---|---|
 | Soldier | `kind`, `place`, `heading`, `motion`, `flags`; `vitals` and `hotbar` for themself; `seated` too for a drone's pilot |
 | Rooster | `kind`, `place`, `heading`, `flags` |
-| Rider | `kind`, `seated`; where their crew show (jeep, sports car, Roadster, helicopter, triplane, mortar), also `heading`, `look` and `flags` (what they hold); `vitals` and `hotbar` for themself |
+| Rider | `kind`, `seated`; where their crew show (jeep, sports car, Roadster, helicopter, triplane, mortar), also `heading`, `look` and `flags` (what they hold); `vitals` and `hotbar` for themself; `struck` once hit, a player's or a driver's of the traffic alike, its point measured from the seat's head point ([LIMBS.md](LIMBS.md)) |
 | Vehicle | `kind`, `place`, `orientation`, `steer`, `health`, and whichever of `turret`, `thrust`, `arms`, `fuel`, `damage`, `doors` it has; `drive` for its driver |
 | Projectile | `projectile`, `place`, `velocity` |
 | Item on the ground | `pickup`, `place` |
