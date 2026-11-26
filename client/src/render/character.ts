@@ -431,6 +431,21 @@ type SpringName = (typeof SPRINGS)[number]
 
 const chase = (value: number, target: number, rate: number, dt: number) => value + (target - value) * (1 - Math.exp(-rate * dt))
 
+/** Below this a clip with nothing asking for it has faded out, and is let go of (`Character.playing`). */
+const FADED = 1e-6
+
+/** The weight each clip is on its way to, by name. A clip given one joins `playing`, the clips that count. */
+class Targets extends Map<string, number> {
+  constructor(private readonly playing: Set<string>) {
+    super()
+  }
+
+  override set(name: string, weight: number): this {
+    if (weight !== 0) this.playing.add(name)
+    return super.set(name, weight)
+  }
+}
+
 const AXIS_X = new Vector3(1, 0, 0)
 const AXIS_Y = new Vector3(0, 1, 0)
 const AXIS_Z = new Vector3(0, 0, 1)
@@ -545,7 +560,13 @@ export class Character {
   private readonly actions: Animator['actions']
   private readonly weights = new Map<string, number>()
   /** The weight each clip is pulled towards this frame; kept from frame to frame, and zeroed at the start of each. */
-  private readonly targets = new Map<string, number>()
+  /**
+   * The clips that count: every one with a weight, or with a target a weight is on its way to. A soldier
+   * has well over a hundred clips and a handful of them here, and the blend goes through these alone.
+   * A clip outside it has no weight, no target, and an action switched off.
+   */
+  private readonly playing = new Set<string>()
+  private readonly targets = new Targets(this.playing)
   /**
    * Its own materials: `outfit` tinted per look (a soldier's patches, a civilian's top), `kit` (the `gear` material) in its
    * final colours (white, but dulled on a zombie) and `skin` tinted with a skin tone.
@@ -555,6 +576,8 @@ export class Character {
   private readonly skin: Material
   /** The model's bodies by name, one shown for the look worn. */
   private readonly bodies = new Map<string, Node>()
+  /** Where each body hangs in the model. Only the one worn is left there: the rest are out of the scene, so a crowd does not place a dozen bodies a soldier that nobody sees. */
+  private readonly bodyParents = new Map<Node, Node>()
   /** What it wears, and the player's colour, which a soldier shows on their patches. */
   private worn: Look = 'soldier'
   private color: number
@@ -740,6 +763,7 @@ export class Character {
       if (node.name.startsWith('body_') && !this.bodies.has(node.name) && !(node.parent?.name === node.name)) this.bodies.set(node.name, node)
     })
     for (const material of [this.outfit, this.kit, this.skin]) crowd.outfits.add(material)
+    for (const node of this.bodies.values()) if (node.parent) this.bodyParents.set(node, node.parent)
     crowd.root.add(this.object)
     crowd.adjust(1)
 
@@ -805,6 +829,7 @@ export class Character {
       this.weights.set(name, 0)
     }
     this.weights.set(this.clip('idle'), 1)
+    this.playing.add(this.clip('idle'))
     const idle = this.actions.get(this.clip('idle'))
     if (idle) idle.weight = 1
     this.object.visible = false
@@ -898,7 +923,11 @@ export class Character {
    */
   private dress() {
     const body = this.dressed
-    for (const [name, node] of this.bodies) node.visible = name === body
+    for (const [name, node] of this.bodies) {
+      node.visible = name === body
+      if (!node.visible) node.removeFromParent()
+      else if (!node.parent) this.bodyParents.get(node)?.add(node)
+    }
     const top = this.undead ? ZOMBIE_RAGS : this.worn === 'soldier' ? this.color : this.worn === 'civilian' ? CIVILIAN_TOPS[pick(this.id, 4, CIVILIAN_TOPS.length)]! : 0xffffff
     this.outfit.color.setHex(top)
     this.kit.color.setHex(this.undead ? ZOMBIE_DIRT : 0xffffff)
@@ -1024,8 +1053,7 @@ export class Character {
     const running = smoothstep(WALK_SPEED + 0.4, RUN_SPEED - 0.6, speed)
     const targets = this.targets
     // Every clip is pulled to zero unless this stance's blend asks for it, so a stance change crossfades.
-    for (const name of targets.keys()) targets.set(name, 0)
-    for (const name of this.actions.keys()) targets.set(name, 0)
+    for (const name of this.playing) targets.set(name, 0)
     const along: Record<Direction, number> = {
       fwd: Math.max(0, forward),
       back: Math.max(0, -forward),
@@ -1085,12 +1113,12 @@ export class Character {
     // Weights chase their targets; both sets sum to one, so the blend stays a convex mix.
     const rate = BLEND_RATE
     let sum = 0
-    for (const [name, target] of targets) {
-      const next = chase(this.weights.get(name) ?? 0, target, rate, dt)
+    for (const name of this.playing) {
+      const next = chase(this.weights.get(name) ?? 0, targets.get(name) ?? 0, rate, dt)
       this.weights.set(name, next)
       sum += next
     }
-    if (sum > 0) for (const [name, w] of this.weights) this.weights.set(name, w / sum)
+    if (sum > 0) for (const name of this.playing) this.weights.set(name, this.weights.get(name)! / sum)
 
     // The cycle advances by distance covered, so feet keep up with the ground at any speed.
     let stride = 0
@@ -1113,8 +1141,14 @@ export class Character {
     if (idle) this.idleTime = (this.idleTime + dt) % idle.clip.duration
 
     const current = this.clip('idle')
-    for (const [name, action] of this.actions) {
+    for (const name of this.playing) {
       const w = this.weights.get(name)!
+      if (w < FADED && !targets.get(name) && name !== current) {
+        this.fade(name)
+        continue
+      }
+      const action = this.actions.get(name)
+      if (!action) continue
       const base = baseOf(name)
       action.enabled = w > 0.0005 || name === current
       action.weight = w
@@ -1178,6 +1212,17 @@ export class Character {
     if (near && !this.layered) this.inertia.forget()
     this.layered = near
     if (near) this.inertia.apply(dt)
+  }
+
+  /** Clip `name` has faded out with nothing asking for it: it is no longer one of the clips that count (`playing`). */
+  private fade(name: string) {
+    this.playing.delete(name)
+    this.weights.set(name, 0)
+    this.targets.set(name, 0)
+    const action = this.actions.get(name)
+    if (!action) return
+    action.enabled = false
+    action.weight = 0
   }
 
   /** Lets go of everything the runtime layer holds: something else has the bones, or it is not drawn. */
@@ -1496,6 +1541,7 @@ export class Character {
    */
   seat(head: Vector3, rotation: Quaternion, yaw: number, pitch: number, dt: number, standing = false, door: DoorStep | null = null) {
     this.position.copy(head)
+    const sat = this.seated
     this.seated = true
     this.pitch = pitch
     this.fadeFlash(dt)
@@ -1504,22 +1550,62 @@ export class Character {
     // Getting in or out by a door: how far through it, eased between the snapshots that say, and
     // taken as it is when it starts (getting in starts outside, at 1).
     const stepping = door !== null && door.step > 0
+    // Far off and sitting still in the seat, the pose waits for a later frame as it does on foot
+    // (`skipsFrame`); the body still goes where the vehicle takes it.
+    const posed = !(sat && this.placed && !stepping && this.skipsFrame())
+    if (posed) {
+      dt += this.unposed
+      this.unposed = 0
+    } else this.unposed += dt
+    if (posed) this.sit(rotation, yaw, dt, standing, stepping ? door : null)
+    const forward = SCRATCH.forward.set(0, 0, -1).applyQuaternion(rotation)
+
+    // The model faces +Z; the vehicle's nose is its -Z.
+    this.object.quaternion.copy(rotation).multiply(SCRATCH.turn.setFromAxisAngle(AXIS_Y, Math.PI))
+    const up = SCRATCH.axis.set(0, 1, 0).applyQuaternion(rotation)
+    this.object.position.copy(head).addScaledVector(up, -(standing && !stepping ? STAND_HEAD : SIT_HEAD)).addScaledVector(forward, SIT_HEAD_BACK)
+    if (stepping) {
+      // The clip rises from the seat itself; the body is moved out to the door's spot level with the
+      // seat, mostly while it ducks under the roof in the middle of the climb.
+      const out = SCRATCH.out.copy(door.spot).sub(this.object.position)
+      out.addScaledVector(up, -out.dot(up))
+      const t = Math.min(1, Math.max(0, (this.stepShown - STEP_ACROSS[0]) / (STEP_ACROSS[1] - STEP_ACROSS[0])))
+      this.object.position.addScaledVector(out, t * t * (3 - 2 * t))
+    }
+    this.placed = true
+    this.object.visible = this.shown && !this.gibbed
+    if (posed && this.layered) this.holdGrip()
+  }
+
+  /**
+   * The seated pose itself: the clips blended to sitting, or to the climb in or out by `door`, and the
+   * body turned after the aim. `rotation` is the vehicle's.
+   */
+  private sit(rotation: Quaternion, yaw: number, dt: number, standing: boolean, door: DoorStep | null) {
+    const stepping = door !== null
     this.stepShown = !stepping ? 0 : this.stepShown === 0 ? door.step : chase(this.stepShown, door.step, 1.5 / STEP_OUT_S, dt)
     // Every other clip gives way to sitting, or standing still for a seat stood in, in the stance of the item in hand.
     // Climbing in or out, the climb is all there is: it starts as sitting does and ends as standing does.
     const pose = stepping ? (door.side < 0 ? 'car_out' : 'car_out_r') : standing ? 'idle' : 'sit'
     const sit = this.clip(pose)
     let sum = 0
-    for (const name of this.actions.keys()) {
+    this.playing.add(sit)
+    for (const name of this.playing) {
       const next = stepping ? (name === sit ? 1 : 0) : chase(this.weights.get(name) ?? 0, name === sit ? 1 : 0, BLEND_RATE, dt)
       this.weights.set(name, next)
       sum += next
     }
-    if (sum > 0) for (const [name, w] of this.weights) this.weights.set(name, w / sum)
+    if (sum > 0) for (const name of this.playing) this.weights.set(name, this.weights.get(name)! / sum)
     const clip = this.actions.get(sit)
     if (clip && !stepping) this.idleTime = (this.idleTime + dt) % clip.clip.duration
-    for (const [name, action] of this.actions) {
+    for (const name of this.playing) {
       const w = this.weights.get(name)!
+      if (w < FADED && name !== sit) {
+        this.fade(name)
+        continue
+      }
+      const action = this.actions.get(name)
+      if (!action) continue
       action.enabled = w > 0.0005 || name === sit
       action.weight = w
       if (stepping && name === sit) action.time = this.stepShown * (action.clip.duration - 1e-4)
@@ -1541,22 +1627,6 @@ export class Character {
     const twist = stepping ? 0 : Math.max(-SIT_TWIST, Math.min(SIT_TWIST, Math.atan2(Math.sin(yaw - facing), Math.cos(yaw - facing))))
     this.turn(this.spine, twist * SIT_SPINE, AXIS_Y)
     this.turn(this.chest, twist * (1 - SIT_SPINE), AXIS_Y)
-
-    // The model faces +Z; the vehicle's nose is its -Z.
-    this.object.quaternion.copy(rotation).multiply(SCRATCH.turn.setFromAxisAngle(AXIS_Y, Math.PI))
-    const up = SCRATCH.axis.set(0, 1, 0).applyQuaternion(rotation)
-    this.object.position.copy(head).addScaledVector(up, -(standing && !stepping ? STAND_HEAD : SIT_HEAD)).addScaledVector(forward, SIT_HEAD_BACK)
-    if (stepping) {
-      // The clip rises from the seat itself; the body is moved out to the door's spot level with the
-      // seat, mostly while it ducks under the roof in the middle of the climb.
-      const out = SCRATCH.out.copy(door.spot).sub(this.object.position)
-      out.addScaledVector(up, -out.dot(up))
-      const t = Math.min(1, Math.max(0, (this.stepShown - STEP_ACROSS[0]) / (STEP_ACROSS[1] - STEP_ACROSS[0])))
-      this.object.position.addScaledVector(out, t * t * (3 - 2 * t))
-    }
-    this.placed = true
-    this.object.visible = this.shown && !this.gibbed
-    if (near) this.holdGrip()
   }
 
   /** Fades a hit's whitening. */

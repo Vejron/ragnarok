@@ -11,6 +11,7 @@ import { normalAt } from './shade'
 import { FLOOR_HEATH, FLOOR_LEAF, FLOOR_MIXED, FLOOR_MOSS } from './forest'
 import { GARDEN_SHADE, SHADE_FLOORS, grassMask, type GrassMask } from './grassmask'
 import { inMarshPool, marshField, marshPoolLevel } from './marshnoise'
+import { CraterGrid } from './cratergrid'
 
 export { grassMask, type GrassMask }
 
@@ -603,7 +604,7 @@ export class Grass {
   private nextBlast = 0
   private readonly picked: Bender[] = []
   /** Craters shells dug: bare earth inside, no grass grows there. Keyed by `x,z,radius` so telling of one twice adds nothing. */
-  private readonly craters = new Map<string, { x: number; z: number; radius: number }>()
+  private readonly craters = new CraterGrid()
   /** Rocks as `[x, z, radius²]` runs, by the chunk they stand over and then by tile, so no blade grows through one. */
   private readonly rocks = new Map<number, Map<number, number[]>>()
 
@@ -720,7 +721,7 @@ export class Grass {
   growsAt(x: number, z: number): number {
     const shade = this.shadeAt(x, z)
     if (shade === 0) return 0
-    for (const c of this.craters.values()) if (Math.hypot(x - c.x, z - c.z) < c.radius) return 0
+    if (this.craters.covers(x, z)) return 0
     for (const list of this.rocks.get(chunkKey(Math.floor(x / GRASS_CHUNK), Math.floor(z / GRASS_CHUNK)))?.values() ?? []) {
       for (let i = 0; i < list.length; i += 3) if ((x - list[i]!) ** 2 + (z - list[i + 1]!) ** 2 < list[i + 2]!) return 0
     }
@@ -736,10 +737,8 @@ export class Grass {
    * it are grown again on the new ground, and the grass is gone from the bowl, which is bare earth now.
    */
   dent(x: number, z: number, radius: number) {
-    const key = `${x},${z},${radius}`
-    if (this.craters.has(key)) return
+    if (!this.craters.add(x, z, radius * CRATER_BARE)) return
     this.rescan = true
-    this.craters.set(key, { x, z, radius: radius * CRATER_BARE })
     for (const [chunkAt, chunk] of this.chunks) {
       const cx = (chunkAt % 65536) - 32768, cz = Math.floor(chunkAt / 65536) - 32768
       if ((cx + 1) * GRASS_CHUNK < x - radius || cx * GRASS_CHUNK > x + radius || (cz + 1) * GRASS_CHUNK < z - radius || cz * GRASS_CHUNK > z + radius) continue
@@ -749,7 +748,7 @@ export class Grass {
 
   /** The ground of the crater `dent` was told of has healed: the grass grows over it again. */
   heal(x: number, z: number, radius: number) {
-    if (!this.craters.delete(`${x},${z},${radius}`)) return
+    if (!this.craters.remove(x, z, radius * CRATER_BARE)) return
     this.rescan = true
     for (const [chunkAt, chunk] of this.chunks) {
       const cx = (chunkAt % 65536) - 32768, cz = Math.floor(chunkAt / 65536) - 32768

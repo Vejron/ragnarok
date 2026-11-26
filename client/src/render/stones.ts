@@ -5,6 +5,7 @@ import { carveRock, rockWgsl, type Carving } from './rocks'
 import { shoreLevelAt, shoreOf, WET_HEIGHT, type Shore } from './shore'
 import { stonesPixels } from './groundmaps'
 import type { Pixels } from './terrainmesh'
+import { CraterGrid } from './cratergrid'
 
 /*
  * Stony ground. The tile's `stones` grid goes to the terrain's shader as a texture, and the shader lays
@@ -166,7 +167,7 @@ export class Stones {
   /** The shore of each stony tile that has water, for the wet stones along it. */
   private readonly shores = new Map<number, Shore>()
   private readonly chunks = new Map<number, Chunk>()
-  private readonly craters: { x: number; z: number; radius: number }[] = []
+  private readonly craters = new CraterGrid()
 
   constructor(
     private readonly halfExtent: number,
@@ -202,7 +203,7 @@ export class Stones {
 
   /** A shell dug a crater: the stones in its bowl are gone. */
   dent(x: number, z: number, radius: number) {
-    this.craters.push({ x, z, radius })
+    if (!this.craters.add(x, z, radius)) return
     for (const [key, chunk] of this.chunks) {
       const [cx, cz] = this.chunkAt(key)
       if (x + radius >= cx * CHUNK && x - radius <= (cx + 1) * CHUNK && z + radius >= cz * CHUNK && z - radius <= (cz + 1) * CHUNK) chunk.stale = true
@@ -211,9 +212,7 @@ export class Stones {
 
   /** The ground of a crater `dent` was told of has healed: stones lie in it again. */
   heal(x: number, z: number, radius: number) {
-    const at = this.craters.findIndex((c) => c.x === x && c.z === z && c.radius === radius)
-    if (at < 0) return
-    this.craters.splice(at, 1)
+    if (!this.craters.remove(x, z, radius)) return
     for (const [key, chunk] of this.chunks) {
       const [cx, cz] = this.chunkAt(key)
       if (x + radius >= cx * CHUNK && x - radius <= (cx + 1) * CHUNK && z + radius >= cz * CHUNK && z - radius <= (cz + 1) * CHUNK) chunk.stale = true
@@ -295,7 +294,7 @@ export class Stones {
     const stones = stonesIn(cx * CHUNK, cz * CHUNK, CHUNK, (x, z) => this.stonyAt(x, z))
     const byShape = new Map<Geometry, { stone: Stone; y: number }[]>()
     for (const stone of stones) {
-      if (this.craters.some((c) => Math.hypot(stone.x - c.x, stone.z - c.z) < c.radius)) continue
+      if (this.craters.covers(stone.x, stone.z)) continue
       const y = this.heightAt(stone.x, stone.z)
       if (y === null) continue
       const shapes = stone.angular ? blocks : cobbles

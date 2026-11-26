@@ -80,7 +80,7 @@ import { PerfReadout } from './render/perf'
 import { clock, lap } from './spans'
 import { Screenshots, type TiledBuilding } from './screenshot'
 import { LookWorker } from './render/lookworker'
-import { encodeHands, encodePhone, encodeRtc, KIND_AMV, KIND_CB90, KIND_MISSILE, KIND_PBV, KIND_STRF, KIND_STRV, KIND_SUBMARINE, KIND_TANK, LIMB_ALL, LIMB_ARMS, LIMB_LEGS, THRUST_LOW_ROTOR, TURRET_ALT, TURRET_EMPTY } from './net/codec'
+import { encodeHands, encodePhone, encodeRtc, KIND_AMV, KIND_CB90, KIND_MISSILE, KIND_PBV, KIND_SOLDIER, KIND_STRF, KIND_STRV, KIND_SUBMARINE, KIND_TANK, LIMB_ALL, LIMB_ARMS, LIMB_LEGS, THRUST_LOW_ROTOR, TURRET_ALT, TURRET_EMPTY } from './net/codec'
 import { TankMusic } from './music'
 import { VoiceChat } from './voice'
 import { PlaneModel } from './render/plane'
@@ -1383,7 +1383,8 @@ export class Game {
     this.avatars.sweep((key) => this.surroundings.dry(key))
     this.zombieVoices.sweep()
     this.voice.setTalking(this.localId !== null && this.player.alive && this.input.talkHeld)
-    this.voice.update(this.localId, position, nearby)
+    // Only people talk: a connection offered to a civilian, the police, a zombie or a bot is never answered.
+    this.voice.update(this.localId, position, nearby.filter((near) => (this.store.newest(near.id)?.kind?.kind ?? KIND_SOLDIER) === KIND_SOLDIER && !isBot(near.id)))
     this.scene.contact.end()
     this.surroundings.mirrorWater(dt)
     const stats = this.report(moment)

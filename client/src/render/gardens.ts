@@ -3,6 +3,7 @@ import type { TileRef } from '@/world'
 import { ChunkLayer, FloorBuilder, addShrub, unit, type Shrub } from './forestfloor'
 import { random } from './grass'
 import { FLOWER_COLORS, GARDEN_FLOWERS, GARDEN_RHUBARB, ITEM_STRIDE, type GardenPlan } from './gardenplan'
+import { CraterGrid } from './cratergrid'
 
 /*
  * The gardens round houses (GARDENS.md): rhubarb and the flowers of a bed, where the tile's
@@ -114,7 +115,7 @@ export class Gardens {
   private enabled = true
   /** Each tile's items (`GardenPlan.items` runs), by the chunk they stand in. */
   private readonly items = new Map<number, Map<number, number[]>>()
-  private readonly craters: { x: number; z: number; radius: number }[] = []
+  private readonly craters = new CraterGrid()
 
   /** `heightAt` is the ground, null where it is not loaded. */
   constructor(
@@ -175,16 +176,13 @@ export class Gardens {
 
   /** A shell dug a crater of `radius` metres at `(x, z)`: what grew in it is gone. */
   dent(x: number, z: number, radius: number) {
-    if (this.craters.some((c) => c.x === x && c.z === z && c.radius === radius)) return
-    this.craters.push({ x, z, radius })
+    if (!this.craters.add(x, z, radius)) return
     this.layer.staleOver(x - radius, z - radius, x + radius, z + radius)
   }
 
   /** The ground of a crater `dent` was told of has healed: what grew in it grows again. */
   heal(x: number, z: number, radius: number) {
-    const at = this.craters.findIndex((c) => c.x === x && c.z === z && c.radius === radius)
-    if (at < 0) return
-    this.craters.splice(at, 1)
+    if (!this.craters.remove(x, z, radius)) return
     this.layer.staleOver(x - radius, z - radius, x + radius, z + radius)
   }
 
@@ -221,7 +219,7 @@ export class Gardens {
     for (const list of byTile.values()) {
       for (let i = 0; i < list.length; i += ITEM_STRIDE) {
         const [kind, x, z, radius, size, seed] = [list[i]!, list[i + 1]!, list[i + 2]!, list[i + 3]!, list[i + 4]!, list[i + 5]!]
-        if (this.craters.some((c) => Math.hypot(x - c.x, z - c.z) < c.radius + radius * 0.5)) continue
+        if (this.craters.covers(x, z, radius * 0.5)) continue
         const y = this.heightAt(x, z)
         if (y === null) continue
         const next = random(Math.floor(seed * 4294967296))

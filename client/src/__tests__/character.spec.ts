@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { Mesh, Quaternion, Vector3 } from '@ragnarok/engine'
+import { Quaternion, Vector3 } from '@ragnarok/engine'
 import { describe, expect, it } from 'vitest'
 import { Character, Crowd, parseCharacter } from '@/render/character'
 import { boxOf } from './helpers'
@@ -551,16 +551,10 @@ describe('Character’s looks', () => {
   const ALL = Object.values(BODIES).flat()
   /** The model a character draws, which it keeps to itself. */
   const rootOf = (who: Character) => (who as unknown as { object: import('@ragnarok/engine').Node }).object
-  /** The bodies it shows. */
-  const shown = (who: Character) => ALL.filter((name) => rootOf(who).getObjectByName(name)!.visible)
-  /** The colour of its own material `name` (`outfit`, `gear` or `skin`). */
-  const tint = (who: Character, name: string) => {
-    let hex = -1
-    rootOf(who).traverse((node) => {
-      if (node instanceof Mesh && node.material.name === name) hex = node.material.color.getHex()
-    })
-    return hex
-  }
+  /** The bodies it shows: the ones in its model, as those it does not wear are taken out of it. */
+  const shown = (who: Character) => ALL.filter((name) => rootOf(who).getObjectByName(name)?.visible === true)
+  /** The colour of its own material `name` (`outfit`, `gear` or `skin`), whether the body it wears has it or not. */
+  const tint = (who: Character, name: 'outfit' | 'gear' | 'skin') => (who as unknown as Record<string, { color: { getHex(): number } }>)[name === 'gear' ? 'kit' : name]!.color.getHex()
 
   it('has every body, and the joints the game moves by name', async () => {
     const c = await crowd()

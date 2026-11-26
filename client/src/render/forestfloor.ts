@@ -8,6 +8,7 @@ import { GROUND_LIGHT_WGSL } from './groundlight'
 import { carveRock, isRock, type Carving } from './rocks'
 import { winter } from './season'
 import { normalAt } from './shade'
+import { CraterGrid } from './cratergrid'
 
 /*
  * What stands on a forest's floor (FOREST-FLOOR.md): bilberry, lingonberry and heather, cushions of
@@ -495,7 +496,7 @@ export class ForestFloor {
   private plantsOn = true
   /** What stands on each tile, by the timber chunk it stands in. */
   private readonly standing = new Map<number, Map<number, Standing[]>>()
-  private readonly craters: { x: number; z: number; radius: number }[] = []
+  private readonly craters = new CraterGrid()
 
   /**
    * `floorAt` is the `PALETTE` entry of the grass's mask at a point (`Grass.growsAt`: 0 on a road, in
@@ -564,17 +565,14 @@ export class ForestFloor {
 
   /** A shell dug a crater of `radius` metres at `(x, z)`: what stood in it is gone, and the rest stands on the new ground. */
   dent(x: number, z: number, radius: number) {
-    if (this.craters.some((c) => c.x === x && c.z === z && c.radius === radius)) return
-    this.craters.push({ x, z, radius })
+    if (!this.craters.add(x, z, radius)) return
     this.plants.staleOver(x - radius, z - radius, x + radius, z + radius)
     this.timber.staleOver(x - radius, z - radius, x + radius, z + radius)
   }
 
   /** The ground of a crater `dent` was told of has healed: what stood in it grows again. */
   heal(x: number, z: number, radius: number) {
-    const at = this.craters.findIndex((c) => c.x === x && c.z === z && c.radius === radius)
-    if (at < 0) return
-    this.craters.splice(at, 1)
+    if (!this.craters.remove(x, z, radius)) return
     this.plants.staleOver(x - radius, z - radius, x + radius, z + radius)
     this.timber.staleOver(x - radius, z - radius, x + radius, z + radius)
   }
@@ -647,7 +645,7 @@ export class ForestFloor {
 
   /** Whether the ground within `radius` of `(x, z)` is free of trunks, rocks and craters. */
   private clear(x: number, z: number, radius: number): boolean {
-    if (this.craters.some((c) => Math.hypot(x - c.x, z - c.z) < c.radius + radius)) return false
+    if (this.craters.covers(x, z, radius)) return false
     const [cx, cz] = [Math.floor(x / TIMBER_CHUNK), Math.floor(z / TIMBER_CHUNK)]
     for (let dz = -1; dz <= 1; dz++) {
       for (let dx = -1; dx <= 1; dx++) {

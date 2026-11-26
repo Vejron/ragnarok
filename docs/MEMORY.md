@@ -68,7 +68,7 @@ Per frame, measured playing alone:
 ## Open
 
 - **`Character.update` (21 KB a frame) and `considerLevels` (17 KB)** are the largest that are left, and neither shows what it allocates by reading it: probably numbers boxed in code the engine has not optimised. Find out with a CPU profile before changing them.
-- **The entity paths** (`blend` makes a new entity for each one between snapshots, the vehicle presenters, the snapshot decode) need a run against a server with bots.
+- **The entity paths** (`blend` makes a new entity for each one between snapshots, the vehicle presenters, the snapshot decode) need a run against a server with bots. `frame-bench.mjs --scenario chaos` (FRAME-PERFORMANCE.md) feeds the entity store a crowd without one, for the frame's time; this script has no such run yet.
 - **The 34 tile textures** (87 MB) are uncompressed RGBA8 with mipmaps. A cover map at fewer texels a metre, or a compressed format, changes the picture.
 - **The vertex layout** is 64 bytes for every mesh though a building uses 48 and terrain 32. One layout is what lets every mesh share one buffer.
 - **The window glass** is still a soup (28% of its vertices are unique), and is rewritten in place when a pane breaks.

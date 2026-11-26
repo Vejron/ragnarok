@@ -15,13 +15,19 @@ export class Action {
   constructor(readonly clip: AnimationClip) {}
 }
 
-/** One animated property of one node, with the clips' tracks that drive it. */
+/** One animated property of one node. */
 interface Binding {
   node: Node
   path: TrackPath
   /** The property's value before any animation: what is left when weights add up to less than one. */
   rest: Float32Array
-  tracks: { action: Action; track: Track }[]
+}
+
+/** A clip's track, and which binding (by its place in `bindings`) it drives. */
+interface Driven {
+  slot: number
+  rotation: boolean
+  track: Track
 }
 
 /**
@@ -33,31 +39,39 @@ interface Binding {
 export class Animator {
   readonly actions = new Map<string, Action>()
   private readonly bindings: Binding[] = []
+  /** Every action with the tracks it drives, in the clips' order. */
+  private readonly playing: { action: Action; tracks: Driven[] }[] = []
   private readonly sample = new Float32Array(4)
-  private readonly sum = new Float32Array(4)
+  /** The weighted sum of each binding's samples, four numbers a binding, and the weight summed into each. */
+  private readonly sums: Float32Array
+  private readonly totals: Float64Array
 
   constructor(readonly root: Node, clips: AnimationClip[]) {
     const nodes = new Map<string, Node>()
     root.traverse((node) => {
       if (node.name && !nodes.has(node.name)) nodes.set(node.name, node)
     })
-    const byKey = new Map<string, Binding>()
+    const byKey = new Map<string, number>()
     for (const clip of clips) {
       const action = new Action(clip)
       this.actions.set(clip.name, action)
+      const tracks: Driven[] = []
       for (const track of clip.tracks) {
         const node = nodes.get(track.node)
         if (!node) continue
         const key = `${track.node}|${track.path}`
-        let binding = byKey.get(key)
-        if (!binding) {
-          binding = { node, path: track.path, rest: read(node, track.path), tracks: [] }
-          byKey.set(key, binding)
-          this.bindings.push(binding)
+        let slot = byKey.get(key)
+        if (slot === undefined) {
+          slot = this.bindings.length
+          byKey.set(key, slot)
+          this.bindings.push({ node, path: track.path, rest: read(node, track.path) })
         }
-        binding.tracks.push({ action, track })
+        tracks.push({ slot, rotation: track.path === 'rotation', track })
       }
+      this.playing.push({ action, tracks })
     }
+    this.sums = new Float32Array(this.bindings.length * 4)
+    this.totals = new Float64Array(this.bindings.length)
   }
 
   action(name: string): Action | undefined {
@@ -76,40 +90,57 @@ export class Animator {
     this.apply()
   }
 
-  /** Poses the nodes from the actions' current times and weights, without advancing them. */
+  /**
+   * Poses the nodes from the actions' current times and weights, without advancing them. Only the
+   * actions that count are sampled: a soldier has well over a hundred clips and a handful playing.
+   */
   apply() {
     const sample = this.sample
-    const sum = this.sum
-    for (const binding of this.bindings) {
-      const size = binding.path === 'rotation' ? 4 : 3
-      sum.fill(0)
-      let total = 0
-      for (const { action, track } of binding.tracks) {
-        const w = action.weight
-        if (!action.enabled || w <= 0) continue
-        sampleTrack(track, action.time, sample)
-        if (size === 4 && total > 0 && sum[0]! * sample[0]! + sum[1]! * sample[1]! + sum[2]! * sample[2]! + sum[3]! * sample[3]! < 0) {
-          // The other hemisphere: the same rotation, but it would cancel out in the sum.
-          for (let k = 0; k < 4; k++) sample[k] = -sample[k]!
+    const sums = this.sums
+    const totals = this.totals
+    sums.fill(0)
+    totals.fill(0)
+    for (const { action, tracks } of this.playing) {
+      const w = action.weight
+      if (!action.enabled || w <= 0) continue
+      const time = action.time
+      for (const { slot, rotation, track } of tracks) {
+        sampleTrack(track, time, sample)
+        const at = slot * 4
+        if (rotation) {
+          if (totals[slot]! > 0 && sums[at]! * sample[0]! + sums[at + 1]! * sample[1]! + sums[at + 2]! * sample[2]! + sums[at + 3]! * sample[3]! < 0) {
+            // The other hemisphere: the same rotation, but it would cancel out in the sum.
+            for (let k = 0; k < 4; k++) sample[k] = -sample[k]!
+          }
+          sums[at + 3] = sums[at + 3]! + sample[3]! * w
         }
-        for (let k = 0; k < size; k++) sum[k] = sum[k]! + sample[k]! * w
-        total += w
+        sums[at] = sums[at]! + sample[0]! * w
+        sums[at + 1] = sums[at + 1]! + sample[1]! * w
+        sums[at + 2] = sums[at + 2]! + sample[2]! * w
+        totals[slot] = totals[slot]! + w
       }
+    }
+    const bindings = this.bindings
+    for (let slot = 0; slot < bindings.length; slot++) {
+      const binding = bindings[slot]!
+      const at = slot * 4
+      const size = binding.path === 'rotation' ? 4 : 3
+      let total = totals[slot]!
       if (total < 1) {
         const rest = binding.rest
         const w = 1 - total
         let sign = 1
-        if (size === 4 && total > 0 && sum[0]! * rest[0]! + sum[1]! * rest[1]! + sum[2]! * rest[2]! + sum[3]! * rest[3]! < 0) sign = -1
-        for (let k = 0; k < size; k++) sum[k] = sum[k]! + rest[k]! * w * sign
+        if (size === 4 && total > 0 && sums[at]! * rest[0]! + sums[at + 1]! * rest[1]! + sums[at + 2]! * rest[2]! + sums[at + 3]! * rest[3]! < 0) sign = -1
+        for (let k = 0; k < size; k++) sums[at + k] = sums[at + k]! + rest[k]! * w * sign
         total = 1
       }
       const node = binding.node
       if (size === 4) {
-        const len = Math.hypot(sum[0]!, sum[1]!, sum[2]!, sum[3]!) || 1
-        node.quaternion.set(sum[0]! / len, sum[1]! / len, sum[2]! / len, sum[3]! / len)
+        const len = Math.hypot(sums[at]!, sums[at + 1]!, sums[at + 2]!, sums[at + 3]!) || 1
+        node.quaternion.set(sums[at]! / len, sums[at + 1]! / len, sums[at + 2]! / len, sums[at + 3]! / len)
       } else {
         const v = binding.path === 'translation' ? node.position : node.scale
-        v.set(sum[0]! / total, sum[1]! / total, sum[2]! / total)
+        v.set(sums[at]! / total, sums[at + 1]! / total, sums[at + 2]! / total)
       }
     }
   }

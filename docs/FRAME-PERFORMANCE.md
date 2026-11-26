@@ -19,6 +19,8 @@ node client/scripts/frame-bench.mjs --scenario drive --seconds 40 [--speed 25] [
 # the cuts the server made of a house, replayed through `WorldView.carved` one every 0.6 s
 HOUSE=10 DEMOLITION_OUT=$PWD/client/bench-out/cuts.json RAGNAROK_WORLD=$PWD/worlds/test/world.msgpack cargo test --release -p server -- --ignored --nocapture demolition_cost
 node client/scripts/frame-bench.mjs --scenario demolish --cuts client/bench-out/cuts.json --every 0.6 [--shoot]
+# the end of a long fight: craters already dug, people on foot and cars with their crews all round
+node client/scripts/frame-bench.mjs --scenario chaos --world home --seconds 30 --craters 2000 --people 150 --cars 40 [--shoot]
 ```
 
 It drives the real game in headless Chrome (Windows and Mac), loaded with `?bench`, and records a CPU
@@ -140,6 +142,68 @@ a minute after its last cut. SERVER-PERFORMANCE.md has the server's numbers.
 - `Shell.clusters` allocates nothing per neighbour. Grass chunks are built for about 1.5 ms a frame,
   not three a frame.
 
+## A long fight: craters and crowds
+
+After a quarter of an hour of shelling on `home` with the police out in full, the clients' frame rate
+fell while the server kept up. `--scenario chaos` stands in for the end of such a session, as headless
+Chrome has no server: it digs `--craters` within `--reach` metres of the player through
+`WorldView.cratered`, feeds `--people` on foot (one in six dead) and `--cars` with their crews to the
+entity store as the scenes snapshots rebuild, 30 a second, and walks the player in a circle while
+another crater lands every `--every` seconds. Decoding a snapshot, and what `onSnapshot` gives the
+prediction's physics, are not part of it.
+
+Frame time on a desktop, 30 s on `home`, milliseconds (p50 / p95, and frames over 16.7 ms of some 1,790):
+
+| Run | Before | After |
+|---|---|---|
+| 2,075 craters, nobody about | 1.5 / 17.6, 93 over | 1.3 / 2.6, none over |
+| 150 on foot and 40 cars (205 soldiers drawn), no craters | 16.0 / 18.8, 523 over | 6.7 / 8.9, 12 over |
+| Both at once | not run | 6.8 / 8.7, 2 over |
+
+The longest frames still over are the first, where 205 soldiers are made at once.
+
+- **Craters are found by place** (`render/cratergrid.ts`). The grass, the wheat, its lid, the stones,
+  the forest floor and the gardens each kept a list of every crater, and asked all of it about every
+  blade, stone and plant they laid: a grass chunk is about 3,000 blades, craters only heal with nobody
+  within 400 m, and an autocannon digs one a round. Each layer now keeps a `CraterGrid`, which lists a
+  crater under the 16 m cells its bowl reaches. Over the run the grass took 4.9 s with 2,075 craters,
+  and takes 0.2 s, as it does with none.
+- **The animator samples only the clips that play** (`Animator.apply`). A soldier has 177 clips of
+  19,116 tracks between them, and the pose looked at every track of every bone to find the handful
+  with a weight: 12.2 s of the 30 with the crowd, and 1.1 s now. The actions are gone through in the
+  clips' order as before, so a bone's rotations are summed in the same order and the pose is the same
+  (`animator.spec.ts`).
+- **A soldier in a seat skips frames by distance** as one on foot does (`Character.seat`,
+  `skipsFrame`). Every driver in the traffic and every crew of the police was posed every frame however
+  far off. The body still goes where the vehicle takes it every frame; getting in or out is never
+  skipped.
+- **Voice is offered only to people.** The eight nearest soldiers were offered a connection whoever
+  they were, and a civilian, an officer, a zombie or a bot never answers, so each was closed after 12 s
+  and opened again.
+
+- **A soldier keeps only the body it wears in the scene** (`Character.dress`). The model holds thirteen
+  bodies, one for each look, and the twelve not worn were hidden but still placed every frame with the
+  rest of it. They are taken out of the model and put back when the look changes. The scene's
+  `updateWorld` took 2.8 s of the 30 with the crowd, and takes 2.0 s.
+- **The blend goes through the clips that count** (`Character.playing`). Each pose went through the
+  weights and targets of all 177 clips, in three maps, to move the few with a weight. The clips with a
+  weight or a target are kept in a set of their own, and one that has faded below a millionth with
+  nothing asking for it is let go. `Character.update` took 2.0 s, and takes 0.5 s.
+
+What the crowd costs now, of the 30 s: the scene's `updateWorld` 2.0 s (a soldier is still some 50
+nodes, its bones and the guns it does not hold among them, and all are worked out again as it moves),
+the animator 1.7 s, the bones' matrices for the GPU 0.8 s (`BoneTable.sync`, once for each of a body's
+two or three meshes).
+
+Looked at and left:
+
+- **Advancing the animator's actions over a plain array** in place of the map's values measured no
+  faster, and was taken out again.
+- **The point lights' list** was thought to fill (256) with beacons and headlamps held at any distance.
+  The most held in the run was 55.
+- **The ids of civilians and crews kept after they go** (`Soldiers.civilians`, the names in `profile.ts`,
+  `Bodies.drippedAt`) are a number each and cost nothing a frame.
+
 ## Not done, and why
 
 - **Spreading a tile's attach over frames.** What is left of it is a few milliseconds, and staging it
@@ -152,6 +216,10 @@ a minute after its last cut. SERVER-PERFORMANCE.md has the server's numbers.
 
 ## Open
 
+- **A crowd's soldiers** still cost about 30 µs each a frame. What is left is spread out: the scene
+  walk over the bones, the animator, and the bones' matrices worked out once for each mesh of a body.
+- **The server sets no limit on civilians on foot**, and sends everything within 300 m thirty times a
+  second however far. Either would thin a crowd at its source, and both change the game.
 - **Play-test on the laptop the game is played on.** These numbers are a desktop's.
 - **The prediction's collider is the biggest cost of a cut left** (2 ms here, in WebAssembly). Most of
   it is now the trimesh's BVH and the broad phase taking the new collider. One collider per section of a

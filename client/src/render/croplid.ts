@@ -5,6 +5,7 @@ import { WIND_HEADING } from '@/sim/wind'
 import type { TileGround } from '@/sim/terrain'
 import { GROUND_LIGHT_WGSL } from './groundlight'
 import { WHEAT_DENSITY, type GrassDensity } from './grass'
+import { CraterGrid } from './cratergrid'
 
 /*
  * The far side of a field of wheat. The stalks (`grass.ts`, `WHEAT`) only stand near the camera, and
@@ -239,7 +240,7 @@ export class CropLid {
   private readonly material: ShaderMaterial
   private readonly tiles = new Map<number, { mesh: Mesh | null; crops: Uint8Array; ground: TileGround | null }>()
   /** Craters shells dug, which the lid is open over. Keyed by `x,z,radius` so telling of one twice adds nothing. */
-  private readonly craters = new Map<string, Crater>()
+  private readonly craters = new CraterGrid()
   /** The tiles a crater reached since their lids were laid, and whether laying them again is on its way. */
   private readonly stale = new Set<number>()
   private pending = false
@@ -278,9 +279,7 @@ export class CropLid {
    * its bowl, so that from far off the crater shows in the field as it does among the stalks.
    */
   dent(x: number, z: number, radius: number) {
-    const key = `${x},${z},${radius}`
-    if (this.craters.has(key)) return
-    this.craters.set(key, { x, z, radius })
+    if (!this.craters.add(x, z, radius)) return
     const tile = (v: number) => Math.floor((v + this.halfExtent) / this.tileSize)
     for (let row = tile(z - radius); row <= tile(z + radius); row++) {
       for (let col = tile(x - radius); col <= tile(x + radius); col++) if (this.tiles.has(this.key({ col, row }))) this.stale.add(this.key({ col, row }))
@@ -298,7 +297,7 @@ export class CropLid {
 
   /** The ground of the crater `dent` was told of has healed: the lids it reached are laid whole again with their tiles (`regrowTile`). */
   heal(x: number, z: number, radius: number) {
-    this.craters.delete(`${x},${z},${radius}`)
+    this.craters.remove(x, z, radius)
   }
 
   removeTile(ref: Pick<TileRef, 'col' | 'row'>) {
@@ -310,7 +309,7 @@ export class CropLid {
 
   private build(ref: Pick<TileRef, 'col' | 'row'>, crops: Uint8Array, ground: TileGround | null): Mesh | null {
     const x0 = -this.halfExtent + ref.col * this.tileSize, z0 = -this.halfExtent + ref.row * this.tileSize
-    const bare = [...this.craters.values()].filter((c) => c.x + c.radius >= x0 && c.x - c.radius <= x0 + this.tileSize && c.z + c.radius >= z0 && c.z - c.radius <= z0 + this.tileSize)
+    const bare = this.craters.within(x0, z0, x0 + this.tileSize, z0 + this.tileSize)
     const geometry = lidGeometry(crops, x0, z0, this.tileSize, (x, z) => (ground ? groundAt(ground, x, z) : 0), bare)
     if (!geometry) return null
     // Nothing reads it again: a lid whose ground changes is built anew.

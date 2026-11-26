@@ -5,12 +5,19 @@
 // It prints the spread of frame times, how many frames were long, where the long ones went by span,
 // and the functions that took the most time inside them.
 //
-//   node client/scripts/frame-bench.mjs --scenario drive|demolish [--world test] [--seconds 60]
+//   node client/scripts/frame-bench.mjs --scenario drive|demolish|chaos [--world test] [--seconds 60]
 //                                       [--speed 25] [--heading <degrees>] [--cuts <json>]
 //                                       [--every 0.4] [--label <name>] [--quality high] [--scale 1]
 //                                       [--url <url>] [--out <dir>] [--probe <js>]
+//                                       [--craters 0] [--people 0] [--cars 0] [--reach 150]
 //
-// `--shoot` saves pictures of a demolition to `--out`: just after the first cut, half way, and at the end.
+// `chaos` is the end of a long fight: `--craters` already dug within `--reach` metres, `--people` on
+// foot and `--cars` driving round with their crews (fed to the entity store as rebuilt snapshots, as
+// there is no server), and the player walking a circle for `--seconds` while another crater lands
+// every `--every` seconds.
+//
+// `--shoot` saves pictures of a demolition to `--out`: just after the first cut, half way, and at the end;
+// of `chaos`, one at the end.
 //
 // `--probe` runs JS in the page before the run, with `g` the game, to gather what it likes into
 // `window.__probe`, which is printed after it (say, wrapping a method to count what it is given).
@@ -229,6 +236,105 @@ await evaluate(`(() => {
       if (shoot) picture('end')
       return cuts.length
     },
+    /**
+     * A long fight's worth of the world at once: 'craters' dug within 'reach' metres of the player,
+     * 'people' on foot there (one in six of them dead) and 'cars' driving round with their crews, a
+     * third of them police with the siren on. Then the player walks a circle for 'seconds' while a
+     * new crater lands every 'every' seconds. The people and cars are fed to the entity store as the
+     * scenes the server's snapshots rebuild, 30 a second; decoding a snapshot is not part of it.
+     */
+    async chaos(kinds, craters, people, cars, seconds, every, reach, shoot) {
+      const p = state().position
+      const [x0, z0] = [p[0], p[2]]
+      const eye = p[1] - ground(x0, z0, p[1])
+      let seed = 0x2545f491
+      const next = () => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296)
+      const crater = () => {
+        const a = next() * Math.PI * 2, d = Math.sqrt(next()) * reach
+        // Mostly autocannon and grenades, now and then a shell.
+        const radius = next() < 0.2 ? 5.6 : next() < 0.5 ? 3.5 : 2
+        return { x: Math.round((x0 + Math.sin(a) * d) * 100), z: Math.round((z0 + Math.cos(a) * d) * 100), radius: Math.round(radius * 100), depth: Math.round(radius * 18), yaw: 0, dip: 0, contact: 0, solid: false, age: 0 }
+      }
+      // In batches, as a barrage comes, so no one message digs for seconds.
+      for (let done = 0; done < craters; done += 50) {
+        g.view.cratered(Array.from({ length: Math.min(50, craters - done) }, crater), true)
+        await new Promise((r) => requestAnimationFrame(r))
+      }
+
+      const FIRST = 100000
+      const walkers = Array.from({ length: people }, (_, i) => {
+        const a = next() * Math.PI * 2, d = 5 + Math.sqrt(next()) * (reach - 5)
+        return { id: FIRST + i, cx: x0 + Math.sin(a) * d, cz: z0 + Math.cos(a) * d, r: 3 + next() * 8, w: (next() < 0.5 ? -1 : 1) * (0.15 + next() * 0.3), phase: next() * 6.28, dead: i % 6 === 5, kind: i % 3 === 0 ? kinds.officer : kinds.civilian, wire: null }
+      })
+      const drivers = []
+      const driving = Array.from({ length: cars }, (_, i) => {
+        const police = i % 3 === 0
+        const car = { id: FIRST + 10000 + i, r: 25 + next() * (reach - 25), w: (next() < 0.5 ? -1 : 1) * (8 + next() * 6), phase: next() * 6.28, kind: police ? kinds.police : kinds.car, police }
+        for (let seat = 0; seat < (police ? 2 : 1); seat++) drivers.push({ id: FIRST + 20000 + i * 4 + seat, car, seat })
+        return car
+      })
+      const scene = (seconds) => {
+        const out = new Map()
+        for (const w of walkers) {
+          if (w.dead && w.wire) { out.set(w.id, w.wire); continue }
+          const a = w.phase + seconds * w.w
+          const [x, z] = [w.cx + Math.sin(a) * w.r, w.cz + Math.cos(a) * w.r]
+          const yaw = Math.atan2(-Math.cos(a) * Math.sign(w.w), Math.sin(a) * Math.sign(w.w))
+          w.wire = {
+            kind: { kind: w.kind }, place: { x: Math.round(x * 100), y: Math.round((ground(x, z, p[1]) + eye) * 100), z: Math.round(z * 100) },
+            heading: { yaw: Math.round(yaw * 1000) }, motion: { vy: 0, knock_x: 0, knock_z: 0 }, flags: { flags: kinds.grounded | (w.dead ? kinds.dead : 0), stance: 0 },
+          }
+          out.set(w.id, w.wire)
+        }
+        for (const c of driving) {
+          // A circle about the player at 'w' m/s.
+          const a = c.phase + (seconds * c.w) / c.r
+          const [x, z] = [x0 + Math.sin(a) * c.r, z0 + Math.cos(a) * c.r]
+          const yaw = Math.atan2(-Math.cos(a) * Math.sign(c.w), -Math.sin(a) * Math.sign(c.w))
+          out.set(c.id, {
+            kind: { kind: c.kind }, place: { x: Math.round(x * 100), y: Math.round((ground(x, z, p[1]) + 0.65) * 100), z: Math.round(z * 100) },
+            orientation: { qx: 0, qy: Math.round(Math.sin(yaw / 2) * 32767), qz: 0 }, steer: { steer: 20, throttle: 60 }, health: { hp: 100 },
+            ...(c.police ? { flags: { flags: kinds.lamp | kinds.siren, stance: 0 } } : {}),
+          })
+        }
+        for (const d of drivers) {
+          out.set(d.id, { kind: { kind: d.car.police ? kinds.officer : kinds.civilian }, seated: { vehicle: d.car.id, seat: d.seat, step: 0 }, heading: { yaw: 0 }, look: { pitch: 0 }, flags: { flags: 0, stance: 0 } })
+        }
+        return out
+      }
+
+      const start = performance.now()
+      let pushed = 0, dug = 0
+      const [radius, pace] = [40, 4]
+      let y = p[1]
+      window.__frames.length = 0
+      return new Promise((done) => {
+        const step = () => {
+          const now = performance.now()
+          const t = (now - start) / 1000
+          const tick = Math.floor((now * 60) / 1000 / 2) * 2
+          if (people + cars > 0 && tick > pushed) {
+            pushed = tick
+            g.store.push(tick, scene(t), true)
+            g.clock.observe(tick, now)
+          }
+          if (every > 0 && t > (dug + 1) * every) {
+            dug++
+            g.view.cratered([crater()], true)
+          }
+          const a = (t * pace) / radius
+          const [x, z] = [x0 - radius + Math.cos(a) * radius, z0 + Math.sin(a) * radius]
+          y = ground(x, z, y - eye) + eye
+          place(x, z, y)
+          g.input.yaw = Math.atan2(Math.sin(a), -Math.cos(a))
+          g.input.pitch = 0.05
+          if (t < seconds) return requestAnimationFrame(step)
+          if (shoot) { g.scene.render(); (window.__shots = []).push(['end', g.scene.canvas.toDataURL('image/png').split(',')[1]]) }
+          done({ craters: craters + dug, people, cars, crews: drivers.length, drawn: { people: g.avatars?.all?.size ?? null, cars: g.vehicles?.placed?.size ?? null } })
+        }
+        requestAnimationFrame(step)
+      })
+    },
   }
   window.__frames = []
   return 1
@@ -256,6 +362,15 @@ if (scenario === 'drive') {
   await evaluate('(() => { window.__frames.length = 0; window.__demolishFrom = performance.now(); return 1 })()')
   const n = await evaluate(`window.__bench.demolish(${JSON.stringify(cuts)}, ${every}, 5, ${args.includes('--shoot')})`)
   what = `replayed ${n} cuts of building ${first.index} on tile ${first.col},${first.row}, one every ${every} s`
+} else if (scenario === 'chaos') {
+  const [craters, people, cars] = [Number(option('craters', 0)), Number(option('people', 0)), Number(option('cars', 0))]
+  // The page's own copies of the kinds and flags, so the scenes say what the server's would.
+  const done = await evaluate(`(async () => {
+    const c = await import('/src/net/codec.ts')
+    const kinds = { civilian: c.KIND_CIVILIAN, officer: c.KIND_OFFICER, police: c.KIND_POLICE_CAR, car: c.KIND_VOLVO_240, grounded: c.FLAG_GROUNDED, dead: c.FLAG_DEAD, lamp: c.FLAG_LAMP, siren: c.FLAG_SIREN }
+    return await window.__bench.chaos(kinds, ${craters}, ${people}, ${cars}, ${seconds}, ${every}, ${Number(option('reach', 150))}, ${args.includes('--shoot')})
+  })()`)
+  what = `walked a circle for ${seconds} s among ${done?.craters} craters (one more every ${every} s), ${done?.people} people on foot and ${done?.cars} cars with ${done?.crews} aboard; drawn at the end: ${JSON.stringify(done?.drawn)}`
 } else {
   throw new Error(`no scenario ${scenario}`)
 }
