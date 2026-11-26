@@ -1158,6 +1158,8 @@ pub struct Fresh {
     pub told: Vec<(u32, String)>,
     /// Gates opened or shut: the building, the gate's number among its openings, and whether it is open now.
     pub gates: Vec<(ObjId, u32, bool)>,
+    /// Vehicles that came out of a fuel station's wash healed (`carwash`), to go out as one `Washed`.
+    pub washed: Vec<u32>,
 }
 
 /// Something of the static world brought down: a tree felled, a piece of fence or wall broken, a building

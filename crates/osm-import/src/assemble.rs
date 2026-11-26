@@ -57,7 +57,7 @@ fn cm(metres: f64) -> i32 {
     (metres * 100.0).round() as i32
 }
 
-fn signed_area(points: &[P]) -> f64 {
+pub(crate) fn signed_area(points: &[P]) -> f64 {
     let n = points.len();
     (0..n).map(|i| {
         let [x0, z0] = points[i];
@@ -2970,7 +2970,7 @@ fn join_rings(mut pieces: Vec<Vec<P>>) -> Vec<Vec<P>> {
 
 /// Sutherland–Hodgman: the part of the polygon `ring` inside `rect`. May run along the rect's
 /// edges where the polygon leaves it, which is invisible under a fill.
-fn clip_ring(ring: &[P], [x0, z0, x1, z1]: Rect) -> Vec<P> {
+pub(crate) fn clip_ring(ring: &[P], [x0, z0, x1, z1]: Rect) -> Vec<P> {
     // Each edge: is the point inside, and where does a segment cross it.
     type Edge = (fn(P, Rect) -> bool, fn(P, P, Rect) -> P);
     fn at_x(a: P, b: P, x: f64) -> P {
@@ -3055,6 +3055,9 @@ pub fn synthetic_city(half: f64, tile_size: f64, ground: Ground, water: Placed) 
         roads.push((vec![[line, -half], [line, half]], STREET, ROAD_MINOR));
         roads.push((vec![[-half, line], [half, line]], STREET, ROAD_MINOR));
     }
+    // The fuel station's lot fills the middle of a block, with nothing else built on it.
+    let middle = start + PITCH * 1.5;
+    let station = crate::fuel::Lot { middle: [middle, middle], yaw: 0.0 };
     // The last column of blocks is the pond and its stream (`synthetic_water`).
     for i in 0..count - 1 {
         for j in 0..count {
@@ -3095,6 +3098,7 @@ pub fn synthetic_city(half: f64, tile_size: f64, ground: Ground, water: Placed) 
             }
         }
     }
+    buildings.retain(|(ring, ..)| !station.overlaps(ring));
     // A few trees in the parks and along the streets, so the offline world has some to draw.
     let mut trees = Vec::new();
     for i in 0..=count {
@@ -3142,9 +3146,8 @@ pub fn synthetic_city(half: f64, tile_size: f64, ground: Ground, water: Placed) 
         crate::graves::lay(&mut built, &yards, &ways, half, &ground);
     }
     lay_crops(&mut built, &fields, half, tile_size);
-    // A fuel station on the verge of the second crossroads, so the offline world has one to fill up at.
-    let corner = start + PITCH + STREET / 2.0 + 1.0;
-    built.manifest.fuel_stations = vec![[cm(corner), cm(corner)]];
+    // A fuel station in the second block of the second row, facing its street, so the offline world has one to fill up at.
+    crate::fuel::lay(&mut built, &[station]);
     built
 }
 

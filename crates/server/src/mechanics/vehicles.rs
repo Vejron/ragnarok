@@ -51,7 +51,7 @@ pub(super) fn drop_height(kind: u8) -> f32 {
 }
 
 /// Vehicle `vid` put back as new: whole, restocked and, once its wreck has burnt out, `HurtBy` no one.
-fn restore(world: &mut World, vid: u32, burnt: bool) {
+pub(super) fn restore(world: &mut World, vid: u32, burnt: bool) {
     let mut health = world.entities.of_mut::<Health>(vid);
     health.hp = health.max;
     if burnt {

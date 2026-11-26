@@ -5,6 +5,7 @@ use crate::game::Vehicle;
 use shared::armor::{Part, State};
 use shared::consts::{FUEL_BOOST_BURN, FUEL_FILL_SECONDS, FUEL_IDLE_BURN, FUEL_LEAK_GONE_SECONDS, FUEL_LEAK_HURT_SECONDS, FUEL_STATION_REACH};
 use shared::vehicles::vehicle_def;
+use shared::world::FuelStation;
 use sim::CarControls;
 
 /// What a player at the wheel asks of the engine this tick.
@@ -15,10 +16,13 @@ pub struct Burn {
     pub boosting: bool,
 }
 
-/// Whether `position` (metres) is within `FUEL_STATION_REACH` of one of `stations` (`[x, z]`,
-/// centimetres) on the ground plane.
-pub fn at_station(stations: &[[i32; 2]], position: [f32; 3]) -> bool {
-    stations.iter().any(|&[x, z]| (x as f32 / 100.0 - position[0]).hypot(z as f32 / 100.0 - position[2]) <= FUEL_STATION_REACH)
+/// Whether `position` (metres) is within `FUEL_STATION_REACH` of the middle of one of `stations` on
+/// the ground plane.
+pub fn at_station(stations: &[FuelStation], position: [f32; 3]) -> bool {
+    stations.iter().any(|station| {
+        let [x, z] = station.at;
+        (x as f32 / 100.0 - position[0]).hypot(z as f32 / 100.0 - position[2]) <= FUEL_STATION_REACH
+    })
 }
 
 /// The share of a full tank a holed fuel tank of `vehicle` loses a second: nothing while it is sound.

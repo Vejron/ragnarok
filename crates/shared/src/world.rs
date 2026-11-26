@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::terrain::Ground;
 
-pub const WORLD_VERSION: u8 = 42;
+pub const WORLD_VERSION: u8 = 43;
 
 /// `Manifest::theme`: the world as it always was.
 pub const THEME_PLAIN: u8 = 0;
@@ -149,10 +149,24 @@ pub struct Manifest {
     /// Whether the world's lakes and sea are that colour too, and not the clear blue they are
     /// without it. Only drawn.
     pub tint_all: bool,
-    /// The fuel stations `[x, z]`, centimetres, whole for the same reason as the bus lines: the server
-    /// fills the tank of a vehicle within `FUEL_STATION_REACH` of one, and the client stands a pump
-    /// there and marks it on the map. From OpenStreetMap's `amenity=fuel`.
-    pub fuel_stations: Vec<[i32; 2]>,
+    /// The fuel stations, whole for the same reason as the lifts: they stand from the start
+    /// (`shared::station`), the server fills the tank of a vehicle within `FUEL_STATION_REACH` of one
+    /// and heals whatever goes through its wash, and the client draws them and marks them on the map.
+    /// From OpenStreetMap's `amenity=fuel`.
+    pub fuel_stations: Vec<FuelStation>,
+}
+
+/// A fuel station (`shared::station`): a lot with a sign, a canopy over the pumps and behind it a
+/// drive-through wash, all laid out in the station's own frame.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FuelStation {
+    /// The middle of the lot, centimetres.
+    pub at: [i32; 2],
+    /// How far the station's frame is turned about the vertical, milliradians, as a rotation about +Y:
+    /// its +Z (back from the road it faces) goes to `(sin, cos)`. Its +X runs along that road.
+    pub yaw: i16,
+    /// Height of the lot's paving, centimetres.
+    pub base: i32,
 }
 
 impl Manifest {
@@ -662,9 +676,9 @@ pub struct WorldFile {
     /// The bus lines, from the manifest.
     #[serde(skip)]
     pub bus_lines: Vec<BusLine>,
-    /// The fuel stations `[x, z]`, centimetres, from the manifest.
+    /// The fuel stations, from the manifest.
     #[serde(skip)]
-    pub fuel_stations: Vec<[i32; 2]>,
+    pub fuel_stations: Vec<FuelStation>,
     /// Every ski track. Filled by `assemble`.
     #[serde(skip)]
     pub ski: Vec<SkiTrail>,
@@ -1666,7 +1680,7 @@ mod tests {
             bus_lines: vec![BusLine { points: vec![[0, 0], [30_000, 0], [30_000, 40_000]], stops: vec![0, 30_000, 70_000], signs: vec![[0, 560], [30_000, 560], [30_560, 40_000]] }],
             river_tint: [70, 80, 40],
             tint_all: true,
-            fuel_stations: vec![[1_200, -3_400]],
+            fuel_stations: vec![FuelStation { at: [1_200, -3_400], yaw: 1_571, base: 250 }],
         };
         assert_eq!(Manifest::decode(&manifest.encode()).unwrap(), manifest);
         // A bus line knows its length, and where it is and which way it runs any distance along it.

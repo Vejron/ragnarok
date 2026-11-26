@@ -46,7 +46,7 @@ pub use crate::vehicles::police_car::*;
 pub use crate::vehicles::ambulance::*;
 
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
-pub const PROTOCOL_VERSION: u8 = 101;
+pub const PROTOCOL_VERSION: u8 = 102;
 
 /// Why a page closes its session (`Bye`): the tab is closing or reloading.
 pub const BYE_LEAVING: u8 = 0;
@@ -989,6 +989,47 @@ pub const FUEL_STRANDED_SECONDS: u32 = 5 * 60;
 /// How far apart two fuel stations of a map are at least, metres: the importer makes one of the
 /// pumps, the canopy and the shop that OpenStreetMap maps for the same station.
 pub const FUEL_STATION_APART: f32 = 60.0;
+
+/// A fuel station's lot (`shared::station`), metres: along the road it faces (X of the station's own
+/// frame, which its wash lane runs along), then back from that road (Z, the road on the -Z side). It is
+/// paved, levelled, and cleared of OpenStreetMap's own buildings and trees.
+pub const STATION_LOT: [f32; 2] = [36.0, 24.0];
+/// How far the front edge of a station's lot keeps from the edge of the road it faces, metres.
+pub const STATION_ROAD_CLEAR: f32 = 3.0;
+/// How far from a station the importer looks for the road it faces, metres. A station with no road
+/// that near faces north.
+pub const STATION_ROAD_REACH: f32 = 80.0;
+/// The canopy over the pumps: its middle in the station's frame, metres. The wash bay is behind it,
+/// on the same middle along X, so a car leaves the bay either way with the lot clear ahead of it.
+pub const STATION_CANOPY_AT: [f32; 2] = [0.0, -4.0];
+/// The canopy's roof, metres: along X, along Z.
+pub const STATION_CANOPY_SIZE: [f32; 2] = [14.0, 10.0];
+/// How high the underside of the canopy is over the lot, metres, and how deep its roof and fascia are.
+pub const STATION_CANOPY_HEIGHT: f32 = 4.8;
+pub const STATION_CANOPY_DEPTH: f32 = 0.8;
+/// The foot of the sign's post in the station's frame, metres: the front corner nearest the road.
+pub const STATION_SIGN_AT: [f32; 2] = [-16.0, -10.0];
+/// How high the middle of the round sign stands, metres, and its radius.
+pub const STATION_SIGN_HEIGHT: f32 = 10.5;
+pub const STATION_SIGN_RADIUS: f32 = 1.6;
+/// The wash bay's doors, metres along X of the station's frame: the two ends of the lane through it.
+/// A car may go through either way.
+pub const WASH_BAY_X: [f32; 2] = [-6.0, 6.0];
+/// How far back from the lot's middle the wash lane runs, metres along Z of the station's frame.
+pub const WASH_BAY_Z: f32 = 7.5;
+/// The clear width and height inside the bay and through its doors, metres.
+pub const WASH_BAY_WIDTH: f32 = 5.0;
+pub const WASH_BAY_HEIGHT: f32 = 3.8;
+/// How far out in front of either door the wash takes the wheel and the door opens, metres.
+pub const WASH_LEAD: f32 = 5.0;
+/// How fast the wash pulls a car through, m/s: a walking pace.
+pub const WASH_SPEED: f32 = 2.5;
+/// How far a car may head off the line of the lane and still be taken, radians either way.
+pub const WASH_TAKE_ANGLE: f32 = 0.9;
+/// How far a car's middle may be off the middle of the lane and still be taken, metres.
+pub const WASH_TAKE_ASIDE: f32 = 2.0;
+/// How far ahead along the lane the wash steers for, metres.
+pub const WASH_STEER_AHEAD: f32 = 4.0;
 
 /// How far back the server will rewind other players to meet a shooter's view, in ticks (250 ms).
 /// A shot never reaches further into the past than this, so a laggy shooter has a cap on how far

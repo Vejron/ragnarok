@@ -4,7 +4,7 @@ import { span } from './spans'
 
 /** Mirrors `crates/shared/src/world.rs`. Coordinates are metres: +X east, +Z south, +Y up. */
 
-export const WORLD_VERSION = 42
+export const WORLD_VERSION = 43
 
 /** `Manifest::theme`, mirrors `crates/shared/src/world.rs`. */
 export const THEME_WINTER = 1
@@ -431,6 +431,18 @@ export interface SkiTrail {
 }
 
 /**
+ * A fuel station (`FuelStation` in `crates/shared/src/world.rs`), in metres and radians: the middle of
+ * its lot, how far its frame is turned (its +Z, back from the road, goes to `(sin, cos)`), and the
+ * height of its paving (`shared::station`).
+ */
+export interface FuelStation {
+  x: number
+  z: number
+  yaw: number
+  base: number
+}
+
+/**
  * A ski lift (`Lift` in `crates/shared/src/world.rs`), in metres: its line from the bottom station
  * over the pylons to the top, the ground under each point and the cable's height over each, from the
  * world's zero. Every lift is drawn as a chair lift; `kind` is what OpenStreetMap calls it (`LIFT_*`).
@@ -495,8 +507,8 @@ export interface WorldData {
   riverTint?: number
   /** Whether the lakes and the sea are that colour too (`Manifest::tint_all`). */
   tintAll?: boolean
-  /** The fuel stations, metres (`Manifest::fuel_stations`): a vehicle near one has its tank filled (FUEL.md). */
-  fuelStations?: Point2[]
+  /** The fuel stations (`Manifest::fuel_stations`): a vehicle near one has its tank filled, and one through its wash is healed (FUEL.md). */
+  fuelStations?: FuelStation[]
   /**
    * Which tiles of the square grid are part of the world, `grid × grid` row-major, or `null` when
    * every one is. Tiles outside it have no ground and are walled off.
@@ -611,7 +623,7 @@ export function trunkRadiusCm(kind: number, heightCm: number, crownCm: number): 
 const noCollision = (): CollisionMesh => ({ vertices: new Float32Array(), triangles: new Uint32Array() })
 
 export function decodeManifest(bytes: Uint8Array): WorldData {
-  const [version, frame, halfExtent, tileSize, spawns, tiles, groundCell, theme, lifts, openWater, busLines, riverTint, tintAll, fuelStations] = decode(bytes) as [number, [number, number, number], number, number, number[][], number[][], number, number, [number, number, number[][], number[], number[]][], boolean, [number[][], number[], number[][]][], [number, number, number], boolean, number[][]]
+  const [version, frame, halfExtent, tileSize, spawns, tiles, groundCell, theme, lifts, openWater, busLines, riverTint, tintAll, fuelStations] = decode(bytes) as [number, [number, number, number], number, number, number[][], number[][], number, number, [number, number, number[][], number[], number[]][], boolean, [number[][], number[], number[][]][], [number, number, number], boolean, [[number, number], number, number][]]
   if (version !== WORLD_VERSION) throw new Error(`world version ${version}, expected ${WORLD_VERSION}`)
   const refs = tiles.map(([col, row, hash]) => ({ col: col!, row: row!, hash: hash! }))
   const grid = Math.max(1, Math.ceil((2 * halfExtent) / Math.max(tileSize, 1)))
@@ -633,7 +645,7 @@ export function decodeManifest(bytes: Uint8Array): WorldData {
     busLines: busLines.map(([points, stops, signs]) => ({ points: points.map(point), stops: stops.map(metres), signs: signs.map(point) })),
     riverTint: (riverTint[0] << 16) | (riverTint[1] << 8) | riverTint[2],
     tintAll,
-    fuelStations: fuelStations.map(point),
+    fuelStations: fuelStations.map(([[x, z], yaw, base]) => ({ x: metres(x), z: metres(z), yaw: yaw / 1000, base: metres(base) })),
     inside,
     collision: noCollision(),
     bytes,

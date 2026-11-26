@@ -34,7 +34,7 @@ import { TitanModel } from './render/titan'
 import { TitanHands } from './titanhands'
 import { Headset, type HeadsetFrame } from './xr/headset'
 import { fistsFromHands } from './xr/hands'
-import { dayPhase } from './render/daynight'
+import { dayPhase, nightAt } from './render/daynight'
 import { DamageNumbers } from './render/damagenumbers'
 import { Particles } from './render/particles'
 import { iced, setIced, setWinter, winter } from './render/season'
@@ -955,6 +955,13 @@ export class Game {
         if (news) this.notices.receive(NOTICE_SAY, news, now)
         break
       }
+      case 'washed':
+        // Out of a fuel station's wash, healed: its dents, holes, scorch and blood come off with it.
+        for (const id of message.vehicles) {
+          this.hullMarks.clear(id)
+          if (id === this.seat?.vehicle) this.notices.receive(NOTICE_SAY, 'Washed and mended: the police have lost you', now)
+        }
+        break
       case 'delivered': {
         this.board.cash(message.by, message.cash)
         const news = this.deliveries.delivered(message, this.localId, nameFor)
@@ -1332,7 +1339,7 @@ export class Game {
     this.followClock(renderTick)
     this.liftView?.update(this.liftTick(now), eye, this.scene.scene.fog?.far ?? Infinity)
     this.busStops?.update(eye, this.scene.scene.fog?.far ?? Infinity, (x, z) => this.terrain?.sample(x, z) ?? null)
-    this.fuelStations?.update(eye, this.scene.scene.fog?.far ?? Infinity, (x, z) => this.terrain?.sample(x, z) ?? null)
+    this.fuelStations?.update(eye, this.scene.scene.fog?.far ?? Infinity, nightAt(this.scene.phase), dt, this.vehicles.placed.values())
 
     const seat = this.seat
     const view = seat ? crewedSeatView(seat.kind, seat.index, this.vehicles.placed.get(seat.vehicle)?.seats ?? []) : null
@@ -1792,8 +1799,8 @@ export class Game {
       ...(gauges?.includes('tubes') ? { bombs: ride?.arms?.bombs ?? null } : {}),
       air: gauges?.includes('air') ? (this.driver?.thrust?.air ?? null) : gauges?.includes('wind') && seat ? this.sailing(seat.vehicle, now) : null,
       boost: gauges?.includes('boost') ? (this.driver?.thrust?.air ?? null) : null,
-      fuel: ride?.fuel != null ? fuelGauge(ride.fuel, this.fuelStations?.stations ?? [], ride.x, ride.z) : null,
-      fuelStations: this.fuelStations?.stations ?? [],
+      fuel: ride?.fuel != null ? fuelGauge(ride.fuel, this.fuelStations?.points ?? [], ride.x, ride.z) : null,
+      fuelStations: this.fuelStations?.points ?? [],
       stamina: !seated && able ? { left: 1 - local.spent / STAMINA_FULL, winded: local.winded } : null,
       breath: !seated && player.alive && player.breath < 1 ? player.breath : null,
       rotor: gauges?.includes('rotor') && seat ? this.rotorGauge(seat.vehicle) : null,

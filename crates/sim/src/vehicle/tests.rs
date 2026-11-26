@@ -3451,3 +3451,63 @@ fn run_alone_floors_the_throttle_on_the_boost_and_pulling_back_still_brakes() {
     let controls = CarControls::driven(KIND_VOLVO_740, &input);
     assert!(controls.throttle < 0.0, "{controls:?}");
 }
+
+/// A flat world with a fuel station at the origin, unturned: its wash lane runs along +X at z = `WASH_BAY_Z`.
+fn station_world() -> WorldFile {
+    WorldFile { fuel_stations: vec![shared::world::FuelStation { at: [0, 0], yaw: 0, base: 0 }], ..flat() }
+}
+
+/// Floored, with someone at the wheel.
+const WASHED_DRIVER: CarControls = CarControls { throttle: 1.0, powered: true, ..CarControls::IDLE };
+
+#[test]
+fn the_wash_takes_a_car_floored_at_its_door_through_at_a_walking_pace_down_the_middle() {
+    use shared::consts::{WASH_BAY_X, WASH_BAY_Z, WASH_LEAD, WASH_SPEED};
+    let mut physics = Physics::new(&station_world()).unwrap();
+    // In the lead-in before the -X door, a little off the middle, facing +X.
+    physics.add_car(1, KIND_VOLVO_240, [WASH_BAY_X[0] - 3.5, 1.2, WASH_BAY_Z + 0.6], -std::f32::consts::FRAC_PI_2);
+    let (mut fastest, mut widest, mut through) = (0.0_f32, 0.0_f32, false);
+    for _ in 0..60 * 14 {
+        physics.drive_car(1, WASHED_DRIVER, TICK_DT);
+        physics.step_cars(TICK_DT);
+        let pose = physics.car_pose(1).unwrap();
+        let [x, _, z] = pose.position;
+        if x > WASH_BAY_X[0] + 1.0 && x < WASH_BAY_X[1] {
+            fastest = fastest.max(pose.forward_speed);
+            widest = widest.max((z - WASH_BAY_Z).abs());
+        }
+        through |= x > WASH_BAY_X[1] + WASH_LEAD + 1.0;
+    }
+    assert!(through, "it came out the far side: {:?}", physics.car_pose(1));
+    assert!(fastest < WASH_SPEED + 0.6, "held near the wash's pace in the bay, whatever the driver asked: {fastest}");
+    assert!(widest < 0.7, "down the middle, clear of the walls: {widest}");
+    // Out of the lead-out the driver has it back, and the floored throttle takes it away fast.
+    assert!(physics.car_pose(1).unwrap().forward_speed > WASH_SPEED + 2.0);
+}
+
+#[test]
+fn a_car_across_the_wash_lane_or_with_nobody_driving_is_not_the_washs() {
+    use shared::consts::{WASH_BAY_X, WASH_BAY_Z, WASH_SPEED};
+    let mut physics = Physics::new(&station_world()).unwrap();
+    // In the lead-in but facing -Z, across the lane: floored, it goes on as it likes.
+    physics.add_car(1, KIND_VOLVO_240, [WASH_BAY_X[0] - 2.0, 1.2, WASH_BAY_Z], 0.0);
+    let pose = run(&mut physics, WASHED_DRIVER, 120);
+    assert!(pose.forward_speed > WASH_SPEED + 1.0, "{pose:?}");
+    // Facing along the lane with nobody at the wheel, it stands where it was left.
+    let mut physics = Physics::new(&station_world()).unwrap();
+    physics.add_car(1, KIND_VOLVO_240, [WASH_BAY_X[0] - 2.0, 1.2, WASH_BAY_Z], -std::f32::consts::FRAC_PI_2);
+    let pose = run(&mut physics, CarControls { handbrake: true, ..CarControls::IDLE }, 120);
+    assert!(pose.forward_speed.abs() < 0.2, "{pose:?}");
+}
+
+#[test]
+fn a_stations_bay_walls_are_solid() {
+    use shared::consts::{WASH_BAY_WIDTH, WASH_BAY_X, WASH_BAY_Z};
+    let mut physics = Physics::new(&station_world()).unwrap();
+    // Beside the bay, driven at its outer wall along +Z (yaw π faces +Z): stopped by it.
+    let wall = WASH_BAY_Z - WASH_BAY_WIDTH / 2.0;
+    // From just behind the canopy, clear of its pumps.
+    physics.add_car(1, KIND_VOLVO_240, [(WASH_BAY_X[0] + WASH_BAY_X[1]) / 2.0, 1.2, wall - 4.5], std::f32::consts::PI);
+    let pose = run(&mut physics, WASHED_DRIVER, 60 * 6);
+    assert!(pose.position[2] < wall, "the wall held it: {pose:?}");
+}

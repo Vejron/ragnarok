@@ -659,7 +659,15 @@ fn main() -> Result<()> {
         let (osm, jointed) = network::join_tracks(osm, place.frame);
         eprintln!("railways: {jointed} joints between ways of one track closed");
         let (landforms, cliffs) = ocad.as_ref().map_or((&[][..], &[][..]), |ocad| (ocad.landforms.as_slice(), ocad.cliffs.as_slice()));
-        let features = if args.raw_ground { condition::Features::default() } else { condition::Features::from_osm(&osm, place.frame, &map.streams) };
+        // The fuel stations' lots, along the roads, with OpenStreetMap's own buildings on them cleared.
+        let fuel: Vec<[f64; 2]> = osm_import::fuel::stations(&data).iter().map(|station| place.frame.project(station.lat, station.lon)).collect();
+        let lots = osm_import::fuel::lots(&fuel, &osm, place.frame);
+        let (osm, cleared) = osm_import::fuel::clear(osm, &lots, place.frame);
+        eprintln!("fuel: {} mapped in OpenStreetMap, {} stations, {cleared} buildings cleared off their lots", fuel.len(), lots.len());
+        let mut features = if args.raw_ground { condition::Features::default() } else { condition::Features::from_osm(&osm, place.frame, &map.streams) };
+        if !args.raw_ground {
+            features.pads.extend(lots.iter().map(osm_import::fuel::ring));
+        }
         let (ground, datum, dem, placed, shaping) = terrain(&args, &place, mask, &mut map, &channel::Beside::from_osm(&osm, place.frame), &features, landforms, cliffs)?;
         let Laser { roofs: cloud, decks, trees: detected, bushes: found_bushes } = laser(&args, &place, mask, datum, &osm, dem.as_ref())?;
         progress::stage("trees");
@@ -718,13 +726,12 @@ fn main() -> Result<()> {
         };
         let lifts = osm_import::osm_lifts::from(&data);
         let bus_stops: Vec<[f64; 2]> = if options.buses { osm_import::buslines::stops(&data).iter().map(|stop| place.frame.project(stop.lat, stop.lon)).collect() } else { Vec::new() };
-        let fuel: Vec<[f64; 2]> = osm_import::fuel::stations(&data).iter().map(|station| place.frame.project(station.lat, station.lon)).collect();
         drop(data);
         eprintln!("lifts: {} from OpenStreetMap", lifts.len());
         let mut built = assemble::from_osm(&place, args.tile, mask, &osm, &planted, ground, placed, cloud.as_ref(), decks.as_ref(), photo.as_ref(), &ski, ocad.as_ref(), course.as_ref(), &lifts);
         eprintln!("lifts: {} in the world", built.manifest.lifts.len());
-        osm_import::fuel::lay(&mut built, &fuel);
-        eprintln!("fuel: {} mapped in OpenStreetMap, {} stations in the world", fuel.len(), built.manifest.fuel_stations.len());
+        osm_import::fuel::lay(&mut built, &lots);
+        eprintln!("fuel: {} stations in the world", built.manifest.fuel_stations.len());
         if options.buses {
             osm_import::buslines::lay(&mut built, &bus_stops);
             eprintln!("buses: {} stops from OpenStreetMap, {} lines", bus_stops.len(), built.manifest.bus_lines.len());

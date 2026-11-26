@@ -100,6 +100,7 @@ fn samples() -> Vec<(&'static str, Vec<u8>)> {
             offers: vec![JobOffer { id: 3, shop_x: -12_345, shop_z: 67_890, house_x: 100_000, house_z: -5, pay: 87, par: 340 }],
             mine: vec![JobState { id: 2, stage: crate::consts::JOB_CARRY, x: 4_000, z: -70_000, pay: 51, left: -30 }],
         }),
+        case("washed", S_WASHED, &Washed { tag: S_WASHED, vehicles: vec![7, 70_000] }),
         case("delivered", S_DELIVERED, &Delivered { tag: S_DELIVERED, by: 4, courier: 9, job: 70_000, pay: 87, cash: 1_000 }),
         case("notice", S_NOTICE, &Notice { tag: S_NOTICE, kind: NOTICE_OBJECTIVE, text: "Go".into() }),
         case("destroyed", S_DESTROYED, &Destroyed { tag: S_DESTROYED, objects: vec![DestroyedObject { kind: OBJ_TREE, col: 2, row: 3, index: 70_000, yaw: -1571, force: 51, stage: GROWN_YOUNG }] }),

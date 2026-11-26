@@ -45,7 +45,7 @@ The docs are in [docs/](docs/).
 - [GUNSMOKE.md](docs/GUNSMOKE.md): a shell leaving the barrel: fire, a bank of smoke sized to the gun, brake jets, sparks, dust and a barrel that goes on smoking, with smoke that churns, leans with the wind and is lit by flashes and lamps; small arms smoke too, every gun has a shaped muzzle flare, and the sniper kicks down its scope
 - [HULL-DAMAGE.md](docs/HULL-DAMAGE.md): what a round leaves on a vehicle: dents, soot, holes ringed with blued steel and gouges, drawn by the mesh's own shader, and the blow that rocks it, a Titan too
 - [WRECKS.md](docs/WRECKS.md): a vehicle whose health is gone burns for three seconds while its crew gets out, then goes up as its kind does: a car thrown, a tank where it stands, a Titan falling away from the blow
-- [FUEL.md](docs/FUEL.md): vehicles burn fuel while a player drives them, leak it through a holed tank, fill up at the fuel stations of OpenStreetMap, and go home when left empty where nobody is near
+- [FUEL.md](docs/FUEL.md): vehicles burn fuel while a player drives them, leak it through a holed tank, fill up at the fuel stations of OpenStreetMap, and go home when left empty where nobody is near; each station has a drive-through wash that mends a car and loses the police
 - [DRONES.md](docs/DRONES.md): FPV and loitering drones
 - [GYRO-AIM.md](docs/GYRO-AIM.md): aiming on a phone by turning it
 - [BACKPACK.md](docs/BACKPACK.md): backpack mode

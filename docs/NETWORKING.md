@@ -77,6 +77,7 @@ Each datagram repeats the newest 4 frames, so a single lost datagram loses nothi
 | 21 | `delivered` | reliable stream | `[21, by u32, courier u32, job u32, pay u32, cash u32]`: `by` handed in `courier`'s job (someone else's when they took it from them) for `pay`, which makes `cash` in all. Sent to everyone, before the phones that change with it |
 | 22 | `healed` | reliable stream | `[22, [[col u16, row u16], …]]`: these tiles' ground has healed back to the world file's heights (protocol 98, CRATERS.md "Healing"). Sent to everyone |
 | 23 | `regrown` | reliable stream | `[23, [[kind u8, col u16, row u16, index u32, stage u8], …]]`: felled trees grown back a stage and broken pieces of fences and walls mended (`GROWN_*`; `GROWN_WHOLE`, 3, as they were), where no player could see it (protocol 99, [REGROWTH.md](REGROWTH.md)). Sent to everyone |
+| 24 | `washed` | reliable stream | `[24, [vehicle u32, …]]`: these vehicles came out of a fuel station's wash this tick, mended, so every client takes the dents, holes, scorch and blood off them (protocol 102, [FUEL.md](FUEL.md) "The car wash") |
 
 - `baseline` is the `server_tick` of the snapshot this one is a change from, or 0 when it is not. Then every entity in range comes whole. Each `update` is one entity's components: see [Entities and components](#entities-and-components) and [Delta snapshots](#delta-snapshots-and-interest).
 - `ack` is the newest input `seq` of the receiving player already applied to this state. The client drops pending inputs up to `ack` and replays the rest.

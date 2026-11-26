@@ -44,6 +44,10 @@ pub use spec::half_extents;
 pub use limbs::{Contact, Hand, LIMB_GROUP, LimbsPose};
 pub(super) use spec::{Airframe, Arms, Buttons, Drive, Floats, Gait, Lift, Role, Rotorcraft, Runners, Shape, Solid, Spec, spec};
 
+/// The least room a vehicle the wash takes leaves either side of it in the bay, metres.
+const WASH_ROOM: f32 = 0.3;
+/// How far over or under the floor of a wash bay a car's middle may be and still be in its lane, metres.
+const WASH_ABOVE: f32 = 3.0;
 
 /// How quickly a tank's yaw rate follows the stick, rad/s².
 const TURN_ACCEL: f32 = 3.0;
@@ -893,6 +897,18 @@ impl Physics {
         }
     }
 
+    /// Mends car `id` where it is, as `reset_car` does without moving it: a turret shot off is back,
+    /// and its tank is full. Its wheels and engine follow the `CarCondition` it is given next.
+    pub fn mend_car(&mut self, id: u32) {
+        let Some(car) = self.cars.get_mut(&id) else { return };
+        car.tank = car.spec.tank;
+        for &handle in &car.extra {
+            if let Some(collider) = self.colliders.get_mut(handle) {
+                collider.set_enabled(true);
+            }
+        }
+    }
+
     /// Puts car `id` on rails, or takes it off them. On rails it is a moving obstacle: it goes where
     /// `place_car` puts it each step, whatever is in its way, with no wheels, springs or engine to
     /// work out, and shots still meet it. Off them it is a car again, moving at `velocity`, m/s.
@@ -993,8 +1009,41 @@ impl Physics {
         }
     }
 
-    /// Applies the driver's controls to the wheels for the next [`Physics::step_cars`].
+    /// `controls`, or the wash's in their place (`shared::station::pull`): while car `id` is driven, on
+    /// wheels, narrow enough for the bay, with its middle in a station's wash lane and facing along
+    /// it, the wash takes the wheel and pulls it through at a walking pace whatever its driver asks.
+    /// Both ends' physics do this, so the driver's prediction agrees with the server.
+    fn washed(&self, id: u32, controls: CarControls) -> CarControls {
+        if self.washes.is_empty() || !controls.powered {
+            return controls;
+        }
+        let Some(car) = self.cars.get(&id) else { return controls };
+        if car.spec.lift != Lift::Wheels || car.spec.half_extents[0] > shared::consts::WASH_BAY_WIDTH / 2.0 - WASH_ROOM {
+            return controls;
+        }
+        let Some(body) = self.bodies.get(car.body) else { return controls };
+        let at = body.translation();
+        let forward = body.rotation() * Vector::new(0.0, 0.0, -1.0);
+        let speed = forward.dot(body.linvel());
+        let yaw = (-forward.x).atan2(-forward.z);
+        let axles = car.spec.axles;
+        let wheelbase = axles.iter().copied().fold(f32::MIN, f32::max) - axles.iter().copied().fold(f32::MAX, f32::min);
+        for bay in &self.washes {
+            // A car on a bridge over the lot, or under it, is not in the lane.
+            if (at.y - bay.floor).abs() > WASH_ABOVE {
+                continue;
+            }
+            if let Some([throttle, steer]) = shared::station::pull(bay, [at.x, at.z], yaw, speed, wheelbase, car.spec.steer_lock) {
+                return CarControls { throttle, steer, powered: true, ..CarControls::IDLE };
+            }
+        }
+        controls
+    }
+
+    /// Applies the driver's controls to the wheels for the next [`Physics::step_cars`]. In a fuel
+    /// station's wash lane the wash drives instead (`washed`).
     pub fn drive_car(&mut self, id: u32, controls: CarControls, dt: f32) {
+        let controls = self.washed(id, controls);
         let Some(car) = self.cars.get_mut(&id) else { return };
         if car.rails {
             return;

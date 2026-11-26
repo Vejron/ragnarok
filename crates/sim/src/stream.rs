@@ -136,6 +136,7 @@ impl Physics {
         for lift in crate::lift_colliders(&manifest.lifts) {
             physics.insert_static(lift, None);
         }
+        physics.add_stations(&manifest.fuel_stations);
         physics.step_pipeline();
         physics
     }

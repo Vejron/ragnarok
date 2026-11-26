@@ -104,6 +104,8 @@ pub struct Physics {
     wading: KinematicCharacterController,
     /// Where the groomed ski tracks are.
     ski: SkiMap,
+    /// The fuel stations' wash lanes (`shared::station::Bay`): a car in one is driven through by the wash.
+    washes: Vec<shared::station::Bay>,
     character_shape: Collider,
     /// The shape of a character lying down. Same controller; only the collider differs.
     prone_shape: Collider,
@@ -273,6 +275,33 @@ pub(crate) fn lift_colliders(lifts: &[shared::world::Lift]) -> Vec<Collider> {
             builder.translation(Vector::from(part.centre)).build()
         })
         .collect()
+}
+
+/// The fuel stations' paving, wash bays, canopies, pumps and sign posts (`shared::station::structure`).
+pub(crate) fn station_colliders(stations: &[shared::world::FuelStation]) -> Vec<Collider> {
+    use shared::lifts::Shape;
+    stations
+        .iter()
+        .flat_map(shared::station::structure)
+        .map(|part| {
+            let builder = match part.shape {
+                Shape::Box([hx, hy, hz]) => ColliderBuilder::cuboid(hx, hy, hz),
+                Shape::Post { radius, half } => ColliderBuilder::cylinder(half, radius),
+            };
+            builder.rotation(Vector::new(0.0, part.turn, 0.0)).translation(Vector::from(part.centre)).build()
+        })
+        .collect()
+}
+
+impl Physics {
+    /// Stands `stations` (`station_colliders`) and keeps their wash lanes, which drive a car in one
+    /// through (`drive_car`). They stand from the start, whatever tiles are loaded.
+    pub(crate) fn add_stations(&mut self, stations: &[shared::world::FuelStation]) {
+        for collider in station_colliders(stations) {
+            self.insert_static(collider, None);
+        }
+        self.washes = stations.iter().map(shared::station::Bay::of).collect();
+    }
 }
 
 /// The buildings, the rest of the collision mesh (bridges), the tree trunks, the fences and walls, the
@@ -643,6 +672,7 @@ impl Physics {
         for lift in lift_colliders(&world.lifts) {
             physics.insert_static(lift, None);
         }
+        physics.add_stations(&world.fuel_stations);
         for (collider, object) in object_colliders(world)? {
             physics.insert_static(collider, object);
         }
@@ -668,6 +698,7 @@ impl Physics {
             snapping: KinematicCharacterController { snap_to_ground: Some(CharacterLength::Absolute(SNAP_DISTANCE)), ..controller() },
             ski_snapping: KinematicCharacterController { snap_to_ground: Some(CharacterLength::Absolute(SKI_SNAP_DISTANCE)), ..controller() },
             ski: SkiMap::default(),
+            washes: Vec::new(),
             swimmer: swimmer(),
             wading: KinematicCharacterController { snap_to_ground: Some(CharacterLength::Absolute(SNAP_DISTANCE)), ..swimmer() },
             controller: controller(),

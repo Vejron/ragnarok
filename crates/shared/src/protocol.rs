@@ -49,6 +49,7 @@ pub const S_JOBS: u8 = 20;
 pub const S_DELIVERED: u8 = 21;
 pub const S_HEALED: u8 = 22;
 pub const S_REGROWN: u8 = 23;
+pub const S_WASHED: u8 = 24;
 
 /// `Hit` roles: whose feedback it is.
 /// You hurt something.
@@ -612,6 +613,12 @@ messages! {
     /// jobs, when either changes, once a second while they have one, and on joining.
     #[derive(Eq)]
     [S_JOBS] Jobs { offers: Vec<JobOffer>, mine: Vec<JobState> }
+
+    /// Sent on a reliable stream to everyone when vehicles come out of a fuel station's wash, healed
+    /// (FUEL.md): the ids of those that did this tick, so every client takes the dents, holes, scorch
+    /// and blood off them.
+    #[derive(Eq)]
+    [S_WASHED] Washed { vehicles: Vec<u32> }
 
     /// Sent on a reliable stream to everyone when a parcel is handed in: `by` delivered job `job`, which
     /// was `courier`'s (someone else's when `by` took it from them), and was paid `pay`, which makes

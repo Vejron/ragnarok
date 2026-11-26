@@ -3,13 +3,13 @@ use crate::game::{Command, Game, Outgoing, Player, Seats, TEAM_BOTS};
 use shared::consts::*;
 use shared::protocol::InputFrame;
 use shared::vec3;
-use shared::world::{Road, WORLD_VERSION, WorldFile};
+use shared::world::{FuelStation, Road, WORLD_VERSION, WorldFile};
 use sim::STANDING_Y;
 use tokio::sync::{mpsc, oneshot};
 
 /// A flat 1200 m square with one road along X, a jeep and a sports car parked on it near the middle,
-/// and `stations` (`[x, z]`, centimetres).
-fn game(stations: Vec<[i32; 2]>) -> Game {
+/// and `stations`.
+fn game(stations: Vec<FuelStation>) -> Game {
     let spawns: Vec<[i32; 2]> = [[-25_000, 0], [25_000, 0]].into_iter().chain((0..12).map(|i| [i * 2500 - 13_750, 0])).collect();
     let map = WorldFile {
         version: WORLD_VERSION,
@@ -191,7 +191,7 @@ fn a_station_fills_an_empty_tank_in_ten_seconds_and_only_near_it() {
     let (jeep, sports) = (car(&game, KIND_JEEP), car(&game, KIND_SPORTS));
     // A station a little off the road from the jeep; the sports car is moved well out of its reach.
     let at = game.world.physics.car_pose(jeep).unwrap().position;
-    game.world.map.fuel_stations = vec![[(at[0] * 100.0) as i32, (at[2] * 100.0) as i32 + 1_500]];
+    game.world.map.fuel_stations = vec![FuelStation { at: [(at[0] * 100.0) as i32, (at[2] * 100.0) as i32 + 1_500], yaw: 0, base: 0 }];
     game.world.physics.reset_car(sports, [at[0] + FUEL_STATION_REACH + 20.0, at[1], at[2]], 0.0);
     set_fuel(&mut game, jeep, 0.0);
     set_fuel(&mut game, sports, 0.0);

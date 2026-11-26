@@ -34,6 +34,7 @@ export const S_JOBS = 20
 export const S_DELIVERED = 21
 export const S_HEALED = 22
 export const S_REGROWN = 23
+export const S_WASHED = 24
 
 export interface BulletSpawn {
   id: number
@@ -357,6 +358,11 @@ export interface Jobs {
   mine: JobState[]
 }
 
+export interface Washed {
+  type: 'washed'
+  vehicles: number[]
+}
+
 export interface Delivered {
   type: 'delivered'
   by: number
@@ -399,7 +405,7 @@ export interface Rtc {
   json: string
 }
 
-export type ServerMessage = Welcome | Snapshot | Pong | Leave | Kill | Scores | Profiles | Notice | Destroyed | Damaged | Carved | Built | Gates | Cratered | Dug | Regrown | Healed | Marks | Backpack | Jobs | Delivered | Armor | Hit | Rtc
+export type ServerMessage = Welcome | Snapshot | Pong | Leave | Kill | Scores | Profiles | Notice | Destroyed | Damaged | Carved | Built | Gates | Cratered | Dug | Regrown | Healed | Marks | Backpack | Jobs | Washed | Delivered | Armor | Hit | Rtc
 
 function decodeBulletSpawn(r: unknown): BulletSpawn | undefined {
   if (!Array.isArray(r) || r.length !== 10) return undefined
@@ -773,6 +779,13 @@ function decodeJobs(r: readonly unknown[]): Jobs | undefined {
   return { type: 'jobs', offers, mine }
 }
 
+function decodeWashed(r: readonly unknown[]): Washed | undefined {
+  if (r.length !== 2) return undefined
+  const vehicles = w.ints(r[1])
+  if (vehicles === undefined) return undefined
+  return { type: 'washed', vehicles }
+}
+
 function decodeDelivered(r: readonly unknown[]): Delivered | undefined {
   if (r.length !== 6) return undefined
   const by = w.int(r[1])
@@ -866,6 +879,8 @@ export function decodeMessage(r: readonly unknown[]): ServerMessage | undefined 
       return decodeBackpack(r)
     case S_JOBS:
       return decodeJobs(r)
+    case S_WASHED:
+      return decodeWashed(r)
     case S_DELIVERED:
       return decodeDelivered(r)
     case S_ARMOR:

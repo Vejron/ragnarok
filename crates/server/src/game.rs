@@ -596,6 +596,7 @@ impl Game {
         self.heal();
         self.broadcast_built();
         self.broadcast_gates();
+        self.broadcast_washed();
         self.broadcast_backpack();
         self.send_deliveries();
         for text in std::mem::take(&mut self.world.fresh.said) {
@@ -729,6 +730,15 @@ impl Game {
         }
         let gates = self.world.fresh.gates.drain(..).map(|(id, door, open)| GateState { col: id.col, row: id.row, index: id.index, door: door as u16, open }).collect();
         self.broadcast(encode(&Gates { tag: S_GATES, live: true, gates }));
+    }
+
+    /// Tells everyone which vehicles came out of a wash this tick, as one message.
+    fn broadcast_washed(&mut self) {
+        if self.world.fresh.washed.is_empty() {
+            return;
+        }
+        let vehicles = std::mem::take(&mut self.world.fresh.washed);
+        self.broadcast(encode(&Washed { tag: S_WASHED, vehicles }));
     }
 
     /// Tells everyone where the backpack's circle is, when its mechanic has something to say.
