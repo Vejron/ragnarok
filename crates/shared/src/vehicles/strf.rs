@@ -124,6 +124,7 @@ pub(super) const STRF: VehicleDef = VehicleDef {
         linear_damping: 0.05,
         com_drop: 0.0,
         tank: Some(BOOST_FULL),
+        fuel: Some(540.0),
         buttons: Buttons::Boost,
         boost: Some(Boost::HEAVY),
         aims: false,

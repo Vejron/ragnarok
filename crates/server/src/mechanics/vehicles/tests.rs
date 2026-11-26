@@ -625,7 +625,7 @@ fn a_wheel_takes_a_hit_beside_it_and_a_wreck_comes_back_whole() {
     game.world.entities.get_mut::<Vehicle>(a).unwrap().damage = damage;
     game.world.entities.insert(a, HurtBy(7));
     super::super::combat::damage_vehicle(&mut game.world, a, 255, None);
-    for _ in 0..WRECK_TICKS + 2 {
+    for _ in 0..DOOM_TICKS + WRECK_TICKS + 2 {
         Vehicles.on_tick(&mut game.world, TICK_DT);
     }
     assert_eq!((game.world.entities.of::<Health>(a).hp, game.world.entities.of::<Vehicle>(a).damage), (vehicle_hp(KIND_JEEP), [0; shared::protocol::DAMAGE_SLOTS]));
@@ -1121,4 +1121,53 @@ fn a_tank_goes_through_a_house_wall_losing_little() {
     let (came_in, goes_on, broke) = ram_the_house(KIND_TANK, 8.0);
     assert!(broke, "the wall breaks");
     assert!(goes_on > came_in * 0.8, "came in at {came_in} m/s, goes on at {goes_on}");
+}
+
+#[test]
+fn a_doomed_car_cannot_be_driven_and_its_driver_who_gets_out_and_runs_lives() {
+    let mut game = game();
+    let (id, _inbox) = join(&mut game);
+    let mut seq = 0;
+    idle(&mut game, id, &mut seq, 30);
+    let vid = move_player_next_to_a_car(&mut game, id);
+    press(&mut game, id, &mut seq, (0, 0), BUTTON_USE, 1);
+    idle(&mut game, id, &mut seq, 3);
+    assert_eq!(game.world.entities.of::<Seats>(vid)[0], Some(id));
+
+    super::super::combat::damage_vehicle(&mut game.world, vid, 255, None);
+    // Its health is gone: full throttle does nothing, and nobody else can get in.
+    press(&mut game, id, &mut seq, (0, 1), 0, TICK_RATE / 2);
+    let speed = vec3::length(game.world.physics.car_pose(vid).unwrap().velocity);
+    assert!(speed < 0.5, "it does not answer the throttle ({speed} m/s)");
+    assert!(game.world.entities.alive(id) && game.world.entities.of::<Seats>(vid)[0] == Some(id), "the driver is still in it, alive");
+
+    // Out, and away from it as fast as they can.
+    press(&mut game, id, &mut seq, (0, 0), BUTTON_USE, 1);
+    press(&mut game, id, &mut seq, (0, 1), BUTTON_RUN, DOOM_TICKS);
+    assert!(game.world.entities.has::<Wreck>(vid), "it has gone up");
+    let (player, pose) = (game.world.entities.of::<Player>(id).character.position, game.world.physics.car_pose(vid).unwrap());
+    assert!(game.world.entities.alive(id), "they got clear, {} m away", vec3::distance(player, pose.position));
+}
+
+#[test]
+fn a_wrecked_tank_burns_where_it_stands_and_is_not_thrown() {
+    let mut game = game();
+    let vid = game.world.entities.all::<Vehicle>().find(|(_, vehicle)| vehicle.kind == KIND_TANK).unwrap().0;
+    for _ in 0..TICK_RATE {
+        game.step();
+    }
+    let start = game.world.physics.car_pose(vid).unwrap().position;
+    super::super::combat::damage_vehicle(&mut game.world, vid, 255, None);
+    let mut highest = start[1];
+    let mut fastest_turn = 0.0f32;
+    for _ in 0..DOOM_TICKS + 2 * TICK_RATE {
+        game.step();
+        highest = highest.max(game.world.physics.car_pose(vid).unwrap().position[1]);
+        fastest_turn = fastest_turn.max(vec3::length(game.world.physics.car_motion(vid).unwrap().angvel));
+    }
+    assert!(game.world.entities.has::<Wreck>(vid), "it has gone up");
+    let pose = game.world.physics.car_pose(vid).unwrap();
+    assert!(highest - start[1] < 0.6, "it hardly left the ground ({} m)", highest - start[1]);
+    assert!(fastest_turn < 1.0, "it was not sent tumbling ({fastest_turn} rad/s)");
+    assert!(pose.up_y > 0.9 && (pose.position[0] - start[0]).hypot(pose.position[2] - start[2]) < 0.5, "it lies where it stood, upright: {pose:?}");
 }

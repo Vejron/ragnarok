@@ -92,6 +92,7 @@ pub(super) const SUBMARINE: VehicleDef = VehicleDef {
         // Ballast low in the hull: it rolls back upright.
         com_drop: 0.5,
         tank: None,
+        fuel: Some(720.0),
         buttons: Buttons::Drive,
         boost: Spec::NO_BOOST,
         aims: false,

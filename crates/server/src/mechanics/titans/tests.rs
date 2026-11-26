@@ -704,3 +704,42 @@ fn a_titan_punching_another_hurts_it_once_per_blow_and_a_blocked_one_less() {
     assert!(clean[0] >= 10, "a punch to the head hurts it: {clean:?}");
     assert!(blocked.iter().map(|&lost| u32::from(lost)).sum::<u32>() * 3 <= u32::from(clean[0]), "the guard takes most of it: {blocked:?} against {clean:?}");
 }
+
+/// A Titan facing -Z struck down by a soldier standing `ahead` metres in front of it (behind it when
+/// negative): which way its front faces once it has fallen, as the y of its forward axis.
+fn struck_down_from(ahead: f32) -> f32 {
+    let mut game = game();
+    let vid = titan(&mut game);
+    let shooter = join(&mut game);
+    stand(&mut game, shooter, [0.0, -ahead]);
+    game.world.entities.of_mut::<Health>(vid).hp = 1;
+    crate::mechanics::damage_vehicle(&mut game.world, vid, u8::MAX, Some(shooter));
+    assert!(game.world.entities.dead(vid));
+    let mut rise = 0.0f32;
+    let mut gone_up = None;
+    for tick in 0..DOOM_TICKS + WRECK_TOPPLE_TICKS + TICK_RATE {
+        game.step();
+        rise = rise.max(game.world.physics.car_pose(vid).unwrap().velocity[1]);
+        if gone_up.is_none() && game.world.entities.has::<crate::game::Wreck>(vid) {
+            gone_up = Some((tick, game.world.physics.car_pose(vid).unwrap().up_y));
+        }
+    }
+    assert!(rise < 1.0, "it is not thrown up ({rise} m/s)");
+    let (tick, up) = gone_up.expect("it went up");
+    assert!(tick < DOOM_TICKS + WRECK_TOPPLE_TICKS && up <= WRECK_LIES_UP, "once it lay on the ground: at tick {tick}, up {up}");
+    let pose = game.world.physics.car_pose(vid).unwrap();
+    assert!(pose.up_y < 0.2, "it has fallen: {pose:?}");
+    pose.world_dir([0.0, 0.0, -1.0])[1]
+}
+
+#[test]
+fn a_titan_struck_down_from_the_front_falls_on_its_back() {
+    let front = struck_down_from(60.0);
+    assert!(front > 0.5, "its front faces the sky ({front})");
+}
+
+#[test]
+fn a_titan_struck_down_from_behind_falls_on_its_face() {
+    let front = struck_down_from(-60.0);
+    assert!(front < -0.5, "its front faces the ground ({front})");
+}

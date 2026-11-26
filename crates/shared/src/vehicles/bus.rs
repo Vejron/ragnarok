@@ -70,7 +70,7 @@ pub(super) const BUS: VehicleDef = VehicleDef {
     seat_heads: &BUS_SEAT_HEADS,
     crew_guns: true,
     // Twelve tonnes: it rams harder than a car and is hurt less by what it hits.
-    body: Body { drop_y: 1.3, ram: 2.0, crash: 0.5, ..CAR },
+    body: Body { drop_y: 1.3, ram: 2.0, crash: 0.5, fall: Fall::Settles, ..CAR },
     spec: Spec {
         half_extents: BUS_HALF_EXTENTS,
         // 30 m³ of frame box is about twelve tonnes; the body over it adds no mass.
@@ -92,6 +92,7 @@ pub(super) const BUS: VehicleDef = VehicleDef {
         // Its engine and frame are low under a tall, light body.
         com_drop: 0.3,
         tank: Some(BOOST_FULL),
+        fuel: Some(840.0),
         buttons: Buttons::Boost,
         boost: Some(Boost::HEAVY),
         aims: false,

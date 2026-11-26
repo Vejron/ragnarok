@@ -65,6 +65,7 @@ pub(super) const SPORTS: VehicleDef = VehicleDef {
         // Low enough that it stays on its wheels at full lock flat out (measured in vehicle/tests.rs).
         com_drop: 0.3,
         tank: Some(BOOST_FULL),
+        fuel: Some(480.0),
         buttons: Buttons::Boost,
         boost: Some(Boost::CAR),
         aims: false,

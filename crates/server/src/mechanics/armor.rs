@@ -420,7 +420,7 @@ fn hit_part(world: &mut World, vid: u32, slot: usize, amount: f32, attacker: Opt
         }
         if Part::Ammo.slot() == Some(slot) {
             damage_turret(world, vid, u8::MAX, attacker);
-            super::combat::damage_vehicle(world, vid, u8::MAX, attacker);
+            super::combat::cook_off(world, vid, attacker);
         } else if Part::Fuel.slot() == Some(slot) && !world.entities.dead(vid) {
             world.entities.insert(vid, Burning { ticks: 0 });
         }

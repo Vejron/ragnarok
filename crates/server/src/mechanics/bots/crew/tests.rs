@@ -239,11 +239,26 @@ fn a_stuck_tank_backs_out_and_gives_the_waypoint_up() {
 }
 
 #[test]
-fn a_crew_gets_back_in_when_their_wrecked_tank_comes_back() {
+fn a_crew_gets_out_of_their_doomed_tank_and_back_in_when_it_comes_back() {
     let mut game = game(false, vec![]);
     let (vid, [driver, gunner]) = crew(&mut game, [0.0, 0.0], vec![[0.0, 0.0]]);
     run(&mut game, 1.0);
     damage_vehicle(&mut game.world, vid, 255, None);
+    // They climb out while it burns, and live through it going up beside them.
+    run(&mut game, DOOM_TICKS as f32 / TICK_RATE as f32 + 0.5);
+    assert!(game.world.entities.has::<crate::game::Wreck>(vid), "it has gone up");
+    assert!(game.world.entities.alive(driver) && game.world.entities.alive(gunner), "the crew got out");
+    assert_eq!(seated(&game, driver), None);
+    assert_eq!(seated(&game, gunner), None);
+}
+
+#[test]
+fn a_crew_gets_back_in_when_their_wrecked_tank_comes_back() {
+    let mut game = game(false, vec![]);
+    let (vid, [driver, gunner]) = crew(&mut game, [0.0, 0.0], vec![[0.0, 0.0]]);
+    run(&mut game, 1.0);
+    // Its ammunition goes up: there is no getting out of that.
+    crate::mechanics::cook_off(&mut game.world, vid, None);
     game.step();
     assert!(!game.world.entities.alive(driver) && !game.world.entities.alive(gunner), "the crew die in the wreck");
     assert_eq!(seated(&game, driver), None);

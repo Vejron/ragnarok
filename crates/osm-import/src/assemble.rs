@@ -3142,6 +3142,9 @@ pub fn synthetic_city(half: f64, tile_size: f64, ground: Ground, water: Placed) 
         crate::graves::lay(&mut built, &yards, &ways, half, &ground);
     }
     lay_crops(&mut built, &fields, half, tile_size);
+    // A fuel station on the verge of the second crossroads, so the offline world has one to fill up at.
+    let corner = start + PITCH + STREET / 2.0 + 1.0;
+    built.manifest.fuel_stations = vec![[cm(corner), cm(corner)]];
     built
 }
 

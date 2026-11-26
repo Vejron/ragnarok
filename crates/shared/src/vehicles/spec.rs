@@ -172,6 +172,10 @@ pub struct Spec {
     /// everything else. A walker with one has wings (see `flap`). A helicopter keeps its rotor's speed
     /// here, as a share of the speed its governor holds, and this is the speed it starts at: stopped.
     pub tank: Option<f32>,
+    /// How long a full tank of fuel lasts with a player at the wheel and the throttle wide open,
+    /// seconds; a boost burns it faster (`FUEL_BOOST_BURN`). Dry, its engine gives no power.
+    /// `Spec::NO_FUEL` for a kind that burns none: one with no engine, or one that runs on a battery.
+    pub fuel: Option<f32>,
     /// What its driver's buttons do (see `CarControls::driven`).
     pub buttons: Buttons,
     /// What holding run does to its engine while its `tank` has boost left (`Buttons::Boost`), or
@@ -244,6 +248,10 @@ impl Spec {
     pub const FLAT: f32 = 0.0;
     /// The `boost` of a kind whose run does not boost its engine.
     pub const NO_BOOST: Option<Boost> = None;
+    /// The `fuel` of a kind that burns none, and so never runs dry.
+    pub const NO_FUEL: Option<f32> = None;
+    /// The `fuel` of an ordinary car: ten minutes flat out.
+    pub const FUEL: Option<f32> = Some(600.0);
 
     /// The fastest it goes flat out without its boost, m/s: `max_speed`, less for a kind with a `Boost`.
     pub fn cruise_speed(&self) -> f32 {

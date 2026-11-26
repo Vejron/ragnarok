@@ -53,7 +53,7 @@ export class InGameHud {
       g.beginPath()
       g.roundRect(0, 0, MINI_PX, MINI_PX, 12)
       g.clip()
-      paintMap(g, tiles, s.x, s.z, MINI_PX / MINI_METRES, MINI_PX, MINI_PX, { x: s.x, z: s.z, yaw: s.yaw, blips: s.blips, circle: s.backpack, target: s.delivery?.target, pulse: (now % PULSE_MS) / PULSE_MS })
+      paintMap(g, tiles, s.x, s.z, MINI_PX / MINI_METRES, MINI_PX, MINI_PX, { x: s.x, z: s.z, yaw: s.yaw, blips: s.blips, circle: s.backpack, target: s.delivery?.target, stations: s.fuelStations, pulse: (now % PULSE_MS) / PULSE_MS })
       g.restore()
     }, (p.scale * size) / MINI_PX)
     const x = p.width - 12 - size - 2

@@ -73,7 +73,7 @@ pub fn query([south, west, north, east]: [f64; 4]) -> String {
     let lodgings = crate::classify::LODGINGS.join("|");
     query.push_str(&format!(r#"node["shop"]({bbox});node["amenity"~"^({uses})$"]({bbox});node["tourism"~"^({lodgings})$"]({bbox});"#));
     query.push_str(&format!(
-        r#"way["waterway"~"^(river|stream|canal)$"]({bbox});way["natural"="coastline"]({bbox});way["golf"]({bbox});node["golf"="pin"]({bbox});node["highway"="bus_stop"]({bbox});way["aerialway"~"^({lifts})$"]({bbox});way["piste:type"~"nordic"]({bbox});relation["piste:type"~"nordic"]({bbox});relation["route"="ski"]({bbox});"#
+        r#"way["waterway"~"^(river|stream|canal)$"]({bbox});way["natural"="coastline"]({bbox});way["golf"]({bbox});node["golf"="pin"]({bbox});node["highway"="bus_stop"]({bbox});way["amenity"="fuel"]({bbox});way["aerialway"~"^({lifts})$"]({bbox});way["piste:type"~"nordic"]({bbox});relation["piste:type"~"nordic"]({bbox});relation["route"="ski"]({bbox});"#
     ));
     query.push_str(");out geom;");
     query

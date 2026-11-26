@@ -132,6 +132,7 @@ pub(super) const HELI: VehicleDef = VehicleDef {
         com_drop: 0.0,
         // The rotor's speed: it starts stopped.
         tank: Some(0.0),
+        fuel: Some(480.0),
         buttons: Buttons::Collective,
         boost: Spec::NO_BOOST,
         // The pedals turn it towards where its pilot looks.

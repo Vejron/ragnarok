@@ -281,3 +281,17 @@ fn buses_on_a_real_world() {
         eprintln!("bus {vid}: drove {driven:.0} m, fastest {fastest:.1} m/s, backed out {backed} times, put back {put_back} times");
     }
 }
+
+#[test]
+fn a_bus_driver_burns_no_fuel_and_drives_on_with_an_empty_tank() {
+    let mut game = game(vec![line()]);
+    run(&mut game, 20.0);
+    let vid = bus(&game, true);
+    assert_eq!(game.world.entities.of::<Vehicle>(vid).fuel, 1.0, "its driver has burnt nothing");
+    game.world.entities.of_mut::<Vehicle>(vid).fuel = 0.0;
+    run(&mut game, 2.0);
+    let start = pose(&game, vid).position;
+    run(&mut game, 10.0);
+    let moved = shared::vec3::distance(start, pose(&game, vid).position);
+    assert!(moved > 10.0, "it runs its line on an empty tank ({moved} m)");
+}

@@ -103,6 +103,12 @@ fn controls_from(c: &[f32]) -> CarControls {
 /// firing, steer fraction]`; `tank` is NaN for a kind without one.
 pub const CAR_STATE_LEN: usize = 18;
 
+/// What a vehicle of `kind` can do as a snapshot shows it: its health and `wear`, and its fuel out (`dry`).
+fn condition(kind: u8, hp: u8, wear: [u8; shared::protocol::DAMAGE_SLOTS], dry: bool) -> CarCondition {
+    let condition = CarCondition::of(kind, hp, wear);
+    if dry { condition.dry() } else { condition }
+}
+
 fn error(context: &str, cause: impl std::fmt::Display) -> JsError {
     JsError::new(&format!("{context}: {cause}"))
 }
@@ -292,11 +298,12 @@ impl ClientSim {
     /// server's does. It moves at `(vx, vz)` m/s over the ground with its front wheels at `steer` of
     /// their lock (+ is right). With someone `driven` it is held to that steering and to `throttle`
     /// (-1..=1, as its `steer` component says), and with nobody it holds its handbrake, as on the
-    /// server. `hp`, `damage` and `turret` are the wear the snapshot shows. Whether it was done:
+    /// server. `hp`, `damage` and `turret` are the wear the snapshot shows, and `dry` that its `fuel` is
+    /// out. Whether it was done:
     /// not for a kind that cannot be (an aircraft, a boat, a towed gun), which stays a stand-in.
     #[allow(clippy::too_many_arguments)]
     #[wasm_bindgen(js_name = setNeighbour)]
-    pub fn set_neighbour(&mut self, id: u32, kind: u8, x: f32, y: f32, z: f32, qx: f32, qy: f32, qz: f32, qw: f32, vx: f32, vz: f32, steer: f32, throttle: f32, driven: bool, hp: u8, damage: &[u8], turret: bool) -> bool {
+    pub fn set_neighbour(&mut self, id: u32, kind: u8, x: f32, y: f32, z: f32, qx: f32, qy: f32, qz: f32, qw: f32, vx: f32, vz: f32, steer: f32, throttle: f32, driven: bool, hp: u8, damage: &[u8], dry: bool, turret: bool) -> bool {
         if self.cars.contains_key(&id) {
             return false;
         }
@@ -305,7 +312,7 @@ impl ClientSim {
         for (slot, &value) in wear.iter_mut().zip(damage) {
             *slot = value;
         }
-        self.physics.set_neighbour(id, kind, [x, y, z], [qx, qy, qz, qw], [vx, 0.0, vz], steer, controls, CarCondition::of(kind, hp, wear), turret)
+        self.physics.set_neighbour(id, kind, [x, y, z], [qx, qy, qz, qw], [vx, 0.0, vz], steer, controls, condition(kind, hp, wear, dry), turret)
     }
 
     /// Stops simulating vehicle `id` beside the player's own.
@@ -321,10 +328,11 @@ impl ClientSim {
     }
 
     /// Puts vehicle `id` in the state a snapshot reports: pose, motion (its `drive` component), its tank
-    /// (NaN to leave it), and the wear its health and damage mean, turret included.
+    /// (NaN to leave it), the wear its health and damage mean, turret included, and whether its fuel is
+    /// out (`dry`).
     #[allow(clippy::too_many_arguments)]
     #[wasm_bindgen(js_name = setCarState)]
-    pub fn set_car_state(&mut self, id: u32, x: f32, y: f32, z: f32, qx: f32, qy: f32, qz: f32, qw: f32, vx: f32, vy: f32, vz: f32, wx: f32, wy: f32, wz: f32, steer: f32, spin: f32, tank: f32, hp: u8, damage: &[u8], turret: bool) {
+    pub fn set_car_state(&mut self, id: u32, x: f32, y: f32, z: f32, qx: f32, qy: f32, qz: f32, qw: f32, vx: f32, vy: f32, vz: f32, wx: f32, wy: f32, wz: f32, steer: f32, spin: f32, tank: f32, hp: u8, damage: &[u8], dry: bool, turret: bool) {
         let Some(&kind) = self.cars.get(&id) else { return };
         let motion = CarMotion { linvel: [vx, vy, vz], angvel: [wx, wy, wz], steer, spin };
         self.physics.set_car_state(id, [x, y, z], [qx, qy, qz, qw], motion, (!tank.is_nan()).then_some(tank));
@@ -332,7 +340,7 @@ impl ClientSim {
         for (slot, &value) in wear.iter_mut().zip(damage) {
             *slot = value;
         }
-        self.physics.set_car_condition(id, CarCondition::of(kind, hp, wear));
+        self.physics.set_car_condition(id, condition(kind, hp, wear, dry));
         self.physics.set_turret(id, turret);
     }
 

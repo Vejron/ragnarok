@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::terrain::Ground;
 
-pub const WORLD_VERSION: u8 = 41;
+pub const WORLD_VERSION: u8 = 42;
 
 /// `Manifest::theme`: the world as it always was.
 pub const THEME_PLAIN: u8 = 0;
@@ -149,6 +149,10 @@ pub struct Manifest {
     /// Whether the world's lakes and sea are that colour too, and not the clear blue they are
     /// without it. Only drawn.
     pub tint_all: bool,
+    /// The fuel stations `[x, z]`, centimetres, whole for the same reason as the bus lines: the server
+    /// fills the tank of a vehicle within `FUEL_STATION_REACH` of one, and the client stands a pump
+    /// there and marks it on the map. From OpenStreetMap's `amenity=fuel`.
+    pub fuel_stations: Vec<[i32; 2]>,
 }
 
 impl Manifest {
@@ -658,6 +662,9 @@ pub struct WorldFile {
     /// The bus lines, from the manifest.
     #[serde(skip)]
     pub bus_lines: Vec<BusLine>,
+    /// The fuel stations `[x, z]`, centimetres, from the manifest.
+    #[serde(skip)]
+    pub fuel_stations: Vec<[i32; 2]>,
     /// Every ski track. Filled by `assemble`.
     #[serde(skip)]
     pub ski: Vec<SkiTrail>,
@@ -1451,6 +1458,7 @@ impl WorldFile {
             lifts: manifest.lifts.clone(),
             open_water: manifest.open_water,
             bus_lines: manifest.bus_lines.clone(),
+            fuel_stations: manifest.fuel_stations.clone(),
             ..Default::default()
         };
         let grid = manifest.grid() as usize;
@@ -1658,6 +1666,7 @@ mod tests {
             bus_lines: vec![BusLine { points: vec![[0, 0], [30_000, 0], [30_000, 40_000]], stops: vec![0, 30_000, 70_000], signs: vec![[0, 560], [30_000, 560], [30_560, 40_000]] }],
             river_tint: [70, 80, 40],
             tint_all: true,
+            fuel_stations: vec![[1_200, -3_400]],
         };
         assert_eq!(Manifest::decode(&manifest.encode()).unwrap(), manifest);
         // A bus line knows its length, and where it is and which way it runs any distance along it.

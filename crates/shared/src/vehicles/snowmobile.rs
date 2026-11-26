@@ -74,6 +74,7 @@ pub(super) const SNOWMOBILE: VehicleDef = VehicleDef {
         // steep side slope, and a full-lock turn while the tail slides, without rolling.
         com_drop: 0.5,
         tank: Some(BOOST_FULL),
+        fuel: Some(420.0),
         buttons: Buttons::Boost,
         boost: Some(SNOWMOBILE_BOOST),
         aims: false,

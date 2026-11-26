@@ -7,12 +7,12 @@ use super::spawn;
 use super::projectiles::{self, Flying, Stage};
 use crate::entities::{Health, HurtBy, Respawn, With};
 use crate::events::Hooks;
-use crate::game::{Bot, Damaged, Died, Drone, Felled, Player, Seats, TEAM_NONE, Vehicle, World, Wreck};
+use crate::game::{Bot, Damaged, Died, Doomed, Drone, Felled, Player, Seats, TEAM_NONE, Vehicle, World, Wreck};
 use sim::Obj;
 use shared::consts::*;
 use shared::armor::Pen;
 use shared::items::*;
-use shared::vehicles::{Exposure, crew_gun, vehicle_def};
+use shared::vehicles::{Exposure, Fall, crew_gun, vehicle_def};
 use shared::protocol::{BulletSpawn, ItemSlot, LIMB_ARMS, PROJECTILE_BULLET, PROJECTILE_FLARE, PROJECTILE_GRENADE, PROJECTILE_ROCKET, ShotEvent, WEAPON_FLARE, WEAPON_GLASS, WEAPON_PELLET, WEAPON_RIFLE, WEAPON_WRECK};
 use shared::quant::{from_mrad, to_cm, to_cm_i16, to_mrad};
 
@@ -211,8 +211,7 @@ fn burst(world: &mut World, blast: Blast, direct: Option<Direct>, spare: Option<
         super::limbs::blasted(world, id, blast.point, amount, blast.attacker);
         damage_entity(world, id, Harm::new(amount, blast.attacker, blast.weapon).from(blast.point));
     }
-    let mut reached = world.physics.blast_cars(blast.point, blast.radius);
-    reached.retain(|&(vid, _)| Some(vid) != spare);
+    let mut reached = world.physics.blast_cars(blast.point, blast.radius, spare);
     // A shell that struck a vehicle's edge may burst further from its centre than the blast reaches.
     if let Some(direct) = direct.filter(|direct| !reached.iter().any(|&(vid, _)| vid == direct.vehicle)) {
         reached.push((direct.vehicle, 0.0));
@@ -500,13 +499,58 @@ pub fn damage_vehicle_at(world: &mut World, vid: u32, amount: u8, attacker: Opti
     let struck = point.or_else(|| at.map(|p| [p[0], p[1] + 0.8, p[2]])).unwrap_or([0.0; 3]);
     crate::events::damaged(world, Damaged { victim: vid, lost, attacker, weapon: 0, from, at: struck, head: false, killed: wrecked, aboard: seated });
     if wrecked {
+        // The way the blow went: from whoever struck it, or else from where it landed, to the hull.
+        let away = at.and_then(|hull| {
+            let source = from.unwrap_or(struck);
+            flat([hull[0] - source[0], hull[2] - source[2]])
+        });
+        doom(world, vid, away);
+    }
+}
+
+/// Vehicle `vid`'s ammunition goes up: it is a wreck at once, with nobody given the time to get out.
+pub fn cook_off(world: &mut World, vid: u32, attacker: Option<u32>) {
+    damage_vehicle(world, vid, u8::MAX, attacker);
+    if world.entities.has::<Doomed>(vid) {
         wreck(world, vid);
     }
 }
 
-/// A vehicle's last moment: everyone inside dies, and it goes up in a blast that can take the
-/// next one with it.
-fn wreck(world: &mut World, vid: u32) {
+/// `[x, z]` made a unit vector, or `None` when it is too short to have a way.
+fn flat(v: [f32; 2]) -> Option<[f32; 2]> {
+    let length = v[0].hypot(v[1]);
+    (length > 1e-3).then(|| [v[0] / length, v[1] / length])
+}
+
+/// Vehicle `vid`'s health is gone: it can no longer be driven, and burns for `DOOM_TICKS` while its
+/// crew gets out (`Vehicles` then calls `wreck`). One on legs loses them at once, and is pushed over
+/// along `away`, the way the blow that finished it went (x, z), or backwards when nothing says.
+fn doom(world: &mut World, vid: u32, away: Option<[f32; 2]>) {
+    // A drone shot down only pops, and its pilot is back in their own body.
+    if world.entities.has::<Drone>(vid) {
+        super::drones::pop(world, vid);
+        return;
+    }
+    let Some(pose) = world.physics.car_pose(vid) else { return };
+    let Some(mut vehicle) = world.entities.get_mut::<Vehicle>(vid) else { return };
+    vehicle.controls = Default::default();
+    let def = vehicle_def(vehicle.kind);
+    let back = pose.world_dir([0.0, 0.0, 1.0]);
+    let away = away.or_else(|| flat([back[0], back[2]])).unwrap_or([0.0, 1.0]);
+    world.entities.insert(vid, Doomed { ticks: 0, away });
+    if def.body.fall == Fall::Topples && !def.spec.lift.afloat() {
+        // About the level axis square to `away`, so that its top goes that way.
+        let axis = pose.local_dir([away[1], 0.0, -away[0]]);
+        world.physics.spin_car(vid, axis.map(|a| a * WRECK_TOPPLE_SPIN));
+    }
+    tracing::debug!(vid, "vehicle doomed");
+}
+
+/// A vehicle's last moment: everyone still inside dies, and it goes up in a blast that can take the
+/// next one with it. A light one is thrown into the air as it does; a heavy one, or one lying where
+/// it fell, goes up where it is.
+pub(crate) fn wreck(world: &mut World, vid: u32) {
+    world.entities.remove::<Doomed>(vid);
     // A drone shot down only pops, and its pilot is back in their own body.
     if world.entities.has::<Drone>(vid) {
         super::drones::pop(world, vid);
@@ -553,28 +597,32 @@ fn wreck(world: &mut World, vid: u32) {
         tracing::debug!(vid, "ship wrecked");
         return;
     }
-    // Thrown up a little, so it is plainly not a parked car any more.
-    world.physics.kick_car(vid, [0.0, 9.0, 0.0]);
-    // ...and tumbling: a roll or a somersault, either way round, picked by the vehicle's id and
-    // where it stood so that two wrecks do not turn alike.
-    let seed = (vid as f32 * 12.9898 + pose.position[0] * 78.233 + pose.position[2] * 37.719).sin() * 43758.547;
-    let pick = seed - seed.floor();
-    let rate = WRECK_SPIN * (0.7 + 0.6 * ((pick * 7.0) - (pick * 7.0).floor()));
-    let sign = if pick < 0.5 { -1.0 } else { 1.0 };
-    let spin = if ((pick * 4.0) as u32).is_multiple_of(2) { [0.0, 0.0, sign * rate] } else { [sign * rate, 0.0, 0.0] };
-    world.physics.spin_car(vid, spin);
-    blast(
-        world,
-        Blast {
-            point: pose.position,
-            radius: WRECK_BLAST_RADIUS,
-            damage: WRECK_BLAST_DAMAGE,
-            knock: WRECK_BLAST_KNOCK,
-            dir: [0.0, 1.0, 0.0],
-            attacker,
-            weapon: WEAPON_WRECK,
-        },
-    );
+    let fall = world.entities.get::<Vehicle>(vid).map_or(Fall::Thrown, |vehicle| vehicle_def(vehicle.kind).body.fall);
+    match fall {
+        Fall::Thrown => {
+            // Thrown up a little, so it is plainly not a parked car any more.
+            world.physics.kick_car(vid, [0.0, 9.0, 0.0]);
+            // ...and tumbling: a roll or a somersault, either way round, picked by the vehicle's id and
+            // where it stood so that two wrecks do not turn alike.
+            let seed = (vid as f32 * 12.9898 + pose.position[0] * 78.233 + pose.position[2] * 37.719).sin() * 43758.547;
+            let pick = seed - seed.floor();
+            let rate = WRECK_SPIN * (0.7 + 0.6 * ((pick * 7.0) - (pick * 7.0).floor()));
+            let sign = if pick < 0.5 { -1.0 } else { 1.0 };
+            let spin = if ((pick * 4.0) as u32).is_multiple_of(2) { [0.0, 0.0, sign * rate] } else { [sign * rate, 0.0, 0.0] };
+            world.physics.spin_car(vid, spin);
+        }
+        // Jolted where it stands, and burns there.
+        Fall::Settles => world.physics.kick_car(vid, [0.0, WRECK_JOLT, 0.0]),
+        // It has fallen already, and goes up where it lies.
+        Fall::Topples => {}
+    }
+    let blast_of = Blast { point: pose.position, radius: WRECK_BLAST_RADIUS, damage: WRECK_BLAST_DAMAGE, knock: WRECK_BLAST_KNOCK, dir: [0.0, 1.0, 0.0], attacker, weapon: WEAPON_WRECK };
+    // A light one is thrown by its own blast as much as by anything; a heavy one does not feel it.
+    if fall == Fall::Thrown {
+        blast(world, blast_of);
+    } else {
+        blast_sparing(world, blast_of, vid);
+    }
     tracing::debug!(vid, "vehicle wrecked");
 }
 

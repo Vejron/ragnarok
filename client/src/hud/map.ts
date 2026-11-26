@@ -11,6 +11,9 @@ export const miniSize = (width: number, height: number) => Math.round(Math.max(1
 /** How far down the minimap's frame reaches, from the top of the screen. */
 export const miniBottom = (width: number, height: number) => 12 + miniSize(width, height) + 4
 
+/** The colour of a fuel station's mark: its sign's (`render/fuelstations.ts`). */
+const FUEL_MARK = '#d8342b'
+
 const MODEM = (alpha: number) => `rgba(255, 140, 0, ${alpha})`
 
 /** What a map shows on top of the picture: who reads it, the marks, and the backpack's circle. */
@@ -23,6 +26,8 @@ export interface MapMarks {
   circle: { x: number; z: number; radius: number } | null
   /** Where the delivery job in hand sends the reader (DELIVERY.md), if anywhere. */
   target?: { x: number; z: number } | null
+  /** The world's fuel stations, metres (FUEL.md). */
+  stations?: readonly (readonly [number, number])[]
   /** 0..1, for the pulse of the backpack's circle. */
   pulse: number
 }
@@ -76,6 +81,13 @@ export function paintMap(g: CanvasRenderingContext2D, tiles: MapTiles, cx: numbe
       g.stroke()
       disc(g, left, top, 4.5 * scale, WAYPOINT, 1.5 * scale)
     }
+  }
+
+  for (const [x, z] of marks.stations ?? []) {
+    const [sx, sy] = at(x, z)
+    const edge = 6 * scale
+    if (sx < edge || sy < edge || sx > width - edge || sy > height - edge) continue
+    pump(g, sx, sy, scale)
   }
 
   for (const blip of marks.blips) {
@@ -141,6 +153,18 @@ function golfBall(g: CanvasRenderingContext2D, x: number, y: number, scale: numb
   g.lineWidth = 2 * scale
   g.strokeStyle = INK_CSS
   g.stroke()
+}
+
+/** A fuel station's mark: a red pump on a white tile. */
+function pump(g: CanvasRenderingContext2D, x: number, y: number, scale: number) {
+  g.fillStyle = '#fff'
+  g.fillRect(x - 6 * scale, y - 6 * scale, 12 * scale, 12 * scale)
+  g.fillStyle = FUEL_MARK
+  g.fillRect(x - 4.5 * scale, y - 4.5 * scale, 9 * scale, 9 * scale)
+  // The pump's window and its hose.
+  g.fillStyle = '#fff'
+  g.fillRect(x - 2.5 * scale, y - 3 * scale, 3.5 * scale, 2.5 * scale)
+  g.fillRect(x + 2 * scale, y - 1.5 * scale, 1.2 * scale, 4.5 * scale)
 }
 
 function disc(g: CanvasRenderingContext2D, x: number, y: number, r: number, color: string, edge: number) {

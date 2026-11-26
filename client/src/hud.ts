@@ -44,6 +44,13 @@ export interface HudStats {
   /** The driver of a car, a tank, a boat or a snowmobile: the boost left that run spends, 0..1; null elsewhere. */
   boost: number | null
   /**
+   * Anyone in a vehicle that burns fuel: what is left in its tank, 0..1, and whether a fuel station
+   * is filling it (FUEL.md); null elsewhere.
+   */
+  fuel: { left: number; filling: boolean } | null
+  /** The world's fuel stations, metres, for the map. */
+  fuelStations: readonly (readonly [number, number])[]
+  /**
    * A helicopter's pilot: where the collective lever is and how fast the rotor turns, each 0..1 of full, the
    * vertical speed, m/s (+ up), and whether the rotor is low (`THRUST_LOW_ROTOR`); null elsewhere.
    */
@@ -99,6 +106,8 @@ export interface HudStats {
   dead: boolean
   /** Seconds until respawn while dead. */
   respawnIn: number
+  /** Seconds until the vehicle you sit in goes up, once its health is gone (`DOOM_TICKS`); null otherwise. */
+  doomedIn: number | null
   /**
    * A ghost (GHOSTS.md): whole seconds it has left as one, why it may not take shape here (`GHOST_BLOCK_*`)
    * and whether it is taking shape now; null while not one.

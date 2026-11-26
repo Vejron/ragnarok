@@ -330,7 +330,7 @@ fn a_tank_without_its_turret_cannot_fire_and_gets_one_back_on_respawn() {
     assert_eq!(game.world.entities.of::<Vehicle>(vid).damage[DAMAGE_TURRET], TURRET_GONE);
     // Wrecked and put back: the turret is on again.
     super::super::combat::damage_vehicle(&mut game.world, vid, 255, None);
-    for _ in 0..(WRECK_TICKS + 5) {
+    for _ in 0..(DOOM_TICKS + WRECK_TICKS + 5) {
         game.step();
     }
     let vehicle = &game.world.entities.of::<Vehicle>(vid);
@@ -552,7 +552,7 @@ fn burning_fuel_eats_the_tank_until_it_is_a_wreck_and_a_fresh_one_is_whole() {
     assert!(game.world.entities.of::<Health>(vid).hp < full, "it burns");
     assert_eq!(game.world.entities.of::<Vehicle>(vid).damage[shared::protocol::DAMAGE_FIRE], shared::protocol::BURNING);
     super::super::combat::damage_vehicle(&mut game.world, vid, 255, None);
-    for _ in 0..(WRECK_TICKS + 5) {
+    for _ in 0..(DOOM_TICKS + WRECK_TICKS + 5) {
         game.step();
     }
     assert_eq!(game.world.entities.of::<Vehicle>(vid).parts, Vehicle::fresh_parts(KIND_TANK));

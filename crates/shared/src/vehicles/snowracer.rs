@@ -81,6 +81,7 @@ pub(super) const SNOWRACER: VehicleDef = VehicleDef {
         // The riders sit low between the runners.
         com_drop: 0.2,
         tank: None,
+        fuel: Spec::NO_FUEL,
         buttons: Buttons::Drive,
         boost: Spec::NO_BOOST,
         aims: false,

@@ -117,6 +117,8 @@ export interface VehiclePose {
   damage: readonly number[]
   /** Air, stamina or battery left, 0..1, for a vehicle that has any. */
   air: number | null
+  /** The fuel left in its tank, 0..1: 0 is dry, and its engine gives nothing. Null for a kind that burns none. */
+  fuel: number | null
 }
 
 /** A vehicle of the newest snapshot, as a solid for the soldier, with its horizontal velocity. */
@@ -315,7 +317,7 @@ export class SimMotor {
       for (const car of vehicles) {
         if (beside.size >= max) break
         const turret = car.damage[DAMAGE_TURRET] !== TURRET_GONE
-        if (this.sim.setNeighbour(car.id, car.kind, car.x, car.y, car.z, car.qx, car.qy, car.qz, car.qw, car.vx, car.vz, car.steer, car.throttle, car.driven, car.hp, Uint8Array.from(car.damage), turret)) beside.add(car.id)
+        if (this.sim.setNeighbour(car.id, car.kind, car.x, car.y, car.z, car.qx, car.qy, car.qz, car.qw, car.vx, car.vz, car.steer, car.throttle, car.driven, car.hp, Uint8Array.from(car.damage), car.fuel === 0, turret)) beside.add(car.id)
       }
       for (const id of this.sim.neighbourIds()) if (!beside.has(id)) this.sim.removeNeighbour(id)
       return beside
@@ -396,7 +398,7 @@ export class SimMotor {
     // The wire carries a share of full (`air_byte` on the server).
     const tank = vehicle.air !== null ? vehicle.air * ROADSTER_AIR : Number.NaN
     const turret = vehicle.damage[DAMAGE_TURRET] !== TURRET_GONE
-    this.sim.setCarState(id, vehicle.x, vehicle.y, vehicle.z, vehicle.qx, vehicle.qy, vehicle.qz, vehicle.qw, drive.vx, drive.vy, drive.vz, drive.wx, drive.wy, drive.wz, drive.steer, drive.spin, tank, vehicle.hp, Uint8Array.from(vehicle.damage), turret)
+    this.sim.setCarState(id, vehicle.x, vehicle.y, vehicle.z, vehicle.qx, vehicle.qy, vehicle.qz, vehicle.qw, drive.vx, drive.vy, drive.vz, drive.wx, drive.wy, drive.wz, drive.steer, drive.spin, tank, vehicle.hp, Uint8Array.from(vehicle.damage), vehicle.fuel === 0, turret)
   }
 
   /**
@@ -410,7 +412,7 @@ export class SimMotor {
   /** Puts simulated vehicle `id` in a state of the caller's making, the rest as it is when new; for tests. */
   placeCar(id: number, state: { position: Vec3; rotation?: [number, number, number, number]; linvel?: Vec3; angvel?: Vec3; hp?: number; damage?: readonly number[]; turret?: boolean }) {
     const { position, rotation = [0, 0, 0, 1], linvel = [0, 0, 0], angvel = [0, 0, 0], hp = 255, damage = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], turret = true } = state
-    this.sim.setCarState(id, ...position, ...rotation, ...linvel, ...angvel, 0, 0, Number.NaN, hp, Uint8Array.from(damage), turret)
+    this.sim.setCarState(id, ...position, ...rotation, ...linvel, ...angvel, 0, 0, Number.NaN, hp, Uint8Array.from(damage), false, turret)
   }
 
   /** Sets the server tick the next `driveCar` steps, which the waves on open water run on; each step moves it on. */

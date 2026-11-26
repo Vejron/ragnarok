@@ -99,6 +99,7 @@ pub(super) const TECHNICAL: VehicleDef = VehicleDef {
         // springs let it lean until it goes over.
         com_drop: 0.5,
         tank: Some(BOOST_FULL),
+        fuel: Spec::FUEL,
         buttons: Buttons::Boost,
         boost: Some(Boost::CAR),
         aims: false,

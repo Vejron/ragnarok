@@ -65,6 +65,7 @@ pub(super) const EPA: VehicleDef = VehicleDef {
         linear_damping: 0.05,
         com_drop: 0.15,
         tank: Some(BOOST_FULL),
+        fuel: Spec::FUEL,
         buttons: Buttons::Boost,
         boost: Some(Boost::GOVERNED),
         aims: false,

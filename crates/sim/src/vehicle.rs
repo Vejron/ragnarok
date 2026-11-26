@@ -201,6 +201,12 @@ impl CarCondition {
         }
         condition
     }
+
+    /// The same vehicle with its fuel tank empty (`Spec::fuel`): its engine gives nothing, as with
+    /// its engine gone, so it rolls to a stop, and what flies on its power comes down.
+    pub fn dry(self) -> CarCondition {
+        CarCondition { power: 0.0, turn: 0.0, ..self }
+    }
 }
 
 impl CarControls {
@@ -1574,12 +1580,16 @@ impl Physics {
         }
     }
 
-    /// Shoves every vehicle within `radius` of `point` away from it, harder the closer it is.
-    /// Returns each one it reached with how close it was: 1 at the point, 0 at the edge.
-    pub fn blast_cars(&mut self, point: [f32; 3], radius: f32) -> Vec<(u32, f32)> {
+    /// Shoves every vehicle within `radius` of `point` away from it, harder the closer it is, but for
+    /// `spare`, which made the blast and does not feel it. Returns each one it reached with how close it
+    /// was: 1 at the point, 0 at the edge.
+    pub fn blast_cars(&mut self, point: [f32; 3], radius: f32, spare: Option<u32>) -> Vec<(u32, f32)> {
         let point = Vector::from(point);
         let mut reached = Vec::new();
         for (&id, car) in &self.cars {
+            if Some(id) == spare {
+                continue;
+            }
             let Some(body) = self.bodies.get_mut(car.body) else { continue };
             let away = body.translation() - point;
             let distance = away.length();

@@ -15,6 +15,7 @@ pub mod canopy;
 pub mod dem;
 pub mod field;
 pub mod footprints;
+pub mod fuel;
 pub mod detail;
 pub mod edges;
 pub mod grid;

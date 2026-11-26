@@ -133,6 +133,7 @@ pub(super) const WALKER: VehicleDef = VehicleDef {
         linear_damping: 0.05,
         com_drop: 0.0,
         tank: None,
+        fuel: Spec::FUEL,
         buttons: Buttons::Drive,
         boost: Spec::NO_BOOST,
         aims: false,

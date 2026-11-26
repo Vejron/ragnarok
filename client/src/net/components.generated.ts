@@ -71,6 +71,10 @@ export interface Arms {
   flags: number
 }
 
+export interface Fuel {
+  level: number
+}
+
 export interface Health {
   hp: number
 }
@@ -217,6 +221,7 @@ export interface Components {
   limbs?: Limbs
   thrust?: Thrust
   arms?: Arms
+  fuel?: Fuel
   health?: Health
   damage?: Damage
   velocity?: Velocity
@@ -260,6 +265,7 @@ export const SCHEMA: readonly { id: number; name: ComponentName; diff: boolean; 
   { id: 7, name: 'limbs', diff: false, owner: false, fields: [{ name: 'lost' }] },
   { id: 8, name: 'thrust', diff: false, owner: false, fields: [{ name: 'air', unit: 'byte' }, { name: 'flags' }] },
   { id: 9, name: 'arms', diff: false, owner: false, fields: [{ name: 'shots' }, { name: 'heat', unit: 'byte' }, { name: 'rear_heat', unit: 'byte' }, { name: 'bombs' }, { name: 'flags' }] },
+  { id: 10, name: 'fuel', diff: false, owner: false, fields: [{ name: 'level', unit: 'byte' }] },
   { id: 11, name: 'health', diff: false, owner: false, fields: [{ name: 'hp' }] },
   { id: 12, name: 'damage', diff: false, owner: false, fields: [{ name: 'parts' }] },
   { id: 13, name: 'velocity', diff: true, owner: false, fields: [{ name: 'vx', unit: 'cm' }, { name: 'vy', unit: 'cm' }, { name: 'vz', unit: 'cm' }] },

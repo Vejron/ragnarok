@@ -365,7 +365,7 @@ describe('driving a predicted vehicle', () => {
     return {
       vehicle: {
         id: 3, kind, x: cm(s.position[0]), y: cm(s.position[1]), z: cm(s.position[2]),
-        qx, qy, qz, qw: Math.sqrt(1 - qx * qx - qy * qy - qz * qz), hp: vehicleMaxHp(kind), damage: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], air: null,
+        qx, qy, qz, qw: Math.sqrt(1 - qx * qx - qy * qy - qz * qz), hp: vehicleMaxHp(kind), damage: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], air: null, fuel: 1,
       },
       drive: {
         vx: cm(s.linvel[0]), vy: cm(s.linvel[1]), vz: cm(s.linvel[2]),
@@ -394,6 +394,24 @@ describe('driving a predicted vehicle', () => {
       driver.dispose()
       motor.dispose()
     }
+  })
+
+  it('does not drive off on an empty tank, and does once there is fuel in it', async () => {
+    const motor = await field(200)
+    const driver = new VehicleDriver(motor)
+    const parked = await serverState(KIND_JEEP, 0)
+    // The snapshot says the tank is dry: full throttle gets the predicted jeep nowhere, as on the server.
+    driver.reconcile(0, { ...parked.vehicle, fuel: 0 }, parked.drive)
+    for (let seq = 1; seq <= 120; seq++) driver.apply(input(seq))
+    const dry = driver.pose(1, 0)!
+    expect(Math.hypot(dry.position[0] - parked.vehicle.x, dry.position[2] - parked.vehicle.z)).toBeLessThan(0.5)
+    // A station has put some in.
+    driver.reconcile(120, { ...parked.vehicle, fuel: 0.2 }, parked.drive)
+    for (let seq = 121; seq <= 240; seq++) driver.apply(input(seq))
+    const fuelled = driver.pose(1, 0)!
+    expect(Math.hypot(fuelled.position[0] - parked.vehicle.x, fuelled.position[2] - parked.vehicle.z)).toBeGreaterThan(5)
+    driver.dispose()
+    motor.dispose()
   })
 
   it('stops predicting when the player leaves the seat, and the vehicle is a solid again', async () => {
@@ -493,7 +511,7 @@ describe('a predicted ram through a wall', () => {
     }
     return { state, motor: motor as unknown as SimMotor }
   }
-  const vehicle: VehiclePose = { id: 3, kind: KIND_JEEP, x: 0, y: 0, z: 0, qx: 0, qy: 0, qz: 0, qw: 1, hp: 255, damage: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], air: null }
+  const vehicle: VehiclePose = { id: 3, kind: KIND_JEEP, x: 0, y: 0, z: 0, qx: 0, qy: 0, qz: 0, qw: 1, hp: 255, damage: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], air: null, fuel: 1 }
   const drive: DriveState = { vx: 0, vy: 0, vz: 0, wx: 0, wy: 0, wz: 0, steer: 0, spin: 0 }
   const input = (seq: number): InputFrame => ({ seq, strafe: 0, forward: 127, yaw: 0, pitch: 0, view: 0, slot: 0, collective: 0, buttons: 0 })
 

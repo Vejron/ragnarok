@@ -351,7 +351,7 @@ impl Traffic {
         let gunmen: Vec<(u32, [f32; 3], [f32; 3])> = world
             .entities
             .all::<Player>()
-            .filter(|&(id, player)| super::human(world, id) && world.entities.alive(id) && player.seat.is_none() && player.input.buttons() & BUTTON_ALT != 0 && shared::items::def(player.held().item).is_some_and(|item| item.kind == ItemKind::Gun))
+            .filter(|&(id, player)| super::super::human(world, id) && world.entities.alive(id) && player.seat.is_none() && player.input.buttons() & BUTTON_ALT != 0 && shared::items::def(player.held().item).is_some_and(|item| item.kind == ItemKind::Gun))
             .map(|(id, player)| (id, player.eye(), look(from_mrad(player.input.yaw), from_mrad(player.input.pitch()))))
             .collect();
         for i in 0..self.cars.len() {

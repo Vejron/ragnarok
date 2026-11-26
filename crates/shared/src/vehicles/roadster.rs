@@ -86,6 +86,7 @@ pub(super) const ROADSTER: VehicleDef = VehicleDef {
         linear_damping: 0.05,
         com_drop: 0.02,
         tank: Some(ROADSTER_AIR),
+        fuel: Some(480.0),
         buttons: Buttons::Stunt,
         boost: Spec::NO_BOOST,
         aims: false,

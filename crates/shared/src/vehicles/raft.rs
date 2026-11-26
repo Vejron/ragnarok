@@ -148,6 +148,7 @@ pub(super) const RAFT: VehicleDef = VehicleDef {
         // Its weight is its floor and the motor low on the transom: it sits flat.
         com_drop: 0.15,
         tank: Some(BOOST_FULL),
+        fuel: Spec::FUEL,
         buttons: Buttons::Boost,
         boost: Some(Boost::BOAT),
         aims: false,

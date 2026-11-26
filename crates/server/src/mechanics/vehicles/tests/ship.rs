@@ -207,6 +207,10 @@ fn a_wrecked_ship_takes_her_guns_down_with_her() {
     crate::mechanics::combat::damage_vehicle(&mut game.world, ship, u8::MAX, None);
     let guns = game.world.physics.fittings_of(ship);
     assert!(game.world.entities.dead(ship));
+    // She burns while her crew gets off, then goes up.
+    for _ in 0..DOOM_TICKS {
+        game.step();
+    }
     assert!(guns.iter().all(|&gun| game.world.entities.dead(gun)), "every gun is wrecked with her");
     for _ in 0..8 * TICK_RATE {
         game.step();

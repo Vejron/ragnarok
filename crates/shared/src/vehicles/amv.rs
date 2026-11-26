@@ -120,7 +120,7 @@ pub(super) const AMV: VehicleDef = VehicleDef {
     crew: Exposure::Sealed,
     seat_heads: &[],
     crew_guns: false,
-    body: Body { drop_y: 1.6, ram: 2.5, crash: 0.3, ..CAR },
+    body: Body { drop_y: 1.6, ram: 2.5, crash: 0.3, fall: Fall::Settles, ..CAR },
     spec: Spec {
         half_extents: AMV_HALF_EXTENTS,
         // The hull's 40 m³ of box at 600 kg/m³ is 24 tonnes.
@@ -143,6 +143,7 @@ pub(super) const AMV: VehicleDef = VehicleDef {
         // Its weight is low in the hull, under the turret: otherwise it leans over at full lock.
         com_drop: 0.6,
         tank: Some(BOOST_FULL),
+        fuel: Some(540.0),
         buttons: Buttons::Boost,
         boost: Some(Boost::HEAVY),
         aims: false,

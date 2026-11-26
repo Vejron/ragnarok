@@ -13,6 +13,7 @@ mod combat;
 mod deliveries;
 mod drones;
 mod emergency;
+mod fuel;
 mod gates;
 mod ghosts;
 mod golf;
@@ -42,7 +43,7 @@ pub use buses::{Bus, BusCall, BusDriver, Buses};
 pub use bots::{Bots, DRIVER, GUNNER, nearest_waypoint, road_route};
 pub use combat::{Combat, bearing, position_of};
 #[cfg(test)]
-pub use combat::{damage_object, damage_vehicle};
+pub use combat::{cook_off, damage_object, damage_vehicle};
 #[cfg(test)]
 pub(crate) use combat::CARVE_REACH;
 pub(crate) use backpack::{carries, lying as backpack_lying};
@@ -70,12 +71,20 @@ pub use titans::{Head as TitanHead, Titans, held_in as held_in_fist};
 pub use emergency::{Emergency, EmergencyCall, MEDIC_KIND, Medic, OFFICER_KIND, Officer, TEAM_SERVICES, officer_loadout, wanted_byte};
 pub use traffic::{Driver, Fleet, Traffic, TrafficCall, seat_crew};
 pub use vehicles::{Vehicles, add_tank, remove_vehicle, seat, step_byte};
+pub(crate) use vehicles::reclaim_stranded;
+pub(crate) use fuel::byte as fuel_byte;
 pub use wildlife::{Wildlife, fell, grazing};
 pub use zombies::{Zombie, Zombies, clawing, is_zombie, rising, start_rising};
 pub(crate) use bots::darkness;
 pub(crate) use life::{Harm, damage_entity, open_ground};
 
 use crate::game::World;
+
+/// Whether player `id` is a person: not a bot, a zombie or a civilian (a bus driver, an officer and
+/// a medic among them).
+pub(crate) fn human(world: &World, id: u32) -> bool {
+    !world.entities.has::<crate::game::Bot>(id) && !is_noncombatant(world, id) && !is_zombie(world, id)
+}
 
 pub trait Mechanic: Send {
     /// Its name, for timings and logs.
@@ -118,6 +127,7 @@ pub fn register_components(ecs: &mut bevy_ecs::world::World) {
     ecs.register_component::<crate::game::Mounts>();
     ecs.register_component::<crate::game::Drone>();
     ecs.register_component::<crate::game::Wreck>();
+    ecs.register_component::<crate::game::Doomed>();
     ecs.register_component::<crate::game::Burning>();
     ecs.register_component::<crate::game::Seats>();
     ecs.register_component::<crate::game::Autopilot>();

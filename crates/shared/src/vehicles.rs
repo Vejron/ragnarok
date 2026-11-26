@@ -304,23 +304,38 @@ pub struct Body {
     /// The share of any harm it takes, against a car's 1: what is left of a hit after rounding is all it
     /// loses, so a small enough one does nothing at all.
     pub tough: f32,
+    /// How its wreck goes when its health is gone.
+    pub fall: Fall,
 }
 
-const CAR: Body = Body { drop_y: 1.0, legs: 0.0, heavy: false, ram: 1.0, crash: 1.0, belly: 4.0, flies: false, towed: false, tough: 1.0 };
+/// How a vehicle dies once its health is gone: it burns for `DOOM_TICKS` while its crew gets out, then
+/// goes up as its kind does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Fall {
+    /// A light vehicle: when it goes up it is thrown into the air, tumbling.
+    Thrown,
+    /// A heavy one: it goes up where it stands, hardly lifted, and burns there.
+    Settles,
+    /// One that stands on legs: they let go the moment its health is gone, and it is pushed over away
+    /// from the blow that finished it, so it falls on its back or its face. It goes up where it lies.
+    Topples,
+}
+
+const CAR: Body = Body { drop_y: 1.0, legs: 0.0, heavy: false, ram: 1.0, crash: 1.0, belly: 4.0, flies: false, towed: false, tough: 1.0, fall: Fall::Thrown };
 /// A tank's armour takes a fifth of what a car would, and it rams with three times a car's weight.
-const TRACKS: Body = Body { heavy: true, ram: 3.0, crash: 0.2, ..CAR };
+const TRACKS: Body = Body { heavy: true, ram: 3.0, crash: 0.2, fall: Fall::Settles, ..CAR };
 /// A helicopter's skids take nothing: setting it down hard hurts it.
 const ROTOR: Body = Body { belly: 0.0, flies: true, ..CAR };
 /// A plane is wood and canvas: it takes twice the crash damage, so flying it into anything at speed
 /// is the end of it, and so is dropping it onto its wheels.
 const WINGS: Body = Body { drop_y: 1.5, crash: 2.0, belly: 0.0, flies: true, ..CAR };
 /// A walker's, a hen's or a tupp's hull starts as high as its legs hold it up.
-const LEGS: Body = Body { drop_y: WALKER_LEG_LENGTH + WALKER_HALF_EXTENTS[1], legs: WALKER_LEG_LENGTH, ..CAR };
+const LEGS: Body = Body { drop_y: WALKER_LEG_LENGTH + WALKER_HALF_EXTENTS[1], legs: WALKER_LEG_LENGTH, fall: Fall::Topples, ..CAR };
 const TOWED: Body = Body { towed: true, ..CAR };
 /// A Titan stands as high as its legs hold it, rams a building as nothing else does and is not hurt by
 /// walking into things. A tenth of any hit is what it feels. It is not `heavy`, which is a tracked
 /// hull's shape and wheels: its torso is far above the trees, and its limbs go through them.
-const GIANT: Body = Body { drop_y: titan::TITAN_LEG_LENGTH + titan::TITAN_HALF_EXTENTS[1], legs: titan::TITAN_LEG_LENGTH, ram: 40.0, crash: 0.0, tough: 0.1, ..CAR };
+const GIANT: Body = Body { drop_y: titan::TITAN_LEG_LENGTH + titan::TITAN_HALF_EXTENTS[1], legs: titan::TITAN_LEG_LENGTH, ram: 40.0, crash: 0.0, tough: 0.1, fall: Fall::Topples, ..CAR };
 /// A sled is bent steel tube on runners, built to be slammed about: crashes do it no harm at all.
 const SLED: Body = Body { crash: 0.0, ..CAR };
 

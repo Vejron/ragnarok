@@ -672,10 +672,15 @@ impl Game {
     /// felled trees and mends the broken fences and walls (REGROWTH.md) that nobody can see and
     /// nothing stands on, and tells everyone what changed.
     fn heal(&mut self) {
-        if !self.world.tick.is_multiple_of(HEAL_CHECK_TICKS) || (self.world.dug_tiles.is_empty() && !self.world.regrowing()) {
+        if !self.world.tick.is_multiple_of(HEAL_CHECK_TICKS) {
             return;
         }
         let (eyes, things) = self.watchers();
+        // A vehicle left out of fuel goes home by the same rule: when nobody is near enough to see it go (FUEL.md).
+        crate::mechanics::reclaim_stranded(&mut self.world, &eyes);
+        if self.world.dug_tiles.is_empty() && !self.world.regrowing() {
+            return;
+        }
         let tiles = self.world.heal_craters(&eyes, &things);
         if !tiles.is_empty() {
             self.broadcast(encode(&Healed { tag: S_HEALED, tiles }));

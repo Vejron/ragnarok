@@ -353,12 +353,14 @@ fn the_ak5_chips_a_vehicle_and_a_wreck_kills_the_crew() {
 
     damage_vehicle(&mut game.world, vid, max, Some(shooter));
     assert!(game.world.entities.dead(vid));
+    // It burns a while before it goes up, and the crew is still in it, alive, with the time to get out.
+    game.step();
+    assert!(game.world.entities.alive(driver) && !game.world.entities.of::<Seats>(vid).vacant(), "the driver has the time to get out");
+    assert!(!game.world.shots.iter().any(|shot| shot.weapon == WEAPON_WRECK), "and it has not gone up yet");
+    go_up(&mut game, vid);
     assert!(game.world.entities.of::<Seats>(vid).vacant(), "the crew is out of their seats");
     assert!(!game.world.entities.alive(driver), "and dead");
-    assert!(game.world.happened::<crate::game::Died>().any(|died| died.victim == driver && died.killer == Some(shooter)), "the credit goes to whoever wrecked it");
-    assert!(game.world.shots.iter().any(|shot| shot.weapon == WEAPON_WRECK));
-    game.step();
-    assert_eq!(game.world.entities.of::<Player>(shooter).score.kills, 1, "and is counted at the end of the tick");
+    assert_eq!(game.world.entities.of::<Player>(shooter).score.kills, 1, "the credit goes to whoever wrecked it");
 }
 
 #[test]
@@ -398,11 +400,24 @@ fn a_round_on_a_vehicle_shows_its_number_where_it_struck_not_in_the_middle() {
     }
 }
 
+/// Steps `game` until vehicle `vid`, whose health is gone, has burnt its `DOOM_TICKS` and gone up: what
+/// it did that tick can be read as it is left.
+fn go_up(game: &mut Game, vid: u32) {
+    for _ in 0..=DOOM_TICKS {
+        if !game.world.entities.has::<crate::game::Doomed>(vid) {
+            break;
+        }
+        game.step();
+    }
+    assert!(game.world.entities.has::<Wreck>(vid), "it has gone up");
+}
+
 #[test]
 fn a_wreck_tumbles_as_it_is_thrown_up() {
     let mut game = game();
     let (vid, _driver) = driver_in_the_car(&mut game);
     damage_vehicle(&mut game.world, vid, 255, None);
+    go_up(&mut game, vid);
     let motion = game.world.physics.car_motion(vid).unwrap();
     let spin = vec3::length(motion.angvel);
     assert!(spin > 3.0, "a wreck is sent turning over, not just straight up (spin {spin})");
@@ -425,7 +440,7 @@ fn a_wreck_cannot_be_boarded_and_comes_back_whole() {
     hold(&mut game, id, &mut seq, 0.0, 0, 3);
     assert!(game.world.entities.of::<Player>(id).seat.is_none(), "nobody boards a wreck");
 
-    for _ in 0..WRECK_TICKS {
+    for _ in 0..DOOM_TICKS + WRECK_TICKS {
         game.step();
     }
     assert!(!game.world.entities.dead(vid));

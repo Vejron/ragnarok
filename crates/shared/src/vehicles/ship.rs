@@ -92,6 +92,7 @@ pub(super) const SHIP: VehicleDef = VehicleDef {
         // Ballast in the bilge: it rolls back upright from a broadside.
         com_drop: 0.35,
         tank: None,
+        fuel: Spec::NO_FUEL,
         buttons: Buttons::Drive,
         boost: Spec::NO_BOOST,
         aims: false,

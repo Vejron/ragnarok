@@ -77,6 +77,8 @@ export interface Placed {
   jets: number
   /** Air, stamina or battery left, 0..1, if it has any. */
   air: number | null
+  /** The fuel left in its tank, 0..1, 0 being dry (`Fuel`, FUEL.md); null for a kind that burns none. */
+  fuel: number | null
   /** How hard its driver works the engine, -1..1 (`Steer.throttle`). */
   throttle: number
 }
@@ -338,7 +340,7 @@ export class Vehicles implements Presenter<Frame> {
     }
     const placed: Placed = {
       kind, x, y, z, yaw: Math.atan2(-forward.x, -forward.z), rotation, steer, seats, manned: this.seating.manned(id), turret, pintle, arms, sub: entity.sub ?? null,
-      hp: entity.health?.hp ?? 0, damage: entity.damage?.parts ?? UNHURT, doors: entity.doors ?? SHUT, jets, air: entity.thrust?.air ?? null, throttle,
+      hp: entity.health?.hp ?? 0, damage: entity.damage?.parts ?? UNHURT, doors: entity.doors ?? SHUT, jets, air: entity.thrust?.air ?? null, fuel: entity.fuel?.level ?? null, throttle,
     }
     this.placed.set(id, placed)
     this.tyres(id, placed, frame.dt, entity.arms ? (entity.arms.flags & ARMS_CUT) !== 0 : false)
@@ -369,8 +371,8 @@ export class Vehicles implements Presenter<Frame> {
       this.motion.set(id, fx)
     }
     const position: [number, number, number] = [placed.x, placed.y, placed.z]
-    // A towed gun has no engine, whoever sits at it.
-    const powered = (seats[0] ?? 0) !== 0 && hp > 0 && !vehicleDef(kind).towed
+    // A towed gun has no engine, whoever sits at it, and an engine out of fuel does not run.
+    const powered = (seats[0] ?? 0) !== 0 && hp > 0 && !vehicleDef(kind).towed && placed.fuel !== 0
     fx.update(this.world.fx(), position, placed.rotation, placed.steer, powered, dt)
     // The driver's own car is drawn from its prediction, so what is heard follows the wheel at once.
     const landing = fx.takeLanding()
@@ -410,5 +412,5 @@ export class Vehicles implements Presenter<Frame> {
 export function poseOf(id: number, entity: Entity): VehiclePose {
   const { x, y, z } = entity.place!
   const { qx, qy, qz, qw } = entity.orientation!
-  return { id, kind: entity.kind?.kind ?? 0, x, y, z, qx, qy, qz, qw, hp: entity.health?.hp ?? 0, damage: entity.damage?.parts ?? UNHURT, air: entity.thrust?.air ?? null }
+  return { id, kind: entity.kind?.kind ?? 0, x, y, z, qx, qy, qz, qw, hp: entity.health?.hp ?? 0, damage: entity.damage?.parts ?? UNHURT, air: entity.thrust?.air ?? null, fuel: entity.fuel?.level ?? null }
 }

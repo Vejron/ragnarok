@@ -171,7 +171,7 @@ An `update` is `[id u32, set u32, (cleared u32), fields…]`:
 | 7 | | | | retired (was the vehicle's `crew`; see `seated`) |
 | 8 | `thrust` | whole | `air, flags` u8 | The air left in its tank, 0..255 of full, and the nozzles firing (bit 0 the rear boost nozzles, bit 1 the lift nozzles). Other clients draw the jets from `flags`; the driver's prediction resumes from `air`. A drone sends its battery as `air` and sets bit 2 while its pilot still flies it. A hen sends its wings' stamina as `air`; bit 1 is set while it leaps or flaps, bit 3 while it glides with its wings spread and still, and bit 4 while neither foot is on the ground. A helicopter sends its rotor's speed as `air` (255 is governed speed), which every client spins the rotor and beats the blades with and the pilot's prediction resumes from, and sets bit 5 while its rotor is low with a pilot aboard (protocol 90) |
 | 9 | `arms` | whole | `shots, heat, rear_heat, bombs, flags` u8 | a plane's pilot weapons and engine, or a hen's eggs (below) |
-| 10 | | | | retired (was the vehicle's `seats`; see `seated`) |
+| 10 | `fuel` | whole | `level` u8 | what is left in a vehicle's fuel tank, 0..255 of full, rounded up: 0 is dry, and its engine gives nothing. Only on a kind that burns fuel (`Spec::fuel`). Its driver's prediction stops the engine by it (protocol 100, [FUEL.md](FUEL.md)) |
 | 11 | `health` | whole | `hp` u8 | a vehicle's health; 0 is a burning wreck nobody can board |
 | 12 | `damage` | whole | `parts`: 8 × u8 | Absent while unhurt; front, rear, left, right, then wheels FL, FR, RL, RR, each 0..255 (a wheel at 255 is gone). A tank has no wheels to hurt, so its byte 4 (`DAMAGE_TURRET`) is 255 (`TURRET_GONE`) once its turret has been shot off |
 | 13 | `velocity` | diff | `vx, vy, vz` i16 | a projectile's velocity, cm/s |
@@ -197,7 +197,7 @@ What each carries today:
 | Soldier | `kind`, `place`, `heading`, `motion`, `flags`; `vitals` and `hotbar` for themself; `seated` too for a drone's pilot |
 | Rooster | `kind`, `place`, `heading`, `flags` |
 | Rider | `kind`, `seated`; where their crew show (jeep, sports car, Roadster, helicopter, triplane, mortar), also `heading`, `look` and `flags` (what they hold); `vitals` and `hotbar` for themself |
-| Vehicle | `kind`, `place`, `orientation`, `steer`, `health`, and whichever of `turret`, `thrust`, `arms`, `damage`, `doors` it has; `drive` for its driver |
+| Vehicle | `kind`, `place`, `orientation`, `steer`, `health`, and whichever of `turret`, `thrust`, `arms`, `fuel`, `damage`, `doors` it has; `drive` for its driver |
 | Projectile | `projectile`, `place`, `velocity` |
 | Item on the ground | `pickup`, `place` |
 

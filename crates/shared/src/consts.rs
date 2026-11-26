@@ -46,7 +46,7 @@ pub use crate::vehicles::police_car::*;
 pub use crate::vehicles::ambulance::*;
 
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
-pub const PROTOCOL_VERSION: u8 = 99;
+pub const PROTOCOL_VERSION: u8 = 100;
 
 /// Why a page closes its session (`Bye`): the tab is closing or reloading.
 pub const BYE_LEAVING: u8 = 0;
@@ -956,6 +956,39 @@ pub const WRECK_SPIN: f32 = 6.5;
 pub const WRECK_BLAST_RADIUS: f32 = 8.0;
 pub const WRECK_BLAST_DAMAGE: f32 = 100.0;
 pub const WRECK_BLAST_KNOCK: f32 = 14.0;
+/// How long a vehicle whose health is gone burns before it goes up, ticks: the time its crew has to
+/// get out. Whoever is still aboard when it goes up dies with it.
+pub const DOOM_TICKS: u32 = 3 * TICK_RATE;
+/// Angular speed (rad/s) a wreck on legs is pushed over with, away from the blow that finished it: only
+/// a start, since gravity does the rest once its legs let go.
+pub const WRECK_TOPPLE_SPIN: f32 = 0.3;
+/// A wreck on legs goes up once it lies, its up axis no higher than this (y of it, 1 upright), or this
+/// many ticks after `DOOM_TICKS` at the latest: a Titan takes about five seconds to come down.
+pub const WRECK_LIES_UP: f32 = 0.3;
+pub const WRECK_TOPPLE_TICKS: u32 = 3 * TICK_RATE;
+/// How fast (m/s) a heavy wreck is jolted upwards as it goes up: enough to be seen, not to leave the ground.
+pub const WRECK_JOLT: f32 = 2.0;
+
+/// How many times faster a vehicle burns its fuel while its driver holds the boost.
+pub const FUEL_BOOST_BURN: f32 = 2.0;
+/// What an engine burns with a player at the wheel and the throttle at rest, a share of what it
+/// burns flat out.
+pub const FUEL_IDLE_BURN: f32 = 0.05;
+/// How long a full tank takes to run out through a holed fuel tank (the part hurt), seconds. It
+/// leaks whether the vehicle is driven or parked.
+pub const FUEL_LEAK_HURT_SECONDS: f32 = 120.0;
+/// How long a full tank takes to run out of a fuel tank shot to pieces (the part gone), seconds.
+pub const FUEL_LEAK_GONE_SECONDS: f32 = 20.0;
+/// How long a fuel station takes to fill an empty tank, seconds.
+pub const FUEL_FILL_SECONDS: f32 = 10.0;
+/// How near a fuel station a vehicle fills up, metres on the ground plane.
+pub const FUEL_STATION_REACH: f32 = 30.0;
+/// How long a vehicle stands empty of fuel and of crew before it is taken back to where it was
+/// placed, seconds. It goes only while no player is within `HEAL_CLEAR` of it.
+pub const FUEL_STRANDED_SECONDS: u32 = 5 * 60;
+/// How far apart two fuel stations of a map are at least, metres: the importer makes one of the
+/// pumps, the canopy and the shop that OpenStreetMap maps for the same station.
+pub const FUEL_STATION_APART: f32 = 60.0;
 
 /// How far back the server will rewind other players to meet a shooter's view, in ticks (250 ms).
 /// A shot never reaches further into the past than this, so a laggy shooter has a cap on how far

@@ -68,6 +68,7 @@ pub(super) const AMBULANCE: VehicleDef = VehicleDef {
         // Low enough that it stays on its wheels at full lock flat out (measured in vehicle/tests.rs).
         com_drop: 0.4,
         tank: Some(BOOST_FULL),
+        fuel: Spec::FUEL,
         buttons: Buttons::Boost,
         boost: Some(Boost::CAR),
         aims: false,

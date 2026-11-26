@@ -102,6 +102,7 @@ pub(super) const HEN: VehicleDef = VehicleDef {
         linear_damping: 0.05,
         com_drop: 0.0,
         tank: Some(HEN_STAMINA),
+        fuel: Spec::NO_FUEL,
         buttons: Buttons::Leap,
         boost: Spec::NO_BOOST,
         aims: false,

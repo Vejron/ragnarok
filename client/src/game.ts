@@ -9,7 +9,7 @@ import { Transport } from './net/transport'
 import {
   BUTTON_ALT, BUTTON_CHUTE, BUTTON_CROUCH, BUTTON_FIRE, BUTTON_JUMP, BUTTON_LAMP, BUTTON_RELOAD, BUTTON_RUN, BYE_LEAVING, BYE_REJOINING, CROUCH_EYE_DROP, PRONE_EYE_HEIGHT, SLIDE_MIN_SPEED, EYE_HEIGHT, INPUT_REDUNDANCY, PLAYER_MAX_HP, PROTOCOL_VERSION,
   SHELL_COOLDOWN_TICKS, STANDING_Y, STANCE_CHUTE, STANCE_DIVE, STANCE_DOWN, STANCE_PRONE, STANCE_SWIM, STANCE_GHOST,
-  TICK_MS, TICK_RATE, TITAN_FIST_RADIUS, TITAN_REACH, LIFT_RIDER_CENTRE, BLOOM_RECOVER, STAMINA_FULL, ONE_ARM_SWAY, BACKPACK_SPEED, CARRY_SKIS, SUB_LAUNCH_DEPTH } from './sim/consts'
+  DOOM_TICKS, TICK_MS, TICK_RATE, TITAN_FIST_RADIUS, TITAN_REACH, LIFT_RIDER_CENTRE, BLOOM_RECOVER, STAMINA_FULL, ONE_ARM_SWAY, BACKPACK_SPEED, CARRY_SKIS, SUB_LAUNCH_DEPTH } from './sim/consts'
 import { easeSway, sway, swayAmplitude } from './sway'
 import { mayPlace } from './sim/bricks'
 import { crewGun, vehicleDef } from './sim/vehicles'
@@ -123,6 +123,8 @@ import { Riders, doorStep, seatFrame } from './entities/presenters/riders'
 import type { DoorStep } from './render/character'
 import { LiftRiders } from './entities/presenters/liftriders'
 import { BusStops } from './render/busstops'
+import { FuelStations } from './render/fuelstations'
+import { fuelGauge } from './fuel'
 import { LiftView } from './render/lifts'
 import { Seating } from './entities/presenters/seating'
 import { poseOf, Vehicles, type Placed, type VehicleWorld } from './entities/presenters/vehicles'
@@ -480,6 +482,7 @@ export class Game {
   private liftView: LiftView | null = null
   /** The signs at the world's bus stops, once the world is known. */
   private busStops: BusStops | null = null
+  private fuelStations: FuelStations | null = null
   /** Where the camera goes while seated, by the seat's rig. */
   private readonly cameras: Cameras
   private predictor: Predictor | null = null
@@ -517,6 +520,8 @@ export class Game {
   /** Set when reconnecting cannot help (another protocol, build or world); only a reload can. */
   private halted = false
   private warning: string | null = null
+  /** The vehicle you sit in whose health is gone, and when it was first seen so (ms), for the countdown to it going up. */
+  private doomed: { vehicle: number; since: number } | null = null
   /** Watches the session for being dead or out of step with the server, and says when to rejoin. */
   private readonly health = new ConnectionHealth()
   /** What the HUD says while a lost session is being rejoined; null while joined, or never joined. */
@@ -695,6 +700,8 @@ export class Game {
     this.scene.scene.add(this.liftView.root)
     this.busStops = new BusStops(world.busLines)
     this.scene.scene.add(this.busStops.root)
+    this.fuelStations = new FuelStations(world.fuelStations ?? [])
+    this.scene.scene.add(this.fuelStations.root)
     this.motor = this.view.motor = motor
     this.ragdolls = new Ragdolls(motor)
     this.driver = new VehicleDriver(motor)
@@ -1321,6 +1328,7 @@ export class Game {
     this.followClock(renderTick)
     this.liftView?.update(this.liftTick(now), eye, this.scene.scene.fog?.far ?? Infinity)
     this.busStops?.update(eye, this.scene.scene.fog?.far ?? Infinity, (x, z) => this.terrain?.sample(x, z) ?? null)
+    this.fuelStations?.update(eye, this.scene.scene.fog?.far ?? Infinity, (x, z) => this.terrain?.sample(x, z) ?? null)
 
     const seat = this.seat
     const view = seat ? crewedSeatView(seat.kind, seat.index, this.vehicles.placed.get(seat.vehicle)?.seats ?? []) : null
@@ -1387,7 +1395,7 @@ export class Game {
 
   /** Raises or lowers the phone and redraws its screen when something changed, or every so often. */
   private holdPhone(stats: HudStats, { now, dt, velocity, lookYaw, lookPitch }: Moment) {
-    const marks = { x: stats.x, z: stats.z, yaw: stats.yaw, blips: stats.blips, circle: stats.backpack, target: stats.delivery?.target, pulse: (now % 1600) / 1600 }
+    const marks = { x: stats.x, z: stats.z, yaw: stats.yaw, blips: stats.blips, circle: stats.backpack, target: stats.delivery?.target, stations: stats.fuelStations, pulse: (now % 1600) / 1600 }
     if (this.localId !== null) this.scene.heldPhone.dress(colorFor(this.localId))
     if (this.input.takeStatsToggle()) this.setLook({ ...this.scene.look, netStats: !this.scene.look.netStats })
     const app = this.input.phone
@@ -1712,6 +1720,16 @@ export class Game {
     return this.scene.camera.project(point) ? [(point.x + 1) / 2, (1 - point.y) / 2] : null
   }
 
+  /** Seconds until `vehicle`, which you sit in, goes up once its health is gone, counted from when it was first seen at none; null while it has some. */
+  private doomedIn(now: number, vehicle: number | undefined, ride: Placed | undefined): number | null {
+    if (vehicle === undefined || !ride || ride.hp > 0) {
+      this.doomed = null
+      return null
+    }
+    if (this.doomed?.vehicle !== vehicle) this.doomed = { vehicle, since: now }
+    return Math.max(0, (DOOM_TICKS * TICK_MS - (now - this.doomed.since)) / 1000)
+  }
+
   /** How deep a submarine's middle is under the surface where it is drawn, metres. */
   private depthOf(ride: { x: number; y: number; z: number }): number {
     const level = this.waters?.surfaceAt(ride.x, ride.z, this.waveClock) ?? NO_WATER
@@ -1769,6 +1787,8 @@ export class Game {
       ...(gauges?.includes('tubes') ? { bombs: ride?.arms?.bombs ?? null } : {}),
       air: gauges?.includes('air') ? (this.driver?.thrust?.air ?? null) : gauges?.includes('wind') && seat ? this.sailing(seat.vehicle, now) : null,
       boost: gauges?.includes('boost') ? (this.driver?.thrust?.air ?? null) : null,
+      fuel: ride?.fuel != null ? fuelGauge(ride.fuel, this.fuelStations?.stations ?? [], ride.x, ride.z) : null,
+      fuelStations: this.fuelStations?.stations ?? [],
       stamina: !seated && able ? { left: 1 - local.spent / STAMINA_FULL, winded: local.winded } : null,
       breath: !seated && player.alive && player.breath < 1 ? player.breath : null,
       rotor: gauges?.includes('rotor') && seat ? this.rotorGauge(seat.vehicle) : null,
@@ -1792,6 +1812,7 @@ export class Game {
       maxHp: PLAYER_MAX_HP,
       dead: !player.alive,
       respawnIn: player.respawnIn(now),
+      doomedIn: this.doomedIn(now, seat?.vehicle, ride),
       ghost: player.ghost || player.forming ? { left: player.ghostLeft, block: player.ghostBlock, forming: player.forming } : null,
       wanted: player.wanted > 0 ? { stars: player.wanted, unseen: player.unseen } : null,
       sight: sighted,

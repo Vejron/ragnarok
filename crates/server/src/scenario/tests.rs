@@ -382,7 +382,7 @@ fn a_squad_tank_comes_crewed_and_goes_once_it_is_wrecked_and_burnt_out() {
         assert_eq!(game.world.entities.of::<Bot>(*id).temper, crate::game::Temper { courage: 0.25, aggression: 0.5, patience: 1.0 });
     }
 
-    crate::mechanics::damage_vehicle(&mut game.world, vid, 255, None);
+    crate::mechanics::cook_off(&mut game.world, vid, None);
     let [walker] = bots(&game).into_iter().filter(|id| !crew.contains(id)).collect::<Vec<_>>()[..] else { panic!() };
     kill(&mut game, walker);
     run(&mut game, 5.0);

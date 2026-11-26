@@ -75,6 +75,7 @@ pub(super) const MORTAR: VehicleDef = VehicleDef {
         linear_damping: 0.05,
         com_drop: 0.0,
         tank: None,
+        fuel: Spec::NO_FUEL,
         buttons: Buttons::Drive,
         boost: Spec::NO_BOOST,
         aims: false,

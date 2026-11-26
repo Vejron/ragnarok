@@ -555,6 +555,12 @@ pub struct Vehicle {
     pub siren: bool,
     /// Its doors (`VehicleDef::doors`): what each has taken, which stand open, and which have come off.
     pub doors: DoorState,
+    /// The fuel left in its tank, a share of full, for a kind that burns any (`Spec::fuel`): see
+    /// `mechanics::fuel`. Full on a kind that burns none.
+    pub fuel: f32,
+    /// Ticks it has stood with its tank empty and nobody aboard: `fuel::reclaim` takes it home after
+    /// `FUEL_STRANDED_SECONDS` of it.
+    pub dry_ticks: u32,
 }
 
 /// What a vehicle's doors are doing, by the index of each in `VehicleDef::doors` (DOORS.md).
@@ -605,12 +611,14 @@ impl Vehicle {
         std::array::from_fn(|slot| armor.module(slot).map_or(0, |module| module.hp))
     }
 
-    /// Put back as new: no damage, its turret on and every part whole.
+    /// Put back as new: no damage, its turret on, every part whole and its tank full.
     pub fn renew(&mut self) {
         self.damage = [0; shared::protocol::DAMAGE_SLOTS];
         self.turret_hp = shared::consts::TANK_TURRET_HP;
         self.parts = Vehicle::fresh_parts(self.kind);
         self.doors = DoorState::default();
+        self.fuel = 1.0;
+        self.dry_ticks = 0;
     }
 }
 
@@ -704,6 +712,16 @@ impl std::ops::DerefMut for Seats {
 #[derive(crate::entities::Component, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Wreck {
     pub left: u32,
+}
+
+/// A vehicle at zero `Health` that has not gone up yet: it has burnt for `ticks` while its crew gets out,
+/// and is a `Wreck` once it has burnt `DOOM_TICKS` (and, on legs, has come down). `away` is the way (x, z,
+/// a unit vector) the blow that finished it was going, which a wreck on legs falls along. The `Vehicles`
+/// mechanic owns it.
+#[derive(crate::entities::Component, Clone, Copy, Debug, PartialEq)]
+pub struct Doomed {
+    pub ticks: u32,
+    pub away: [f32; 2],
 }
 
 /// What a weapon mount (`shared::mounts::MountDef`) is doing: where it points, when it can fire

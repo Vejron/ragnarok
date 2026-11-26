@@ -1811,13 +1811,13 @@ fn rays_see_walls_and_ignore_their_own_vehicle() {
 fn a_blast_shoves_a_nearby_vehicle_away() {
     let mut physics = with_car(&flat());
     run(&mut physics, COAST, 120);
-    physics.blast_cars([-3.0, 0.0, 0.0], EXPLOSION_RADIUS);
+    physics.blast_cars([-3.0, 0.0, 0.0], EXPLOSION_RADIUS, None);
     // Measured in the hop it gives: once down, the tyres' side grip soon stops the slide.
     let after = run(&mut physics, COAST, 5);
     assert!(after.velocity[0] > 1.0, "pushed towards +X: {:?}", after.velocity);
     let mut far = with_car(&flat());
     run(&mut far, COAST, 120);
-    far.blast_cars([-30.0, 0.0, 0.0], EXPLOSION_RADIUS);
+    far.blast_cars([-30.0, 0.0, 0.0], EXPLOSION_RADIUS, None);
     assert!(run(&mut far, COAST, 20).velocity[0].abs() < 0.2);
 }
 
@@ -1878,14 +1878,14 @@ fn a_walker_shrugs_off_a_nudge_but_a_close_blast_tips_it_over() {
     assert!(pose.up_y > 0.99, "recovers from a nudge: {pose:?}");
 
     // A shell bursting at its side, a few metres off, is a shove it can stay on its feet through.
-    let reached = physics.blast_cars([-9.0, 4.5, 0.0], 12.0);
+    let reached = physics.blast_cars([-9.0, 4.5, 0.0], 12.0, None);
     assert_eq!(reached.len(), 1);
     let pose = run(&mut physics, COAST, 240);
     assert!(pose.up_y > 0.9, "a far blast does not tip it: {pose:?}");
 
     // One right beside it goes over, and a fallen walker cannot be driven off.
     let at = physics.car_pose(1).unwrap().position;
-    physics.blast_cars([at[0] - 1.2, at[1] - 0.8, at[2]], 12.0);
+    physics.blast_cars([at[0] - 1.2, at[1] - 0.8, at[2]], 12.0, None);
     let pose = run(&mut physics, COAST, 90);
     assert!(pose.up_y < WALKER_FALLEN_UP, "tipped over: {pose:?}");
     let fallen = run(&mut physics, CarControls { throttle: 1.0, ..DRIVEN }, 30);
@@ -2898,7 +2898,7 @@ fn a_titan_shrugs_off_a_shell_but_a_great_blow_fells_it_and_it_gets_up() {
     let mut physics = titan();
     run(&mut physics, COAST, 300);
     // A blast against its chest that would throw a walker over.
-    physics.blast_cars([0.0, TITAN_RIDE_HEIGHT, -5.0], 12.0);
+    physics.blast_cars([0.0, TITAN_RIDE_HEIGHT, -5.0], 12.0, None);
     let pose = run(&mut physics, COAST, 300);
     assert!(pose.up_y > 0.99 && pose.position[2].abs() < 1.0, "a shell's blast barely moves it: {pose:?}");
     // Thrown over bodily.
@@ -3328,4 +3328,13 @@ fn a_punch_on_the_guard_knocks_the_arm_aside_and_barely_rocks_the_titan() {
     assert!(contacts.first().is_some_and(|contact| contact.guard.is_some() && contact.speed > TITAN_PUNCH_SPEED), "it lands on the guard: {contacts:?}");
     assert!(most.to_degrees() < 2.5, "the Titan behind it barely rocks: {} degrees", most.to_degrees());
     assert!(swung > 1.5, "the arm it landed on is knocked aside: {swung} m");
+}
+
+#[test]
+fn a_car_out_of_fuel_has_no_power_whatever_its_health() {
+    let whole = CarCondition::of(KIND_JEEP, 100, [0; shared::protocol::DAMAGE_SLOTS]);
+    assert_eq!(whole.power, 1.0);
+    let dry = whole.dry();
+    assert_eq!((dry.power, dry.turn), (0.0, 0.0), "its engine gives nothing");
+    assert_eq!(dry.wheels, whole.wheels, "and nothing else about it changes");
 }

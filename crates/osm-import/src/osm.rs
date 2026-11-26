@@ -237,7 +237,7 @@ pub fn is_ski_relation<T: Lookup + ?Sized>(tags: &T) -> bool {
 
 /// Whether any pass wants this way.
 pub fn wants_way<T: Lookup + ?Sized>(tags: &T) -> bool {
-    is_main_way(tags) || is_water_way(tags) || is_golf_way(tags) || is_lift(tags) || is_nordic(tags)
+    is_main_way(tags) || is_water_way(tags) || is_golf_way(tags) || is_lift(tags) || is_nordic(tags) || crate::fuel::is_fuel(tags)
 }
 
 /// Whether any pass wants this relation.

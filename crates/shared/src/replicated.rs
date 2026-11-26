@@ -350,8 +350,7 @@ replicated! {
 
     set 7 limbs
     /// The limbs a soldier has lost (`LIMB_*`, low four bits) and the stumps that still bleed (the same
-    /// bits above `LIMB_BLEED_SHIFT`). Absent while whole. Ids 7 and 10 were the vehicle's `crew` and
-    /// `seats`.
+    /// bits above `LIMB_BLEED_SHIFT`). Absent while whole.
     Limbs { lost: u8 }
 
     set 8 thrust
@@ -364,6 +363,11 @@ replicated! {
     /// rounds modulo 256 (the left gun fires the even ones), the heat of both sets of guns (they jam at
     /// 255), the bombs on the rack, and `ARMS_*` flags. A hen sends its clutch of eggs as `bombs`.
     Arms { shots: u8, heat: u8 as byte, rear_heat: u8 as byte, bombs: u8, flags: u8 }
+
+    set 10 fuel
+    /// What is left in a vehicle's fuel tank, 0..=255 of full, rounded up: 0 is dry, and its engine
+    /// gives nothing (FUEL.md). Only on a kind that burns fuel (`Spec::fuel`).
+    Fuel { level: u8 as byte }
 
     set 11 health
     /// A vehicle's health; 0 is a burning wreck.
@@ -416,7 +420,7 @@ replicated! {
     set 20 seated
     /// A player sitting in seat `seat` of vehicle `vehicle` (0 drives). They have no `place` of their
     /// own unless their body stays behind (a drone's pilot): they are where the kind's seat puts them.
-    /// Id 10 was the vehicle's `seats`, which this replaced. `step` is how far they are through
+    /// `step` is how far they are through
     /// getting out by the seat's door, 0 in the seat and 1 standing outside it (DOORS.md): getting in
     /// runs it back from 1 to 0.
     Seated { vehicle: u32, seat: u8, step: u8 as byte }

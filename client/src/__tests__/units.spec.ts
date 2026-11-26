@@ -16,11 +16,11 @@ describe('replicated components in the game’s units', () => {
     expect(person).toMatchObject({ place: { x: 12.34, y: -1234.56, z: 1.01 }, heading: { yaw: 1.571 }, motion: { vy: -5, knock_x: 6.5, knock_z: -3 } })
     const roadster = toGame({
       kind: { kind: KIND_ROADSTER }, place: { x: -250, y: 80, z: 4100 }, orientation: { qx: 1200, qy: -3000, qz: 15 }, steer: { steer: -64, throttle: 0 },
-      health: { hp: 100 }, damage: { parts: [0, 0, 40, 0, 0, 0, 255, 3] }, thrust: { air: 51, flags: THRUST_BOOST },
+      health: { hp: 100 }, damage: { parts: [0, 0, 40, 0, 0, 0, 255, 3] }, thrust: { air: 51, flags: THRUST_BOOST }, fuel: { level: 51 },
     })
     expect(roadster).toMatchObject({
       place: { x: -2.5, y: 0.8, z: 41 }, steer: { steer: -64 / 127 }, health: { hp: 100 }, damage: { parts: [0, 0, 40, 0, 0, 0, 255, 3] },
-      thrust: { air: 0.2, flags: THRUST_BOOST },
+      thrust: { air: 0.2, flags: THRUST_BOOST }, fuel: { level: 0.2 },
     })
     expect(roadster.orientation).toEqual({ qx: q(1200), qy: q(-3000), qz: q(15), qw: expect.closeTo(Math.sqrt(1 - (1200 ** 2 + 3000 ** 2 + 15 ** 2) / 32767 ** 2), 9) })
     const tank = toGame({ kind: { kind: 2 }, place: { x: 0, y: 0, z: 0 }, orientation: { qx: 0, qy: 0, qz: 0 }, turret: { yaw: -700, pitch: 250, shots: 3, range: 1234, heat: 51, flags: TURRET_STOWED } })

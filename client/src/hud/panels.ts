@@ -131,6 +131,11 @@ export class Panels {
     else if (s.dead && !s.notices.outcome) {
       p.rect(0, 0, p.width, p.height, 0x961414, 0.35)
       title(p, 'ELIMINATED', `Rising as a ghost in ${Math.ceil(s.respawnIn)}`)
+    } else if (s.doomedIn !== null) {
+      // The vehicle you sit in is burning: the screen pulses, faster as it nears going up.
+      const pulse = 0.5 + 0.5 * Math.sin(now / (s.doomedIn > 1 ? 160 : 80))
+      p.rect(0, 0, p.width, p.height, 0xe0501e, 0.15 + 0.15 * pulse)
+      title(p, 'GET OUT', s.doomedIn > 0 ? `It goes up in ${Math.ceil(s.doomedIn)}` : 'It is going up')
     }
     this.scenario(p, s, now, pillsBottom + 10)
     if (s.notices.outcome) {

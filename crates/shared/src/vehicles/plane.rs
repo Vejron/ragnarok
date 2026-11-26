@@ -154,6 +154,7 @@ pub(super) const PLANE: VehicleDef = VehicleDef {
         linear_damping: 0.0,
         com_drop: 0.0,
         tank: None,
+        fuel: Some(540.0),
         buttons: Buttons::Drive,
         boost: Spec::NO_BOOST,
         aims: true,

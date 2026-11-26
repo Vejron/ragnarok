@@ -28,7 +28,7 @@ mod route;
 use super::Mechanic;
 use super::vehicles::{add_vehicle, remove_vehicle};
 use crate::entities::{Health, With};
-use crate::game::{Autopilot, Bot, Noise, Player, Seats, Vehicle, World};
+use crate::game::{Autopilot, Noise, Player, Seats, Vehicle, World};
 use bevy_ecs::message::MessageCursor;
 use crate::rng::Rng;
 pub use graph::{Graph, Way};
@@ -451,7 +451,7 @@ fn deck_at(world: &World, x: f32, z: f32) -> f32 {
 
 /// The players traffic is real for: people, not bots, zombies or bus drivers.
 pub(super) fn viewers(world: &World) -> Vec<[f32; 3]> {
-    world.entities.all::<Player>().filter(|&(id, _)| human(world, id)).map(|(_, player)| player.character.position).collect()
+    world.entities.all::<Player>().filter(|&(id, _)| super::human(world, id)).map(|(_, player)| player.character.position).collect()
 }
 
 /// Whether vehicle `vid` is fit to drive on as traffic: it has half its health or more, and all
@@ -467,7 +467,7 @@ fn sound(world: &World, vid: u32) -> bool {
 /// they look.
 pub(crate) fn hidden(world: &World, p: [f32; 3]) -> bool {
     let target = [p[0], p[1] + HIDDEN_HEIGHT, p[2]];
-    world.entities.all::<Player>().filter(|&(id, _)| human(world, id)).all(|(id, player)| {
+    world.entities.all::<Player>().filter(|&(id, _)| super::human(world, id)).all(|(id, player)| {
         let own = player.seat.filter(|seat| !seat.remote).map(|seat| seat.vehicle);
         let aboard = own.and_then(|vid| world.physics.car_pose(vid)).map(|pose| [pose.position[0], pose.position[1] + 1.5, pose.position[2]]);
         let eye = world.seated_head(id).map(|(_, head)| head).or(aboard).unwrap_or_else(|| player.eye());
@@ -481,11 +481,6 @@ pub(crate) fn hidden(world: &World, p: [f32; 3]) -> bool {
         let off = wrap_angle((-(p[0] - eye[0])).atan2(-(p[2] - eye[2])) - shared::quant::from_mrad(player.input.yaw)).abs();
         off > VIEW_HALF || !super::bots::clear_line_past(world, eye, target, own)
     })
-}
-
-/// Whether player `id` is a person: not a bot, a zombie or a civilian.
-fn human(world: &World, id: u32) -> bool {
-    !world.entities.has::<Bot>(id) && !super::is_noncombatant(world, id) && !super::is_zombie(world, id)
 }
 
 impl Traffic {
@@ -1611,7 +1606,7 @@ impl Mechanic for Traffic {
             return;
         }
         self.viewers = viewers(world);
-        self.looks = world.entities.all::<Player>().filter(|&(id, _)| human(world, id)).map(|(_, player)| shared::quant::from_mrad(player.input.yaw)).collect();
+        self.looks = world.entities.all::<Player>().filter(|&(id, _)| super::human(world, id)).map(|(_, player)| shared::quant::from_mrad(player.input.yaw)).collect();
         self.lay_out(world);
         let tick = world.tick;
         self.tick = tick;

@@ -219,6 +219,7 @@ pub(super) const CB90: VehicleDef = VehicleDef {
         // Its engines low in the hull: it rolls back upright.
         com_drop: 0.4,
         tank: Some(BOOST_FULL),
+        fuel: Spec::FUEL,
         buttons: Buttons::Boost,
         boost: Some(Boost::BOAT),
         aims: false,

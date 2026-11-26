@@ -75,6 +75,7 @@ pub(super) const SHIP_GUN: VehicleDef = VehicleDef {
         linear_damping: 0.0,
         com_drop: 0.0,
         tank: None,
+        fuel: Spec::NO_FUEL,
         buttons: Buttons::Drive,
         boost: Spec::NO_BOOST,
         aims: false,

@@ -77,6 +77,7 @@ pub(super) const DRONE: VehicleDef = VehicleDef {
         linear_damping: DRONE_DAMPING,
         com_drop: 0.0,
         tank: None,
+        fuel: Spec::NO_FUEL,
         buttons: Buttons::Drive,
         boost: Spec::NO_BOOST,
         aims: true,

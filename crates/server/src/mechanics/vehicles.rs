@@ -1,7 +1,7 @@
 use shared::vec3;
 use crate::entities::{Health, HurtBy, Hurtbox, Transform, With};
 use super::Mechanic;
-use crate::game::{Autopilot, Burning, Died, Mounts, Player, Seat, Seats, Vehicle, World, Wreck};
+use crate::game::{Autopilot, Bot, Burning, Died, Doomed, Mounts, Player, Seat, Seats, Vehicle, World, Wreck};
 use sim::{CarCondition, CarControls, CarImpact, CarPose, Character, Obj, half_extents};
 use shared::consts::*;
 use shared::vehicles::vehicle_def;
@@ -57,7 +57,7 @@ fn restore(world: &mut World, vid: u32, burnt: bool) {
     if burnt {
         world.entities.remove::<(Wreck, HurtBy)>(vid);
     }
-    world.entities.remove::<Burning>(vid);
+    world.entities.remove::<(Burning, Doomed)>(vid);
     if let Some(mut mounts) = world.entities.get_mut::<Mounts>(vid) {
         mounts.restock();
     }
@@ -81,6 +81,8 @@ pub(super) fn add_vehicle(world: &mut World, kind: u8, position: [f32; 3], yaw: 
             lamp_held: false,
             siren: false,
             doors: Default::default(),
+            fuel: 1.0,
+            dry_ticks: 0,
         },
         Health::full(vehicle_hp(kind)),
         Seats::empty(vehicle_def(kind).seats),
@@ -789,6 +791,13 @@ impl Mechanic for Vehicles {
             let driver = world.entities.of::<Seats>(vid).rider(0).filter(|&driver| !world.entities.has::<Stepping>(driver)).and_then(|driver| world.entities.get::<Player>(driver)).filter(|driver| driver.seat.is_none_or(|seat| seat.vehicle == vid)).map(|driver| driver.input);
             let occupied = world.entities.of::<Seats>(vid).rider(0).is_some();
             let autopilot = world.entities.get::<Autopilot>(vid).map(|autopilot| autopilot.0);
+            // Fuel is a player's to run out of: a bot, a bus driver or the traffic drives on with none.
+            let at_wheel = world.entities.of::<Seats>(vid).rider(0);
+            let human = at_wheel.is_some_and(|id| super::human(world, id));
+            let spared = autopilot.is_some() || (at_wheel.is_some() && !human);
+            let crewed = world.entities.of::<Seats>(vid).riders().next().is_some();
+            let boosting = world.physics.car_thrust(vid).is_some_and(|(_, flags)| flags & shared::protocol::THRUST_BOOST != 0);
+            let at_station = world.physics.car_pose(vid).is_some_and(|pose| super::fuel::at_station(&world.map.fuel_stations, pose.position));
             let mut vehicle = world.entities.of_mut::<Vehicle>(vid);
             // The driver switches the lamps; they go out when the seat is left or the vehicle is wrecked.
             let pressed = driver.is_some_and(|input| input.buttons() & BUTTON_LAMP != 0);
@@ -800,12 +809,17 @@ impl Mechanic for Vehicles {
                 CarControls { handbrake: !towed, ..Default::default() }
             } else {
                 match driver {
+                    // A vehicle whose health is gone answers to nobody: it rolls on until it goes up.
+                    _ if hp == 0 => CarControls::default(),
                     Some(input) => CarControls::driven(vehicle.kind, &input),
                     // Nobody at the wheel: what drives it by itself, or its handbrake.
                     None => autopilot.unwrap_or(CarControls { handbrake: true, ..Default::default() }),
                 }
             };
-            world.physics.set_car_condition(vid, CarCondition::of(vehicle.kind, hp, vehicle.damage));
+            let burning = (human && hp > 0).then_some(super::fuel::Burn { controls: vehicle.controls, boosting });
+            let dry = super::fuel::step(&mut vehicle, burning, at_station, crewed, dt) && !spared;
+            let condition = CarCondition::of(vehicle.kind, hp, vehicle.damage);
+            world.physics.set_car_condition(vid, if dry { condition.dry() } else { condition });
             world.physics.drive_car(vid, vehicle.controls, dt);
         }
         let before: BTreeMap<u32, CarPose> = world.entities.ids::<With<Vehicle>>().into_iter().filter_map(|vid| Some((vid, world.physics.car_pose(vid)?))).collect();
@@ -829,12 +843,15 @@ impl Mechanic for Vehicles {
         plow_trees(world, &before);
         crash(world, &before);
 
+        doomed(world);
+
         // Riders travel with their car; stuck or fallen cars are put right.
         for vid in world.entities.ids::<With<Vehicle>>() {
             let Some(pose) = world.physics.car_pose(vid) else { continue };
             // A wreck burns where it lies, then the room puts a fresh one back.
             let wrecked = world.entities.dead(vid);
             let burnt = wrecked
+                && !world.entities.has::<Doomed>(vid)
                 && world.entities.get_mut::<Wreck>(vid).is_none_or(|mut wreck| {
                     wreck.left = wreck.left.saturating_sub(1);
                     wreck.left == 0
@@ -887,6 +904,59 @@ impl Mechanic for Vehicles {
             }
         }
         engines(world);
+    }
+}
+
+/// Takes home, whole and with a full tank, every vehicle that has stood out of fuel with nobody aboard
+/// for `FUEL_STRANDED_SECONDS` and has no player's `eyes` (`[x, z]`, metres) within `HEAL_CLEAR` of
+/// it: nobody sees it go. A car of the traffic or a bus that a player drove off is not taken home:
+/// the traffic and the buses clear away their own.
+pub(crate) fn reclaim_stranded(world: &mut World, eyes: &[[f32; 2]]) {
+    for vid in world.entities.ids::<With<Vehicle>>() {
+        let stranded = world.entities.of::<Vehicle>(vid).dry_ticks >= FUEL_STRANDED_SECONDS * TICK_RATE;
+        if !stranded || world.entities.dead(vid) || world.entities.has::<super::traffic::Abandoned>(vid) || world.entities.has::<super::buses::Strayed>(vid) {
+            continue;
+        }
+        let Some(pose) = world.physics.car_pose(vid) else { continue };
+        let [x, _, z] = pose.position;
+        if eyes.iter().any(|eye| (eye[0] - x).hypot(eye[1] - z) < HEAL_CLEAR) {
+            continue;
+        }
+        world.physics.detach(vid);
+        let home = {
+            let mut vehicle = world.entities.of_mut::<Vehicle>(vid);
+            vehicle.renew();
+            vehicle.home
+        };
+        world.physics.reset_car(vid, home.0, home.1);
+        restore(world, vid, false);
+    }
+}
+
+/// One tick of the vehicles whose health is gone: the bots aboard get out, as a player would, and
+/// each that has burnt for `DOOM_TICKS` goes up with whoever is still in it; one on legs, once it has
+/// come down (or `WRECK_TOPPLE_TICKS` after that at the latest).
+fn doomed(world: &mut World) {
+    for vid in world.entities.ids::<With<Doomed>>() {
+        let bots: Vec<u32> = world
+            .entities
+            .of::<Seats>(vid)
+            .riders()
+            .filter(|&id| world.entities.has::<Bot>(id) && !world.entities.has::<Stepping>(id) && world.entities.alive(id))
+            .collect();
+        for bot in bots {
+            leave(world, bot);
+        }
+        let ticks = {
+            let mut doomed = world.entities.of_mut::<Doomed>(vid);
+            doomed.ticks += 1;
+            doomed.ticks
+        };
+        let topples = world.entities.get::<Vehicle>(vid).is_some_and(|vehicle| vehicle_def(vehicle.kind).body.fall == shared::vehicles::Fall::Topples);
+        let lies = !topples || world.physics.car_pose(vid).is_none_or(|pose| pose.up_y <= WRECK_LIES_UP);
+        if ticks >= DOOM_TICKS && (lies || ticks >= DOOM_TICKS + WRECK_TOPPLE_TICKS) {
+            super::combat::wreck(world, vid);
+        }
     }
 }
 

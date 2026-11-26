@@ -16,6 +16,7 @@ const GOLF_METER_MIN = 560
 const FILLS = {
   heat: ['#f3c94b', '#ff5a5f'],
   air: ['#9fd8ff', '#e8f6ff'],
+  fuel: ['#e0a13a', '#f6dc8a'],
   stamina: ['#8fd16a', '#d9f5a8'],
   breath: ['#5fb7d9', '#c9eefc'],
   white: ['#ffffff'],
@@ -279,6 +280,10 @@ export class Gauges {
       gauge(s.air, 'air', s.air < 0.15, label)
     }
     if (s.boost !== null) gauge(s.boost, 'air', s.boost < 0.15, s.boost < 0.15 ? 'BOOST LOW' : 'BOOST')
+    if (s.fuel) {
+      const { left, filling } = s.fuel
+      gauge(left, 'fuel', left < 0.15 && !filling, filling ? 'REFUELLING' : left <= 0 ? 'OUT OF FUEL' : left < 0.15 ? 'FUEL LOW' : 'FUEL')
+    }
     if (s.rotor) {
       const climb = `${s.rotor.climb >= 0 ? '+' : '−'}${Math.abs(s.rotor.climb).toFixed(1)} m/s`
       gauge(s.rotor.lever, 'stamina', false, `COLLECTIVE ${Math.round(s.rotor.lever * 100)}%  ${climb}`)

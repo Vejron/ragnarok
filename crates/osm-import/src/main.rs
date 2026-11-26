@@ -718,10 +718,13 @@ fn main() -> Result<()> {
         };
         let lifts = osm_import::osm_lifts::from(&data);
         let bus_stops: Vec<[f64; 2]> = if options.buses { osm_import::buslines::stops(&data).iter().map(|stop| place.frame.project(stop.lat, stop.lon)).collect() } else { Vec::new() };
+        let fuel: Vec<[f64; 2]> = osm_import::fuel::stations(&data).iter().map(|station| place.frame.project(station.lat, station.lon)).collect();
         drop(data);
         eprintln!("lifts: {} from OpenStreetMap", lifts.len());
         let mut built = assemble::from_osm(&place, args.tile, mask, &osm, &planted, ground, placed, cloud.as_ref(), decks.as_ref(), photo.as_ref(), &ski, ocad.as_ref(), course.as_ref(), &lifts);
         eprintln!("lifts: {} in the world", built.manifest.lifts.len());
+        osm_import::fuel::lay(&mut built, &fuel);
+        eprintln!("fuel: {} mapped in OpenStreetMap, {} stations in the world", fuel.len(), built.manifest.fuel_stations.len());
         if options.buses {
             osm_import::buslines::lay(&mut built, &bus_stops);
             eprintln!("buses: {} stops from OpenStreetMap, {} lines", bus_stops.len(), built.manifest.bus_lines.len());
