@@ -107,8 +107,8 @@ impl Canopy {
     }
 
     /// Keeps trees out of `ring` (SWEREF 99 TM, a building's footprint), with `margin` metres around
-    /// it for eaves.
-    pub fn mask(&mut self, ring: &[(f64, f64)], margin: f64) {
+    /// it for eaves, but not out of the yards `holes` inside it past that margin from their walls.
+    pub fn mask(&mut self, ring: &[(f64, f64)], holes: &[Vec<(f64, f64)>], margin: f64) {
         if ring.len() < 3 {
             return;
         }
@@ -124,7 +124,8 @@ impl Canopy {
         for r in r0..=r1 {
             for c in c0..=c1 {
                 let at = (self.e0 + (c as f64 + 0.5) * CELL, self.n0 + (r as f64 + 0.5) * CELL);
-                if inside(at, ring) || distance_to_ring(at, ring) <= margin {
+                let in_yard = holes.iter().any(|hole| hole.len() >= 3 && inside(at, hole) && distance_to_ring(at, hole) > margin);
+                if !in_yard && (inside(at, ring) || distance_to_ring(at, ring) <= margin) {
                     self.masked[r * self.cols + c] = true;
                 }
             }
@@ -561,7 +562,7 @@ mod tests {
             }
         }
         // A house under the jib, which must not cut it into pieces too short to know.
-        canopy.mask(&[(45.0, 22.0), (57.0, 22.0), (57.0, 40.0), (45.0, 40.0)], 1.5);
+        canopy.mask(&[(45.0, 22.0), (57.0, 22.0), (57.0, 40.0), (45.0, 40.0)], &[], 1.5);
         crown(&mut canopy, 80.0, 20.0, 14.0, 3.0);
         let trees = canopy.detect(flat, MIN_HEIGHT);
         assert_eq!(trees.len(), 1, "{trees:?}");
@@ -611,7 +612,7 @@ mod tests {
                 canopy.add(&Point { e: 30.0 + f64::from(i) * 0.7, n: 30.0 + f64::from(j) * 0.7, z: 9.0, class: 1, ret: 1, returns: 1, intensity: 100 });
             }
         }
-        canopy.mask(&[(30.0, 30.0), (40.0, 30.0), (40.0, 40.0), (30.0, 40.0)], 1.0);
+        canopy.mask(&[(30.0, 30.0), (40.0, 30.0), (40.0, 40.0), (30.0, 40.0)], &[], 1.0);
         assert!(canopy.detect(flat, MIN_HEIGHT).is_empty());
     }
 

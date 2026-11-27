@@ -408,7 +408,7 @@ auth. They are never written to the cache or to the world files. OSM and Umeå's
 ### OpenStreetMap
 One read of the box (`osm::load`) returns everything any pass wants (`osm::wants_way`, `wants_relation`,
 `wants_node`): buildings, highways, railways and cover (landuse, natural, leisure, and `amenity=grave_yard`) as ways with inline
-geometry and multipolygon relations for cover, and also water, golf, lifts and ski tracks. Each pass then
+geometry and multipolygon relations for cover and for buildings round a yard ([COURTYARDS.md](COURTYARDS.md)), and also water, golf, lifts and ski tracks. Each pass then
 takes its own view of the answer with the tag filter its own Overpass query once had (`Data::main`,
 `osm_water::from`, `osm_golf::from`, `osm_lifts::from`, `osm_ski::from`), so a world comes out the same
 whichever source served it. The read comes from a local extract when one covers every block of the world,
@@ -683,7 +683,7 @@ Before a roof is fitted, every footprint whose walls all run within 12° of one 
 right angle is squared (`square.rs`): the walls are made exactly parallel and at right angles,
 jogs under 0.6 m are taken out and kinked walls made straight. It is kept only if it stays within
 8% of the drawn area and 1 m of the drawn outline; a round tower or a wedge stays as drawn, and so
-do footprints France cuts on its lattice (over 1000 m²).
+do footprints France cuts on its lattice (over 1000 m²) and any footprint with a yard inside it.
 
 A house (under 250 m², `roof::SPLIT_FROM`) gets its roof from a catalogue of common shapes
 (`catalogue.rs`), not a free fit:
@@ -741,7 +741,9 @@ its own. See [BUILDING-STYLES.md](BUILDING-STYLES.md).
 The mesh (`roof::build`) cuts the footprint into pieces each under one plane of the roof. Every line
 of the whole roof cuts every piece (valleys and dormer sides only the pieces of their wings), and
 each corner of a piece is added to the sides of its neighbours, so pieces always meet corner to
-corner and leave no cracks. A side no other piece shares is an outer wall; a side two pieces share
+corner and leave no cracks. A piece narrower than half a millimetre, a needle between corners that
+lie almost on one line, is left out and its neighbour takes its corner. A side no other piece shares
+is an outer wall, round the outline or round a yard; a side two pieces share
 with the roof higher on one is a step wall facing the lower side: a dormer's front and cheeks, or
 the end of a higher part. A wall whose foot stands 2 m or more over the building's lowest (a
 dormer's front) gets small windows (0.8 × 0.7 m) and never the door (`shared::windows`, mirrored in

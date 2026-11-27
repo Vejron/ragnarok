@@ -780,7 +780,7 @@ const css = (color: number) => `#${color.toString(16).padStart(6, '0')}`
 
 /** What of a tile its cover is painted from: the cover, the crops on it, the houses a garden has gravel round, the trees of its woods and its flower beds. */
 export type CoverSource = Pick<TileData, 'cover'> & Partial<Pick<TileData, 'crops'>> & {
-  buildings?: readonly { footprint: readonly (readonly [number, number])[] }[]
+  buildings?: readonly { footprint: readonly (readonly [number, number])[]; holes?: readonly (readonly (readonly [number, number])[])[] }[]
   /** The tile's trees (`woodsOf`), for the floors of its woods. */
   woods?: Float32Array
   /** Its gardens' flower beds (`GardenPlan.beds`), dug soil. */
@@ -859,9 +859,11 @@ export function paintCover(
       ctx.lineWidth = APRON_WIDTH * 2 * scale
       ctx.lineJoin = 'round'
       ctx.beginPath()
-      for (const { footprint } of tile.buildings) {
-        footprint.forEach((p, i) => (i === 0 ? ctx.moveTo(...at(p)) : ctx.lineTo(...at(p))))
-        ctx.closePath()
+      for (const { footprint, holes } of tile.buildings) {
+        for (const ring of [footprint, ...(holes ?? [])]) {
+          ring.forEach((p, i) => (i === 0 ? ctx.moveTo(...at(p)) : ctx.lineTo(...at(p))))
+          ctx.closePath()
+        }
       }
       ctx.stroke()
       ctx.restore()

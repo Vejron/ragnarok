@@ -25,7 +25,7 @@ import { lineBuffers, lineTransferables, type LineBuffers } from './lines'
 
 /** What of a tile `prepareTile` reads: small enough to send to the worker (`tileParts`). */
 export type TileParts = Pick<TileData, 'cover' | 'crops' | 'detail' | 'stones' | 'lines' | 'roads' | 'rails' | 'ski' | 'water' | 'reach' | 'flow' | 'foam' | 'stir' | 'lane' | 'streams' | 'bridges' | 'collision' | 'look'> & {
-  buildings: readonly Pick<Building, 'first' | 'walls' | 'roof' | 'roofKind' | 'kind' | 'cells' | 'footprint' | 'paint' | 'clad' | 'look' | 'front'>[]
+  buildings: readonly Pick<Building, 'first' | 'walls' | 'roof' | 'roofKind' | 'kind' | 'cells' | 'footprint' | 'holes' | 'paint' | 'clad' | 'look' | 'front'>[]
   /** The tile's trees as the forest's floor reads them (`woodsOf`). */
   woods: Float32Array
   /** Where its graves stand, x and z each: no garden is grown in a churchyard. */
@@ -40,7 +40,7 @@ export function gravesOf(graves: TileData['graves']): Float32Array {
 /** The parts of `tile` `prepareTile` reads, leaving out what the worker has no use for (all of a tree but where it stands and what it is, the file's bytes). */
 export function tileParts(tile: TileData): TileParts {
   const { cover, crops, detail, stones, lines, roads, rails, ski, water, reach, flow, foam, stir, lane, streams, bridges, collision, look } = tile
-  const buildings = tile.buildings.map(({ first, walls, roof, roofKind, kind, cells, footprint, paint, clad, look, front }) => ({ first, walls, roof, roofKind, kind, cells, footprint, paint, clad, look: look ?? null, front }))
+  const buildings = tile.buildings.map(({ first, walls, roof, roofKind, kind, cells, footprint, holes, paint, clad, look, front }) => ({ first, walls, roof, roofKind, kind, cells, footprint, holes, paint, clad, look: look ?? null, front }))
   return { cover, ...(crops ? { crops } : {}), ...(detail ? { detail } : {}), ...(stones ? { stones } : {}), ...(lines ? { lines } : {}), roads, rails, ski, water, ...(reach ? { reach } : {}), ...(flow ? { flow } : {}), ...(foam ? { foam } : {}), ...(stir ? { stir } : {}), ...(lane ? { lane } : {}), streams, bridges, collision, ...(look ? { look } : {}), buildings, woods: woodsOf(tile.trees), graves: gravesOf(tile.graves) }
 }
 

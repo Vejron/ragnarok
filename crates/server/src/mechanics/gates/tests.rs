@@ -24,7 +24,7 @@ fn barn() -> WorldFile {
     }
     let windows = shared::windows::openings_of(&look, [0, walls.len() as u32, roof.len() as u32], BUILDING_BARN, [0, 0]);
     let footprint = vec![[0, 0], [w, 0], [w, d], [0, d]];
-    let inside: Vec<Tri> = shared::interior::rooms(&footprint, &walls, &roof, &windows, BUILDING_BARN).iter().filter(|p| p.collided()).map(|p| p.tri).collect();
+    let inside: Vec<Tri> = shared::interior::rooms(&footprint, &[], &walls, &roof, &windows, BUILDING_BARN).iter().filter(|p| p.collided()).map(|p| p.tri).collect();
     assert!(!inside.is_empty(), "a barn has a floor");
     let mut collision = CollisionMesh::default();
     for t in &floor {
@@ -32,7 +32,7 @@ fn barn() -> WorldFile {
         collision.vertices.extend([[t[0], t[1], t[2]], [t[3], t[4], t[5]], [t[6], t[7], t[8]]]);
         collision.triangles.push([base, base + 1, base + 2]);
     }
-    let building = Building { height: h, footprint, base: 0, first: 0, walls: 0, roof: 0, roof_kind: 0, kind: BUILDING_BARN, front: [0, 0], cells: Shell::new(&walls, &roof).unwrap().cells(), paint: [None, None], clad: [0, 0] };
+    let building = Building { height: h, footprint, holes: Vec::new(), base: 0, first: 0, walls: 0, roof: 0, roof_kind: 0, kind: BUILDING_BARN, front: [0, 0], cells: Shell::new(&walls, &roof).unwrap().cells(), paint: [None, None], clad: [0, 0] };
     let shut = shared::windows::gates(&windows);
     WorldFile {
         version: WORLD_VERSION,

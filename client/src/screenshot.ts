@@ -48,14 +48,15 @@ export interface ShotSource {
   say: (text: string) => void
 }
 
-/** The building whose footprint holds `p`, else the nearest within `NEAR_BUILDING`. */
+/** The building `p` is under (inside its footprint and in none of its yards), else the one with the nearest wall within `NEAR_BUILDING`. */
 export function buildingAt(p: Point2, buildings: Iterable<TiledBuilding>): TiledBuilding | null {
   let best: TiledBuilding | null = null
   let nearest = NEAR_BUILDING
   for (const b of buildings) {
     const ring = b.building.footprint
-    if (inside(p, ring)) return b
-    const d = distanceTo(p, ring)
+    const yards = b.building.holes
+    if (inside(p, ring) && !yards.some((yard) => inside(p, yard))) return b
+    const d = Math.min(distanceTo(p, ring), ...yards.map((yard) => distanceTo(p, yard)))
     if (d <= nearest) {
       nearest = d
       best = b
@@ -127,6 +128,7 @@ export function describe(source: ShotSource, now = new Date()) {
                 index: found.index,
                 centre: centreOf(found.building.footprint).map((v) => round(v)),
                 footprint: found.building.footprint.map(([x, z]) => [round(x, 2), round(z, 2)]),
+                holes: found.building.holes.map((hole) => hole.map(([x, z]) => [round(x, 2), round(z, 2)])),
                 base: round(found.building.base, 2),
                 height: round(found.building.height, 2),
                 roofKind: found.building.roofKind,

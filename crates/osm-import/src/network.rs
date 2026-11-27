@@ -218,7 +218,7 @@ mod tests {
     /// The ways left of `ways`, each as its id and how many points it has.
     fn joined(ways: Vec<Way>) -> Vec<(u64, usize)> {
         let frame = Frame::Equirect { origin: (0.0, 0.0) };
-        let mut left: Vec<(u64, usize)> = join(Osm { ways, areas: Vec::new(), pois: Vec::new() }, frame).0.ways.iter().map(|way| (way.id, way.geometry.len())).collect();
+        let mut left: Vec<(u64, usize)> = join(Osm { ways, areas: Vec::new(), pois: Vec::new(), yards: Default::default() }, frame).0.ways.iter().map(|way| (way.id, way.geometry.len())).collect();
         left.sort();
         left
     }
@@ -269,7 +269,7 @@ mod tests {
             way(6, &[("railway", "rail"), ("bridge", "yes")], &[[300.0, 0.0], [340.0, 0.0]]),
         ];
         let frame = Frame::Equirect { origin: (0.0, 0.0) };
-        let (osm, count) = join_tracks(Osm { ways, areas: Vec::new(), pois: Vec::new() }, frame);
+        let (osm, count) = join_tracks(Osm { ways, areas: Vec::new(), pois: Vec::new(), yards: Default::default() }, frame);
         assert_eq!((osm.ways.len(), count), (5, 1));
         let tracks: Vec<usize> = osm.ways.iter().filter(|way| way.tags.contains_key("railway")).map(|way| way.geometry.len()).collect();
         assert_eq!(tracks.iter().copied().max(), Some(3), "the two pieces at the crossing are one");
@@ -296,12 +296,12 @@ mod tests {
     fn a_small_change_of_width_is_evened_out_to_the_longer_piece() {
         let frame = Frame::Equirect { origin: (0.0, 0.0) };
         let ways = vec![way(1, &[("highway", "residential"), ("width", "6")], &[[0.0, 0.0], [40.0, 0.0]]), way(2, &[("highway", "residential")], &[[40.0, 0.0], [300.0, 0.0]])];
-        let (osm, count) = join(Osm { ways, areas: Vec::new(), pois: Vec::new() }, frame);
+        let (osm, count) = join(Osm { ways, areas: Vec::new(), pois: Vec::new(), yards: Default::default() }, frame);
         assert_eq!((osm.ways.len(), count), (1, 1));
         assert!(!osm.ways[0].tags.contains_key("width"), "the longer piece's tags are kept");
         assert_eq!(osm.ways[0].geometry.len(), 3);
         // Three metres' difference is two roads.
         let ways = vec![way(1, &[("highway", "residential"), ("width", "10")], &[[0.0, 0.0], [40.0, 0.0]]), way(2, &[("highway", "residential")], &[[40.0, 0.0], [300.0, 0.0]])];
-        assert_eq!(join(Osm { ways, areas: Vec::new(), pois: Vec::new() }, frame).1, 0);
+        assert_eq!(join(Osm { ways, areas: Vec::new(), pois: Vec::new(), yards: Default::default() }, frame).1, 0);
     }
 }

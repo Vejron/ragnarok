@@ -107,6 +107,50 @@ export function splitPlane(poly: Poly, n: P, d: number): [Poly, Poly] {
 }
 
 /**
+ * `ring` with each of `holes` let into it (points `[x, z]`, each either way round): one ring that
+ * runs round `ring`, in along a cut to a hole, round the hole the other way and back out along the
+ * same cut, so that `triangulate` leaves every hole open. A cut is the shortest line from a corner
+ * of a hole to a corner of the ring that crosses no side of either. A hole no cut reaches is left
+ * filled. As `with_yards` in `interior.rs`.
+ */
+export function joinHoles(ring: readonly (readonly [number, number])[], holes: readonly (readonly (readonly [number, number])[])[]): (readonly [number, number])[] {
+  type Q = readonly [number, number]
+  const twice = (r: readonly Q[]) => r.reduce((sum, [ax, az], i) => sum + ax * r[(i + 1) % r.length]![1] - r[(i + 1) % r.length]![0] * az, 0)
+  let out: Q[] = twice(ring) < 0 ? [...ring].reverse() : [...ring]
+  const left: Q[][] = holes.filter((hole) => hole.length >= 3).map((hole) => (twice(hole) > 0 ? [...hole].reverse() : [...hole]))
+  const cross = (o: Q, s: Q, t: Q) => (s[0] - o[0]) * (t[1] - o[1]) - (s[1] - o[1]) * (t[0] - o[0])
+  const on = (o: Q, s: Q, t: Q) => t[0] >= Math.min(o[0], s[0]) - 1e-9 && t[0] <= Math.max(o[0], s[0]) + 1e-9 && t[1] >= Math.min(o[1], s[1]) - 1e-9 && t[1] <= Math.max(o[1], s[1]) + 1e-9
+  const meet = (p: Q, q: Q, a: Q, b: Q) => {
+    const [d1, d2, d3, d4] = [cross(a, b, p), cross(a, b, q), cross(p, q, a), cross(p, q, b)]
+    if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))) return true
+    return (Math.abs(d1) < 1e-9 && on(a, b, p)) || (Math.abs(d2) < 1e-9 && on(a, b, q)) || (Math.abs(d3) < 1e-9 && on(p, q, a)) || (Math.abs(d4) < 1e-9 && on(p, q, b))
+  }
+  const same = (a: Q, b: Q) => a[0] === b[0] && a[1] === b[1]
+  while (left.length > 0) {
+    let best: [number, number, number, number] | null = null
+    left.forEach((hole, y) => hole.forEach((h, j) => out.forEach((p, i) => {
+      const length = (p[0] - h[0]) ** 2 + (p[1] - h[1]) ** 2
+      if (length === 0 || (best && length >= best[0])) return
+      // A side that ends at the cut's own end is not crossed by it, unless it runs along it.
+      const crosses = (edges: readonly Q[]) => edges.some((a, k) => {
+        const b = edges[(k + 1) % edges.length]!
+        const [sa, sb] = [same(a, p) || same(a, h), same(b, p) || same(b, h)]
+        if (sa && sb) return false
+        if (sa) return meet(p, h, b, b)
+        if (sb) return meet(p, h, a, a)
+        return meet(p, h, a, b)
+      })
+      if (!crosses(out) && !left.some(crosses)) best = [length, y, j, i]
+    })))
+    if (!best) break
+    const [, y, j, i] = best as [number, number, number, number]
+    const hole = left.splice(y, 1)[0]!
+    out = [...out.slice(0, i + 1), ...Array.from({ length: hole.length + 1 }, (_, k) => hole[(j + k) % hole.length]!), ...out.slice(i)]
+  }
+  return out
+}
+
+/**
  * A simple polygon in the plane (points `[x, z]`, either way round) as triangles, by ear clipping:
  * indices into `ring`, three a triangle, wound as the ring is. A ring it cannot clip falls back to a fan.
  */
@@ -138,7 +182,9 @@ export function triangulate(ring: readonly (readonly [number, number])[]): numbe
     for (let i = 0; i < left.length; i++) {
       const [a, b, c] = [left[(i + left.length - 1) % left.length]!, left[i]!, left[(i + 1) % left.length]!]
       if (cross2(a, b, c) * sign <= 1e-9) continue
-      if (left.some((p) => p !== a && p !== b && p !== c && inside(a, b, c, p))) continue
+      // A corner at the same place as one of the ear's own is the other end of a cut to a hole (`joinHoles`), not in its way.
+      const apart = (p: number, q: number) => ring[p]![0] !== ring[q]![0] || ring[p]![1] !== ring[q]![1]
+      if (left.some((p) => apart(p, a) && apart(p, b) && apart(p, c) && inside(a, b, c, p))) continue
       out.push(a, b, c)
       left.splice(i, 1)
       clipped = true

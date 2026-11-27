@@ -84,7 +84,7 @@ mod tests {
         let manifest = Manifest { tile_size: tile_cm, ground_cell: ground.cell, half_extent: -ground.origin, ..Default::default() };
         let mut tiles = BTreeMap::new();
         tiles.insert((0, 0), Tile::default());
-        Built { manifest, tiles }
+        Built { manifest, tiles, left_out: Default::default() }
     }
 
     #[test]

@@ -11,7 +11,7 @@ import type { TileReply, TileRequest } from './tileworker'
 
 /*
  * Prepares streamed-in tiles off the main thread (`TileWorker`): everything `prepareTile` makes,
- * the buildings' faces merged in its own copy of the WebAssembly module. Every tile prepared here
+ * the rooms inside the buildings worked out in its own copy of the WebAssembly module. Every tile prepared here
  * keeps its ground in `terrain` until dropped, so a tile is shaded and draped with the neighbours
  * already here, those are shaded again along the new seam, and the tile can be meshed again at
  * another level of detail.
@@ -19,7 +19,7 @@ import type { TileReply, TileRequest } from './tileworker'
 
 declare const self: DedicatedWorkerGlobalScope
 
-/** The WebAssembly module, for `carve_baked_faces`: awaited before the first tile with buildings. */
+/** The WebAssembly module, for the rooms inside the buildings (`interior_of`): awaited before the first tile with buildings. */
 const ready = init()
 
 let terrain: Terrain | null = null

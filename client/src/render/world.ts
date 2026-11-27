@@ -222,7 +222,7 @@ export function buildTile(tile: TileData, salt: number, ground: TileGround | nul
 const NONE: ReadonlySet<number> = new Set()
 
 /**
- * The tile's buildings (as cubes) and bridges as one mesh with a colour per vertex
+ * The tile's buildings and bridges as one mesh with a colour per vertex
  * (`buildingBuffers`). One draw per tile (and one shadow draw) however many colours it holds.
  */
 function mergedMesh(buffers: BuildingBuffers | null, destroyed: ReadonlySet<number>): Mesh[] {

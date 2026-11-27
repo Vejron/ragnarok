@@ -505,7 +505,7 @@ impl Source {
             }
         }
         ways.append(&mut self.ways);
-        Osm { ways, areas: osm.areas, pois: osm.pois }
+        Osm { ways, areas: osm.areas, pois: osm.pois, yards: osm.yards }
     }
 
     /// `trees` without those the map's open land clears, or that would stand in a pit. The choice
@@ -900,6 +900,7 @@ mod tests {
             ],
             areas: Vec::new(),
             pois: Vec::new(),
+            yards: Default::default(),
         };
         let merged = source.over(osm, &place);
         let ids: Vec<u64> = merged.ways.iter().map(|way| way.id & 0xffff).collect();

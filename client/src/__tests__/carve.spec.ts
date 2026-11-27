@@ -54,16 +54,10 @@ describe('carve', () => {
     expect(shell.cell).toBe(72)
     expect(shell.dims).toEqual([7, 5, 6])
     expect(shell.solidCount).toBe(130)
-    // The faces, as `cell_numbers_match_the_fixture` sums them: each number by its place in its triangle.
-    const sum = (faces: Int32Array) => faces.reduce((n, v, i) => n + v * ((i % 9) + 1), 0)
-    const faces = shell.faces(new Set())
-    expect([faces.length / 9, sum(faces)]).toEqual([36, 393_120])
     const diagonal = Shell.of(slanted(), [])!
     let cells = 0
     for (let id = 0; id < diagonal.dims[0] * diagonal.dims[1] * diagonal.dims[2]; id++) if (diagonal.isSolid(id)) cells += id
     expect([diagonal.origin, diagonal.dims, diagonal.solidCount, cells]).toEqual([[-72, 0, 0], [11, 5, 8], 90, 19_505])
-    const slant = diagonal.faces(new Set())
-    expect([slant.length / 9, sum(slant)]).toEqual([92, 1_179_144])
   })
 
   it('unpacks the cells the importer baked', () => {
@@ -78,7 +72,6 @@ describe('carve', () => {
     for (let id = 0; id < 210; id++) {
       expect([baked.isSolid(id), baked.isRoof(id)]).toEqual([cut.isSolid(id), cut.isRoof(id)])
     }
-    expect(baked.faces(new Set())).toEqual(cut.faces(new Set()))
     expect([...baked.cells]).toEqual([...Array(210).keys()].filter((id) => cut.isSolid(id)))
     // A run of zero bytes over several layers repeats the layer below it.
     const tower = unpack(Uint8Array.from([1, 0, 4]), 48, 8)
@@ -86,17 +79,6 @@ describe('carve', () => {
     // A long run of zero bytes, with a two-byte length (`baked_cells_come_back_as_they_were`).
     const flags = unpack(Uint8Array.from([1, 0, 169, 2, 128]), 8 * 300, 8 * 300)
     expect([...flags.keys()].filter((i) => flags[i])).toEqual([0, 8 * 299 + 7])
-  })
-
-  it('draws the cubes that are left', () => {
-    const shell = Shell.of(boxed(5, 4, 3), roof(5, 4, 3))!
-    const whole = shell.faces(new Set())
-    // A cell out of the middle of a wall opens a hole: its four sides become faces.
-    const hole = shell.faces(new Set([shell.cellAt(2.5, 1.5, 0.25)]))
-    expect(hole.length).toBeGreaterThan(whole.length)
-    // The roof's triangles are told apart from the walls'.
-    const { roof: top } = shell.facesWithRoof(new Set())
-    expect(top.some((r) => r === 1) && top.some((r) => r === 0)).toBe(true)
   })
 
   it('finds the cell a round struck as the server does, skipping those already out', () => {

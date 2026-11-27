@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::terrain::Ground;
 
-pub const WORLD_VERSION: u8 = 45;
+pub const WORLD_VERSION: u8 = 46;
 
 /// `Manifest::theme`: the world as it always was.
 pub const THEME_PLAIN: u8 = 0;
@@ -453,8 +453,8 @@ impl BuildingLook {
             return Self::default();
         }
         let (walls, roof) = look.parts(range);
-        let windows = crate::windows::openings_of(look, range, building.kind, building.front);
-        let inside = crate::interior::rooms(&building.footprint, &walls, &roof, &windows, building.kind).into_iter().filter(|part| part.collided()).map(|part| part.tri).collect::<Vec<_>>();
+        let windows = crate::windows::openings_round(look, range, building.kind, building.front, &building.holes);
+        let inside = crate::interior::rooms(&building.footprint, &building.holes, &walls, &roof, &windows, building.kind).into_iter().filter(|part| part.collided()).map(|part| part.tri).collect::<Vec<_>>();
         let shut = if inside.is_empty() { Vec::new() } else { crate::windows::gates(&windows) };
         BuildingLook { walls, roof, windows, inside, shut }
     }
@@ -798,6 +798,10 @@ pub struct Building {
     pub height: i32,
     /// Closed footprint `[x, z]` without the repeated first point, counter-clockwise seen from above.
     pub footprint: Vec<[i32; 2]>,
+    /// The yards inside the footprint that are open to the sky, each a ring like `footprint` but
+    /// clockwise seen from above: a courtyard. Walls stand round each, facing into it, and the
+    /// building has no roof or floor over it. Empty for most buildings.
+    pub holes: Vec<Vec<[i32; 2]>>,
     /// Height of the floor, centimetres: the lowest ground under the footprint. The roof is at
     /// `base + height`.
     pub base: i32,
@@ -1028,15 +1032,19 @@ impl Building {
     /// the volume, capped so even the biggest is a siege and not a campaign. Server only.
     pub fn hp(&self) -> u16 {
         let [min_x, min_z, max_x, max_z] = self.bounds();
-        // The footprint's own area, by the shoelace formula, in square metres.
-        let n = self.footprint.len();
-        let twice: i64 = (0..n)
-            .map(|i| {
-                let (a, b) = (self.footprint[i], self.footprint[(i + 1) % n]);
-                a[0] as i64 * b[1] as i64 - b[0] as i64 * a[1] as i64
-            })
-            .sum();
-        let area = (twice.abs() as f32 / 2.0) / 10_000.0;
+        // The footprint's own area less its yards', by the shoelace formula, in square metres.
+        let twice = |ring: &[[i32; 2]]| -> i64 {
+            let n = ring.len();
+            (0..n)
+                .map(|i| {
+                    let (a, b) = (ring[i], ring[(i + 1) % n]);
+                    a[0] as i64 * b[1] as i64 - b[0] as i64 * a[1] as i64
+                })
+                .sum::<i64>()
+                .abs()
+        };
+        let built = twice(&self.footprint) - self.holes.iter().map(|hole| twice(hole)).sum::<i64>();
+        let area = (built.max(0) as f32 / 2.0) / 10_000.0;
         // A thin or L-shaped footprint is not its bounding box, but never below a third of it.
         let boxed = ((max_x - min_x) as f32 / 100.0) * ((max_z - min_z) as f32 / 100.0);
         let area = area.max(boxed / 3.0);
@@ -1745,7 +1753,7 @@ mod tests {
         assert!(!manifest.frozen());
         assert!(Manifest { open_water: false, ..manifest.clone() }.frozen());
         let tile = Tile {
-            buildings: vec![Building { height: 800, footprint: vec![[0, 0], [100, 0], [100, 100]], base: 250, first: 0, walls: 6, roof: 2, roof_kind: ROOF_GABLE, kind: BUILDING_CHURCH, front: [0, -127], cells: Cells { origin: [-100, 0, 200], dims: [2, 1, 5], solid: Bits(vec![0b1011, 3]), roof: Bits(vec![1, 0]) }, paint: [Some(0xeee3c8), None], clad: [CLAD_RENDER, ROOFING_SHEET] }, Building { height: 300, ..Default::default() }],
+            buildings: vec![Building { height: 800, footprint: vec![[0, 0], [100, 0], [100, 100]], holes: vec![vec![[60, 20], [80, 60], [80, 20]]], base: 250, first: 0, walls: 6, roof: 2, roof_kind: ROOF_GABLE, kind: BUILDING_CHURCH, front: [0, -127], cells: Cells { origin: [-100, 0, 200], dims: [2, 1, 5], solid: Bits(vec![0b1011, 3]), roof: Bits(vec![1, 0]) }, paint: [Some(0xeee3c8), None], clad: [CLAD_RENDER, ROOFING_SHEET] }, Building { height: 300, ..Default::default() }],
             roads: vec![Road { width: 600, kind: ROAD_MINOR, carried: false, points: vec![[0, 0], [500, 500]], ..Default::default() }],
             collision: CollisionMesh { vertices: vec![[0, 0, 0]], triangles: vec![[0, 0, 0]] },
             ground: vec![0, 10, 20, 30],

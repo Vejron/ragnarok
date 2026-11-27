@@ -2,19 +2,20 @@
 //! bite leaves hanging can fall.
 //!
 //! A building's walls and roof (the triangles `osm-import` made) are turned into cubes: the cells
-//! of a regular grid they pass through. The building is drawn and collided with as those cubes.
+//! of a regular grid they pass through. The building is drawn and collided with as its own walls
+//! and roof, with the pieces in the cells that are gone left out (`facade::standing`); one without
+//! a look, which only a world built by hand has, is collided with as its cubes merged into boxes.
 //! The server decides which cells a blast removes and which are left unsupported, and tells
 //! everyone the cell numbers; the clients cut the same cells with this same code, built to
-//! WebAssembly (`crates/sim-wasm`: the physics through `ClientSim`, the drawing through the `carve_*`
-//! functions that `client/src/sim/carve.ts` wraps), and draw and collide with what is left. It is
-//! integer arithmetic on centimetres, and `cell_numbers_match_the_fixture` and `carve.spec.ts` pin
-//! the numbers.
+//! WebAssembly (`crates/sim-wasm`: the physics through `ClientSim`, the rest through the `carve_*`
+//! functions that `client/src/sim/carve.ts` wraps). It is integer arithmetic on centimetres, and
+//! `cell_numbers_match_the_fixture` and `carve.spec.ts` pin the numbers.
 //!
 //! The floor is not carved: it is never part of the cells.
 //!
 //! The importer cuts every building once (`Shell::new`) and bakes the cells into the tile
-//! (`Shell::cells`, `world::Cells`), with the faces of the cubes in the collision mesh in place of
-//! the walls and roof; the server and clients only read them back (`Shell::from_cells`).
+//! (`Shell::cells`, `world::Cells`), moving the walls and roof out of the collision mesh into the
+//! tile's look; the server and clients only read the cells back (`Shell::from_cells`).
 
 use crate::world::{Bits, Cells};
 
@@ -827,18 +828,6 @@ impl Shell {
         (0..self.solid.len()).filter(|&i| self.solid[i] && !removed[i]).count()
     }
 
-    /// What the building is drawn as: the faces of its standing cubes (solid, not
-    /// in `removed`) that look onto a cell with nothing standing in it, as triangles in centimetres,
-    /// wound counter-clockwise seen from outside the cube. Neighbouring faces of wall cubes, and of
-    /// roof cubes, are merged into rectangles as `greedy` does, so a plain wall is two triangles a
-    /// side, and the clients draw the same faces in the wall's and the roof's colours (`faces_of`).
-    pub fn faces(&self, removed: &[bool]) -> Vec<Tri> {
-        let keys: Vec<i32> = (0..self.solid.len()).map(|i| if self.solid[i] && !removed[i] { i32::from(self.roof[i]) } else { -1 }).collect();
-        let mut out = Vec::new();
-        faces_of(self.origin, self.dims, &keys, |tri, _| out.push(tri));
-        out
-    }
-
     /// Whether each cell holds a piece of wall or roof, in cell number order.
     pub fn solid_flags(&self) -> &[bool] {
         &self.solid
@@ -880,22 +869,6 @@ pub fn whole_boxes(cells: &Cells) -> Option<Vec<[i32; 6]>> {
         return None;
     }
     Some(boxes_of(cells.origin, dims, unpack(&cells.solid.0, n, dims[0] * dims[2])))
-}
-
-/// What a building the importer cut is drawn as while nothing is gone from it: `Shell::faces` of
-/// `untouched`, straight from its baked flags, without the anchors. Calls `emit` with each triangle
-/// and 1 when it is a roof cube's, 0 when a wall cube's. False when it has no cells.
-pub fn whole_faces(cells: &Cells, emit: impl FnMut(Tri, i32)) -> bool {
-    let dims = cells.dims.map(|d| d as usize);
-    let n = dims[0] * dims[1] * dims[2];
-    if n == 0 || n > MAX_CELLS {
-        return false;
-    }
-    let layer = dims[0] * dims[2];
-    let (solid, roof) = (unpack(&cells.solid.0, n, layer), unpack(&cells.roof.0, n, layer));
-    let keys: Vec<i32> = (0..n).map(|i| if solid[i] { i32::from(roof[i]) } else { -1 }).collect();
-    faces_of(cells.origin, dims, &keys, emit);
-    true
 }
 
 /// The cells of a grid of `dims` cells from `origin` that are `free` (one flag a cell, `Shell::index`
@@ -1639,31 +1612,6 @@ mod tests {
     }
 
     #[test]
-    fn a_box_collides_as_its_cubes() {
-        // A box 6 × 6 × 4 m with a flat roof is a hollow of cubes: its outside is the box itself,
-        // merged into one rectangle a side, and its inside is a metre in from each wall.
-        let shell = Shell::new(&boxed(6, 6, 4), &roof(6, 6, 4)).unwrap();
-        let faces = shell.faces(&shell.untouched());
-        let (mut lo, mut hi) = ([i32::MAX; 3], [i32::MIN; 3]);
-        for tri in &faces {
-            for k in 0..3 {
-                for a in 0..3 {
-                    lo[a] = lo[a].min(tri[k * 3 + a]);
-                    hi[a] = hi[a].max(tri[k * 3 + a]);
-                }
-            }
-        }
-        assert_eq!((lo, hi), ([0, 0, 0], [648, 432, 648]));
-        // The top: the whole roof, one rectangle at its height.
-        let top = faces.iter().filter(|t| t[1] == 432 && t[4] == 432 && t[7] == 432).count();
-        assert_eq!(top, 2);
-        // A hole lets you in: more faces, the hole's sides.
-        let mut removed = shell.untouched();
-        shell.blast(&mut removed, [300, 150, 0], 100);
-        assert!(shell.faces(&removed).len() > faces.len());
-    }
-
-    #[test]
     fn the_boxes_cover_each_standing_cube_once() {
         let shell = Shell::new(&boxed(6, 6, 4), &roof(6, 6, 4)).unwrap();
         let mut removed = shell.untouched();
@@ -1693,15 +1641,10 @@ mod tests {
         let shell = Shell::new(&boxed(5, 4, 3), &roof(5, 4, 3)).unwrap();
         assert_eq!(shell.cell, 72);
         assert_eq!(shell.dims, [7, 5, 6]);
-        let faces = shell.faces(&shell.untouched());
-        let sum: i64 = faces.iter().flatten().enumerate().map(|(i, &v)| v as i64 * (i % 9 + 1) as i64).sum();
-        assert_eq!((faces.len(), shell.solid_count(), sum), (36, 130, 393_120));
+        assert_eq!(shell.solid_count(), 130);
         let diagonal = Shell::new(&slanted(), &[]).unwrap();
         let cells: u64 = diagonal.solid_cells().iter().map(|&id| id as u64).sum();
         assert_eq!((diagonal.origin, diagonal.dims, diagonal.solid_count(), cells), ([-72, 0, 0], [11, 5, 8], 90, 19_505));
-        let faces = diagonal.faces(&diagonal.untouched());
-        let sum: i64 = faces.iter().flatten().enumerate().map(|(i, &v)| v as i64 * (i % 9 + 1) as i64).sum();
-        assert_eq!((faces.len(), sum), (92, 1_179_144));
         // The boxes, summed the same way: each number by its place in its box.
         let boxes = |shell: &Shell| {
             let boxes = shell.boxes(&shell.untouched());
@@ -1762,13 +1705,6 @@ mod tests {
             assert_eq!((back.origin, back.dims, &back.solid, &back.roof), (shell.origin, shell.dims, &shell.solid, &shell.roof));
             assert_eq!(back.anchored, shell.anchored);
             assert_eq!(whole_boxes(&shell.cells()).unwrap(), shell.boxes(&shell.untouched()));
-            let mut faces = Vec::new();
-            assert!(whole_faces(&shell.cells(), |tri, key| faces.push((tri, key))));
-            let keys: Vec<i32> = (0..shell.solid.len()).map(|i| if shell.solid[i] { i32::from(shell.roof[i]) } else { -1 }).collect();
-            let mut expected = Vec::new();
-            super::faces_of(shell.origin, shell.dims, &keys, |tri, key| expected.push((tri, key)));
-            assert_eq!(faces, expected);
-            assert_eq!(faces.iter().map(|f| f.0).collect::<Vec<_>>(), shell.faces(&shell.untouched()));
         }
         // A long run of zeros takes a two-byte length.
         let mut flags = vec![false; 8 * 300];

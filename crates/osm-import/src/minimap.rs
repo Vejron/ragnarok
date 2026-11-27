@@ -274,8 +274,9 @@ pub fn render_square(manifest: &Manifest, all: &BTreeMap<(u16, u16), Tile>, over
 
     // A bridge's sections are buildings to carve, not houses: its road is on the map already.
     for building in tiles.values().flat_map(|tile| &tile.buildings).filter(|building| building.kind != BUILDING_BRIDGE) {
-        let footprint = ring(&canvas, &building.footprint);
-        canvas.fill(&[footprint], BUILDING);
+        // Its yards are left as the ground they are: the fill is even-odd.
+        let rings: Vec<Vec<[f64; 2]>> = std::iter::once(&building.footprint).chain(&building.holes).map(|points| ring(&canvas, points)).collect();
+        canvas.fill(&rings, BUILDING);
     }
 
     if manifest.theme == THEME_WINTER {

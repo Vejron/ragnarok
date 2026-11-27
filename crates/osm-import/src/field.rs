@@ -37,9 +37,9 @@ pub struct Field {
 }
 
 impl Field {
-    /// The field of `points` (`[x, z, y, _]`, as `roof::Cloud::over` gives them) over `footprint`,
-    /// or `None` when they cover too little of it to be the roof.
-    pub fn measure(footprint: &[P], points: &[[f64; 4]]) -> Option<Field> {
+    /// The field of `points` (`[x, z, y, _]`, as `roof::Cloud::over` gives them) over `footprint`
+    /// outside its yards `holes`, or `None` when they cover too little of it to be the roof.
+    pub fn measure(footprint: &[P], holes: &[Vec<P>], points: &[[f64; 4]]) -> Option<Field> {
         if points.len() < MIN_POINTS || footprint.len() < 3 {
             return None;
         }
@@ -60,7 +60,7 @@ impl Field {
         let (mut wanted, mut known) = (0usize, 0usize);
         for j in 0..rows {
             for i in 0..cols {
-                if inside(centre(i, j), footprint) {
+                if inside(centre(i, j), footprint) && !holes.iter().any(|hole| inside(centre(i, j), hole)) {
                     wanted += 1;
                     known += usize::from(!top[j * cols + i].is_nan());
                 }
@@ -180,8 +180,9 @@ fn clip(polygon: &[P], axis: usize, at: f64, keep_above: bool) -> Vec<P> {
 }
 
 /// Appends a building with a measured roof to `mesh`, in the order `roof::build` does: walls, roof,
-/// then floor. `footprint` is counter-clockwise from above; the floor is at `floor` metres.
-pub fn build(mesh: &mut CollisionMesh, footprint: &[P], floor: f64, field: &Field) -> crate::roof::Parts {
+/// then floor. `footprint` is counter-clockwise from above and each of its yards `holes` clockwise;
+/// the floor is at `floor` metres.
+pub fn build(mesh: &mut CollisionMesh, footprint: &[P], holes: &[Vec<P>], floor: f64, field: &Field) -> crate::roof::Parts {
     let mut ids: HashMap<[i32; 3], u32> = HashMap::new();
     let mut vertex = |mesh: &mut CollisionMesh, x: f64, y: f64, z: f64| -> u32 {
         let key = [cm(x), cm(y), cm(z)];
@@ -200,8 +201,8 @@ pub fn build(mesh: &mut CollisionMesh, footprint: &[P], floor: f64, field: &Fiel
 
     // Walls, each edge cut every half cell so the top follows the field.
     let first_wall = mesh.triangles.len();
-    for k in 0..footprint.len() {
-        let (a, b) = (footprint[k], footprint[(k + 1) % footprint.len()]);
+    for (ring, k) in std::iter::once(footprint).chain(holes.iter().map(Vec::as_slice)).flat_map(|ring| (0..ring.len()).map(move |k| (ring, k))) {
+        let (a, b) = (ring[k], ring[(k + 1) % ring.len()]);
         let steps = ((b[0] - a[0]).hypot(b[1] - a[1]) / (STEP / 2.0)).ceil().max(1.0) as usize;
         let at = |s: usize| {
             let t = s as f64 / steps as f64;
@@ -220,11 +221,10 @@ pub fn build(mesh: &mut CollisionMesh, footprint: &[P], floor: f64, field: &Fiel
     let walls = (mesh.triangles.len() - first_wall) as u32;
 
     // Roof: each of the footprint's triangles cut into the grid's cells, fan-triangulated.
-    let flat: Vec<f64> = footprint.iter().flat_map(|p| [p[0], p[1]]).collect();
-    let triangles: Vec<[usize; 3]> = earcutr::earcut(&flat, &[], 2).map(|i| i.chunks_exact(3).map(|t| [t[0], t[1], t[2]]).collect()).unwrap_or_default();
+    let (corners, triangles) = crate::roof::triangulate(footprint, holes);
     let first_roof = mesh.triangles.len();
     for t in &triangles {
-        let tri: Vec<P> = t.iter().map(|&k| footprint[k]).collect();
+        let tri: Vec<P> = t.iter().map(|&k| corners[k]).collect();
         let (lo, hi) = bounds(&tri);
         let cell = |v: f64, origin: f64| ((v - origin) / STEP).floor() as i64;
         for j in cell(lo[1], field.z0)..=cell(hi[1], field.z0) {
@@ -255,7 +255,7 @@ pub fn build(mesh: &mut CollisionMesh, footprint: &[P], floor: f64, field: &Fiel
 
     // Floor, facing down.
     for [a, b, c] in &triangles {
-        let ids = [*c, *b, *a].map(|k| vertex(mesh, footprint[k][0], floor, footprint[k][1]));
+        let ids = [*c, *b, *a].map(|k| vertex(mesh, corners[k][0], floor, corners[k][1]));
         push(mesh, ids);
     }
     crate::roof::Parts { walls, roof, top: highest }
@@ -285,7 +285,7 @@ mod tests {
     #[test]
     fn a_tower_on_a_podium_keeps_both_heights() {
         let points = scan(0.0, 20.0, 0.0, 20.0, |x, z| if (5.0..10.0).contains(&x) && (5.0..10.0).contains(&z) { 30.0 } else { 8.0 });
-        let field = Field::measure(&SQUARE, &points).unwrap();
+        let field = Field::measure(&SQUARE, &[], &points).unwrap();
         assert!((field.height([7.5, 7.5]) - 30.0).abs() < 1e-6);
         assert!((field.height([15.0, 15.0]) - 8.0).abs() < 1e-6);
         assert_eq!(field.kind(), ROOF_FLAT);
@@ -295,29 +295,29 @@ mod tests {
     fn gaps_in_the_scan_are_filled_from_around() {
         // A 4 m hole in the returns, as under a skylight.
         let points: Vec<[f64; 4]> = scan(0.0, 20.0, 0.0, 20.0, |_, _| 9.0).into_iter().filter(|p| !((8.0..12.0).contains(&p[0]) && (8.0..12.0).contains(&p[1]))).collect();
-        let field = Field::measure(&SQUARE, &points).unwrap();
+        let field = Field::measure(&SQUARE, &[], &points).unwrap();
         assert!((field.height([10.0, 10.0]) - 9.0).abs() < 1e-6);
     }
 
     #[test]
     fn too_few_returns_are_not_a_roof() {
         let points = scan(0.0, 5.0, 0.0, 5.0, |_, _| 9.0);
-        assert!(Field::measure(&SQUARE, &points).is_none());
+        assert!(Field::measure(&SQUARE, &[], &points).is_none());
     }
 
     #[test]
     fn a_pitched_roof_is_drawn_as_one() {
         let points = scan(0.0, 20.0, 0.0, 20.0, |x, _| 12.0 - 0.6 * (x - 10.0).abs());
-        assert_eq!(Field::measure(&SQUARE, &points).unwrap().kind(), ROOF_GABLE);
+        assert_eq!(Field::measure(&SQUARE, &[], &points).unwrap().kind(), ROOF_GABLE);
     }
 
     #[test]
     fn the_mesh_covers_the_footprint_and_reaches_the_tower() {
         let points = scan(0.0, 20.0, 0.0, 20.0, |x, z| if (5.0..10.0).contains(&x) && (5.0..10.0).contains(&z) { 30.0 } else { 8.0 });
-        let field = Field::measure(&SQUARE, &points).unwrap();
+        let field = Field::measure(&SQUARE, &[], &points).unwrap();
         let ccw: Vec<P> = SQUARE.iter().rev().copied().collect();
         let mut mesh = CollisionMesh::default();
-        let parts = build(&mut mesh, &ccw, 0.0, &field);
+        let parts = build(&mut mesh, &ccw, &[], 0.0, &field);
         assert!((parts.top - 30.0).abs() < 1e-6);
         // The roof's triangles cover the footprint once, seen from above.
         let roof = &mesh.triangles[parts.walls as usize..(parts.walls + parts.roof) as usize];
@@ -338,5 +338,23 @@ mod tests {
         let roofs: Vec<_> = roof.iter().map(tri).collect();
         let shell = shared::carve::Shell::new(&walls, &roofs).unwrap();
         assert_eq!(shell.cells().dims[1], 3000_u32.div_ceil(72));
+    }
+
+    #[test]
+    fn a_yard_in_a_measured_building_is_walled_round_and_left_open() {
+        // The laser sees the ground of the yard, 8 m under the roof; a yard is not a gap in the scan.
+        let yard: Vec<P> = vec![[6.0, 6.0], [6.0, 14.0], [14.0, 14.0], [14.0, 6.0]];
+        let in_yard = |x: f64, z: f64| (6.0..14.0).contains(&x) && (6.0..14.0).contains(&z);
+        let points: Vec<[f64; 4]> = scan(0.0, 20.0, 0.0, 20.0, |_, _| 8.0).into_iter().filter(|p| !in_yard(p[0], p[1])).collect();
+        let holes = [yard.iter().rev().copied().collect::<Vec<P>>()];
+        let field = Field::measure(&SQUARE, &holes, &points).unwrap();
+        let ccw: Vec<P> = SQUARE.iter().rev().copied().collect();
+        let mut mesh = CollisionMesh::default();
+        let parts = build(&mut mesh, &ccw, &holes, 0.0, &field);
+        let flat = |t: &[u32; 3]| t.map(|v| mesh.vertices[v as usize]).map(|v| [f64::from(v[0]) / 100.0, f64::from(v[2]) / 100.0]);
+        let area: f64 = mesh.triangles[parts.walls as usize..(parts.walls + parts.roof) as usize].iter().map(|t| { let [a, b, c] = flat(t); ((b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1])).abs() / 2.0 }).sum();
+        assert!((area - (400.0 - 64.0)).abs() < 0.5, "the roof covers {area} m²");
+        crate::roof::tests::walls_cover(&holes[0], &mesh, parts, 0.0, 8.0);
+        crate::roof::tests::walls_cover(&ccw, &mesh, parts, 0.0, 8.0);
     }
 }

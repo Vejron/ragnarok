@@ -103,7 +103,7 @@ function nearSegment([ax, az]: Point2, [bx, bz]: Point2, half: number, x0: numbe
  * (`FLOOR_SHADES`), where the tile's `forest` is given. `surface` is the tile's `rasterSurface`,
  * when it has been worked out already.
  */
-export function grassMask(tile: Pick<TileData, 'cover' | 'roads' | 'water' | 'streams'> & Partial<Pick<TileData, 'rails'>> & { buildings: readonly (Pick<Building, 'footprint'> & { kind?: number })[] }, x0: number, z0: number, size: number, ground: TileGround | null = null, surface = rasterSurface(tile, x0, z0, size, ground), forest: Forest | null = null, beds?: Float32Array): GrassMask {
+export function grassMask(tile: Pick<TileData, 'cover' | 'roads' | 'water' | 'streams'> & Partial<Pick<TileData, 'rails'>> & { buildings: readonly (Pick<Building, 'footprint'> & { kind?: number; holes?: Building['holes'] })[] }, x0: number, z0: number, size: number, ground: TileGround | null = null, surface = rasterSurface(tile, x0, z0, size, ground), forest: Forest | null = null, beds?: Float32Array): GrassMask {
   const { side } = surface
   const cells = new Uint8Array(side * side).fill(1)
   for (const cover of tile.cover) {
@@ -124,13 +124,16 @@ export function grassMask(tile: Pick<TileData, 'cover' | 'roads' | 'water' | 'st
   for (const building of tile.buildings) {
     if (building.kind === BUILDING_BRIDGE) continue
     // Nor on the gravel round a house in a garden (`APRON_WIDTH`).
-    const ring = building.footprint
-    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-      nearSegment(ring[j]!, ring[i]!, APRON_WIDTH, x0, z0, side, (at) => {
-        if (cells[at] === GARDEN_SHADE) cells[at] = 0
-      })
+    // Grass grows in a yard inside one: the fill is even-odd.
+    const rings = [building.footprint, ...(building.holes ?? [])]
+    for (const ring of rings) {
+      for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+        nearSegment(ring[j]!, ring[i]!, APRON_WIDTH, x0, z0, side, (at) => {
+          if (cells[at] === GARDEN_SHADE) cells[at] = 0
+        })
+      }
     }
-    fillRings([ring], x0, z0, side, (row, column) => (cells[row * side + column] = 0))
+    fillRings(rings, x0, z0, side, (row, column) => (cells[row * side + column] = 0))
   }
   // Nor in a garden's flower beds (`gardenPlan`): four corners each, the first two along the wall.
   for (let i = 0; beds && i + 8 <= beds.length; i += 8) {

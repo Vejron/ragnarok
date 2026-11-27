@@ -1,5 +1,5 @@
 import { BUILDING_BRIDGE, BUILDING_SHELTER, type CollisionMesh } from '@/world'
-import { add, centreOf, dot, keyOf, normalOf, splitPlane, sub, triangulate, unit, type P, type Poly, type RGB } from './geom'
+import { add, centreOf, dot, joinHoles, keyOf, normalOf, splitPlane, sub, triangulate, unit, type P, type Poly, type RGB } from './geom'
 import { REVEAL, openingsFor, type LookRange, type Opening } from './windows'
 import { Part, insideFor, type InsidePiece } from '@/sim/interior'
 
@@ -140,7 +140,8 @@ function cutWindow(walls: Poly[], o: Opening): Poly[] {
 
 /**
  * The floor under `walls`: the ring their bottom edges make, triangulated, facing up. A shelter's
- * (`open`) is a ring with one side missing, the open one, which closes it.
+ * (`open`) is a ring with one side missing, the open one, which closes it. The walls round a yard
+ * make a ring that runs the other way: it is a hole in the floor of the ring it lies in.
  */
 function floorOf(walls: readonly Poly[], open = false): Poly[] {
   let low = Infinity
@@ -159,6 +160,7 @@ function floorOf(walls: readonly Poly[], open = false): Poly[] {
     points.set(key, p)
   }
   const floor: Poly[] = []
+  const rings: P[][] = []
   const seen = new Set<string>()
   // An open ring is walked from its first corner, the one no edge leads to.
   const led = new Set([...next.values()].map(keyOf))
@@ -179,9 +181,33 @@ function floorOf(walls: readonly Poly[], open = false): Poly[] {
       if (key === start) closed = true
     }
     if ((!closed && !open) || ring.length < 3) continue
-    const ids = triangulate(ring.map((q) => [q[0], q[2]] as const))
+    rings.push(ring)
+  }
+  const flat = (ring: readonly P[]) => ring.map((q) => [q[0], q[2]] as const)
+  const twice = (ring: readonly P[]) => ring.reduce((sum, p, i) => sum + p[0] * ring[(i + 1) % ring.length]![2] - ring[(i + 1) % ring.length]![0] * p[2], 0)
+  const holds = (ring: readonly P[], [x, , z]: P) => {
+    let inside = false
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const [a, b] = [ring[i]!, ring[j]!]
+      if (a[2] > z !== b[2] > z && x < a[0] + ((z - a[2]) / (b[2] - a[2])) * (b[0] - a[0])) inside = !inside
+    }
+    return inside
+  }
+  // The biggest ring is an outline, and so is every ring that runs its way; one that runs the other
+  // way is a yard in the smallest outline it lies in.
+  const areas = rings.map(twice)
+  const way = Math.sign(areas.reduce((most, area) => (Math.abs(area) > Math.abs(most) ? area : most), 0)) || 1
+  const outlines = rings.map((ring, k) => ({ ring, area: Math.abs(areas[k]!), holes: [] as P[][] })).filter((_, k) => Math.sign(areas[k]!) === way || areas[k] === 0)
+  rings.forEach((ring, k) => {
+    if (Math.sign(areas[k]!) !== -way) return
+    const around = outlines.filter((outline) => holds(outline.ring, ring[0]!)).sort((a, b) => a.area - b.area)[0]
+    around?.holes.push(ring)
+  })
+  for (const { ring, holes } of outlines) {
+    const joined = holes.length > 0 ? joinHoles(flat(ring), holes.map(flat)) : flat(ring)
+    const ids = triangulate(joined)
     for (let i = 0; i + 2 < ids.length; i += 3) {
-      const tri: Poly = [ids[i]!, ids[i + 1]!, ids[i + 2]!].map((k) => add(ring[k]!, [0, 1, 0], low - ring[k]![1] + FLOOR_UP))
+      const tri: Poly = [ids[i]!, ids[i + 1]!, ids[i + 2]!].map((k): P => [joined[k]![0], low + FLOOR_UP, joined[k]![1]])
       if (normalOf(tri)[1] < 0) tri.reverse()
       floor.push(tri)
     }

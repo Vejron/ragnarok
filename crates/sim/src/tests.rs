@@ -892,7 +892,7 @@ fn looked_house() -> (WorldFile, Shell, Vec<Tri>) {
         mesh.vertices.extend([[t[0], t[1], t[2]], [t[3], t[4], t[5]], [t[6], t[7], t[8]]]);
         mesh.triangles.push([base, base + 1, base + 2]);
     }
-    let building = Building { height: r, footprint: vec![[0, 0], [w, 0], [w, d], [0, d]], base: 0, first: 0, walls: 0, roof: 0, roof_kind: 2, kind: 0, front: [0, 0], cells: shell.cells(), paint: [None, None], clad: [0, 0] };
+    let building = Building { height: r, footprint: vec![[0, 0], [w, 0], [w, d], [0, d]], holes: Vec::new(), base: 0, first: 0, walls: 0, roof: 0, roof_kind: 2, kind: 0, front: [0, 0], cells: shell.cells(), paint: [None, None], clad: [0, 0] };
     let world = WorldFile {
         buildings: vec![building],
         building_ids: vec![ObjId { col: 0, row: 0, index: 0 }],
@@ -952,14 +952,14 @@ fn furnished_house() -> (WorldFile, Vec<shared::interior::Part>) {
     }
     let windows = shared::windows::openings_of(&look, [0, walls.len() as u32, roof.len() as u32], 0, [0, 0]);
     let footprint = vec![[0, 0], [w, 0], [w, d], [0, d]];
-    let parts = shared::interior::rooms(&footprint, &walls, &roof, &windows, 0);
+    let parts = shared::interior::rooms(&footprint, &[], &walls, &roof, &windows, 0);
     let mut mesh = CollisionMesh::default();
     for t in &floor {
         let base = mesh.vertices.len() as u32;
         mesh.vertices.extend([[t[0], t[1], t[2]], [t[3], t[4], t[5]], [t[6], t[7], t[8]]]);
         mesh.triangles.push([base, base + 1, base + 2]);
     }
-    let building = Building { height: h, footprint, base: 0, first: 0, walls: 0, roof: 0, roof_kind: 0, kind: 0, front: [0, 0], cells: Shell::new(&walls, &roof).unwrap().cells(), paint: [None, None], clad: [0, 0] };
+    let building = Building { height: h, footprint, holes: Vec::new(), base: 0, first: 0, walls: 0, roof: 0, roof_kind: 0, kind: 0, front: [0, 0], cells: Shell::new(&walls, &roof).unwrap().cells(), paint: [None, None], clad: [0, 0] };
     let inside = parts.iter().filter(|p| p.collided()).map(|p| p.tri).collect();
     let world = WorldFile {
         buildings: vec![building],

@@ -5,13 +5,20 @@ import type { TileData } from '@/world'
 import { shellOf, type Shell } from '@/sim/carve'
 import type { Effects } from './effects'
 import { dustCloud, type Particles } from './particles'
-import { Fracture, shardGeometry } from './fracture'
 import { lookChunk, lookFracture } from './lookfracture'
 import { rubbleSoup, shardSoup, type RubbleMemo } from './shards'
 import { buildingColors, buildingSurfaces } from './buildingmesh'
 import { lookSlice, type GroundGrid, type LookSource, type LookWorker } from './lookworker'
 import { span as timed } from '@/spans'
 import { reachOf, type Reach } from './reach'
+
+/** A flat-shaded geometry from triangle soup with a colour per vertex. */
+function shardGeometry(positions: Float32Array, colors: Float32Array, custom?: Float32Array): Geometry {
+  // Not indexed, so every face has its own normal: flat shading.
+  const geometry = new Geometry({ positions, colors, custom })
+  geometry.computeNormals()
+  return geometry
+}
 
 /** A small deterministic generator, so every client throws the same pieces the same way. */
 function random(seed: number) {
@@ -105,16 +112,11 @@ interface Falling {
 
 interface Drawn {
   group: Group
-  /** The building's walls and roof as cells, once it is hurt, and what is drawn of them. */
-  fracture: Fracture | null
-  /** What is drawn of the cells still standing, a mesh a brick (`Fracture.bricksNear`). */
-  bricks: Map<number, Mesh>
-  /**
-   * For a building with a look (`Tile.look`): its own walls and roof with the holes cut in them,
-   * one mesh, drawn instead of the bricks; and what it is drawn from.
-   */
+  /** The building's walls and roof as cells, the same as the server cuts them. */
+  shell: Shell
+  /** Its own walls and roof (`Tile.look`) with the holes cut in them, one mesh; and what it is drawn from. */
   look: Mesh | null
-  seen: { key: number; loaded: Loaded; index: number } | null
+  seen: { key: number; loaded: Loaded; index: number }
   /** A redraw of the look is out with the worker (`BuildingDamage.looks`): the next waits for it. */
   asking: boolean
   /**
@@ -129,9 +131,8 @@ interface Drawn {
   rubbleDue: number
   /** The mounds of `rubble` by square, so a heap only makes again the squares that changed. */
   mounds: RubbleMemo
-  /** The state the bricks in `dirty` are to be redrawn for at the next `update`: a barrage redraws a building once a frame, not once a hit. */
+  /** The state it is to be redrawn for at the next `update`: a barrage redraws a building once a frame, not once a hit. */
   stale: Hurt | null
-  dirty: Set<number>
   falling: Falling[]
   /** Seconds to the next puff of smoke. */
   puff: number
@@ -229,10 +230,11 @@ function wallsOf(tile: TileData, index: number): Wall[] {
 
 /**
  * What a hurt building looks like beyond being whole. Just hit or about to fall, it smoulders for a minute. Once cells have been blasted out of it, or this player's rounds have
- * dented some, its walls and roof are redrawn from their cells (`Fracture`) without those that are
- * gone, and the pieces fly and fall. Pieces live in `root` in world coordinates; what a
- * building has suffered is kept, so a tile that streams back in is hurt as it was. Buildings drawn
- * from their cells are to be left out of the tile's own drawing (`fractured`).
+ * dented some, its own walls and roof (`Tile.look`) are redrawn without the pieces in the cells that
+ * are gone, and the pieces fly and fall. Pieces live in `root` in world coordinates; what a
+ * building has suffered is kept, so a tile that streams back in is hurt as it was. Buildings redrawn
+ * here are to be left out of the tile's own drawing (`fractured`). A building without a look has
+ * nothing to be redrawn from, and is not drawn hurt.
  */
 export class BuildingDamage {
   readonly root = new Group()
@@ -296,7 +298,7 @@ export class BuildingDamage {
     if (state.removed.has(cell)) return false
     state.dents.set(cell, (state.dents.get(cell) ?? 0) + damage)
     const loaded = this.loaded.get(key)
-    if (loaded) this.draw(key, index, loaded, state, false, null, [cell])
+    if (loaded) this.draw(key, index, loaded, state, false, null)
     if (wasWhole) this.awaitFirst(key, index)
     return wasWhole
   }
@@ -317,7 +319,7 @@ export class BuildingDamage {
     // Something fresh was lost, now: it smoulders from here. The catch-up on joining shows only what is left, cold.
     if (live && (fresh.blasted.length > 0 || fresh.fell.length > 0)) state.heat = SMOULDER_SECONDS
     const loaded = this.loaded.get(key)
-    if (loaded) this.draw(key, index, loaded, state, live, fresh, [...fresh.blasted, ...fresh.fell])
+    if (loaded) this.draw(key, index, loaded, state, live, fresh)
     for (const cell of state.removed) state.dents.delete(cell)
     if (wasWhole && state.removed.size > 0) this.awaitFirst(key, index)
     return wasWhole && state.removed.size > 0
@@ -333,15 +335,10 @@ export class BuildingDamage {
     if (!state) return
     const back = cells.filter((cell) => state.removed.delete(cell))
     const drawn = this.drawn.get(key)?.get(index)
-    if (back.length === 0 || !drawn?.fracture) return
-    if (drawn.seen) {
-      if (drawn.look) drawn.stale = state
-      else this.redraw(drawn, state)
-      this.heap(drawn, state)
-    } else {
-      for (const brick of drawn.fracture.bricksNear(back)) drawn.dirty.add(brick)
-      this.redraw(drawn, state)
-    }
+    if (back.length === 0 || !drawn) return
+    if (drawn.look) drawn.stale = state
+    else this.redraw(drawn, state)
+    this.heap(drawn, state)
   }
 
   /** The cells of each hurt building of tile `key` that are gone, by building index. */
@@ -351,7 +348,7 @@ export class BuildingDamage {
     return out
   }
 
-  /** The buildings of tile `key` that are drawn here from their cells and so are not to be drawn whole. */
+  /** The buildings of tile `key` that are drawn here, holed, and so are not to be drawn whole. */
   fractured(key: number): number[] {
     const out: number[] = []
     const drawn = this.drawn.get(key)
@@ -448,89 +445,50 @@ export class BuildingDamage {
   }
 
   /** Brings tile `key`'s building `index` up to `state`; `live` when it is happening now, to be seen. */
-  private draw(key: number, index: number, loaded: Loaded, state: Hurt, live: boolean, burst: Burst | null, cells: readonly number[] = []) {
+  private draw(key: number, index: number, loaded: Loaded, state: Hurt, live: boolean, burst: Burst | null) {
     const buildings = this.drawn.get(key) ?? new Map<number, Drawn>()
     this.drawn.set(key, buildings)
     let drawn = buildings.get(index)
     const building = loaded.tile.buildings[index]
-    // Nothing to draw hurt: neither cells nor walls of its own.
-    if (!building || (!shellOf(loaded.tile, index) && building.walls === 0)) return
+    // Nothing to draw hurt: no look to redraw, or no cells to cut it by.
+    if (!building?.look || !loaded.tile.look) return
     if (!drawn) {
-      drawn = { group: new Group(), fracture: null, bricks: new Map(), look: null, seen: null, asking: false, waiting: false, released: false, rubble: null, rubbleDue: 0, mounds: new Map(), stale: null, dirty: new Set(), falling: [], puff: 0, sections: [], heaping: false, heapAgain: null }
+      const shell = timed('damage.shell', () => shellOf(loaded.tile, index))
+      if (!shell) return
+      drawn = { group: new Group(), shell, look: null, seen: { key, loaded, index }, asking: false, waiting: false, released: false, rubble: null, rubbleDue: 0, mounds: new Map(), stale: null, falling: [], puff: 0, sections: [], heaping: false, heapAgain: null }
       buildings.set(index, drawn)
       this.root.add(drawn.group)
     }
-    if (state.removed.size > 0 || state.dents.size > 0) this.shatter(drawn, key, index, loaded, state, live, burst, cells)
+    drawn.seen = { key, loaded, index }
+    if (state.removed.size > 0 || state.dents.size > 0) this.shatter(drawn, state, live, burst)
   }
 
   /** Redraws the building without the cells that are gone and with the ones that were shot pushed in. */
-  private shatter(drawn: Drawn, key: number, index: number, loaded: Loaded, state: Hurt, live: boolean, burst: Burst | null, cells: readonly number[]) {
-    const building = loaded.tile.buildings[index]!
-    // Cubes: through a hole you see the inner faces of the walls round it, so no room needs drawing.
-    drawn.fracture ??= timed('damage.fracture', () => new Fracture(loaded.tile, index, loaded.salt))
-    const fracture = drawn.fracture
-    const shell = fracture.shell
-    const looked = !!(loaded.tile.look && building.look && shell)
-    if (looked) drawn.seen = { key, loaded, index }
+  private shatter(drawn: Drawn, state: Hurt, live: boolean, burst: Burst | null) {
+    const { shell, seen } = drawn
+    const base = seen.loaded.tile.buildings[seen.index]!.base
     // Thrown first: the sections that fall whole go to the look worker with the redraw that shows their hole.
-    if (live && burst && shell) {
+    if (live && burst) {
       timed('damage.throw', () => {
-        this.throwCells(drawn, fracture, shell, building.base, burst.blasted, burst.point, false, state.removed)
-        this.throwCells(drawn, fracture, shell, building.base, burst.fell, burst.point, true, state.removed)
+        this.throwCells(drawn, shell, base, burst.blasted, burst.point, false, state.removed)
+        this.throwCells(drawn, shell, base, burst.fell, burst.point, true, state.removed)
       })
     }
-    if (looked) {
-      // Its own walls and roof with the holes cut in them, redrawn whole: the first time now, so the tile's
-      // own drawing of the building can stop, and after that at the frame's end, so a barrage or a burst of
-      // rounds redraws it once a frame, not once a hit.
-      if (drawn.look) drawn.stale = state
-      else this.redraw(drawn, state)
-      // What fell lands about a second later; till then the heap stays as it was. A round that only dented
-      // a wall takes nothing out of it, so the heap is left as it is.
-      if (live) drawn.rubbleDue = RUBBLE_DELAY
-      else if (burst || !drawn.rubble) this.heap(drawn, state)
-    } else {
-      // The first time it is drawn now, so the tile's own drawing of the building can stop; after that a live hit waits for the frame's end.
-      for (const brick of fracture.bricksNear(cells)) drawn.dirty.add(brick)
-      if (drawn.bricks.size > 0 && live) drawn.stale = state
-      else this.redraw(drawn, state)
-    }
+    // Its own walls and roof with the holes cut in them, redrawn whole: the first time now, so the tile's
+    // own drawing of the building can stop, and after that at the frame's end, so a barrage or a burst of
+    // rounds redraws it once a frame, not once a hit.
+    if (drawn.look) drawn.stale = state
+    else this.redraw(drawn, state)
+    // What fell lands about a second later; till then the heap stays as it was. A round that only dented
+    // a wall takes nothing out of it, so the heap is left as it is.
+    if (live) drawn.rubbleDue = RUBBLE_DELAY
+    else if (burst || !drawn.rubble) this.heap(drawn, state)
   }
 
-  /** Draws the bricks of `drawn` that changed, as `state` has the cells; all of them the first time. */
+  /** Redraws `drawn` as `state` has the cells. */
   private redraw(drawn: Drawn, state: Hurt) {
-    const fracture = drawn.fracture
-    if (!fracture) return
     drawn.stale = null
-    if (drawn.seen) {
-      this.redrawLook(drawn, fracture, drawn.seen.loaded, drawn.seen.index, state)
-      return
-    }
-    const first = drawn.bricks.size === 0
-    const todo = first ? fracture.allBricks() : drawn.dirty
-    for (const key of todo) {
-      const built = fracture.buildBrick(key, state.removed, state.dents)
-      const old = drawn.bricks.get(key)
-      if (!built) {
-        if (old) {
-          old.geometry.dispose()
-          old.removeFromParent()
-          drawn.bricks.delete(key)
-        }
-        continue
-      }
-      if (old) {
-        old.geometry.dispose()
-        old.geometry = shardGeometry(built.positions, built.colors)
-        continue
-      }
-      const mesh = new Mesh(shardGeometry(built.positions, built.colors), hurtMaterial)
-      mesh.castShadow = true
-      mesh.receiveShadow = true
-      drawn.group.add(mesh)
-      drawn.bricks.set(key, mesh)
-    }
-    drawn.dirty.clear()
+    this.redrawLook(drawn, drawn.seen.loaded, drawn.seen.index, state)
   }
 
   /**
@@ -538,10 +496,9 @@ export class BuildingDamage {
    * when there is one (a frame or two late, under the dust), else here.
    */
   private heap(drawn: Drawn, state: Hurt) {
-    const seen = drawn.seen
-    const shell = drawn.fracture?.shell
+    const { seen, shell } = drawn
     const looks = this.looks
-    if (!seen || !shell || state.removed.size === 0) return
+    if (state.removed.size === 0) return
     const { tile, salt } = seen.loaded
     const building = tile.buildings[seen.index]
     if (!building) return
@@ -611,15 +568,15 @@ export class BuildingDamage {
 
   /** The name `drawn`'s building goes by with the look worker. */
   private lookName(drawn: Drawn): string {
-    return `${drawn.seen?.key}:${drawn.seen?.index}`
+    return `${drawn.seen.key}:${drawn.seen.index}`
   }
 
   /** What the look worker is told of `drawn`'s building the first time: its own look and its cells. */
   private lookSource(drawn: Drawn): LookSource {
-    const seen = drawn.seen!
+    const seen = drawn.seen
     const look = seen.loaded.tile.look!
     const range = seen.loaded.tile.buildings[seen.index]!.look!
-    return { ...lookSlice(look, range), shell: drawn.fracture!.shell!.flags }
+    return { ...lookSlice(look, range), shell: drawn.shell.flags }
   }
 
   /**
@@ -639,10 +596,9 @@ export class BuildingDamage {
 
   /** Section `pending` of `drawn`'s building cut out here, on the main thread (`lookChunk`). */
   private cutHere(drawn: Drawn, pending: PendingSection): SectionMesh | null {
-    const seen = drawn.seen
-    const shell = drawn.fracture?.shell
-    const range = seen?.loaded.tile.buildings[seen.index]?.look
-    if (!seen || !shell || !seen.loaded.tile.look || !range) return null
+    const { seen, shell } = drawn
+    const range = seen.loaded.tile.buildings[seen.index]?.look
+    if (!seen.loaded.tile.look || !range) return null
     const { wall, roof } = buildingColors(seen.loaded.tile, seen.index, seen.loaded.salt)
     return timed('damage.cut', () => lookChunk(seen.loaded.tile.look!, range, shell, new Set(pending.cells), [pending.pivot.x, pending.pivot.y, pending.pivot.z], rgbOf(wall), rgbOf(roof), buildingSurfaces(seen.loaded.tile, seen.index, seen.loaded.salt)))
   }
@@ -657,12 +613,12 @@ export class BuildingDamage {
   }
 
   /** Draws a building with a look from it, the holes in `state` cut in: in the worker when there is one. */
-  private redrawLook(drawn: Drawn, fracture: Fracture, loaded: Loaded, index: number, state: Hurt) {
+  private redrawLook(drawn: Drawn, loaded: Loaded, index: number, state: Hurt) {
     const { tile, salt } = loaded
     const range = tile.buildings[index]?.look
-    const shell = fracture.shell
+    const shell = drawn.shell
     const look = tile.look
-    if (!look || !range || !shell) return
+    if (!look || !range) return
     const { wall, roof } = buildingColors(tile, index, salt)
     const surfaces = buildingSurfaces(tile, index, salt)
     const looks = this.looks
@@ -727,16 +683,12 @@ export class BuildingDamage {
     mesh.receiveShadow = true
     drawn.group.add(mesh)
     drawn.look = mesh
-    if (drawn.waiting && drawn.seen) {
+    if (drawn.waiting) {
       drawn.waiting = false
       this.onShown(drawn.seen.key, index)
     }
   }
 
-  /**
-   * Throws the wall and roof in `cells` out of the building as chunks: blasted ones fly away from
-   * `point`, ones that were left hanging (`falls`) drop where they were.
-   */
   /** Pieces of `drawn` still falling or toppling: those lying still or sinking take no place. */
   private moving(drawn: Drawn): number {
     let n = 0
@@ -744,57 +696,23 @@ export class BuildingDamage {
     return n
   }
 
-  private throwCells(drawn: Drawn, fracture: Fracture, shell: NonNullable<Fracture['shell']>, floor: number, cells: readonly number[], point: Mark | null, falls: boolean, removed: ReadonlySet<number>) {
+  /**
+   * Throws the wall and roof in `cells` out of the building in pieces: blasted ones fly away from
+   * `point`, ones that were left hanging (`falls`) drop where they were.
+   */
+  private throwCells(drawn: Drawn, shell: Shell, floor: number, cells: readonly number[], point: Mark | null, falls: boolean, removed: ReadonlySet<number>) {
     // A big swath is thrown in bigger chunks rather than dropped past the limit: pieces still falling from the last round take places too.
     const room = Math.max(MAX_FALLING - this.moving(drawn), 8)
     const most = Math.max(falls ? FALLEN_CELLS : THROWN_CELLS, Math.ceil(cells.length / room))
-    const seen = drawn.seen
-    for (const group of shell.clusters(cells, most)) {
-      if (seen) {
-        this.throwShards(drawn, seen, shell, floor, group, point, falls, removed)
-        continue
-      }
-      const chunk = fracture.chunk(new Set(group))
-      if (!chunk) continue
-      this.puffs.push({ at: chunk.pivot.clone(), size: falls ? 3 + this.rand() * 2 : 1.4 + this.rand() * 1.4 })
-      if (this.moving(drawn) >= MAX_FALLING * 2) continue
-      const mesh = new Mesh(shardGeometry(chunk.positions, chunk.colors), pieceMaterial)
-      mesh.position.copy(chunk.pivot)
-      mesh.castShadow = true
-      drawn.group.add(mesh)
-      const velocity = new Vector3()
-      if (!falls && point) {
-        velocity.set(chunk.pivot.x - point[0], chunk.pivot.y - point[1], chunk.pivot.z - point[2])
-        if (velocity.lengthSq() < 1e-4) velocity.set(0, 1, 0)
-        velocity.normalize().multiplyScalar(THROW * (0.5 + this.rand())).y += 1 + this.rand() * 2
-      }
-      const tumble = falls ? 0.6 : 5
-      const spin = new Vector3((this.rand() - 0.5) * tumble, (this.rand() - 0.5) * tumble, (this.rand() - 0.5) * tumble)
-      // A piece that lost its hold tips over towards the gap, top first, and slides that way a little.
-      const lean = falls ? leanOf(shell, group, removed) : null
-      if (lean) {
-        const rate = 0.3 + this.rand() * 0.3
-        spin.x += lean[1] * rate
-        spin.z -= lean[0] * rate
-        velocity.x += lean[0] * LEAN_SPEED * (0.6 + this.rand() * 0.8)
-        velocity.z += lean[1] * LEAN_SPEED * (0.6 + this.rand() * 0.8)
-      }
-      drawn.falling.push({
-        mesh,
-        velocity,
-        spin,
-        age: 0,
-        resting: false,
-      })
-    }
+    for (const group of shell.clusters(cells, most)) this.throwShards(drawn, drawn.seen, shell, floor, group, point, falls, removed)
   }
 
   /**
-   * A piece of cells `group` of a building with a look, thrown as broken plates of its wall and roof
-   * rather than as cubes: one big slab and a few smaller pieces for a piece that falls, a spray of
-   * small ones for a piece that is blasted. They go as the cube chunks go (`fall`).
+   * A piece of cells `group` of the building, thrown as broken plates of its wall and roof: one big
+   * slab and a few smaller pieces for a piece that falls, a spray of small ones for a piece that is
+   * blasted (`fall`).
    */
-  private throwShards(drawn: Drawn, seen: NonNullable<Drawn['seen']>, shell: NonNullable<Fracture['shell']>, floor: number, group: readonly number[], point: Mark | null, falls: boolean, removed: ReadonlySet<number>) {
+  private throwShards(drawn: Drawn, seen: Drawn['seen'], shell: Shell, floor: number, group: readonly number[], point: Mark | null, falls: boolean, removed: ReadonlySet<number>) {
     const pivot = new Vector3()
     let roofs = 0
     for (const id of group) {
@@ -1025,7 +943,7 @@ export class BuildingDamage {
 
   private release(drawn: Drawn) {
     drawn.released = true
-    for (const mesh of [...drawn.bricks.values(), ...(drawn.look ? [drawn.look] : []), ...(drawn.rubble ? [drawn.rubble] : []), ...drawn.falling.filter((f) => !f.shared).map((f) => f.mesh)]) mesh.geometry.dispose()
+    for (const mesh of [...(drawn.look ? [drawn.look] : []), ...(drawn.rubble ? [drawn.rubble] : []), ...drawn.falling.filter((f) => !f.shared).map((f) => f.mesh)]) mesh.geometry.dispose()
     this.root.remove(drawn.group)
   }
 
@@ -1069,7 +987,7 @@ export class BuildingDamage {
  * from the piece towards the cells gone from round it (within 3 cells), which is what held it.
  * Null when they are all round it or none are.
  */
-function leanOf(shell: NonNullable<Fracture['shell']>, group: readonly number[], removed: ReadonlySet<number>): [number, number] | null {
+function leanOf(shell: Shell, group: readonly number[], removed: ReadonlySet<number>): [number, number] | null {
   const own = new Set(group)
   const reach = 3
   let [cx, cz] = [0, 0]

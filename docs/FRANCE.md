@@ -139,7 +139,7 @@ The code:
   France's OSM outlines come from the cadastre and are better than traced ones, so OSM stays the
   outline wherever it has one. That replaces the planned "match by overlap": with outlines this
   good, the laser only has to find what is missing. Tours gains 99 buildings and central Paris 497,
-  mostly whole blocks that OSM maps as multipolygons, which the importer does not read.
+  mostly whole blocks that OSM maps as multipolygons, which the importer did not read then (it does now: [COURTYARDS.md](COURTYARDS.md)).
 - [x] **Big buildings in pieces.** Laser-found regions, and OSM footprints over 1,000 m², are cut on
       a fixed 32 m lattice (`footprints::pieces`), each piece its own building. As one building, a
       Paris block's structure check took 47 ms whenever it was hit, and the traced outline roofed
@@ -229,8 +229,10 @@ heavy.
 
 ### Later
 - [ ] Fewer collision boxes for measured roofs (see the table above).
-- [ ] Read OSM's multipolygon buildings, so whole blocks keep their cadastre outlines instead of
-      laser-traced pieces.
+- [x] Read OSM's multipolygon buildings, so whole blocks keep their cadastre outlines instead of
+      laser-traced pieces ([COURTYARDS.md](COURTYARDS.md)). A block with a yard is one building,
+      not cut on the lattice.
+- [ ] Cut a block with a yard into pieces as one without is, keeping its yard open.
 - [ ] Class 64 as props (walls, pylons); the photo's colours on the minimap; BD TOPO's building use
       and heights, and its wall materials for wall colours (only about a quarter of the buildings in
       central Tours have them).

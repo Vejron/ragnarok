@@ -67,5 +67,6 @@ is decided by a number seeded from the footprint.
   over the lowest ground under the house.
 - Bots find their way on a flat grid: the open door lets them onto a ground floor, never upstairs.
 - A storey is one empty room: no walls inside, no furniture, and nothing is placed indoors.
+- A building round a yard has its floors round the yard and no door into it ([COURTYARDS.md](COURTYARDS.md)).
 - Indoors the camera's shoulder comes in from a wall, so there the crosshair is a little off the
   line the server shoots along.

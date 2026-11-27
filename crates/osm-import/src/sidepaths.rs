@@ -182,7 +182,7 @@ mod tests {
 
     fn pruned(ways: Vec<Way>) -> Vec<u64> {
         let frame = Frame::Equirect { origin: (0.0, 0.0) };
-        prune(Osm { ways, areas: Vec::new(), pois: Vec::new() }, frame).0.ways.iter().map(|way| way.id).collect()
+        prune(Osm { ways, areas: Vec::new(), pois: Vec::new(), yards: Default::default() }, frame).0.ways.iter().map(|way| way.id).collect()
     }
 
     #[test]

@@ -77,7 +77,7 @@ function inside(ring: readonly Point2[], x: number, z: number): boolean {
   return odd
 }
 
-type Plot = Pick<Building, 'footprint' | 'kind'> & { front?: readonly [number, number] }
+type Plot = Pick<Building, 'footprint' | 'kind'> & { front?: readonly [number, number]; holes?: Building['holes'] }
 
 /**
  * The gardens of a tile's houses (those whose middle is on it). `surface` is the tile's surface grid:
@@ -108,8 +108,10 @@ export function gardenPlan(tile: Pick<TileData, 'cover'> & { buildings: readonly
       const [minX, minZ, maxX, maxZ] = boxes[b]!
       if (x < minX - reach || x > maxX + reach || z < minZ - reach || z > maxZ + reach) continue
       const ring = tile.buildings[b]!.footprint
-      if (inside(ring, x, z)) return false
-      for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) if (toSegment(x, z, ring[j]!, ring[i]!) < reach) return false
+      const yards = tile.buildings[b]!.holes ?? []
+      // A yard inside a building is open ground, as far from its walls as from any.
+      if (inside(ring, x, z) && !yards.some((yard) => inside(yard, x, z))) return false
+      for (const walls of [ring, ...yards]) for (let i = 0, j = walls.length - 1; i < walls.length; j = i++) if (toSegment(x, z, walls[j]!, walls[i]!) < reach) return false
     }
     for (let i = 0; i < woods.length; i += WOOD_STRIDE) {
       if (Math.hypot(x - woods[i]!, z - woods[i + 1]!) < radius + 0.6 + woods[i + 2]! * 0.3) return false

@@ -42,7 +42,14 @@ pub struct Osm {
     pub areas: Vec<Area>,
     /// The shops, police stations and the like mapped as nodes (`is_poi`): what the building each lies in is.
     pub pois: Vec<Node>,
+    /// The yards inside a building that is mapped as a multipolygon, by the id of its way in `ways`:
+    /// each a closed ring, open to the sky.
+    pub yards: HashMap<u64, Vec<Vec<LatLon>>>,
 }
+
+/// Set in the id of a way of `Osm::ways` that is the outline of a building relation, over the
+/// relation's own id: no way of OpenStreetMap has an id this high, so it is never another way's.
+pub const FROM_RELATION: u64 = 1 << 62;
 
 /// A way that is a member of a relation, with its role and geometry.
 #[derive(Clone, Debug)]
@@ -93,9 +100,29 @@ impl Data {
     }
 
     /// The buildings, highways, railways and ground cover, as `assemble` takes them: the ways the main
-    /// query asked for, and multipolygons of cover.
+    /// query asked for, multipolygons of cover, and each building mapped as a multipolygon as a way
+    /// of its outline with the relation's tags (`FROM_RELATION`) and its yards in `Osm::yards`.
     pub fn main(&self) -> Osm {
-        let ways = self.ways.iter().filter(|way| is_main_way(&way.tags)).cloned().collect();
+        let blocks: Vec<&Relation> = self.relations.iter().filter(|relation| is_building_area(&relation.tags)).collect();
+        // A block's outline is often tagged as a building too: it is the one building, read from the relation.
+        let outlines: HashSet<u64> = blocks.iter().flat_map(|relation| relation.members.iter().filter(|member| member.role != "inner").map(|member| member.way)).collect();
+        let mut ways: Vec<Way> = self.ways.iter().filter(|way| is_main_way(&way.tags) && !(tag(&way.tags, "building").is_some() && outlines.contains(&way.id))).cloned().collect();
+        let mut yards = HashMap::new();
+        let flat = |ring: &[LatLon]| -> Vec<[f64; 2]> { ring.iter().map(|p| [p.lon, p.lat]).collect() };
+        for relation in blocks {
+            let part = |inner: bool| crate::assemble::join_rings(relation.members.iter().filter(|member| (member.role == "inner") == inner && member.geometry.len() >= 2).map(|member| member.geometry.clone()).collect());
+            let (outer, inner) = (part(false), part(true));
+            for (k, ring) in outer.iter().enumerate() {
+                // A relation of several outlines is several buildings, each with the yards that lie in it.
+                let id = FROM_RELATION | relation.id.wrapping_add((k as u64) << 48);
+                let around = flat(ring);
+                let inside: Vec<Vec<LatLon>> = inner.iter().filter(|yard| crate::assemble::point_in_polygon([yard[0].lon, yard[0].lat], &around)).map(|yard| yard.iter().chain(yard.first()).copied().collect()).collect();
+                if !inside.is_empty() {
+                    yards.insert(id, inside);
+                }
+                ways.push(Way { id, tags: relation.tags.clone(), geometry: ring.iter().chain(ring.first()).copied().collect() });
+            }
+        }
         let areas = self
             .relations
             .iter()
@@ -108,7 +135,7 @@ impl Data {
                 Area { id: relation.id, tags: relation.tags.clone(), outer, inner }
             })
             .collect();
-        Osm { ways, areas, pois: self.nodes.iter().filter(|node| is_poi(&node.tags)).cloned().collect() }
+        Osm { ways, areas, pois: self.nodes.iter().filter(|node| is_poi(&node.tags)).cloned().collect(), yards }
     }
 }
 
@@ -186,6 +213,12 @@ pub fn is_cover_area<T: Lookup + ?Sized>(tags: &T) -> bool {
     tag(tags, "type") == Some("multipolygon") && is_cover(tags)
 }
 
+/// A relation of the main query that is a building: a multipolygon tagged `building`, as a block
+/// round a yard is mapped.
+pub fn is_building_area<T: Lookup + ?Sized>(tags: &T) -> bool {
+    tag(tags, "type") == Some("multipolygon") && tag(tags, "building").is_some()
+}
+
 /// A lake, a river's polygon or a reservoir, as a way or a relation.
 pub fn is_water_body<T: Lookup + ?Sized>(tags: &T) -> bool {
     tag(tags, "natural") == Some("water") || tag(tags, "waterway") == Some("riverbank") || tag(tags, "landuse") == Some("reservoir")
@@ -242,7 +275,7 @@ pub fn wants_way<T: Lookup + ?Sized>(tags: &T) -> bool {
 
 /// Whether any pass wants this relation.
 pub fn wants_relation<T: Lookup + ?Sized>(tags: &T) -> bool {
-    is_cover_area(tags) || is_water_body(tags) || is_ski_relation(tags)
+    is_cover_area(tags) || is_building_area(tags) || is_water_body(tags) || is_ski_relation(tags)
 }
 
 /// Whether any pass wants this node.
@@ -286,6 +319,53 @@ mod tests {
         assert_eq!(osm.ways.iter().map(|w| w.id).collect::<Vec<_>>(), [1, 3]);
         assert_eq!(osm.areas.len(), 1);
         assert_eq!((osm.areas[0].outer.len(), osm.areas[0].inner.len()), (1, 1));
+    }
+
+    /// A square of side `side` degrees with its south-west corner at `(at, at)`, closed.
+    fn square(at: f64, side: f64) -> Vec<LatLon> {
+        [[0.0, 0.0], [0.0, side], [side, side], [side, 0.0], [0.0, 0.0]].iter().map(|p| LatLon { lat: at + p[0], lon: at + p[1] }).collect()
+    }
+
+    #[test]
+    fn a_building_relation_is_read_with_its_courtyard() {
+        // The outline in two ways that meet end to end, and one yard inside it.
+        let ring = square(0.0, 0.01);
+        let member = |way, role: &str, geometry: &[LatLon]| Member { way, role: role.into(), geometry: geometry.to_vec() };
+        let block = Relation { id: 40, tags: tags(&[("type", "multipolygon"), ("building", "apartments")]), members: vec![member(1, "outer", &ring[..3]), member(2, "outer", &ring[2..]), member(3, "inner", &square(0.004, 0.002))] };
+        let osm = Data { relations: vec![block], ..Default::default() }.main();
+        assert_eq!(osm.ways.len(), 1, "the block is one building");
+        let way = &osm.ways[0];
+        assert_eq!(way.tags.get("building").map(String::as_str), Some("apartments"));
+        assert_eq!((way.geometry.len(), way.geometry.first() == way.geometry.last()), (5, true), "its outline is a closed ring");
+        assert!(way.id & FROM_RELATION != 0);
+        let yards = &osm.yards[&way.id];
+        assert_eq!((yards.len(), yards[0].len()), (1, 5));
+        assert!(wants_relation(&tags(&[("type", "multipolygon"), ("building", "yes")])), "the extract keeps it");
+        assert!(crate::overpass::query([0.0; 4]).contains(r#"relation[type=multipolygon]["building"]"#), "and the query asks for it");
+    }
+
+    #[test]
+    fn a_tagged_outer_way_of_a_relation_is_one_building() {
+        let member = |way, role: &str, geometry: Vec<LatLon>| Member { way, role: role.into(), geometry };
+        // The yard is a building of its own too, as a glazed court is mapped: that one stays.
+        let ways = vec![Way { id: 1, tags: tags(&[("building", "yes")]), geometry: square(0.0, 0.01) }, Way { id: 3, tags: tags(&[("building", "roof")]), geometry: square(0.004, 0.002) }, Way { id: 4, tags: tags(&[("building", "yes")]), geometry: square(0.02, 0.01) }];
+        let block = Relation { id: 40, tags: tags(&[("type", "multipolygon"), ("building", "yes")]), members: vec![member(1, "outer", square(0.0, 0.01)), member(3, "inner", square(0.004, 0.002))] };
+        let osm = Data { ways, relations: vec![block], ..Default::default() }.main();
+        let mut ids: Vec<u64> = osm.ways.iter().map(|way| way.id & !FROM_RELATION).collect();
+        ids.sort_unstable();
+        assert_eq!(ids, [3, 4, 40], "the outline is read once, from the relation");
+        assert_eq!(osm.yards.len(), 1);
+    }
+
+    #[test]
+    fn a_relation_of_two_outlines_is_two_buildings_each_with_its_own_yard() {
+        let member = |way, role: &str, geometry: Vec<LatLon>| Member { way, role: role.into(), geometry };
+        let block = Relation { id: 40, tags: tags(&[("type", "multipolygon"), ("building", "yes")]), members: vec![member(1, "outer", square(0.0, 0.01)), member(2, "outer", square(0.02, 0.01)), member(3, "inner", square(0.024, 0.002))] };
+        let osm = Data { relations: vec![block], ..Default::default() }.main();
+        assert_eq!(osm.ways.len(), 2);
+        assert_eq!(osm.yards.len(), 1);
+        let with_yard = osm.ways.iter().find(|way| osm.yards.contains_key(&way.id)).unwrap();
+        assert!(with_yard.geometry[0].lat >= 0.02, "the yard is in the outline it lies in");
     }
 
     #[test]

@@ -2,7 +2,6 @@ import { Color } from '@ragnarok/engine'
 import type { Sphere } from '@ragnarok/engine'
 import { CLAD_BRICK, CLAD_RENDER, CLAD_SHEET, CLAD_STONE, CLAD_UNKNOWN, CLAD_WOOD, ROOFING_FELT, ROOFING_SHEET, ROOFING_SHINGLES, ROOFING_TILES, ROOFING_UNKNOWN, BUILDING_BARN, BUILDING_BRIDGE, BUILDING_CABIN, BUILDING_CHURCH, BUILDING_FARMHOUSE, BUILDING_FIRE_STATION, BUILDING_FLATS, BUILDING_HALL, BUILDING_PLAIN, BUILDING_VILLA, BUILDING_OUTBUILDING, BUILDING_PUBLIC, BUILDING_SHELTER, BUILDING_SHOP, DECK_ASPHALT, DECK_BALLAST, DECK_PLANKS, ROOF_FLAT, type Bridge, type Building, type TileData } from '@/world'
 import { winter } from './season'
-import { shellOf } from '@/sim/carve'
 import { DOOR_RGB, FRAME_RGB, drawnOpenings, facing, openingQuads, openingTriangles, openingsFor, type Opening } from './windows'
 import { SOFFIT_RGB, eaveQuads, eaveTriangles, eavesFor, type EaveStrip } from './eaves'
 import { detailColour, detailTriangles, detailsOf, type DetailQuad } from './details'
@@ -414,10 +413,6 @@ export function trimmed(rgb: RGB, trim: Trim): RGB {
   return rgb === FRAME_RGB ? trim.frame : rgb === DOOR_RGB ? trim.door : rgb === SOFFIT_RGB ? [trim.frame[0] * 0.8, trim.frame[1] * 0.8, trim.frame[2] * 0.8] : rgb
 }
 
-/** A building's faces as `Shell.facesWithRoof` gives them. */
-type Faces = { tris: Int32Array; roof: Uint8Array }
-
-const NONE: ReadonlySet<number> = new Set()
 /** A drawn face's normal is rounded to a multiple of this in each axis (about 0.01°): too little to see, enough for faces in one plane to share their corners. */
 const NORMAL_STEP = 1 / 4096
 
@@ -497,22 +492,6 @@ class Soup {
       }
     }
     this.at = i + 9
-  }
-
-  /**
-   * Building faces (`Shell.facesWithRoof`: nine centimetre numbers a triangle), roof triangles in
-   * `roof` and the rest in `wall`, with `offset` (metres) taken off every corner.
-   */
-  faces({ tris, roof }: Faces, wall: Color, top: Color, [ox, oy, oz]: readonly [number, number, number] = [0, 0, 0]) {
-    for (let t = 0, i = 0; t < roof.length; t++, i += 9) {
-      const c = roof[t] ? top : wall
-      this.triangle(
-        tris[i]! / 100 - ox, tris[i + 1]! / 100 - oy, tris[i + 2]! / 100 - oz,
-        tris[i + 3]! / 100 - ox, tris[i + 4]! / 100 - oy, tris[i + 5]! / 100 - oz,
-        tris[i + 6]! / 100 - ox, tris[i + 7]! / 100 - oy, tris[i + 8]! / 100 - oz,
-        c.r, c.g, c.b,
-      )
-    }
   }
 
   /**
@@ -652,15 +631,6 @@ function bitsOf(floats: Float32Array): Uint32Array {
   return new Uint32Array(floats.buffer, floats.byteOffset, floats.length)
 }
 
-/**
- * Building `index` as cubes (`voxels.ts`): the outer faces of its cells, as `Shell.facesWithRoof`
- * merges them; it is collided with as boxes. Null when it has no cells to draw (the importer left
- * it no walls, or it is too big to cut).
- */
-function buildingFaces(tile: BuildingTile, index: number): Faces | null {
-  return shellOf(tile, index)?.facesWithRoof(NONE) ?? null
-}
-
 /** Building `index`'s wall and roof colours, as linear `Color`s for vertex colours. */
 function linearColors(tile: BuildingTile, index: number, salt: number): [Color, Color] {
   const { wall, roof } = buildingColors(tile, index, salt)
@@ -668,16 +638,15 @@ function linearColors(tile: BuildingTile, index: number, salt: number): [Color, 
 }
 
 /**
- * The tile's buildings (as cubes) and bridges as one soup, leaving out the buildings in
- * `destroyed`. Null when there is nothing to draw.
+ * The tile's buildings and bridges as one soup, leaving out the buildings in `destroyed`. Null when
+ * there is nothing to draw.
  */
 export function buildingBuffers(tile: BuildingTile, salt: number, destroyed: ReadonlySet<number>): BuildingBuffers | null {
-  // Each building's faces first, so the arrays are made once at their final size. A building
-  // without cells is drawn from its collision triangles.
-  // A building with a look is drawn from it, whole: its own walls and roof, not its cubes.
+  // Each building's faces are counted first, so the arrays are made once at their final size. A
+  // building with a look is drawn from it, whole: its own walls and roof. One without is drawn from
+  // its collision triangles.
   const look = tile.look
   const looked = (index: number) => (look && tile.buildings[index]?.look) || null
-  const faces: (Faces | null | undefined)[] = tile.buildings.map((_, index) => (destroyed.has(index) || looked(index) ? undefined : buildingFaces(tile, index)))
   // Windows and doors on the buildings drawn from their looks: two quads, four triangles, each; and their roofs' overhangs.
   // The walls with their windows cut out, the roof, and the room inside: the same faces turned in, and a floor,
   // or for a house with rooms its floors, the walls between them and its stairs.
@@ -706,12 +675,10 @@ export function buildingBuffers(tile: BuildingTile, salt: number, destroyed: Rea
   const fan = (polys: readonly Poly[]) => polys.reduce((n, poly) => n + poly.length - 2, 0)
   let count = 0
   tile.buildings.forEach((building, index) => {
-    const own = faces[index]
-    const seen = destroyed.has(index) ? null : looked(index)
+    if (destroyed.has(index)) return
     const facade = facades[index]
-    if (seen && facade) count += (building.kind === BUILDING_BRIDGE ? 1 : 2) * (fan(facade.walls) + fan(facade.roof)) + fan(facade.floor) + fan(facade.rims) + 2 * facade.inside.length + openingTriangles(openings[index] ?? []) + eaveTriangles(eaves[index] ?? []) + detailTriangles(details[index] ?? [])
-    else if (own) count += own.roof.length
-    else if (own === null) count += building.walls + building.roof
+    if (looked(index) && facade) count += (building.kind === BUILDING_BRIDGE ? 1 : 2) * (fan(facade.walls) + fan(facade.roof)) + fan(facade.floor) + fan(facade.rims) + 2 * facade.inside.length + openingTriangles(openings[index] ?? []) + eaveTriangles(eaves[index] ?? []) + detailTriangles(details[index] ?? [])
+    else count += building.walls + building.roof
   })
   for (const bridge of tile.bridges) count += bridge.steel
   if (count === 0) return glass ? { ...new Soup(0).buffers(), ranges: new Uint32Array(tile.buildings.length * 2), glass } : null
@@ -719,7 +686,6 @@ export function buildingBuffers(tile: BuildingTile, salt: number, destroyed: Rea
   const ranges = new Uint32Array(tile.buildings.length * 2)
   tile.buildings.forEach((building, index) => {
     if (destroyed.has(index)) return
-    const own = faces[index]
     const seen = looked(index)
     const first = soup.vertices
     const [wall, roof] = linearColors(tile, index, salt)
@@ -766,8 +732,7 @@ export function buildingBuffers(tile: BuildingTile, salt: number, destroyed: Rea
         soup.quad(facing(corners, normal), trimmed(rgb, surfaces))
       }
       soup.surface = Surface.Plain
-    } else if (own) soup.faces(own, wall, roof)
-    else {
+    } else {
       soup.surface = surfaces.wall
       soup.collision(tile, building.first, building.walls, wall)
       soup.surface = surfaces.roof

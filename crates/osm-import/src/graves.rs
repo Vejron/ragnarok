@@ -7,7 +7,7 @@
 //! yard's longest side. No stone stands on a road, in a building, against a tree, in water or closer
 //! to another than a plot is wide, and here and there a plot is left empty.
 
-use crate::assemble::{Built, distance_to_segment, point_in_polygon};
+use crate::assemble::{Built, distance_to_segment};
 use crate::props::{bounds, inside, mix, unit};
 use shared::terrain::Ground;
 use shared::world::{GRAVE_CROSS, GRAVE_HEADSTONE, GRAVE_LOW, Grave, NO_WATER, TREE_LOWWIDE, TREE_ROCK_BOULDER, TREE_ROCK_SLAB};
@@ -167,13 +167,15 @@ pub fn lay(built: &mut Built, yards: &[Vec<Vec<P>>], roads: &[(Vec<P>, f64)], ha
     if yards.is_empty() {
         return;
     }
-    let Built { manifest, tiles } = built;
+    let Built { manifest, tiles, .. } = built;
     let metres = |[x, z]: [i32; 2]| [f64::from(x) / 100.0, f64::from(z) / 100.0];
     let cm = |v: f64| (v * 100.0).round() as i32;
     let inner = half - WORLD_MARGIN;
     let grown = |b: [f64; 4], by: f64| [b[0] - by, b[1] - by, b[2] + by, b[3] + by];
     let in_box = |b: &[f64; 4], p: P| p[0] >= b[0] && p[0] <= b[2] && p[1] >= b[1] && p[1] <= b[3];
-    let footprints: Vec<Vec<P>> = tiles.values().flat_map(|tile| &tile.buildings).map(|building| building.footprint.iter().map(|&p| metres(p)).collect()).collect();
+    let ring = |ring: &Vec<[i32; 2]>| -> Vec<P> { ring.iter().map(|&p| metres(p)).collect() };
+    // Each building where it stands: a stone may stand in a yard inside one, as in a cloister.
+    let footprints: Vec<crate::assemble::Plan> = tiles.values().flat_map(|tile| &tile.buildings).map(|building| crate::assemble::Plan { outer: ring(&building.footprint), holes: building.holes.iter().map(ring).collect() }).collect();
     let trunks: Vec<P> = tiles.values().flat_map(|tile| &tile.trees).filter(|tree| tree.kind <= TREE_LOWWIDE).map(|tree| metres([tree.x, tree.z])).collect();
     let samples = manifest.tile_samples() as usize;
     let mut plots = Plots::default();
@@ -182,7 +184,7 @@ pub fn lay(built: &mut Built, yards: &[Vec<Vec<P>>], roads: &[(Vec<P>, f64)], ha
         let Some(reach) = bounds(yard) else { continue };
         let near = grown(reach, ROWS as f64 * ROW_GAP + 20.0);
         let ways: Vec<Way> = roads.iter().filter(|(line, _)| line.iter().any(|&p| in_box(&near, p)) || line.windows(2).any(|pair| crosses(&near, pair[0], pair[1]))).map(|(line, width)| (line.clone(), width / 2.0)).collect();
-        let footprints: Vec<&Vec<P>> = footprints.iter().filter(|ring| ring.iter().any(|&p| in_box(&near, p))).collect();
+        let footprints: Vec<&crate::assemble::Plan> = footprints.iter().filter(|plan| plan.outer.iter().any(|&p| in_box(&near, p))).collect();
         let trunks: Vec<P> = trunks.iter().copied().filter(|&p| in_box(&near, p)).collect();
         // Under water where the tile's water stands over its ground at the nearest sample.
         let wet = |at: P| {
@@ -198,7 +200,7 @@ pub fn lay(built: &mut Built, yards: &[Vec<Vec<P>>], roads: &[(Vec<P>, f64)], ha
         let clear = |at: P| {
             at[0].abs() <= inner
                 && at[1].abs() <= inner
-                && !footprints.iter().any(|ring| point_in_polygon(at, ring))
+                && !footprints.iter().any(|plan| plan.holds(at))
                 && trunks.iter().all(|p| (p[0] - at[0]).hypot(p[1] - at[1]) >= TRUNK_CLEAR)
                 && !wet(at)
         };
@@ -237,6 +239,7 @@ fn crosses(b: &[f64; 4], p: P, q: P) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::assemble::point_in_polygon;
     use shared::world::{Manifest, Tile, WORLD_VERSION};
 
     fn square(min: f64, max: f64) -> Vec<Vec<P>> {
@@ -347,7 +350,7 @@ mod tests {
         let ground = Ground { origin: -10_000, cell, side, heights };
         let manifest = Manifest { version: WORLD_VERSION, half_extent: 10_000, tile_size: 10_000, ..Default::default() };
         let tree = |x: i32, z: i32, kind: u8| Tree { x, z, kind, height: 800, crown: 200, ..Default::default() };
-        let mut built = Built { manifest, tiles: (0..2).flat_map(|c| (0..2).map(move |r| ((c, r), Tile::default()))).collect() };
+        let mut built = Built { manifest, tiles: (0..2).flat_map(|c| (0..2).map(move |r| ((c, r), Tile::default()))).collect(), left_out: Default::default() };
         // A birch where a stone of the first row would stand, a boulder in the yard and one outside it.
         let row = 1.25 + VERGE;
         built.tiles.get_mut(&(1, 1)).unwrap().trees = vec![tree(2200, (row * 100.0) as i32, TREE_BIRCH), tree(1000, 2000, TREE_ROCK_BOULDER), tree(8000, 8000, TREE_ROCK_SLAB)];

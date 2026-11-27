@@ -48,7 +48,7 @@ const STOP_SHIFT: f64 = 10.0;
 /// OpenStreetMap maps. No stop is on or under a bridge (a road a deck carries), nor where its sign
 /// would have nowhere to stand (`sign`), and each has the one sign.
 pub fn lay(built: &mut Built, stops: &[[f64; 2]]) {
-    let Built { manifest, tiles } = built;
+    let Built { manifest, tiles, .. } = built;
     let roads: Vec<Vec<[i32; 2]>> = tiles.values().flat_map(|tile| &tile.roads).filter(|road| road.kind == ROAD_MAJOR).map(|road| road.points.clone()).collect();
     let half = manifest.half_extent;
     let clear = (EDGE_CLEAR * 100.0) as i32;

@@ -20,6 +20,8 @@ export interface LookRange {
   front?: readonly [number, number]
   /** Its footprint (`x, z` pairs, centimetres) and, once worked out, what stands inside it (`insideFor`). */
   footprint?: Int32Array
+  /** The yards inside it (`yardsOf`): their walls have windows, never a door. None when left out. */
+  yards?: Int32Array
   inside?: Int32Array
 }
 
@@ -99,7 +101,8 @@ const STYLES: Readonly<Record<number, Style>> = {
   [BUILDING_VILLA]: { doors: [DOOR], doored: 1, bays: 1, window: [1.0, 1.2, 1.7, 3.6], walls: [0, Infinity], most: Infinity, storeys: true },
   [BUILDING_FIRE_STATION]: { doors: [[3.6, 3.6], [3.0, 3.0], DOOR], doored: 1, bays: 3, window: [0.9, 1.6, 1.8, 3.0], walls: [0, Infinity], most: Infinity, storeys: true },
 }
-/** Mirror `BAY_GAP`, `FRONT_SHARE` and `FRONT_FACING` in `windows.rs`, where each is described. */
+/** Mirror `BAY_GAP`, `FRONT_SHARE`, `FRONT_FACING` and `YARD_WALL` in `windows.rs`, where each is described. */
+const YARD_WALL = 0.05
 const BAY_GAP = 0.8
 const FRONT_SHARE = 0.6
 const FRONT_FACING = 63.5
@@ -184,7 +187,30 @@ export function openingsOf(look: CollisionMesh, range: LookRange): Opening[] {
     ].every(([u, v]) => inside(plane, u!, v!))
   let lowest = Infinity
   for (const plane of planes) lowest = Math.min(lowest, plane.v0)
-  const sorted = [...planes].sort((a, b) => (a.u1 - a.u0 === b.u1 - b.u0 ? a.d - b.d : b.u1 - b.u0 - (a.u1 - a.u0)))
+  // Whether a wall stands round a yard: its middle lies on a side of one. Only `+ - * /`, as the server works it out.
+  const yards = range.yards ?? []
+  const inYard = (plane: Plane & { d: number }) => {
+    const mid = (plane.u0 + plane.u1) / 2
+    const [x, z] = [plane.u[0] * mid + plane.normal[0] * plane.d, plane.u[2] * mid + plane.normal[2] * plane.d]
+    for (let at = 0; at < yards.length; at += 1 + 2 * yards[at]!) {
+      const corners = yards[at]!
+      for (let i = 0; i < corners; i++) {
+        const [a, b] = [at + 1 + 2 * i, at + 1 + 2 * ((i + 1) % corners)]
+        const [ax, az, bx, bz] = [yards[a]! / 100, yards[a + 1]! / 100, yards[b]! / 100, yards[b + 1]! / 100]
+        const [dx, dz] = [bx - ax, bz - az]
+        const length = dx * dx + dz * dz
+        if (length <= 0) continue
+        const t = Math.min(Math.max(((x - ax) * dx + (z - az) * dz) / length, 0), 1)
+        const [ox, oz] = [x - (ax + dx * t), z - (az + dz * t)]
+        if (ox * ox + oz * oz < YARD_WALL * YARD_WALL) return true
+      }
+    }
+    return false
+  }
+  const byLength = [...planes].sort((a, b) => (a.u1 - a.u0 === b.u1 - b.u0 ? a.d - b.d : b.u1 - b.u0 - (a.u1 - a.u0)))
+  // The walls round a yard after the rest.
+  const yard = new Set(yards.length > 0 ? byLength.filter(inYard) : [])
+  const sorted = [...byLength.filter((plane) => !yard.has(plane)), ...byLength.filter((plane) => yard.has(plane))]
   type Wall = Plane & { d: number }
   const isRaised = (plane: Wall) => plane.v0 - lowest >= RAISED
   // The front goes first: the wall that faces the road, where one of the longer walls does. A
@@ -192,12 +218,12 @@ export function openingsOf(look: CollisionMesh, range: LookRange): Opening[] {
   const front = range.front ?? [0, 0]
   if (range.kind !== BUILDING_CHURCH && (front[0] !== 0 || front[1] !== 0)) {
     let longest = 0
-    for (const plane of sorted) if (!isRaised(plane)) longest = Math.max(longest, plane.u1 - plane.u0)
+    for (const plane of sorted) if (!yard.has(plane) && !isRaised(plane)) longest = Math.max(longest, plane.u1 - plane.u0)
     let best = -1
     let most = FRONT_FACING
     sorted.forEach((plane, rank) => {
       const facing = plane.normal[0] * front[0] + plane.normal[2] * front[1]
-      if (!isRaised(plane) && plane.u1 - plane.u0 >= FRONT_SHARE * longest && facing > most) {
+      if (!yard.has(plane) && !isRaised(plane) && plane.u1 - plane.u0 >= FRONT_SHARE * longest && facing > most) {
         best = rank
         most = facing
       }
@@ -218,7 +244,7 @@ export function openingsOf(look: CollisionMesh, range: LookRange): Opening[] {
       // `[from, to, top]` once it is hung.
       const mid = (plane.u0 + plane.u1) / 2
       let door: [number, number, number] | undefined
-      if (rank < style.doored) {
+      if (rank < style.doored && !yard.has(plane)) {
         for (const [w, h] of style.doors) {
           const bays = Math.max(1, Math.min(style.bays, Math.floor((length - 2 * MARGIN + BAY_GAP) / (w + BAY_GAP))))
           for (let i = 0; i < bays; i++) {
@@ -253,7 +279,7 @@ export function openingsOf(look: CollisionMesh, range: LookRange): Opening[] {
   let ends: Wall[] = []
   let doorEnd: Wall | undefined
   if (range.kind === BUILDING_CHURCH) {
-    ends = sorted.filter((plane) => !isRaised(plane) && !along(plane)).slice(0, 2)
+    ends = sorted.filter((plane) => !yard.has(plane) && !isRaised(plane) && !along(plane)).slice(0, 2)
     // How far an end is from the lesser walls (an annexe's), summed: the front is the end away from them.
     const far = (e: Wall) => {
       let sum = 0
@@ -316,7 +342,7 @@ export function openingsOf(look: CollisionMesh, range: LookRange): Opening[] {
       for (let i = 0; i < count; i++) {
         const mid = plane.u0 + (i + 0.5) * step
         // The longest wall's door: the middle of its ground row.
-        if (!church && !raised && rank === 0 && storey === 0 && i === Math.floor(count / 2) && fits(plane, mid - DOOR_WIDTH / 2, mid + DOOR_WIDTH / 2, plane.v0 + MARGIN, plane.v0 + DOOR_HEIGHT)) {
+        if (!church && !raised && !yard.has(plane) && rank === 0 && storey === 0 && i === Math.floor(count / 2) && fits(plane, mid - DOOR_WIDTH / 2, mid + DOOR_WIDTH / 2, plane.v0 + MARGIN, plane.v0 + DOOR_HEIGHT)) {
           push(mid - DOOR_WIDTH / 2, mid + DOOR_WIDTH / 2, plane.v0 + 0.02, plane.v0 + DOOR_HEIGHT, true)
           continue
         }

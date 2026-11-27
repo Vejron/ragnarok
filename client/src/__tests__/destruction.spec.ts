@@ -128,7 +128,6 @@ import { buildTile, rebuildBuildings } from '@/render/world'
 import type { SimMotor } from '@/sim/motor'
 import { flatMotor, tileBytes } from './worlds'
 import { Shell, shellOf } from '@/sim/carve'
-import { Fracture } from '@/render/fracture'
 import { drawLook, heapRubble } from '@/render/lookjobs'
 import type { LookSource, LookWorker } from '@/render/lookworker'
 import { lookChunk } from '@/render/lookfracture'
@@ -147,16 +146,23 @@ function box(x0: number, vertexBase: number) {
   return { vertices, triangles }
 }
 
+/**
+ * Two box houses 30 m apart, each with a look (its own walls and roof, as every imported building
+ * has) that is its collision triangles. The test physics (`tileBytes`) is given no look, so it
+ * collides with their cubes.
+ */
 function twoHouses(): TileData {
   const [a, b] = [box(0, 0), box(30, 8)]
   const building = (x0: number, first: number): Building => ({
     height: 6, base: 0, first, walls: 8, roof: 2, roofKind: ROOF_FLAT, kind: 0, front: [0, 0], cells: null, paint: [null, null], clad: [0, 0],
-    footprint: [[x0, -5], [x0 + 10, -5], [x0 + 10, 5], [x0, 5]],
+    footprint: [[x0, -5], [x0 + 10, -5], [x0 + 10, 5], [x0, 5]], holes: [],
+    look: { first, walls: 8, roof: 2 },
   })
+  const collision = { vertices: Float32Array.from([...a.vertices, ...b.vertices].flat()), triangles: Uint32Array.from([...a.triangles, ...b.triangles].flat()) }
   return {
     buildings: [building(0, 0), building(30, 12)],
     roads: [], cover: [], trees: [], streams: [], bridges: [],
-    collision: { vertices: Float32Array.from([...a.vertices, ...b.vertices].flat()), triangles: Uint32Array.from([...a.triangles, ...b.triangles].flat()) },
+    collision, look: collision,
     ground: new Float32Array(0), water: new Float32Array(0),
   } as unknown as TileData
 }
@@ -194,7 +200,7 @@ describe('redrawing a tile without a building', () => {
   it('drops that building\'s triangles from the merged meshes and no others', () => {
     const tile = twoHouses()
     const group = buildTile(tile, 0)
-    // Each house is drawn as its own cubes.
+    // Each house is drawn from its look.
     const both = vertexCount(group)
     rebuildBuildings(group, tile, 0, new Set([0]))
     const second = vertexCount(group)
@@ -242,7 +248,7 @@ describe('the building collider', () => {
   }
   const along = (motor: SimMotor, x: number, y = 1, z = 0) => motor.castRay([x, y, z], [1, 0, 0], 5)
 
-  // The cells are the ones the client draws (`carve.ts`); the server's physics cuts them out of its own shell.
+  // The cells are the ones the client cuts (`carve.ts`); the server's physics cuts them out of its own shell.
   it('opens the wall where cells were blasted out and leaves the rest of that wall', async () => {
     const tile = twoHouses()
     const shell = shellOf(tile, 0)!
@@ -256,7 +262,7 @@ describe('the building collider', () => {
     expect(along(motor, 28, 1, 0)).not.toBeNull()
   })
 
-  it('is the cubes the house is drawn as, not its own walls and roof', async () => {
+  it('is the cubes of a house without a look, not its own walls and roof', async () => {
     // A house whose walls and roof fall between the cells: 5.4 m tall, its west wall at x = 0.3.
     const tile = twoHouses()
     const v = tile.collision.vertices
@@ -265,7 +271,7 @@ describe('the building collider', () => {
       if (v[i + 1] === 6) v[i + 1] = 5.4
     }
     const motor = await solidTile(tile)
-    // Standing on the roof is standing on the top of its cubes, 5.76 m up, as drawn.
+    // Standing on the roof is standing on the top of its cubes, 5.76 m up.
     const down = motor.castRay([5, 20, 0], [0, -1, 0], 30)!
     expect(20 - down.t).toBeCloseTo(5.76, 4)
     // And walking into the wall stops at the cubes' face, x = 0.
@@ -306,10 +312,20 @@ describe('a hurt building', () => {
     const damage = new BuildingDamage()
     damage.attach(key, tileWith())
     damage.carve(key, 0, [cellAt(0, 0, 2, 0)], [], [-1, 2, 0], false)
-    const colors = Array.from(bodyOf(damage)!.geometry.colors!)
-    const brightness = (i: number) => colors[i * 3]! + colors[i * 3 + 1]! + colors[i * 3 + 2]!
-    const all = Array.from({ length: colors.length / 3 }, (_, i) => brightness(i))
-    expect(Math.min(...all)).toBeLessThan(Math.max(...all) * 0.6)
+    const { positions, colors } = bodyOf(damage)!.geometry
+    // The west wall's outer face (x = 0), by how far its corners lie from the hole at (0, 2, 0).
+    const near: number[] = []
+    const far: number[] = []
+    for (let i = 0; i < positions.length; i += 3) {
+      if (Math.abs(positions[i]!) > 0.01) continue
+      const away = Math.hypot(positions[i + 1]! - 2, positions[i + 2]!)
+      const brightness = colors![i]! + colors![i + 1]! + colors![i + 2]!
+      if (away < 1) near.push(brightness)
+      else if (away > 2.5) far.push(brightness)
+    }
+    expect(near.length).toBeGreaterThan(0)
+    expect(far.length).toBeGreaterThan(0)
+    expect(Math.min(...near)).toBeLessThan(Math.min(...far) * 0.6)
   })
 
   it('burns a joiner’s walls the same, from the removed cells alone', () => {
@@ -376,9 +392,7 @@ describe('a hurt building', () => {
 
   it('brings every section of a looked house to lie still on the ground, none left in the air', () => {
     const tile = tileWith()
-    // Drawn from its look: what loses its hold falls as whole sections that tip over.
-    tile.look = tile.collision
-    tile.buildings[0]!.look = { first: 0, walls: 8, roof: 2 }
+    // What loses its hold falls as whole sections that tip over.
     const damage = new BuildingDamage()
     damage.groundAt = () => 0
     damage.attach(key, tile)
@@ -401,8 +415,6 @@ describe('a hurt building', () => {
 
   it('lays a fallen section of wall down flat on its broad side, not spinning on the spot', () => {
     const tile = tileWith()
-    tile.look = tile.collision
-    tile.buildings[0]!.look = { first: 0, walls: 8, roof: 2 }
     const damage = new BuildingDamage()
     damage.groundAt = () => 0
     damage.attach(key, tile)
@@ -426,11 +438,9 @@ describe('a hurt building', () => {
     }
   })
 
-  /** A house with a look whose front wall's top half, 4 m along, is about to lose its hold: the tile, and that slab's cells. */
+  /** A house whose front wall's top half, 4 m along, is about to lose its hold: the tile, and that slab's cells. */
   const slabHouse = () => {
     const tile = tileWith()
-    tile.look = tile.collision
-    tile.buildings[0]!.look = { first: 0, walls: 8, roof: 2 }
     const shell = shellOf(tile, 0)!
     const slab: number[] = []
     for (let x = 1; x < 5; x++) for (let y = 3; y < 6; y++) {
@@ -551,8 +561,6 @@ describe('a hurt building', () => {
 
   it('lets every section fall in a long cascade, however much already lies about', () => {
     const tile = tileWith()
-    tile.look = tile.collision
-    tile.buildings[0]!.look = { first: 0, walls: 8, roof: 2 }
     const damage = new BuildingDamage()
     damage.groundAt = () => 0
     damage.attach(key, tile)
@@ -629,7 +637,7 @@ describe('carved message', () => {
 
 describe('a building with cells blasted out of it', () => {
   const key = 5
-  /** The building's standing cells are drawn as several bricks (they receive shadow, the thrown pieces do not); this is them as one mesh. */
+  /** The building as it stands (it receives shadow, the thrown pieces do not), as one mesh. */
   const bodyOf = (damage: BuildingDamage) => {
     const bricks = damage.root.children[0]!.children.filter((c) => c instanceof Mesh && c.receiveShadow && c.geometry.colors) as Mesh[]
     const join = (pick: (m: Mesh) => ArrayLike<number>) => Float32Array.from(bricks.flatMap((m) => Array.from(pick(m))))
@@ -713,7 +721,8 @@ describe('a building with cells blasted out of it', () => {
     const all = Array.from({ length: 4000 }, (_, i) => i)
     damage.carve(key, 0, all.slice(0, 20), all.slice(20, 60), [-1, 2, 0], true)
     const e = effects()
-    const thrown = () => group.children.slice(before) as Mesh[]
+    // What was thrown: not the heap of rubble left round its foot, which receives shadow as the building does.
+    const thrown = () => group.children.slice(before).filter((c) => c instanceof Mesh && !c.receiveShadow) as Mesh[]
     // Landed and lying by eight seconds; a little after the tenth second on the ground, sinking: lower, not yet gone.
     for (let i = 0; i < 160; i++) damage.update(0.05, e, new Vector3(500, 0, 0))
     const count = thrown().length
@@ -727,28 +736,35 @@ describe('a building with cells blasted out of it', () => {
     e.dispose()
   })
 
-  it('darkens a piece of wall as it takes rounds, without shrinking it, and drops the dent when it breaks out', () => {
-    const damage = new BuildingDamage()
-    damage.attach(key, twoHouses())
-    const whole = Array.from(new Fracture(twoHouses(), 0, 0).build().positions)
+  it('chips a piece of wall as it takes rounds, more as it wears, without moving the walls, and drops the dent when it breaks out', () => {
     const shell = shellOf(twoHouses(), 0)!
     const cell = shell.cellAt(0, 1.5, 0)
-    // The darkest a vertex is: a shot cell is the only dark one.
-    const darkest = () => Math.min(...Array.from(bodyOf(damage).geometry.colors!))
-    const fresh = Math.min(...Array.from(new Fracture(twoHouses(), 0, 0).build().colors))
+    // The house as drawn with a dent that took nothing off the cell: as it was whole.
+    const unhurt = new BuildingDamage()
+    unhurt.attach(key, twoHouses())
+    unhurt.dent(key, 0, cell, 0)
+    const whole = Array.from(bodyOf(unhurt).geometry.positions)
+    const damage = new BuildingDamage()
+    damage.attach(key, twoHouses())
+    // A redraw after the first waits for the frame's end.
+    const frame = () => damage.update(0, { dust() {} } as never, new Vector3(1e6, 0, 0))
+    const vertices = () => bodyOf(damage).geometry.vertexCount
     expect(damage.dent(key, 0, cell, 12)).toBe(true)
     expect(damage.fractured(key)).toEqual([0])
-    const once = darkest()
-    expect(once).toBeLessThan(fresh)
-    expect(damage.dent(key, 0, cell, 12)).toBe(false)
-    expect(darkest()).toBeLessThan(once)
-    // Every cube keeps its size: the walls are where they were, only cut into more faces.
+    const once = vertices()
+    expect(once).toBeGreaterThan(whole.length / 3)
+    expect(damage.dent(key, 0, cell, 24)).toBe(false)
+    frame()
+    expect(vertices()).toBeGreaterThan(once)
+    // The walls are where they were, only cut into more faces.
     const extent = (p: number[]) => [0, 1, 2].map((a) => [Math.min(...p.filter((_, i) => i % 3 === a)), Math.max(...p.filter((_, i) => i % 3 === a))])
     expect(extent(Array.from(bodyOf(damage).geometry.positions))).toEqual(extent(whole))
-    // The wall breaks out: the dent is gone with the cell, and nothing is left to darken.
+    // The wall breaks out: the dent is gone with the cell, and a round there chips nothing more.
     damage.carve(key, 0, [cell], [], [-1, 1.5, 0], true)
+    frame()
     const broken = Array.from(bodyOf(damage).geometry.positions)
     expect(damage.dent(key, 0, cell, 12)).toBe(false)
+    frame()
     expect(Array.from(bodyOf(damage).geometry.positions)).toEqual(broken)
   })
 

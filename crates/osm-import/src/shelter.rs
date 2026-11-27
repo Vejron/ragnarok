@@ -172,7 +172,7 @@ mod tests {
         assert!((shape.height([0.0, 1.0]) - 12.2).abs() < 1e-9, "front eave {}", shape.height([0.0, 1.0]));
         assert!((shape.height([2.5, 1.0]) - 11.2).abs() < 1e-9, "back eave {}", shape.height([2.5, 1.0]));
         let mut mesh = CollisionMesh::default();
-        let parts = crate::roof::build_with(&mut mesh, &footprint, 10.0, &roof, walls);
+        let parts = crate::roof::build_with(&mut mesh, &footprint, &[], 10.0, &roof, walls);
         let corner = |v: u32| mesh.vertices[v as usize].map(|c| c as f64 / 100.0);
         let wall_tris: Vec<[[f64; 3]; 3]> = mesh.triangles[..parts.walls as usize].iter().map(|t| t.map(corner)).collect();
         // Three walls of two triangles each, none along x = 0.

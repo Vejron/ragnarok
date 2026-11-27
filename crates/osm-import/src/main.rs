@@ -446,8 +446,10 @@ fn laser(args: &Args, place: &Place, mask: Option<&std::collections::BTreeSet<(u
         // Roofs are not trees: keep the canopy off every building outline. A classified cloud's
         // vegetation has no roofs in it, and masking would only cut crowns that overhang one.
         for way in osm.ways.iter().filter(|way| place.region == Region::Sweden && way.tags.contains_key("building")) {
-            let ring: Vec<(f64, f64)> = way.geometry.iter().map(|p| place.region.source(p.lat, p.lon)).collect();
-            canopy.mask(&ring, 1.5);
+            let source = |ring: &Vec<osm_import::osm::LatLon>| -> Vec<(f64, f64)> { ring.iter().map(|p| place.region.source(p.lat, p.lon)).collect() };
+            // A tree may stand in a block's yard.
+            let yards: Vec<Vec<(f64, f64)>> = osm.yards.get(&way.id).map(|yards| yards.iter().map(source).collect()).unwrap_or_default();
+            canopy.mask(&source(&way.geometry), &yards, 1.5);
         }
         progress::stage("canopy");
         detected = canopy.detect(|e, n| dem.mean(e, n, 0.5), args.min_tree_height);
@@ -793,6 +795,17 @@ fn main() -> Result<()> {
         roofs[usize::from(building.roof_kind).min(3)] += 1;
     }
     eprintln!("roofs: {} flat, {} shed, {} gable, {} hip", roofs[0], roofs[1], roofs[2], roofs[3]);
+    let yards: usize = built.tiles.values().flat_map(|tile| &tile.buildings).map(|building| building.holes.len()).sum();
+    let left = built.left_out;
+    eprintln!(
+        "buildings: {yards} yards inside them; left out: {} at the world's edge, {} too small, {} at a lift's station, {} in tiles the world does not keep; {} that could not be cut into triangles are in the world as nothing; {} stretches of wall the roof's pieces left bare were stood",
+        left.edge,
+        left.small,
+        left.station,
+        left.masked,
+        roof::UNCUT.load(std::sync::atomic::Ordering::Relaxed),
+        roof::BARED.load(std::sync::atomic::Ordering::Relaxed)
+    );
     let (spawns, tile_count) = (built.manifest.spawns.len(), built.tiles.len());
     progress::stage("minimap");
     let map = if args.no_minimap { None } else { Some((minimap::render(&built.manifest, &built.tiles, print.as_ref()).webp(), maptiles::render(&built.manifest, &built.tiles, print.as_ref()))) };

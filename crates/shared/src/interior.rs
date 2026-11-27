@@ -139,29 +139,36 @@ fn grown(r: Rect, by: f64) -> Rect {
     [r[0] - by, r[1] + by, r[2] - by, r[3] + by]
 }
 
-/// The footprint in the house's axes, to ask what lies inside it.
+/// The footprint and the yards inside it in the house's axes, to ask what lies under its roof.
 struct Plan {
     ring: Vec<[f64; 2]>,
+    yards: Vec<Vec<[f64; 2]>>,
+}
+
+/// Whether `[a, b]` is inside `ring`.
+fn within(ring: &[[f64; 2]], [a, b]: [f64; 2]) -> bool {
+    let mut inside = false;
+    for i in 0..ring.len() {
+        let (p, q) = (ring[i], ring[(i + 1) % ring.len()]);
+        if (p[1] > b) != (q[1] > b) && a < p[0] + (b - p[1]) / (q[1] - p[1]) * (q[0] - p[0]) {
+            inside = !inside;
+        }
+    }
+    inside
 }
 
 impl Plan {
-    /// Whether `[a, b]` is inside the footprint.
-    fn holds(&self, [a, b]: [f64; 2]) -> bool {
-        let mut inside = false;
-        for i in 0..self.ring.len() {
-            let (p, q) = (self.ring[i], self.ring[(i + 1) % self.ring.len()]);
-            if (p[1] > b) != (q[1] > b) && a < p[0] + (b - p[1]) / (q[1] - p[1]) * (q[0] - p[0]) {
-                inside = !inside;
-            }
-        }
-        inside
+    /// Whether `[a, b]` is inside the footprint and in none of its yards.
+    fn holds(&self, at: [f64; 2]) -> bool {
+        within(&self.ring, at) && !self.yards.iter().any(|yard| within(yard, at))
     }
 
-    /// Whether the whole of `rect` is inside the footprint: its edge is, at points half a metre apart or less.
+    /// Whether the whole of `rect` is inside the footprint: its edge is, at points half a metre
+    /// apart or less, and no yard lies inside it.
     fn holds_rect(&self, [a0, a1, b0, b1]: Rect) -> bool {
         let steps = |len: f64| (len / 0.5) as usize + 1;
         let (na, nb) = (steps(a1 - a0), steps(b1 - b0));
-        (0..=na).all(|i| {
+        !self.yards.iter().flatten().any(|&[a, b]| a > a0 && a < a1 && b > b0 && b < b1) && (0..=na).all(|i| {
             let a = a0 + (a1 - a0) * i as f64 / na as f64;
             self.holds([a, b0]) && self.holds([a, b1])
         }) && (0..=nb).all(|i| {
@@ -227,6 +234,84 @@ fn triangulate(ring: &[[i64; 2]]) -> Vec<[usize; 3]> {
     out
 }
 
+/// Whether the segments `p`-`q` and `a`-`b` (centimetres) meet, at a point inside both or at an end of either.
+fn meet(p: [i64; 2], q: [i64; 2], a: [i64; 2], b: [i64; 2]) -> bool {
+    let cross = |o: [i64; 2], s: [i64; 2], t: [i64; 2]| (s[0] - o[0]) * (t[1] - o[1]) - (s[1] - o[1]) * (t[0] - o[0]);
+    let on = |o: [i64; 2], s: [i64; 2], t: [i64; 2]| t[0] >= o[0].min(s[0]) && t[0] <= o[0].max(s[0]) && t[1] >= o[1].min(s[1]) && t[1] <= o[1].max(s[1]);
+    let (d1, d2, d3, d4) = (cross(a, b, p), cross(a, b, q), cross(p, q, a), cross(p, q, b));
+    if ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0)) {
+        return true;
+    }
+    (d1 == 0 && on(a, b, p)) || (d2 == 0 && on(a, b, q)) || (d3 == 0 && on(p, q, a)) || (d4 == 0 && on(p, q, b))
+}
+
+/// Twice the area of `ring`, positive when it runs counter-clockwise in `[x, z]`.
+fn twice_area(ring: &[[i64; 2]]) -> i64 {
+    (0..ring.len()).map(|i| ring[i][0] * ring[(i + 1) % ring.len()][1] - ring[(i + 1) % ring.len()][0] * ring[i][1]).sum()
+}
+
+/// `ring` (centimetres) with each of `yards` let into it: one ring that runs round the footprint,
+/// in along a cut to a yard, round the yard the other way and back out along the same cut, so that
+/// clipping its ears (`triangulate`) leaves every yard open. A cut is the shortest line from a
+/// corner of a yard to a corner of the ring that crosses no wall. A yard no cut reaches is left
+/// floored over.
+fn with_yards(ring: &[[i64; 2]], yards: &[Vec<[i64; 2]>]) -> Vec<[i64; 2]> {
+    let mut out: Vec<[i64; 2]> = ring.to_vec();
+    if twice_area(&out) < 0 {
+        out.reverse();
+    }
+    let mut left: Vec<Vec<[i64; 2]>> = yards
+        .iter()
+        .filter(|yard| yard.len() >= 3)
+        .map(|yard| {
+            // The other way round from the ring.
+            let mut yard = yard.clone();
+            if twice_area(&yard) > 0 {
+                yard.reverse();
+            }
+            yard
+        })
+        .collect();
+    while !left.is_empty() {
+        // The shortest cut from any yard still out to the ring as it is now.
+        let mut best: Option<(i64, usize, usize, usize)> = None;
+        for (y, yard) in left.iter().enumerate() {
+            for (j, &h) in yard.iter().enumerate() {
+                for (i, &p) in out.iter().enumerate() {
+                    let length = (p[0] - h[0]) * (p[0] - h[0]) + (p[1] - h[1]) * (p[1] - h[1]);
+                    if length == 0 || best.is_some_and(|(least, ..)| length >= least) {
+                        continue;
+                    }
+                    // A side that ends at the cut's own end is not crossed by it, unless it runs along it.
+                    let crosses = |edges: &[[i64; 2]]| {
+                        (0..edges.len()).any(|k| {
+                            let (a, b) = (edges[k], edges[(k + 1) % edges.len()]);
+                            let shared = |e: [i64; 2]| e == p || e == h;
+                            match (shared(a), shared(b)) {
+                                (true, true) => false,
+                                (true, false) => meet(p, h, b, b),
+                                (false, true) => meet(p, h, a, a),
+                                (false, false) => meet(p, h, a, b),
+                            }
+                        })
+                    };
+                    if !crosses(&out) && !left.iter().any(|other| crosses(other)) {
+                        best = Some((length, y, j, i));
+                    }
+                }
+            }
+        }
+        let Some((_, y, j, i)) = best else { break };
+        let yard = left.remove(y);
+        let mut joined = Vec::with_capacity(out.len() + yard.len() + 2);
+        joined.extend_from_slice(&out[..=i]);
+        joined.extend((0..=yard.len()).map(|k| yard[(j + k) % yard.len()]));
+        joined.extend_from_slice(&out[i..]);
+        out = joined;
+    }
+    out
+}
+
 /// What is being built.
 struct Build {
     frame: Frame,
@@ -283,14 +368,15 @@ fn without(polys: Vec<Poly>, frame: &Frame, [a0, a1, b0, b1]: Rect) -> Vec<Poly>
     out
 }
 
-/// The inside of the house on `footprint` (`[x, z]`, centimetres) whose look is `walls` and `roof`
-/// and whose openings are `windows` (`windows::openings_of`): a ground floor on a plinth, and a
+/// The inside of the house on `footprint` (`[x, z]`, centimetres) round the yards `holes`
+/// (`Building::holes`), whose look is `walls` and `roof`
+/// and whose openings are `windows` (`windows::openings_round`): a ground floor on a plinth, and a
 /// floor `SLAB` thick for every storey that fits under the eaves, with stairs up to it. A church,
 /// a barn, an outbuilding, a hall, a shop and a fire station (`kind`, `BUILDING_*`) have the ground floor only: one
 /// hall, open to its roof, and where it is driven into that floor is a low sill (`plinth`). Empty for a
 /// house too small, or with no door to come in by. The outer door of a house with an inside is an
-/// open doorway (`facade`).
-pub fn rooms(footprint: &[[i32; 2]], walls: &[Tri], roof: &[Tri], windows: &[Window], kind: u8) -> Vec<Part> {
+/// open doorway (`facade`). No floor is laid over a yard, and the stairs keep out of it.
+pub fn rooms(footprint: &[[i32; 2]], holes: &[Vec<[i32; 2]>], walls: &[Tri], roof: &[Tri], windows: &[Window], kind: u8) -> Vec<Part> {
     let mut ring: Vec<[i32; 2]> = Vec::with_capacity(footprint.len());
     for &p in footprint {
         if ring.last() != Some(&p) {
@@ -329,8 +415,9 @@ pub fn rooms(footprint: &[[i32; 2]], walls: &[Tri], roof: &[Tri], windows: &[Win
         frame = Frame { u: frame.v, v: [-frame.u[0], -frame.u[1]] };
         bounds = boxed(&frame);
     }
-    let plan = Plan { ring: ring.iter().map(|&p| frame.of(metres(p))).collect() };
-    let area = (0..plan.ring.len()).map(|i| { let (p, q) = (plan.ring[i], plan.ring[(i + 1) % plan.ring.len()]); p[0] * q[1] - q[0] * p[1] }).sum::<f64>().abs() / 2.0;
+    let plan = Plan { ring: ring.iter().map(|&p| frame.of(metres(p))).collect(), yards: holes.iter().map(|hole| hole.iter().map(|&p| frame.of(metres(p))).collect()).collect() };
+    let shoelace = |ring: &[[f64; 2]]| (0..ring.len()).map(|i| { let (p, q) = (ring[i], ring[(i + 1) % ring.len()]); p[0] * q[1] - q[0] * p[1] }).sum::<f64>().abs() / 2.0;
+    let area = shoelace(&plan.ring) - plan.yards.iter().map(|yard| shoelace(yard)).sum::<f64>();
     let [a0, a1, b0, b1] = bounds;
     if a1 - a0 < MIN_LONG || b1 - b0 < MIN_SHORT || area < MIN_AREA {
         return Vec::new();
@@ -379,10 +466,11 @@ pub fn rooms(footprint: &[[i32; 2]], walls: &[Tri], roof: &[Tri], windows: &[Win
 
     // Slabs: the footprint at each floor's height, with the hole the flight from below comes up
     // through. An upper floor has an underside too, and an edge round the hole.
-    let wide: Vec<[i64; 2]> = ring.iter().map(|p| [p[0] as i64, p[1] as i64]).collect();
-    let slab = triangulate(&wide);
+    let wide = |ring: &[[i32; 2]]| -> Vec<[i64; 2]> { ring.iter().map(|p| [p[0] as i64, p[1] as i64]).collect() };
+    let outline = with_yards(&wide(&ring), &holes.iter().map(|hole| wide(hole)).collect::<Vec<_>>());
+    let slab = triangulate(&outline);
     for (k, &top) in levels.iter().enumerate() {
-        let at = |y: i32| -> Vec<Poly> { slab.iter().map(|t| t.map(|i| { let p = metres(ring[i]); [p[0], y as f64 / 100.0, p[1]] }).to_vec()).collect() };
+        let at = |y: i32| -> Vec<Poly> { slab.iter().map(|t| t.map(|i| [outline[i][0] as f64 / 100.0, y as f64 / 100.0, outline[i][1] as f64 / 100.0]).to_vec()).collect() };
         let hole = well.as_ref().filter(|_| k > 0).map(|well| {
             let [from, to] = well.run(k - 1);
             let [lo, hi] = well.lane((k - 1) % 2);
@@ -463,9 +551,80 @@ mod tests {
         vec![[0, 0], [w, 0], [w, d], [0, d]]
     }
 
+    /// A block on `footprint` round the yards `yards` (clockwise from above), as `house` builds one:
+    /// walls round the outline and round each yard, and a lid that leaves the yards open.
+    fn block(footprint: &[[i32; 2]], yards: &[Vec<[i32; 2]>], eave: i32, ridge: i32) -> (Vec<Tri>, Vec<Tri>, Vec<Window>) {
+        let mut walls: Vec<Tri> = Vec::new();
+        for ring in std::iter::once(footprint).chain(yards.iter().map(Vec::as_slice)) {
+            for i in 0..ring.len() {
+                let (p, q) = (ring[i], ring[(i + 1) % ring.len()]);
+                walls.push([p[0], 0, p[1], q[0], 0, q[1], q[0], eave, q[1]]);
+                walls.push([p[0], 0, p[1], q[0], eave, q[1], p[0], eave, p[1]]);
+            }
+        }
+        let wide = |ring: &[[i32; 2]]| -> Vec<[i64; 2]> { ring.iter().map(|p| [p[0] as i64, p[1] as i64]).collect() };
+        let outline = with_yards(&wide(footprint), &yards.iter().map(|yard| wide(yard)).collect::<Vec<_>>());
+        let mut roof: Vec<Tri> = triangulate(&outline).iter().map(|t| { let [a, b, c] = t.map(|i| outline[i].map(|v| v as i32)); [a[0], eave, a[1], b[0], eave, b[1], c[0], eave, c[1]] }).collect();
+        let [p, q] = [footprint[0], footprint[1]];
+        roof.push([p[0], eave, p[1], q[0], eave, q[1], (p[0] + q[0]) / 2, ridge, (p[1] + q[1]) / 2 + 100]);
+        let mut look = Look::default();
+        for t in walls.iter().chain(&roof) {
+            let at = look.vertices.len() as u32;
+            look.vertices.extend([[t[0], t[1], t[2]], [t[3], t[4], t[5]], [t[6], t[7], t[8]]]);
+            look.triangles.push([at, at + 1, at + 2]);
+        }
+        let windows = crate::windows::openings_round(&look, [0, walls.len() as u32, roof.len() as u32], 0, [0, 0], yards);
+        (walls, roof, windows)
+    }
+
+    /// The area of the level triangles of `kind` at `level`, square metres.
+    fn level_area(parts: &[Part], kind: u8, level: i32) -> f64 {
+        parts.iter().filter(|p| p.kind == kind && p.tri[1] == level && p.tri[4] == level && p.tri[7] == level).map(|p| { let t = p.tri; (((t[3] - t[0]) as f64 * (t[8] - t[2]) as f64 - (t[5] - t[2]) as f64 * (t[6] - t[0]) as f64) / 2.0).abs() / 1e4 }).sum()
+    }
+
+    #[test]
+    fn floors_leave_a_courtyard_open() {
+        // A block 30 × 24 m round a yard 10 × 8 m, and one round two yards, each drawn clockwise.
+        let footprint = rect(3000, 2400);
+        let yard = |x: i32, z: i32, w: i32, d: i32| vec![[x, z], [x, z + d], [x + w, z + d], [x + w, z]];
+        for (yards, open) in [(vec![yard(1000, 800, 1000, 800)], 80.0), (vec![yard(400, 800, 800, 800), yard(1800, 600, 800, 1200)], 64.0 + 96.0)] {
+            let (walls, roof, windows) = block(&footprint, &yards, 900, 1000);
+            let door = windows.iter().find(|w| w.door).expect("a door in an outer wall");
+            let door_mid = [(door.corners[0][0] + door.corners[1][0]) as f64 / 2.0, (door.corners[0][2] + door.corners[1][2]) as f64 / 2.0];
+            assert!(door_mid[0] < 0.1 || door_mid[0] > 29.9 || door_mid[1] < 0.1 || door_mid[1] > 23.9, "the door at {door_mid:?} is in an outer wall");
+            let parts = rooms(&footprint, &yards, &walls, &roof, &windows, 0);
+            assert_eq!(parts, rooms(&footprint, &yards, &walls, &roof, &windows, 0));
+            let levels = floors(&parts);
+            assert_eq!(levels.len(), 3, "{levels:?}");
+            assert!((level_area(&parts, PART_FLOOR, levels[0]) - (720.0 - open)).abs() < 0.01, "the ground floor is {} m²", level_area(&parts, PART_FLOOR, levels[0]));
+            for &level in &levels[1..] {
+                assert!((level_area(&parts, PART_FLOOR, level) - (720.0 - open - RUN * LANE)).abs() < 0.05, "{}", level_area(&parts, PART_FLOOR, level));
+            }
+            // Nothing of the inside, floor or stair, is in a yard.
+            let in_yard = |x: f64, z: f64| yards.iter().any(|ring| { let (lo, hi) = (ring[0], ring[2]); x > lo[0] as f64 + 1.0 && x < hi[0] as f64 - 1.0 && z > lo[1] as f64 + 1.0 && z < hi[1] as f64 - 1.0 });
+            for part in &parts {
+                let t = part.tri;
+                let (x, z) = ((t[0] + t[3] + t[6]) as f64 / 3.0, (t[2] + t[5] + t[8]) as f64 / 3.0);
+                assert!(!in_yard(x, z), "a part of kind {} at {x}, {z} is in a yard", part.kind);
+            }
+        }
+    }
+
+    #[test]
+    fn a_yard_is_let_into_an_l_shaped_footprint_whichever_way_it_is_drawn() {
+        let l: Vec<[i64; 2]> = vec![[0, 0], [3000, 0], [3000, 1200], [1200, 1200], [1200, 3000], [0, 3000]];
+        let yard: Vec<[i64; 2]> = vec![[300, 300], [900, 300], [900, 900], [300, 900]];
+        for yard in [yard.clone(), yard.iter().rev().copied().collect()] {
+            let outline = with_yards(&l, std::slice::from_ref(&yard));
+            assert_eq!(outline.len(), l.len() + yard.len() + 2, "the ring, the yard, and the cut in and out");
+            let area: i64 = triangulate(&outline).iter().map(|t| { let [a, b, c] = t.map(|i| outline[i]); ((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])).abs() }).sum();
+            assert_eq!(area, 2 * (3000 * 1200 + 1200 * 1800 - 600 * 600), "the floor is the footprint less the yard");
+        }
+    }
+
     /// Whether the footprint holds `[x, z]` (centimetres).
     fn within(footprint: &[[i32; 2]], [x, z]: [f64; 2]) -> bool {
-        Plan { ring: footprint.iter().map(|p| [p[0] as f64, p[1] as f64]).collect() }.holds([x, z])
+        Plan { ring: footprint.iter().map(|p| [p[0] as f64, p[1] as f64]).collect(), yards: Vec::new() }.holds([x, z])
     }
 
     /// The heights (centimetres) the house's floors are at, lowest first.
@@ -480,8 +639,8 @@ mod tests {
     fn a_church_is_one_hall_open_to_its_roof() {
         let footprint = rect(3000, 1200);
         let (walls, roof, windows) = house(&footprint, 900, 1700);
-        assert!(floors(&rooms(&footprint, &walls, &roof, &windows, 0)).len() > 1, "as a house it has upper floors");
-        let hall = rooms(&footprint, &walls, &roof, &windows, crate::world::BUILDING_CHURCH);
+        assert!(floors(&rooms(&footprint, &[], &walls, &roof, &windows, 0)).len() > 1, "as a house it has upper floors");
+        let hall = rooms(&footprint, &[], &walls, &roof, &windows, crate::world::BUILDING_CHURCH);
         assert_eq!(floors(&hall).len(), 1);
         assert!(hall.iter().all(|part| part.kind == PART_FLOOR));
     }
@@ -497,7 +656,7 @@ mod tests {
             look.triangles.push([base, base + 1, base + 2]);
         }
         let windows = openings_of(&look, [0, walls.len() as u32, 0], crate::world::BUILDING_BARN, [0, 0]);
-        let barn = rooms(&footprint, &walls, &roof, &windows, crate::world::BUILDING_BARN);
+        let barn = rooms(&footprint, &[], &walls, &roof, &windows, crate::world::BUILDING_BARN);
         assert_eq!(floors(&barn), vec![off_lattice(SILL)]);
         assert!(barn.iter().all(|part| part.kind == PART_FLOOR));
     }
@@ -506,7 +665,7 @@ mod tests {
     fn a_shed_gets_no_rooms() {
         let footprint = rect(500, 400);
         let (walls, roof, windows) = house(&footprint, 300, 300);
-        assert!(rooms(&footprint, &walls, &roof, &windows, 0).is_empty());
+        assert!(rooms(&footprint, &[], &walls, &roof, &windows, 0).is_empty());
     }
 
     #[test]
@@ -514,7 +673,7 @@ mod tests {
         let footprint = rect(1200, 800);
         let (walls, roof, windows) = house(&footprint, 300, 300);
         let panes: Vec<Window> = windows.into_iter().filter(|w| !w.door).collect();
-        assert!(rooms(&footprint, &walls, &roof, &panes, 0).is_empty());
+        assert!(rooms(&footprint, &[], &walls, &roof, &panes, 0).is_empty());
     }
 
     #[test]
@@ -522,7 +681,7 @@ mod tests {
         for (w, d) in [(1200, 800), (900, 700), (2000, 1100)] {
             let footprint = rect(w, d);
             let (walls, roof, windows) = house(&footprint, 300, 300);
-            let parts = rooms(&footprint, &walls, &roof, &windows, 0);
+            let parts = rooms(&footprint, &[], &walls, &roof, &windows, 0);
             assert_eq!(floors(&parts).len(), 1, "one storey under a 3 m roof");
             assert!(parts.iter().all(|p| p.kind == PART_FLOOR), "{w} × {d}: a floor on the plinth, with no underside");
         }
@@ -532,7 +691,7 @@ mod tests {
     fn floors_stay_inside_an_l_shaped_footprint() {
         let footprint = vec![[0, 0], [1600, 0], [1600, 700], [800, 700], [800, 1400], [0, 1400]];
         let (walls, roof, windows) = house(&footprint, 600, 600);
-        let parts = rooms(&footprint, &walls, &roof, &windows, 0);
+        let parts = rooms(&footprint, &[], &walls, &roof, &windows, 0);
         assert_eq!(floors(&parts).len(), 2, "two storeys under a 6 m roof");
         for part in &parts {
             for k in 0..3 {
@@ -548,7 +707,7 @@ mod tests {
     fn a_tall_house_gets_a_floor_a_storey_and_stairs_between_them() {
         let footprint = rect(1200, 800);
         let (walls, roof, windows) = house(&footprint, 900, 900);
-        let parts = rooms(&footprint, &walls, &roof, &windows, 0);
+        let parts = rooms(&footprint, &[], &walls, &roof, &windows, 0);
         // 9 m of wall: floors at the plinth, 2.8 and 5.6 m; one at 8.4 m would have no headroom.
         assert_eq!(floors(&parts).len(), 3, "{:?}", floors(&parts));
         let levels = floors(&parts);
@@ -585,7 +744,7 @@ mod tests {
         let footprint = vec![[150, 0], [450, 0], [600, 150], [600, 350], [450, 500], [150, 500], [0, 350], [0, 150]];
         let (walls, roof, windows) = house(&footprint, 600, 600);
         if windows.iter().any(|w| w.door) {
-            let parts = rooms(&footprint, &walls, &roof, &windows, 0);
+            let parts = rooms(&footprint, &[], &walls, &roof, &windows, 0);
             assert!(floors(&parts).len() <= 1 && !parts.iter().any(|p| p.kind == PART_RAMP));
         }
     }
@@ -595,7 +754,7 @@ mod tests {
         // The same 12 × 8 m house turned 30°: its corners rounded to the centimetre.
         let turned: Vec<[i32; 2]> = rect(1200, 800).iter().map(|p| { let (c, s) = (0.866_025_403_784f64, 0.5f64); [((p[0] as f64) * c - (p[1] as f64) * s).round() as i32 + 5000, ((p[0] as f64) * s + (p[1] as f64) * c).round() as i32 + 5000] }).collect();
         let (walls, roof, windows) = house(&turned, 600, 600);
-        let parts = rooms(&turned, &walls, &roof, &windows, 0);
+        let parts = rooms(&turned, &[], &walls, &roof, &windows, 0);
         assert_eq!(floors(&parts).len(), 2);
         assert!(parts.iter().any(|p| p.kind == PART_RAMP) && parts.iter().any(|p| p.kind == PART_CEILING));
         for part in parts.iter().filter(|p| p.kind != PART_STEP) {
@@ -614,8 +773,8 @@ mod tests {
     fn the_same_house_gets_the_same_floors() {
         let footprint = rect(1200, 800);
         let (walls, roof, windows) = house(&footprint, 600, 600);
-        let parts = rooms(&footprint, &walls, &roof, &windows, 0);
-        assert_eq!(parts, rooms(&footprint, &walls, &roof, &windows, 0));
+        let parts = rooms(&footprint, &[], &walls, &roof, &windows, 0);
+        assert_eq!(parts, rooms(&footprint, &[], &walls, &roof, &windows, 0));
         // Pinned, for `interior.spec.ts` to find the same through the WebAssembly build.
         let sum = parts.iter().fold(0u64, |h, p| p.tri.iter().fold(h.wrapping_mul(31).wrapping_add(p.kind as u64), |h, &v| h.wrapping_mul(31).wrapping_add(v as u32 as u64)));
         assert_eq!((parts.len(), sum % 1_000_000_007), (112, 490_359_646));

@@ -60,7 +60,7 @@ const WATER_FILTERS: [&str; 3] = [r#"["natural"="water"]"#, r#"["waterway"="rive
 /// `wants_relation`, `wants_node`): also the cache key, so it is the one place that spells it.
 pub fn query([south, west, north, east]: [f64; 4]) -> String {
     let bbox = format!("{south},{west},{north},{east}");
-    let mut query = format!("[out:json][timeout:180];(way[\"building\"]({bbox});way[\"highway\"]({bbox});way[\"railway\"]({bbox});way[\"barrier\"~\"^(fence|wall|city_wall)$\"]({bbox});way[\"power\"~\"^(line|minor_line)$\"]({bbox});");
+    let mut query = format!("[out:json][timeout:180];(way[\"building\"]({bbox});relation[type=multipolygon][\"building\"]({bbox});way[\"highway\"]({bbox});way[\"railway\"]({bbox});way[\"barrier\"~\"^(fence|wall|city_wall)$\"]({bbox});way[\"power\"~\"^(line|minor_line)$\"]({bbox});");
     for filter in COVER_FILTERS.split(';') {
         query.push_str(&format!("way{filter}({bbox});relation[type=multipolygon]{filter}({bbox});"));
     }

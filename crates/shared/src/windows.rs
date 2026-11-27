@@ -187,7 +187,17 @@ struct Plane {
 /// has rows of windows a storey apart and a door in its front, the wall facing the road or else its
 /// longest; a church a row of tall windows along its long walls, and a door and a round window in an end;
 /// a barn, an outbuilding, a hall and a shop the doors and the one row of windows of their `Style`.
-pub fn openings_of(look: &Look, [first, walls, _]: [u32; 3], kind: u8, front: [i8; 2]) -> Vec<Window> {
+pub fn openings_of(look: &Look, range: [u32; 3], kind: u8, front: [i8; 2]) -> Vec<Window> {
+    openings_round(look, range, kind, front, &[])
+}
+
+/// How near the middle of a wall lies to a side of a yard for it to be that yard's wall, metres.
+const YARD_WALL: f64 = 0.05;
+
+/// `openings_of` for a building round the yards `yards` (`Building::holes`, centimetres): the walls
+/// round a yard have windows as any wall has, but come after the outer walls and never have a door,
+/// which would open into a yard with no way out of it.
+pub fn openings_round(look: &Look, [first, walls, _]: [u32; 3], kind: u8, front: [i8; 2], yards: &[Vec<[i32; 2]>]) -> Vec<Window> {
     // A bridge has no windows, no doors and so no inside; a shelter is open along one side instead.
     if kind == crate::world::BUILDING_BRIDGE || kind == crate::world::BUILDING_SHELTER {
         return Vec::new();
@@ -244,23 +254,47 @@ pub fn openings_of(look: &Look, [first, walls, _]: [u32; 3], kind: u8, front: [i
         [[u0 - margin, v0 - margin], [u1 + margin, v0 - margin], [u1 + margin, v1 + margin], [u0 - margin, v1 + margin]].iter().all(|&[u, v]| inside(plane, u, v))
     };
     let lowest = planes.iter().fold(f64::INFINITY, |lowest, plane| lowest.min(plane.v0));
-    // The longest wall first, and of two as long the one with the smaller offset.
+    // Whether each wall stands round a yard: its middle lies on a side of one. Only `+ - * /`, as
+    // the client works it out too.
+    let in_yard: Vec<bool> = planes
+        .iter()
+        .map(|plane| {
+            let mid = (plane.u0 + plane.u1) / 2.0;
+            let (x, z) = (plane.u[0] * mid + plane.normal[0] * plane.d, plane.u[2] * mid + plane.normal[2] * plane.d);
+            yards.iter().any(|yard| {
+                (0..yard.len()).any(|i| {
+                    let (a, b) = (yard[i], yard[(i + 1) % yard.len()]);
+                    let (ax, az, bx, bz) = (a[0] as f64 / 100.0, a[1] as f64 / 100.0, b[0] as f64 / 100.0, b[1] as f64 / 100.0);
+                    let (dx, dz) = (bx - ax, bz - az);
+                    let length = dx * dx + dz * dz;
+                    if length <= 0.0 {
+                        return false;
+                    }
+                    let t = (((x - ax) * dx + (z - az) * dz) / length).clamp(0.0, 1.0);
+                    let (ox, oz) = (x - (ax + dx * t), z - (az + dz * t));
+                    ox * ox + oz * oz < YARD_WALL * YARD_WALL
+                })
+            })
+        })
+        .collect();
+    // The longest wall first, and of two as long the one with the smaller offset; the walls round a yard after the rest.
     let mut order: Vec<usize> = (0..planes.len()).collect();
     order.sort_by(|&i, &j| {
         let (a, b) = (&planes[i], &planes[j]);
         let (la, lb) = (a.u1 - a.u0, b.u1 - b.u0);
         if la == lb { a.d.partial_cmp(&b.d).unwrap_or(std::cmp::Ordering::Equal) } else { lb.partial_cmp(&la).unwrap_or(std::cmp::Ordering::Equal) }
     });
+    order.sort_by_key(|&at| in_yard[at]);
     let is_raised = |plane: &Plane| plane.v0 - lowest >= RAISED;
     // The front goes first: the wall that faces the road, where one of the longer walls does. A
     // church's front is the end away from its annexe, whatever road passes it.
     if kind != BUILDING_CHURCH && front != [0, 0] {
-        let longest = order.iter().map(|&at| &planes[at]).filter(|plane| !is_raised(plane)).fold(0.0f64, |longest, plane| longest.max(plane.u1 - plane.u0));
+        let longest = order.iter().filter(|&&at| !in_yard[at]).map(|&at| &planes[at]).filter(|plane| !is_raised(plane)).fold(0.0f64, |longest, plane| longest.max(plane.u1 - plane.u0));
         let mut best: Option<(usize, f64)> = None;
         for (rank, &at) in order.iter().enumerate() {
             let plane = &planes[at];
             let facing = plane.normal[0] * f64::from(front[0]) + plane.normal[2] * f64::from(front[1]);
-            if !is_raised(plane) && plane.u1 - plane.u0 >= FRONT_SHARE * longest && facing > best.map_or(FRONT_FACING, |(_, most)| most) {
+            if !in_yard[at] && !is_raised(plane) && plane.u1 - plane.u0 >= FRONT_SHARE * longest && facing > best.map_or(FRONT_FACING, |(_, most)| most) {
                 best = Some((rank, facing));
             }
         }
@@ -283,7 +317,7 @@ pub fn openings_of(look: &Look, [first, walls, _]: [u32; 3], kind: u8, front: [i
             // is `[from, to, top]` once it is hung.
             let mid = (plane.u0 + plane.u1) / 2.0;
             let mut door: Option<[f64; 3]> = None;
-            if rank < style.doored {
+            if rank < style.doored && !in_yard[at] {
                 for &[w, h] in style.doors {
                     let bays = ((length - 2.0 * MARGIN + BAY_GAP) / (w + BAY_GAP)).floor().min(style.bays).max(1.0);
                     let mut i = 0.0f64;
@@ -331,7 +365,7 @@ pub fn openings_of(look: &Look, [first, walls, _]: [u32; 3], kind: u8, front: [i
     let mut ends: Vec<usize> = Vec::new();
     let mut door_end: Option<usize> = None;
     if kind == BUILDING_CHURCH {
-        ends = order.iter().copied().filter(|&at| !is_raised(&planes[at]) && !along(&planes[at])).take(2).collect();
+        ends = order.iter().copied().filter(|&at| !in_yard[at] && !is_raised(&planes[at]) && !along(&planes[at])).take(2).collect();
         // How far an end is from the lesser walls (an annexe's), summed: the front is the end away from them.
         let far = |end: usize| {
             let e = &planes[end];
@@ -416,7 +450,7 @@ pub fn openings_of(look: &Look, [first, walls, _]: [u32; 3], kind: u8, front: [i
             while i < count {
                 let mid = plane.u0 + (i + 0.5) * step;
                 // The longest wall's door: the middle of its ground row.
-                if !church && !raised && rank == 0 && storey == 0.0 && i == (count / 2.0).floor() && fits(plane, mid - DOOR_WIDTH / 2.0, mid + DOOR_WIDTH / 2.0, plane.v0 + MARGIN, plane.v0 + DOOR_HEIGHT, MARGIN) {
+                if !church && !raised && !in_yard[at] && rank == 0 && storey == 0.0 && i == (count / 2.0).floor() && fits(plane, mid - DOOR_WIDTH / 2.0, mid + DOOR_WIDTH / 2.0, plane.v0 + MARGIN, plane.v0 + DOOR_HEIGHT, MARGIN) {
                     push(mid - DOOR_WIDTH / 2.0, mid + DOOR_WIDTH / 2.0, plane.v0 + 0.02, plane.v0 + DOOR_HEIGHT, true, HEAD_SQUARE);
                     i += 1.0;
                     continue;
@@ -488,6 +522,45 @@ mod tests {
         quad([0, 0, d], [0, 0, 0], [0, h, 0], [0, h, d]);
         quad([0, h, 0], [w, h, 0], [w, h, d], [0, h, d]);
         Look { vertices, triangles, buildings: vec![[0, 8, 2]] }
+    }
+
+    /// A building as a look, wound inwards: walls `h` centimetres high round `outer`
+    /// (counter-clockwise from above) and round each of `yards` (clockwise).
+    fn walled(outer: &[[i32; 2]], yards: &[Vec<[i32; 2]>], h: i32) -> Look {
+        let mut vertices = Vec::new();
+        let mut triangles = Vec::new();
+        for ring in std::iter::once(outer).chain(yards.iter().map(Vec::as_slice)) {
+            for i in 0..ring.len() {
+                let (p, q) = (ring[i], ring[(i + 1) % ring.len()]);
+                let base = vertices.len() as u32;
+                vertices.extend([[p[0], 0, p[1]], [q[0], 0, q[1]], [q[0], h, q[1]], [p[0], h, p[1]]]);
+                triangles.push([base, base + 1, base + 2]);
+                triangles.push([base, base + 2, base + 3]);
+            }
+        }
+        let walls = triangles.len() as u32;
+        Look { vertices, triangles, buildings: vec![[0, walls, 0]] }
+    }
+
+    #[test]
+    fn the_front_door_is_never_on_a_courtyard_wall() {
+        // An eight-sided block with walls of 20 and 14 m, round a yard whose long walls are 24 m:
+        // the longest walls of all are the yard's.
+        let outer = [[1000, 0], [3000, 0], [4000, 1000], [4000, 3000], [3000, 4000], [1000, 4000], [0, 3000], [0, 1000]];
+        let yard = vec![[800, 1700], [800, 2300], [3200, 2300], [3200, 1700]];
+        let in_yard = |o: &Window| o.corners.iter().all(|p| p[0] > 7.9 && p[0] < 32.1 && p[2] > 16.9 && p[2] < 23.1);
+        let look = walled(&outer, std::slice::from_ref(&yard), 600);
+        for (kind, front) in [(BUILDING_PLAIN, [0, 0]), (BUILDING_PLAIN, [0, 127]), (BUILDING_PLAIN, [0, -127]), (crate::world::BUILDING_HALL, [0, 0]), (crate::world::BUILDING_FLATS, [0, 127])] {
+            let openings = openings_round(&look, look.buildings[0], kind, front, std::slice::from_ref(&yard));
+            let doors: Vec<&Window> = openings.iter().filter(|o| o.door).collect();
+            assert!(!doors.is_empty(), "kind {kind}: a door");
+            assert!(doors.iter().all(|door| !in_yard(door)), "kind {kind}, front {front:?}: a door opens into the yard");
+            assert!(openings.iter().any(|o| !o.door && in_yard(o)), "kind {kind}: the yard's walls have windows");
+            // Told nothing of the yard, the door goes on its wall: the longest.
+            if front == [0, 0] {
+                assert!(openings_of(&look, look.buildings[0], kind, front).iter().any(|o| o.door && in_yard(o)), "kind {kind}");
+            }
+        }
     }
 
     #[test]

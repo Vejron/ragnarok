@@ -32,7 +32,7 @@ describe('a screenshot', () => {
   })
 
   it('names the building the crosshair hits, or one just beside the hit', () => {
-    const house = (footprint: Point2[]): Building => ({ footprint, base: 0, height: 6 }) as unknown as Building
+    const house = (footprint: Point2[]): Building => ({ footprint, holes: [], base: 0, height: 6 }) as unknown as Building
     const ref = { col: 3, row: 4, hash: 0 }
     const buildings: TiledBuilding[] = [
       { ref, index: 0, building: house([[0, 0], [10, 0], [10, 8], [0, 8]]) },

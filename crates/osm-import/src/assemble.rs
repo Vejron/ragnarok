@@ -81,6 +81,46 @@ pub(crate) fn point_in_polygon([x, z]: P, polygon: &[P]) -> bool {
     inside
 }
 
+/// Where a building stands: its outline and the yards inside it that are open to the sky.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct Plan {
+    pub outer: Vec<P>,
+    pub holes: Vec<Vec<P>>,
+}
+
+impl Plan {
+    /// The outline and then each yard.
+    pub fn rings(&self) -> impl Iterator<Item = &[P]> {
+        std::iter::once(self.outer.as_slice()).chain(self.holes.iter().map(Vec::as_slice))
+    }
+
+    /// Whether `p` is under the building: inside its outline and in none of its yards.
+    pub fn holds(&self, p: P) -> bool {
+        point_in_polygon(p, &self.outer) && !self.holes.iter().any(|hole| point_in_polygon(p, hole))
+    }
+
+    /// How far `p` is from the nearest wall, round the outline or a yard, metres.
+    pub fn wall(&self, p: P) -> f64 {
+        self.rings().flat_map(|ring| (0..ring.len()).map(move |i| distance_to_segment(p, ring[i], ring[(i + 1) % ring.len()]))).fold(f64::MAX, f64::min)
+    }
+}
+
+/// How many buildings were left out of the world, by why: the importer prints it.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct LeftOut {
+    /// With a corner within `EDGE_MARGIN` of the world's edge, or past it.
+    pub edge: usize,
+    /// Under `MIN_FOOTPRINT` of ground, or fewer than three corners.
+    pub small: usize,
+    /// At the end of a lift, where the lift's own station stands.
+    pub station: usize,
+    /// In a tile the world does not keep.
+    pub masked: usize,
+}
+
+/// The least ground a building covers, and a yard in one, square metres: less is left out.
+const MIN_FOOTPRINT: f64 = 4.0;
+
 pub(crate) fn distance_to_segment([px, pz]: P, [ax, az]: P, [bx, bz]: P) -> f64 {
     let (dx, dz) = (bx - ax, bz - az);
     let length = dx * dx + dz * dz;
@@ -323,15 +363,12 @@ fn per_tile(manifest: &Manifest, half: f64, side: f64, run: &[P], mut f: impl Fn
 }
 
 /// Picks well-spread outdoor spawn points from road vertices.
-fn pick_spawns(candidates: &[P], footprints: &[Vec<P>], half: f64) -> Vec<[i32; 2]> {
+fn pick_spawns(candidates: &[P], footprints: &[Plan], half: f64) -> Vec<[i32; 2]> {
     let limit = half - EDGE_MARGIN - SPAWN_CLEARANCE;
     let clear = |p: P| {
         p[0].abs() < limit
             && p[1].abs() < limit
-            && footprints.iter().all(|footprint| {
-                !point_in_polygon(p, footprint)
-                    && (0..footprint.len()).all(|i| distance_to_segment(p, footprint[i], footprint[(i + 1) % footprint.len()]) >= SPAWN_CLEARANCE)
-            })
+            && footprints.iter().all(|footprint| !footprint.holds(p) && footprint.wall(p) >= SPAWN_CLEARANCE)
     };
     // Prefer points near the centre so players start together.
     let mut sorted: Vec<P> = candidates.to_vec();
@@ -355,6 +392,8 @@ fn pick_spawns(candidates: &[P], footprints: &[Vec<P>], half: f64) -> Vec<[i32; 
 pub struct Built {
     pub manifest: Manifest,
     pub tiles: BTreeMap<(u16, u16), Tile>,
+    /// The buildings that were mapped and are not in the world.
+    pub left_out: LeftOut,
 }
 
 impl Built {
@@ -430,15 +469,16 @@ fn front_of(mid: P, streets: &HashMap<(i32, i32), Vec<[P; 2]>>) -> [i8; 2] {
 
 /// A building to assemble: its footprint, its tagged height, its roof (if the laser gave one), its
 /// colours and materials (as far as the photo or its tags gave them), the most it may rise over its floor
-/// (`cap`), what it is (`BUILDING_*`) and, for a shelter, the way its open side faces if it is mapped.
-type Footprint = (Vec<P>, f64, Option<Top>, Finish, Option<f64>, u8, Option<P>);
+/// (`cap`), what it is (`BUILDING_*`), for a shelter the way its open side faces if it is mapped, and
+/// the yards inside it (rings, any winding).
+type Footprint = (Vec<P>, f64, Option<Top>, Finish, Option<f64>, u8, Option<P>, Vec<Vec<P>>);
 
 /// A footprint to fit a roof to (`fit_roofs`): its ring, the most it may rise over its floor (`cap`),
-/// the roof shape OpenStreetMap names for it, and what it is (`BUILDING_*`).
-type Ring<'a> = (&'a [P], Option<f64>, Option<Category>, u8);
+/// the roof shape OpenStreetMap names for it, what it is (`BUILDING_*`), and the yards inside it.
+type Ring<'a> = (&'a [P], Option<f64>, Option<Category>, u8, &'a [Vec<P>]);
 
 /// A building outline before its roof is fitted: a `Footprint` without the `Top`.
-type Outline = (Vec<P>, f64, Finish, Option<f64>, u8, Option<P>);
+type Outline = (Vec<P>, f64, Finish, Option<f64>, u8, Option<P>, Vec<Vec<P>>);
 
 /// Assembles the world from building outlines (metres, any winding) and road polylines, and cuts
 /// it into square tiles of `tile_size` metres.
@@ -485,24 +525,39 @@ fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collecti
         ..Default::default()
     };
     let mut tiles: BTreeMap<(u16, u16), Tile> = BTreeMap::new();
-    let mut footprints = Vec::new();
+    let mut footprints: Vec<Plan> = Vec::new();
+    let mut left_out = LeftOut::default();
     // How tall each of `footprints` stands over its floor, metres.
     let mut tall: Vec<f64> = Vec::new();
     let streets = streets(&roads);
-    for (mut footprint, height, fitted, paint, ceiling, kind, facing) in buildings {
-        if footprint.len() > 1 && footprint.first() == footprint.last() {
-            footprint.pop();
+    // A ring as it is built from: without its repeated first point or any corner twice running.
+    let open = |ring: &mut Vec<P>| {
+        if ring.len() > 1 && ring.first() == ring.last() {
+            ring.pop();
         }
-        footprint.dedup();
-        if footprint.len() < 3 || footprint.iter().any(|p| p[0].abs() > inner || p[1].abs() > inner) {
+        ring.dedup();
+    };
+    for (mut footprint, height, fitted, paint, ceiling, kind, facing, mut holes) in buildings {
+        open(&mut footprint);
+        if footprint.iter().any(|p| p[0].abs() > inner || p[1].abs() > inner) {
+            left_out.edge += 1;
             continue;
         }
         let area = signed_area(&footprint);
-        if area.abs() < 4.0 {
+        if footprint.len() < 3 || area.abs() < MIN_FOOTPRINT {
+            left_out.small += 1;
             continue;
         }
         if area < 0.0 {
             footprint.reverse();
+        }
+        // A yard is clockwise, so the walls round it face into it. One too small to stand in is built over.
+        holes.iter_mut().for_each(open);
+        holes.retain(|hole| hole.len() >= 3 && signed_area(hole).abs() >= MIN_FOOTPRINT);
+        for hole in &mut holes {
+            if signed_area(hole) > 0.0 {
+                hole.reverse();
+            }
         }
         // A building belongs to the tile its centre is in, whole, so a tile never needs its neighbour.
         let n = footprint.len() as f64;
@@ -519,27 +574,28 @@ fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collecti
                 let towards = facing.unwrap_or([f64::from(front[0]) / 127.0, f64::from(front[1]) / 127.0]);
                 let (shed, walls, open) = crate::shelter::build(&footprint, floor, towards);
                 front = crate::shelter::front(open);
-                (roof::build_with(&mut tile.collision, &footprint, floor, &shed, walls), shed.kind())
+                (roof::build_with(&mut tile.collision, &footprint, &holes, floor, &shed, walls), shed.kind())
             }
-            Some(Top::Measured(field)) => (crate::field::build(&mut tile.collision, &footprint, floor, &field), field.kind()),
+            Some(Top::Measured(field)) => (crate::field::build(&mut tile.collision, &footprint, &holes, floor, &field), field.kind()),
             fitted => {
                 // Without laser data a building is a box of its tagged (or guessed) height.
                 let shape = match fitted {
                     Some(Top::Fitted(roof)) => roof,
                     _ => boxed.clone(),
                 };
-                (roof::build(&mut tile.collision, &footprint, floor, &shape), shape.kind())
+                (roof::build_with(&mut tile.collision, &footprint, &holes, floor, &shape, roof::Walls::CLOSED), shape.kind())
             }
         };
         // A fit may reach a little past the returns it was fitted to: past its cap, a house is a box.
         if kind != BUILDING_SHELTER && ceiling.is_some_and(|ceiling| parts.top - floor > ceiling + 0.01) {
             tile.collision.triangles.truncate(first as usize);
             tile.collision.vertices.truncate(vertices);
-            (parts, roof_kind) = (roof::build(&mut tile.collision, &footprint, floor, &boxed), boxed.kind());
+            (parts, roof_kind) = (roof::build_with(&mut tile.collision, &footprint, &holes, floor, &boxed, roof::Walls::CLOSED), boxed.kind());
         }
         tile.buildings.push(Building {
             height: cm(parts.top - floor),
             footprint: footprint.iter().map(|&[x, z]| [cm(x), cm(z)]).collect(),
+            holes: holes.iter().map(|hole| hole.iter().map(|&[x, z]| [cm(x), cm(z)]).collect()).collect(),
             base: cm(floor),
             first,
             walls: parts.walls,
@@ -551,7 +607,7 @@ fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collecti
             paint: paint.paint,
             clad: paint.clad,
         });
-        footprints.push(footprint);
+        footprints.push(Plan { outer: footprint, holes });
         tall.push(parts.top - floor);
     }
     let mut candidates = Vec::new();
@@ -780,6 +836,7 @@ fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collecti
             tile.buildings.push(Building {
                 height: cm(top - base),
                 footprint: footprint.iter().map(|&[x, z]| [cm(x), cm(z)]).collect(),
+                holes: Vec::new(),
                 base: cm(base),
                 first,
                 walls: count[0],
@@ -880,7 +937,7 @@ fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collecti
     // A track keeps trees off its ballast bed, as a road does off its surface.
     let roads: Vec<(&[P], f64)> = roads.iter().map(|(points, width, _)| (&points[..], *width)).chain(rails.iter().map(|(points, gauge, _)| (&points[..], ballast(*gauge)))).chain(ski.iter().map(|points| (&points[..], SKI_TRAIL_WIDTH))).collect();
     let road_boxes: Vec<[f64; 4]> = roads.iter().map(|(points, width)| reach_box(points, width / 2.0 + SOLID_REACH)).collect();
-    let footprint_boxes: Vec<[f64; 4]> = footprints.iter().map(|footprint| reach_box(footprint, SOLID_REACH)).collect();
+    let footprint_boxes: Vec<[f64; 4]> = footprints.iter().map(|footprint| reach_box(&footprint.outer, SOLID_REACH)).collect();
     // Nothing grows in a stream's channel: the water drawn in it and a trunk's width either side.
     let stream_clear = STREAM_WIDTH / 2.0 + TRUNK_CLEAR;
     let stream_boxes: Vec<[f64; 4]> = water.streams.iter().map(|points| reach_box(points, stream_clear)).collect();
@@ -897,7 +954,7 @@ fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collecti
         if at[0].abs() > inner || at[1].abs() > inner {
             continue;
         }
-        let on_building = footprints.iter().zip(&footprint_boxes).any(|(footprint, b)| in_box(b, at) && point_in_polygon(at, footprint));
+        let on_building = footprints.iter().zip(&footprint_boxes).any(|(footprint, b)| in_box(b, at) && footprint.holds(at));
         let mut on_road = false;
         let mut near = planted;
         for ((points, width), b) in roads.iter().zip(&road_boxes) {
@@ -943,13 +1000,13 @@ fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collecti
             .iter()
             .zip(&footprint_boxes)
             .filter(|(_, b)| in_box(b, at))
-            .flat_map(|(footprint, _)| (0..footprint.len()).map(|i| distance_to_segment(at, footprint[i], footprint[(i + 1) % footprint.len()])))
+            .map(|(footprint, _)| footprint.wall(at))
             .fold(f64::MAX, f64::min);
         // A crown at the roof of a tall house, close by its wall: the laser's reading of the wall.
         let ghost_of_house = !planted
             && crate::thin::is_tree(kind)
             && footprints.iter().zip(&footprint_boxes).zip(&tall).any(|((footprint, b), &tall)| {
-                reads_as_a_crown(tall, height) && in_box(b, at) && (0..footprint.len()).any(|i| distance_to_segment(at, footprint[i], footprint[(i + 1) % footprint.len()]) < GHOST_WALL)
+                reads_as_a_crown(tall, height) && in_box(b, at) && footprint.wall(at) < GHOST_WALL
             });
         if ghost_of_house {
             ghosts[1] += 1;
@@ -1067,13 +1124,14 @@ fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collecti
         }
     }
     if let Some(mask) = mask {
+        left_out.masked = tiles.iter().filter(|(key, _)| !mask.contains(key)).map(|(_, tile)| tile.buildings.iter().filter(|building| building.kind != BUILDING_BRIDGE).count()).sum();
         tiles.retain(|key, _| mask.contains(key));
         // A painted tile with nothing in it, on flat ground, still exists.
         for &(col, row) in mask {
             tiles.entry((col, row)).or_default();
         }
     }
-    Built { manifest, tiles }
+    Built { manifest, tiles, left_out }
 }
 
 /// The bounding box of the `half`-metre square around `(lat, lon)`, as `[south, west, north, east]`.
@@ -1135,6 +1193,10 @@ pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::B
         }
     }
     let is_building = |way: &crate::overpass::Way| way.tags.get("building").is_some_and(|value| value != "no" && value != "roof");
+    // The yards inside a building mapped as a multipolygon (`Osm::yards`), local metres.
+    let yards_of = |way: &crate::overpass::Way| -> Vec<Vec<P>> { osm.yards.get(&way.id).map(|rings| rings.iter().map(|ring| line(ring)).collect()).unwrap_or_default() };
+    let with_yards = osm.ways.iter().filter(|way| is_building(way) && osm.yards.contains_key(&way.id)).count();
+    eprintln!("buildings: {with_yards} with a yard inside them");
     // A classified cloud (France) has nothing but roof in its building returns: measure the roof.
     let measured = place.region == crate::region::Region::France;
     // The outlines, in the order of the ways. Where the roof is measured a big one is cut into pieces
@@ -1166,8 +1228,11 @@ pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::B
             }
         }
         let rings: Vec<Vec<P>> = osm.ways.iter().filter(|way| is_building(way)).map(|way| open(line(&way.geometry))).collect();
+        // A shop mapped as a node in a block's yard is no shop in the block: it is not in the building.
+        let yards: Vec<Vec<Vec<P>>> = osm.ways.iter().filter(|way| is_building(way)).map(&yards_of).collect();
+        let nodes_in = |p: P| !rings.iter().zip(&yards).any(|(ring, yards)| point_in_polygon(p, ring) && yards.iter().any(|yard| point_in_polygon(p, yard)));
         let sites: Vec<(&crate::osm::Tags, &[P])> = osm.ways.iter().filter(|way| is_building(way)).zip(&rings).map(|(way, ring)| (&way.tags, ring.as_slice())).collect();
-        let nodes: Vec<(u8, P)> = osm.pois.iter().filter_map(|node| Some((crate::classify::by_use(&node.tags)?, frame.project(node.at.lat, node.at.lon)))).collect();
+        let nodes: Vec<(u8, P)> = osm.pois.iter().filter_map(|node| Some((crate::classify::by_use(&node.tags)?, frame.project(node.at.lat, node.at.lon)))).filter(|(_, at)| nodes_in(*at)).collect();
         let (kinds, tally) = crate::classify::classify(&sites, &lands, &nodes);
         let [plain, churches, barns, outbuildings, halls, shops, flats, public, cabins, old, villas, fire, _bridges, shelters] = tally.kinds;
         eprintln!("buildings: {plain} houses, {old} old houses, {villas} villas, {churches} churches, {barns} barns, {outbuildings} outbuildings, {halls} halls, {shops} shops, {flats} blocks of flats, {public} public, {fire} fire stations, {cabins} cabins, {shelters} shelters; {} known by their tags, {} by a node in them, {} by the land they stand on, {} by their yard", tally.by_tags, tally.by_node, tally.by_land, tally.by_yard);
@@ -1181,10 +1246,12 @@ pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::B
         .flat_map(|way| {
             let kind = kinds.next().unwrap_or(BUILDING_PLAIN);
             let drawn = line(&way.geometry);
+            let holes = yards_of(way);
             let open = if drawn.len() > 1 && drawn.first() == drawn.last() { &drawn[..drawn.len() - 1] } else { &drawn[..] };
-            // Walls drawn nearly square are made square (`square`); a footprint cut on France's lattice is left as it is.
-            let big = measured && open.len() >= 3 && signed_area(open).abs() > crate::footprints::BIG;
-            let points = match crate::square::square(open).filter(|_| !big) {
+            // Walls drawn nearly square are made square (`square`); a footprint cut on France's lattice is left as it is,
+            // and so is one with a yard, whose rings would be squared apart. One with a yard is not cut on the lattice either.
+            let big = measured && holes.is_empty() && open.len() >= 3 && signed_area(open).abs() > crate::footprints::BIG;
+            let points = match crate::square::square(open).filter(|_| !big && holes.is_empty()) {
                 Some(ring) => {
                     squared.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     ring
@@ -1205,9 +1272,9 @@ pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::B
             let paint = if shelter { seen.or(tagged) } else { tagged.or(seen) };
             let facing = if shelter { crate::shelter::facing(&way.tags) } else { None };
             let found: Vec<Outline> = if big {
-                crate::footprints::pieces(ring).into_iter().map(|piece| (piece, height, paint, ceiling, kind, facing)).collect()
+                crate::footprints::pieces(ring).into_iter().map(|piece| (piece, height, paint, ceiling, kind, facing, Vec::new())).collect()
             } else {
-                vec![(points.clone(), height, paint, ceiling, kind, facing)]
+                vec![(points.clone(), height, paint, ceiling, kind, facing, holes)]
             };
             hints.extend(found.iter().map(|_| hint));
             found
@@ -1216,12 +1283,12 @@ pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::B
     eprintln!("footprints: {} of {} squared", squared.into_inner(), outlines.len());
     let mapped_finish = osm.ways.iter().filter(|way| is_building(way) && crate::finish::of(&way.tags) != Finish::default()).count();
     eprintln!("finish: {mapped_finish} buildings with a colour or a material mapped");
-    let rings: Vec<Ring> = outlines.iter().zip(&hints).map(|((points, _, _, ceiling, kind, _), hint)| (points.as_slice(), *ceiling, *hint, *kind)).collect();
+    let rings: Vec<Ring> = outlines.iter().zip(&hints).map(|((points, _, _, ceiling, kind, _, holes), hint)| (points.as_slice(), *ceiling, *hint, *kind, holes.as_slice())).collect();
     let shapes = lidar.map(|cloud| fit_roofs(cloud, &source, measured, half, tile_size, mask, &ground, &rings)).unwrap_or_default();
     let mut shapes = shapes.into_iter();
-    for (points, height, paint, ceiling, kind, facing) in outlines {
+    for (points, height, paint, ceiling, kind, facing, holes) in outlines {
         // Roofs come from the laser returns over the footprint, where there are any.
-        buildings.push((points, height, shapes.next().flatten(), paint, ceiling, kind, facing));
+        buildings.push((points, height, shapes.next().flatten(), paint, ceiling, kind, facing, holes));
     }
     crate::progress::stage("buildings and roads");
     for (index, way) in osm.ways.iter().enumerate() {
@@ -1311,8 +1378,8 @@ pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::B
                     continue;
                 }
                 let returns = cloud.over(&ring, source);
-                if let Some(top) = from_catalogue(&ring, &returns, true, None, None, &Tally::default()).or_else(|| crate::field::Field::measure(&ring, &returns).map(Top::Measured)) {
-                    buildings.push((ring, 0.0, Some(top), paint, None, BUILDING_PLAIN, None));
+                if let Some(top) = from_catalogue(&ring, &returns, true, None, None, &Tally::default()).or_else(|| crate::field::Field::measure(&ring, &[], &returns).map(Top::Measured)) {
+                    buildings.push((ring, 0.0, Some(top), paint, None, BUILDING_PLAIN, None, Vec::new()));
                 }
             }
         }
@@ -1325,7 +1392,7 @@ pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::B
     }
     if photo.is_some() {
         let mut roofs = std::collections::BTreeMap::new();
-        for (.., paint, _, _, _) in &buildings {
+        for (.., paint, _, _, _, _) in &buildings {
             *roofs.entry(paint.paint[1].map(|roof| format!("{roof:06x}"))).or_insert(0usize) += 1;
         }
         eprintln!("roof colours: {roofs:?}");
@@ -1410,7 +1477,9 @@ pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::B
     // A lift's own station stands at each of its ends: the station building OSM or the laser has there goes.
     let ends: Vec<P> = lifts.iter().flat_map(|(.., points)| points.first().into_iter().chain(points.last())).copied().collect();
     let over_station = |ring: &[P]| ends.iter().any(|&end| point_in_polygon(end, ring) || (0..ring.len()).any(|i| distance_to_segment(end, ring[i], ring[(i + 1) % ring.len()]) < LIFT_STATION_CLEAR));
+    let before = buildings.len();
     buildings.retain(|(ring, ..)| !over_station(ring));
+    let at_stations = before - buildings.len();
     // A road over a cutting OSM has no bridge for gets a deck, or it has a trench across it.
     // Not the paving between carriageways: a strip is no road, and over a valley it runs along a bridge.
     let cuts = cuttings(&roads[..roads.len() - strips], &ground);
@@ -1468,6 +1537,7 @@ pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::B
         eprintln!("trees: {} shrubs and young trees along the woods' edges", trees.len() - before);
     }
     let mut built = assemble(frame, half, tile_size, mask, buildings, roads, &paints, strips, bridges, rails, unmarked, railway, ski, covers, trees, &mapped, ground, water);
+    built.left_out.station = at_stations;
     if let Some(ground) = &kept {
         lay_lifts(&mut built, &lifts, half, ground);
         lay_lines(&mut built, &lines, &decks, half, tile_size, ground);
@@ -2412,7 +2482,7 @@ const LIFT_STATION_CLEAR: f64 = 8.0;
 fn lay_lifts(built: &mut Built, lifts: &[(u8, u8, Vec<P>)], half: f64, ground: &Ground) {
     use shared::consts::{LIFT_CHAIR_DROP, LIFT_CLEARANCE, LIFT_GAUGE, LIFT_PYLON_CABLE, LIFT_PYLON_MAX, LIFT_SPAN, LIFT_STATION_CABLE};
     let inner = half - EDGE_MARGIN;
-    let Built { manifest, tiles } = built;
+    let Built { manifest, tiles, .. } = built;
     for (kind, seats, line) in lifts {
         let mut points: Vec<P> = Vec::new();
         for &p in line {
@@ -2619,7 +2689,7 @@ fn every(points: &[[i32; 2]], step: f32) -> Vec<[i32; 2]> {
 /// deck over it.
 fn lay_lines(built: &mut Built, lines: &[(u8, Vec<P>)], decks: &[(Vec<P>, f64)], half: f64, tile_size: f64, ground: &Ground) {
     let inner = half - EDGE_MARGIN;
-    let Built { manifest, tiles } = built;
+    let Built { manifest, tiles, .. } = built;
     let foot = |x: f64, z: f64| {
         let on_deck = decks.iter().filter_map(|(points, width)| bridge::flush_top(points, *width, ground, [x, z])).fold(f64::NAN, f64::max);
         if on_deck.is_finite() { on_deck } else { f64::from(ground.height_at(x as f32, z as f32)) }
@@ -2694,12 +2764,21 @@ fn fit_roofs(
         let span = |a: f64, b: f64| ((a + half) / tile_size).floor() as i64..=((b + half) / tile_size).floor() as i64;
         span(lo[0], hi[0]).any(|c| span(lo[1], hi[1]).any(|r| c >= 0 && r >= 0 && mask.contains(&(c as u16, r as u16))))
     };
-    let fit = |(points, ceiling, hint, kind): Ring| {
+    let fit = |(points, ceiling, hint, kind, holes): Ring| {
         let ring = if points.len() > 1 && points.first() == points.last() { &points[..points.len() - 1] } else { points };
         if ring.len() < 3 || !painted(ring) {
             return None;
         }
         let mut returns = cloud.over(ring, source);
+        // What the laser saw in a yard is its trees and its ground, not the roof round it.
+        returns.retain(|r| !holes.iter().any(|hole| hole.len() >= 3 && point_in_polygon([r[0], r[1]], hole)));
+        // A block round a yard is no one house of the catalogue, nor a church: it is fitted in parts.
+        if !holes.is_empty() {
+            if measured && let Some(field) = crate::field::Field::measure(ring, holes, &returns) {
+                return Some(Top::Measured(field));
+            }
+            return roof::fit(ring, &returns).map(Top::Fitted);
+        }
         // Over a house that may only be so tall, what stands higher is the trees round it.
         if let Some(ceiling) = ceiling {
             let top = floor_of(ground, ring) + ceiling;
@@ -2725,7 +2804,7 @@ fn fit_roofs(
         if let Some(top) = from_catalogue(ring, &returns, measured, hint, eaves, &tally) {
             return Some(top);
         }
-        if measured && let Some(field) = crate::field::Field::measure(ring, &returns) {
+        if measured && let Some(field) = crate::field::Field::measure(ring, &[], &returns) {
             return Some(Top::Measured(field));
         }
         roof::fit(ring, &returns).map(Top::Fitted)
@@ -2962,7 +3041,7 @@ fn cover_rank(kind: u8) -> u8 {
 }
 
 /// Joins open polylines that share end points into closed rings; pieces that never close are dropped.
-pub(crate) fn join_rings(mut pieces: Vec<Vec<P>>) -> Vec<Vec<P>> {
+pub(crate) fn join_rings<T: Copy + PartialEq>(mut pieces: Vec<Vec<T>>) -> Vec<Vec<T>> {
     let mut rings = Vec::new();
     while let Some(mut ring) = pieces.pop() {
         loop {
@@ -3085,7 +3164,7 @@ pub fn synthetic_city(half: f64, tile_size: f64, ground: Ground, water: Placed) 
             if (i, j) == SYNTHETIC_DEALER {
                 // A store along the block's north side and its car park filling the rest, so the offline
                 // world has a vehicle dealer (`crate::dealer`).
-                buildings.push((vec![[bx + 7.0, bz], [bx + 37.0, bz], [bx + 37.0, bz + 14.0], [bx + 7.0, bz + 14.0]], 6.0, None, Finish::default(), None, BUILDING_SHOP, None));
+                buildings.push((vec![[bx + 7.0, bz], [bx + 37.0, bz], [bx + 37.0, bz + 14.0], [bx + 7.0, bz + 14.0]], 6.0, None, Finish::default(), None, BUILDING_SHOP, None, Vec::new()));
                 let lot = vec![[bx, bz + 16.0], [bx + size, bz + 16.0], [bx + size, bz + size], [bx, bz + size]];
                 covers.push((COVER_ASPHALT, vec![lot.clone()]));
                 dealer_parking.push(lot);
@@ -3122,7 +3201,7 @@ pub fn synthetic_city(half: f64, tile_size: f64, ground: Ground, water: Placed) 
                         Shape::Hip { y: top, at, ridge, pitch: 0.6, half: 0.0 }
                     }))
                 });
-                buildings.push((vec![[x, z], [x + half_size, z], [x + half_size, z + half_size], [x, z + half_size]], height, roof, Finish::default(), None, BUILDING_PLAIN, None));
+                buildings.push((vec![[x, z], [x + half_size, z], [x + half_size, z + half_size], [x, z + half_size]], height, roof, Finish::default(), None, BUILDING_PLAIN, None, Vec::new()));
             }
         }
     }
@@ -3296,7 +3375,7 @@ mod tests {
             buildings: vec![Building { footprint: barn.iter().map(|&[x, z]| [cm(x), cm(z)]).collect(), ..Default::default() }],
             ..Default::default()
         };
-        let mut built = Built { manifest, tiles: [((0, 0), tile), ((1, 0), Tile::default())].into_iter().collect() };
+        let mut built = Built { manifest, tiles: [((0, 0), tile), ((1, 0), Tile::default())].into_iter().collect(), left_out: LeftOut::default() };
         lay_crops(&mut built, &[vec![field]], 100.0, 100.0);
         let crops = &built.tiles[&(0, 0)].crops;
         assert_eq!(crops.len(), 50 * 50);
@@ -3323,7 +3402,7 @@ mod tests {
             for (a, b) in [([-0.3, -90.0], [-0.3, -10.0]), ([-50.0, -90.0], [-50.0, -10.0]), ([-80.0, -83.0], [-1.0, -20.0])] {
                 let west = Tile { cover: vec![cover.clone()], roads: vec![Road { width: cm(width), kind, points: vec![[cm(a[0]), cm(a[1])], [cm(b[0]), cm(b[1])]], ..Default::default() }], ..Default::default() };
                 let east = Tile { cover: vec![cover.clone()], ..Default::default() };
-                let mut built = Built { manifest: manifest.clone(), tiles: [((0, 0), west), ((1, 0), east)].into_iter().collect() };
+                let mut built = Built { manifest: manifest.clone(), tiles: [((0, 0), west), ((1, 0), east)].into_iter().collect(), left_out: LeftOut::default() };
                 lay_crops(&mut built, &[vec![field.clone()]], 100.0, 100.0);
                 let mut nearest = f64::MAX;
                 for (&(col, _), tile) in &built.tiles {
@@ -3353,7 +3432,7 @@ mod tests {
             for (what, edge, west) in [("railway", ballast(1.435) / 2.0, railway), ("stream", STREAM_WIDTH / 2.0, stream)] {
                 let west = Tile { cover: vec![cover.clone()], ..west };
                 let east = Tile { cover: vec![cover.clone()], ..Default::default() };
-                let mut built = Built { manifest: manifest.clone(), tiles: [((0, 0), west), ((1, 0), east)].into_iter().collect() };
+                let mut built = Built { manifest: manifest.clone(), tiles: [((0, 0), west), ((1, 0), east)].into_iter().collect(), left_out: LeftOut::default() };
                 lay_crops(&mut built, &[vec![field.clone()]], 100.0, 100.0);
                 // Across the middle of the line, in whichever tile that is.
                 let sown = |at: f64| {
@@ -3380,7 +3459,7 @@ mod tests {
         let barn = Building { footprint: centimetres(&square(-10.0, -60.0, 10.0, -40.0)), ..Default::default() };
         let west = Tile { cover: vec![cover.clone()], buildings: vec![barn], ..Default::default() };
         let east = Tile { cover: vec![cover], ..Default::default() };
-        let mut built = Built { manifest, tiles: [((0, 0), west), ((1, 0), east)].into_iter().collect() };
+        let mut built = Built { manifest, tiles: [((0, 0), west), ((1, 0), east)].into_iter().collect(), left_out: LeftOut::default() };
         lay_crops(&mut built, &[vec![field]], 100.0, 100.0);
         let crops = &built.tiles[&(1, 0)].crops;
         assert_eq!(crops[25 * 50 + 2], CROP_NONE, "in the barn, in the next tile");
@@ -3788,9 +3867,51 @@ mod tests {
     }
 
     #[test]
+    fn a_block_round_a_yard_is_open_over_it_and_trees_and_spawns_may_stand_in_it() {
+        // A 40 m block round a 20 m yard, the yard drawn either way round; a yard of 1 m² is built over.
+        let outer = vec![[20.0, 20.0], [60.0, 20.0], [60.0, 60.0], [20.0, 60.0]];
+        let yard = vec![[30.0, 30.0], [50.0, 30.0], [50.0, 50.0], [30.0, 50.0], [30.0, 30.0]];
+        let speck = vec![[22.0, 22.0], [23.0, 22.0], [23.0, 23.0], [22.0, 23.0]];
+        for yard in [yard.clone(), yard.iter().rev().copied().collect()] {
+            let block = (outer.clone(), 9.0, None, Finish::default(), None, BUILDING_FLATS, None, vec![yard, speck.clone()]);
+            // One tree in the yard, clear of its walls, one under the roof, one outside.
+            let trees = vec![([40.0, 40.0], TREE_BIRCH, 8.0, 2.0, true), ([25.0, 40.0], TREE_BIRCH, 8.0, 2.0, true), ([0.0, 0.0], TREE_BIRCH, 8.0, 2.0, true)];
+            let built = assemble(Frame::default(), 150.0, 100.0, None, vec![block], vec![], &[], 0, vec![], vec![], vec![], Railway::default(), vec![], vec![], trees, &[], Ground::default(), Placed::default());
+            let building = built.tiles.values().flat_map(|tile| &tile.buildings).next().unwrap();
+            assert_eq!(building.holes.len(), 1, "the speck is built over");
+            let hole: Vec<P> = building.holes[0].iter().map(|&[x, z]| [f64::from(x) / 100.0, f64::from(z) / 100.0]).collect();
+            assert!((signed_area(&hole) + 400.0).abs() < 1e-6, "a yard is clockwise: {}", signed_area(&hole));
+            assert!((f32::from(building.hp()) - (1600.0 - 400.0) * 9.0 / 4.0).abs() < 1.0 || building.hp() == 1200, "its hit points follow what is built: {}", building.hp());
+            let trees: Vec<[i32; 2]> = built.tiles.values().flat_map(|tile| &tile.trees).map(|tree| [tree.x, tree.z]).collect();
+            assert!(trees.contains(&[4000, 4000]) && trees.contains(&[0, 0]) && !trees.contains(&[2500, 4000]), "{trees:?}");
+            // The ground of the yard has no roof over it and no floor on it.
+            let tile = built.tiles.values().find(|tile| !tile.buildings.is_empty()).unwrap();
+            let over_yard = tile.collision.triangles.iter().any(|tri| {
+                let p = tri.map(|i| tile.collision.vertices[i as usize]);
+                let mid = [(p[0][0] + p[1][0] + p[2][0]) / 3, (p[0][2] + p[1][2] + p[2][2]) / 3];
+                let level = p[0][1] == p[1][1] && p[1][1] == p[2][1];
+                level && (3100..4900).contains(&mid[0]) && (3100..4900).contains(&mid[1])
+            });
+            assert!(!over_yard);
+            let plan = Plan { outer: outer.clone(), holes: vec![hole] };
+            assert!(!plan.holds([40.0, 40.0]) && plan.holds([25.0, 40.0]));
+            assert_eq!(pick_spawns(&[[40.0, 40.0], [25.0, 40.0], [31.0, 40.0]], &[plan], 150.0), [[4000, 4000]], "a spawn in the yard, clear of its walls");
+        }
+    }
+
+    #[test]
+    fn buildings_left_out_are_counted_by_why() {
+        let square = |x: f64, side: f64| vec![[x, 0.0], [x + side, 0.0], [x + side, side], [x, side]];
+        let house = |ring: Vec<P>| (ring, 6.0, None, Finish::default(), None, BUILDING_PLAIN, None, Vec::new());
+        let built = assemble(Frame::default(), 150.0, 100.0, None, vec![house(square(0.0, 10.0)), house(square(145.0, 10.0)), house(square(30.0, 1.0))], vec![], &[], 0, vec![], vec![], vec![], Railway::default(), vec![], vec![], vec![], &[], Ground::default(), Placed::default());
+        assert_eq!(built.left_out, LeftOut { edge: 1, small: 1, station: 0, masked: 0 });
+        assert_eq!(built.tiles.values().map(|tile| tile.buildings.len()).sum::<usize>(), 1);
+    }
+
+    #[test]
     fn trees_keep_their_trunks_and_crowns_off_a_house_and_shrubs_need_not() {
         // A 10 m house with its west wall at x = 20; trees west of it, along one line.
-        let house = (vec![[20.0, 20.0], [30.0, 20.0], [30.0, 30.0], [20.0, 30.0]], 6.0, None, Finish::default(), None, BUILDING_PLAIN, None);
+        let house = (vec![[20.0, 20.0], [30.0, 20.0], [30.0, 30.0], [20.0, 30.0]], 6.0, None, Finish::default(), None, BUILDING_PLAIN, None, Vec::new());
         let trees = vec![
             ([19.0, 22.0], TREE_BIRCH, 8.0, 0.8, true),
             ([17.5, 25.0], TREE_BIRCH, 8.0, 3.0, false),
@@ -3807,7 +3928,7 @@ mod tests {
     #[test]
     fn a_tree_the_laser_found_at_the_roof_of_a_tall_house_beside_it_is_dropped_as_its_wall() {
         // A house 15 m tall with its west wall at x = 20; trees 5 m west of it, clear of the wall.
-        let house = (vec![[20.0, 20.0], [30.0, 20.0], [30.0, 30.0], [20.0, 30.0]], 15.0, None, Finish::default(), None, BUILDING_PLAIN, None);
+        let house = (vec![[20.0, 20.0], [30.0, 20.0], [30.0, 30.0], [20.0, 30.0]], 15.0, None, Finish::default(), None, BUILDING_PLAIN, None, Vec::new());
         // (The low tree stands east of the house, out of the tall ones' shade.)
         let trees = vec![([15.0, 22.0], TREE_PINE, 14.0, 3.0, false), ([35.0, 25.0], TREE_PINE, 7.0, 3.0, false), ([15.0, 28.0], TREE_PINE, 14.0, 3.0, true), ([-10.0, 25.0], TREE_PINE, 14.0, 3.0, false)];
         let built = assemble(Frame::default(), 150.0, 100.0, None, vec![house], vec![], &[], 0, vec![], vec![], vec![], Railway::default(), vec![], vec![], trees, &[], Ground::default(), Placed::default());
@@ -3836,7 +3957,7 @@ mod tests {
     #[test]
     fn a_power_line_puts_each_pole_in_one_tile_and_a_fence_is_cut() {
         let manifest = Manifest { version: WORLD_VERSION, half_extent: cm(150.0), tile_size: cm(100.0), ..Default::default() };
-        let mut built = Built { manifest, tiles: [(0, 1), (1, 1), (2, 1)].into_iter().map(|key| (key, Tile::default())).collect() };
+        let mut built = Built { manifest, tiles: [(0, 1), (1, 1), (2, 1)].into_iter().map(|key| (key, Tile::default())).collect(), left_out: LeftOut::default() };
         let lines = vec![(LINE_POWER, vec![[-140.0, 10.0], [140.0, 10.0]]), (LINE_FENCE, vec![[-140.0, 20.0], [140.0, 20.0]])];
         lay_lines(&mut built, &lines, &[], 150.0, 100.0, &Ground::default());
         let power: Vec<&Line> = built.tiles.values().flat_map(|tile| &tile.lines).filter(|line| line.kind == LINE_POWER).collect();
@@ -3892,6 +4013,7 @@ mod tests {
             ways: vec![way(1, ("barrier", "fence"), -100.0, 100.0, 20.0), way(2, ("power", "minor_line"), -100.0, 100.0, -20.0), way(3, ("barrier", "wall"), -100.0, 100.0, 0.0)],
             areas: Vec::new(),
             pois: Vec::new(),
+            yards: Default::default(),
         };
         let ground = Ground { origin: -15_000, cell: 500, side: 61, heights: vec![0; 61 * 61] };
         let built = from_osm(&place, 100.0, None, &osm, &[], ground, Placed::default(), None, None, None, &[], None, None, &[]);
@@ -3914,6 +4036,7 @@ mod tests {
             ],
             areas: vec![Area { id: 3, tags: tags("farmland"), outer: vec![latlon(&ring(-120.0, 40.0, -40.0, 120.0))], inner: Vec::new() }],
             pois: Vec::new(),
+            yards: Default::default(),
         };
         let ground = Ground { origin: -15_000, cell: 500, side: 61, heights: vec![250; 61 * 61] };
         let built = from_osm(&place, 100.0, None, &osm, &[], ground, Placed::default(), None, None, None, &[], None, None, &[]);
@@ -3946,6 +4069,7 @@ mod tests {
             ],
             areas: vec![Area { id: 4, tags: tags("amenity", "parking"), outer: vec![latlon(&ring(-120.0, 80.0, -80.0, 120.0))], inner: vec![latlon(&ring(-105.0, 95.0, -95.0, 105.0))] }],
             pois: Vec::new(),
+            yards: Default::default(),
         };
         let ground = Ground { origin: -15_000, cell: 500, side: 61, heights: vec![250; 61 * 61] };
         let built = from_osm(&place, 100.0, None, &osm, &[], ground, Placed::default(), None, None, None, &[], None, None, &[]);
@@ -3978,6 +4102,7 @@ mod tests {
             ],
             areas: Vec::new(),
             pois: Vec::new(),
+            yards: Default::default(),
         };
         let ground = Ground { origin: -15_000, cell: 500, side: 61, heights: vec![250; 61 * 61] };
         let built = from_osm(&place, 100.0, None, &osm, &[], ground, Placed::default(), None, None, None, &[], None, None, &[]);
@@ -4026,7 +4151,7 @@ mod tests {
             .collect();
         let ground = Ground { origin: -15_000, cell, side, heights };
         let manifest = Manifest { version: WORLD_VERSION, half_extent: cm(150.0), tile_size: cm(100.0), ..Default::default() };
-        let mut built = Built { manifest, tiles: (0..3).flat_map(|c| (0..3).map(move |r| ((c, r), Tile::default()))).collect() };
+        let mut built = Built { manifest, tiles: (0..3).flat_map(|c| (0..3).map(move |r| ((c, r), Tile::default()))).collect(), left_out: LeftOut::default() };
         // Drawn from the top down, with one pylon at z = -20.
         let lifts = vec![(LIFT_CHAIR, 2, vec![[0.0, -120.0], [0.0, -20.0], [0.0, 120.0]]), (LIFT_CHAIR, 2, vec![[0.0, 0.0], [400.0, 0.0]])];
         lay_lifts(&mut built, &lifts, 150.0, &ground);
@@ -4051,7 +4176,7 @@ mod tests {
     fn stony_dots_are_soft_patches_and_areas_fill_to_their_edge() {
         use crate::ocad::isom::Stony;
         let manifest = Manifest { version: WORLD_VERSION, half_extent: cm(100.0), tile_size: cm(100.0), ..Default::default() };
-        let mut built = Built { manifest, tiles: [(0, 0), (1, 0), (0, 1), (1, 1)].into_iter().map(|key| (key, Tile::default())).collect() };
+        let mut built = Built { manifest, tiles: [(0, 0), (1, 0), (0, 1), (1, 1)].into_iter().map(|key| (key, Tile::default())).collect(), left_out: LeftOut::default() };
         let cobbles = Stony { level: 0.45, angular: false, per_block: 0.0 };
         let blocks = Stony { level: 0.9, angular: true, per_block: 15.0 };
         // Two dots near the middle of tile (0, 0), a block field over the corner of (1, 1).
@@ -4154,7 +4279,7 @@ mod tests {
                 add(e, n, if e > 2.4 { 16.0 } else { 4.0 });
             }
         }
-        let tops = fit_roofs(&cloud, &|x, z| (x, z), false, 100.0, 100.0, None, &Ground::default(), &[(&ring, None, None, BUILDING_PLAIN), (&ring, Some(9.3), None, BUILDING_PLAIN)]);
+        let tops = fit_roofs(&cloud, &|x, z| (x, z), false, 100.0, 100.0, None, &Ground::default(), &[(&ring, None, None, BUILDING_PLAIN, &[]), (&ring, Some(9.3), None, BUILDING_PLAIN, &[])]);
         let Some(Top::Fitted(Roof::Leaf(Shape::Flat { y }))) = tops[0] else { panic!("{:?}", tops[0]) };
         assert!(y > 15.0, "uncapped, the crown is the roof: {y}");
         let Some(Top::Fitted(Roof::Leaf(Shape::Flat { y }))) = tops[1] else { panic!("{:?}", tops[1]) };
@@ -4189,7 +4314,7 @@ mod tests {
         // A guard rail down the road's middle stands on the deck over the trench, not down in it,
         // and one beside the road, with no deck under it, stops at the trench.
         let manifest = Manifest { version: WORLD_VERSION, half_extent: cm(150.0), tile_size: cm(300.0), ..Default::default() };
-        let mut built = Built { manifest, tiles: [((0, 0), Tile::default())].into_iter().collect() };
+        let mut built = Built { manifest, tiles: [((0, 0), Tile::default())].into_iter().collect(), left_out: LeftOut::default() };
         let rails = vec![(LINE_GUARDRAIL, vec![[-20.0, 0.0], [60.0, 0.0]]), (LINE_GUARDRAIL, vec![[-20.0, 20.0], [60.0, 20.0]])];
         lay_lines(&mut built, &rails, &[(points.clone(), *width)], 150.0, 300.0, &ground);
         let laid: Vec<&Line> = built.tiles[&(0, 0)].lines.iter().collect();

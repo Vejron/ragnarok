@@ -24,7 +24,8 @@ pub fn usable(map: &WorldFile, [x, z]: [i32; 2]) -> bool {
     map.is_inside(x, z) && !map.wet(x, z) && !map.buildings.iter().any(|building| near_building(building, [x, z]))
 }
 
-/// Whether `point` is inside `building`'s footprint or within `WALL_CLEARANCE` of a wall.
+/// Whether `point` is under `building`'s roof or within `WALL_CLEARANCE` of a wall: inside its
+/// footprint and in none of its yards, or near a wall round either.
 fn near_building(building: &Building, point: [i32; 2]) -> bool {
     let [min_x, min_z, max_x, max_z] = building.bounds();
     let [x, z] = point;
@@ -32,19 +33,22 @@ fn near_building(building: &Building, point: [i32; 2]) -> bool {
         return false;
     }
     let (px, pz) = (x as f64, z as f64);
-    let footprint = &building.footprint;
+    // Every ring a wall stands on is crossed once more by a ray from inside the built part: a
+    // point in a yard is inside two rings, and so outside.
     let mut inside = false;
-    for (i, a) in footprint.iter().enumerate() {
-        let b = footprint[(i + 1) % footprint.len()];
-        let (ax, az, bx, bz) = (a[0] as f64, a[1] as f64, b[0] as f64, b[1] as f64);
-        if (az > pz) != (bz > pz) && px < ax + (pz - az) * (bx - ax) / (bz - az) {
-            inside = !inside;
-        }
-        // Distance from the point to this wall.
-        let (dx, dz) = (bx - ax, bz - az);
-        let t = if dx == 0.0 && dz == 0.0 { 0.0 } else { (((px - ax) * dx + (pz - az) * dz) / (dx * dx + dz * dz)).clamp(0.0, 1.0) };
-        if (px - ax - t * dx).hypot(pz - az - t * dz) < WALL_CLEARANCE as f64 {
-            return true;
+    for ring in std::iter::once(&building.footprint).chain(&building.holes) {
+        for (i, a) in ring.iter().enumerate() {
+            let b = ring[(i + 1) % ring.len()];
+            let (ax, az, bx, bz) = (a[0] as f64, a[1] as f64, b[0] as f64, b[1] as f64);
+            if (az > pz) != (bz > pz) && px < ax + (pz - az) * (bx - ax) / (bz - az) {
+                inside = !inside;
+            }
+            // Distance from the point to this wall.
+            let (dx, dz) = (bx - ax, bz - az);
+            let t = if dx == 0.0 && dz == 0.0 { 0.0 } else { (((px - ax) * dx + (pz - az) * dz) / (dx * dx + dz * dz)).clamp(0.0, 1.0) };
+            if (px - ax - t * dx).hypot(pz - az - t * dz) < WALL_CLEARANCE as f64 {
+                return true;
+            }
         }
     }
     inside
@@ -110,6 +114,12 @@ mod tests {
         assert!(!usable(&map, [10_500, 0]), "outside the square");
         assert!(!usable(&map, [-5_000, -5_000]), "in the pond");
         assert!(!usable(&map, [5_000, 5_000]), "inside the house");
+        // A 40 m block round a 20 m yard: the yard is ground to spawn on, clear of its walls.
+        let mut map = map;
+        map.buildings.push(Building { height: 600, footprint: vec![[-6_000, 2_000], [-2_000, 2_000], [-2_000, 6_000], [-6_000, 6_000]], holes: vec![vec![[-5_000, 3_000], [-5_000, 5_000], [-3_000, 5_000], [-3_000, 3_000]]], ..Default::default() });
+        assert!(usable(&map, [-4_000, 4_000]), "in the yard");
+        assert!(!usable(&map, [-5_500, 4_000]), "under the block's roof");
+        assert!(!usable(&map, [-4_950, 4_000]), "against the yard's wall");
         assert!(!usable(&map, [4_450, 5_000]), "half a metre from its wall");
         assert!(usable(&map, [4_300, 5_000]), "two metres from its wall");
     }

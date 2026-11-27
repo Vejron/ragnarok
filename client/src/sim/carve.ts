@@ -1,12 +1,13 @@
 /**
  * A building cut into cells, as `crates/shared/src/carve.rs` cuts it, through the WebAssembly build
  * (`carve_*` in `crates/sim-wasm`): the server says which cell numbers a blast broke, and the client
- * draws what is left. Cutting, unpacking what the importer baked, merging the faces and finding the
- * cell a round struck are Rust's; what is here is what only the client asks of the cells.
+ * leaves out of the building's own walls and roof what stood in them. Cutting, unpacking what the
+ * importer baked and finding the cell a round struck are Rust's; what is here is what only the client
+ * asks of the cells.
  * The module is initialised by `SimMotor.create` before any tile is drawn.
  */
 
-import { carve_baked_faces, carve_cut, carve_faces, carve_furnish, carve_unpack, windows_of } from './wasm/sim'
+import { carve_cut, carve_faces, carve_furnish, carve_unpack, windows_of } from './wasm/sim'
 import { insideFor, type Furnishable } from './interior'
 
 /** Side of a cell, centimetres, on one lattice for the whole world. Mirrors `CELL`. */
@@ -52,7 +53,7 @@ export class Shell {
   readonly dims: [number, number, number]
   /**
    * The flags as the importer packed them, for a building it baked: they are unpacked only once
-   * something asks after single cells, as drawing the whole building needs none of them.
+   * something asks after single cells.
    */
   private readonly baked: Baked | null
   private solidFlags: Uint8Array | null
@@ -71,7 +72,7 @@ export class Shell {
     return (this.solidFlags ??= unpack(this.baked!.solid, this.count, this.dims[0] * this.dims[2]))
   }
 
-  /** 1 where the roof passes through the cell, for drawing it in the roof's colour. */
+  /** 1 where the roof passes through the cell. */
   private get roofed(): Uint8Array {
     return (this.roofFlags ??= unpack(this.baked!.roof, this.count, this.dims[0] * this.dims[2]))
   }
@@ -126,7 +127,6 @@ export class Shell {
     if (inside.length === 0) return
     const solid = this.solid
     for (const id of carve_furnish(Int32Array.from(this.origin), Uint32Array.from(this.dims), inside)) solid[id] = 1
-    this.whole = null
     this.solidIds = null
   }
 
@@ -255,41 +255,6 @@ export class Shell {
     }
     return out
   }
-
-  /** The faces of the whole building, worked out once: the drawing shares them. */
-  private whole: { tris: Int32Array; roof: Uint8Array } | null = null
-
-  /**
-   * What the building is drawn as (`Shell::faces`): the outer faces of its standing cubes (not in
-   * `removed`), wall and roof merged apart, as triangles of nine centimetre numbers each.
-   */
-  faces(removed: ReadonlySet<number>): Int32Array {
-    return this.facesWithRoof(removed).tris
-  }
-
-  /** `faces`, and for each triangle 1 when it is a roof cube's. */
-  facesWithRoof(removed: ReadonlySet<number>): { tris: Int32Array; roof: Uint8Array } {
-    if (removed.size === 0 && this.whole) return this.whole
-    if (removed.size === 0 && this.baked) {
-      // Straight from the packed flags, without bringing the grid across (`whole_faces`).
-      const out = carve_baked_faces(Int32Array.from(this.origin), Uint32Array.from(this.dims), this.baked.solid, this.baked.roof)
-      const count = out.length / 10
-      return (this.whole = { tris: out.subarray(0, count * 9), roof: Uint8Array.from(out.subarray(count * 9)) })
-    }
-    const keys = new Int32Array(this.solid.length).fill(-1)
-    for (const id of this.cells) if (!removed.has(id)) keys[id] = this.roofed[id]!
-    const faces = keyedFaces(this.origin, this.dims, keys)
-    const count = faces.length / 10
-    const tris = new Int32Array(count * 9)
-    const roof = new Uint8Array(count)
-    for (let t = 0, i = 0, o = 0; t < count; t++, i++) {
-      for (let k = 0; k < 9; k++) tris[o++] = faces[i++]!
-      roof[t] = faces[i]!
-    }
-    const result = { tris, roof }
-    if (removed.size === 0) this.whole = result
-    return result
-  }
 }
 
 const shells = new WeakMap<{ buildings: unknown }, Map<number, Shell | null>>()
@@ -339,11 +304,11 @@ export function shellOf(
 
 /**
  * The windows and door the server places on the walls `walls` (nine centimetre numbers a triangle,
- * `shared::windows::openings_of`) of a building of `kind` whose road lies `front` of it: corners in metres and the wall's normal, as `openingsOf` gives
+ * `shared::windows::openings_round`) of a building of `kind` whose road lies `front` of it, round the yards `yards` (`yardsOf`): corners in metres and the wall's normal, as `openingsOf` gives
  * them, for the two to be checked against each other.
  */
-export function serverOpenings(walls: readonly Tri[], kind = 0, front: readonly [number, number] = [0, 0]): { corners: [number, number, number][]; normal: [number, number, number]; door: boolean; head: number }[] {
-  const flat = windows_of(Int32Array.from(walls.flat()), kind, front[0], front[1])
+export function serverOpenings(walls: readonly Tri[], kind = 0, front: readonly [number, number] = [0, 0], yards: Int32Array = new Int32Array(0)): { corners: [number, number, number][]; normal: [number, number, number]; door: boolean; head: number }[] {
+  const flat = windows_of(Int32Array.from(walls.flat()), kind, front[0], front[1], yards)
   const out: { corners: [number, number, number][]; normal: [number, number, number]; door: boolean; head: number }[] = []
   for (let i = 0; i + 17 <= flat.length; i += 17) {
     const at = (k: number): [number, number, number] => [flat[i + k]!, flat[i + k + 1]!, flat[i + k + 2]!]

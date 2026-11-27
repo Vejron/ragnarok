@@ -669,9 +669,9 @@ pub fn carve_cut(walls: &[i32], roof: &[i32]) -> Option<CarvedCells> {
 /// The windows and door on the walls `walls` (nine centimetre numbers a triangle), as the server places
 /// them on a building of `kind` whose road lies `[front_x, front_z]` of it (`shared::windows::openings_of`): seventeen numbers an opening, its
 /// four corners (metres), the wall's normal, 1 for a door and its head (`HEAD_*`). For the client to
-/// check it places the same (`windows.ts`).
+/// check it places the same (`windows.ts`). `yards` are the yards inside it (`yards_of`).
 #[wasm_bindgen]
-pub fn windows_of(walls: &[i32], kind: u8, front_x: i8, front_z: i8) -> Vec<f32> {
+pub fn windows_of(walls: &[i32], kind: u8, front_x: i8, front_z: i8, yards: &[i32]) -> Vec<f32> {
     let mut look = shared::world::Look::default();
     for t in walls.chunks_exact(9) {
         let base = look.vertices.len() as u32;
@@ -681,7 +681,7 @@ pub fn windows_of(walls: &[i32], kind: u8, front_x: i8, front_z: i8) -> Vec<f32>
     let count = look.triangles.len() as u32;
     look.buildings.push([0, count, 0]);
     let mut out = Vec::new();
-    for window in shared::windows::openings_of(&look, [0, count, 0], kind, [front_x, front_z]) {
+    for window in shared::windows::openings_round(&look, [0, count, 0], kind, [front_x, front_z], &yards_of(yards)) {
         out.extend(window.corners.iter().flatten());
         out.extend(window.normal);
         out.push(if window.door { 1.0 } else { 0.0 });
@@ -690,14 +690,29 @@ pub fn windows_of(walls: &[i32], kind: u8, front_x: i8, front_z: i8) -> Vec<f32>
     out
 }
 
-/// What stands inside the house on `footprint` (`x, z` pairs, centimetres) whose look is `walls` and
+/// A building's yards (`Building::holes`) from the flat numbers they cross in: for each yard how
+/// many corners it has, then its corners as `x, z` pairs, centimetres.
+fn yards_of(flat: &[i32]) -> Vec<Vec<[i32; 2]>> {
+    let mut yards = Vec::new();
+    let mut at = 0;
+    while at < flat.len() {
+        let corners = flat[at].max(0) as usize;
+        let Some(ring) = flat.get(at + 1..at + 1 + 2 * corners) else { break };
+        yards.push(ring.chunks_exact(2).map(|p| [p[0], p[1]]).collect());
+        at += 1 + 2 * corners;
+    }
+    yards
+}
+
+/// What stands inside the house on `footprint` (`x, z` pairs, centimetres) round the yards `yards`
+/// (`yards_of`), whose look is `walls` and
 /// `roof` (nine centimetre numbers a triangle), which is a `kind` (`BUILDING_*`) and whose road lies
 /// `[front_x, front_z]` of it (`Building::front`), as the server
 /// works it out (`shared::interior::rooms`):
 /// ten numbers a triangle, its corners in centimetres and what it is (`PART_*`). Empty for a house
 /// without rooms.
 #[wasm_bindgen]
-pub fn interior_of(footprint: &[i32], walls: &[i32], roof: &[i32], kind: u8, front_x: i8, front_z: i8) -> Vec<i32> {
+pub fn interior_of(footprint: &[i32], yards: &[i32], walls: &[i32], roof: &[i32], kind: u8, front_x: i8, front_z: i8) -> Vec<i32> {
     let tris = |flat: &[i32]| flat.chunks_exact(9).map(|t| std::array::from_fn(|k| t[k])).collect::<Vec<shared::carve::Tri>>();
     let (walls, roof) = (tris(walls), tris(roof));
     let mut look = shared::world::Look::default();
@@ -706,10 +721,11 @@ pub fn interior_of(footprint: &[i32], walls: &[i32], roof: &[i32], kind: u8, fro
         look.vertices.extend([[t[0], t[1], t[2]], [t[3], t[4], t[5]], [t[6], t[7], t[8]]]);
         look.triangles.push([base, base + 1, base + 2]);
     }
-    let windows = shared::windows::openings_of(&look, [0, walls.len() as u32, 0], kind, [front_x, front_z]);
+    let yards = yards_of(yards);
+    let windows = shared::windows::openings_round(&look, [0, walls.len() as u32, 0], kind, [front_x, front_z], &yards);
     let ring: Vec<[i32; 2]> = footprint.chunks_exact(2).map(|p| [p[0], p[1]]).collect();
     let mut out = Vec::new();
-    for part in shared::interior::rooms(&ring, &walls, &roof, &windows, kind) {
+    for part in shared::interior::rooms(&ring, &yards, &walls, &roof, &windows, kind) {
         out.extend(part.tri);
         out.push(part.kind as i32);
     }
@@ -745,27 +761,6 @@ pub fn carve_faces(origin: &[i32], dims: &[u32], keys: &[i32]) -> Vec<i32> {
         out.push(key);
     });
     out
-}
-
-/// What a building the importer baked (its grid corner, size and packed flags, as the tile holds
-/// them) is drawn as while whole (`shared::carve::whole_faces`): nine centimetre numbers a triangle,
-/// then one number a triangle, 1 for a roof cube's. Empty when it has no cells.
-#[wasm_bindgen]
-pub fn carve_baked_faces(origin: &[i32], dims: &[u32], solid: &[u8], roof: &[u8]) -> Vec<i32> {
-    let dims = grid(dims);
-    let cells = shared::world::Cells {
-        origin: corner(origin),
-        dims: dims.map(|d| d as u32),
-        solid: shared::world::Bits(solid.to_vec()),
-        roof: shared::world::Bits(roof.to_vec()),
-    };
-    let (mut tris, mut keys) = (Vec::new(), Vec::new());
-    shared::carve::whole_faces(&cells, |tri, key| {
-        tris.extend_from_slice(&tri);
-        keys.push(key);
-    });
-    tris.extend(keys);
-    tris
 }
 
 /// The cell a round that landed at `(x, y, z)` (centimetres) struck, as the server's `chip` finds it:

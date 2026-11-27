@@ -23,6 +23,8 @@ export interface Furnishable {
   front?: readonly [number, number]
   /** Its footprint, `x, z` pairs in centimetres, as the world file has it. */
   footprint?: Int32Array
+  /** The yards inside it, as `yardsOf` packs them; none when left out. */
+  yards?: Int32Array
   /** Its inside once worked out (`interior_of`): ten numbers a triangle, its corners in centimetres and its `Part`. */
   inside?: Int32Array
 }
@@ -40,6 +42,7 @@ export interface Inside {
 }
 
 const NONE: Inside = { pieces: [], collided: new Int32Array(0) }
+const NO_YARDS = new Int32Array(0)
 const memo = new WeakMap<Int32Array, Inside>()
 
 /**
@@ -60,7 +63,7 @@ export function insideFor(look: { vertices: Float32Array; triangles: Uint32Array
       }
       return out
     }
-    range.inside = interior_of(range.footprint, flat(range.first, range.walls), flat(range.first + range.walls, range.roof), range.kind ?? 0, range.front?.[0] ?? 0, range.front?.[1] ?? 0)
+    range.inside = interior_of(range.footprint, range.yards ?? NO_YARDS, flat(range.first, range.walls), flat(range.first + range.walls, range.roof), range.kind ?? 0, range.front?.[0] ?? 0, range.front?.[1] ?? 0)
   }
   const raw = range.inside
   if (raw.length === 0) return NONE

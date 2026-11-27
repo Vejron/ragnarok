@@ -857,6 +857,9 @@ fn centroid(polygon: &[P]) -> P {
 /// A side of a roof piece by the keys of its two ends, in the order its piece goes round.
 type Side = ([i64; 2], [i64; 2]);
 
+/// How near the side of a roof piece a corner of another piece counts as lying on it, metres.
+const SNAP: f64 = 5e-4;
+
 /// Key of a point to the tenth of a millimetre, so the same corner reached two ways is one.
 fn key(p: P) -> [i64; 2] {
     [(p[0] * 1e4).round() as i64, (p[1] * 1e4).round() as i64]
@@ -868,7 +871,13 @@ fn key(p: P) -> [i64; 2] {
 fn roof_pieces(roof: &Roof, triangles: Vec<Vec<P>>) -> Vec<Vec<P>> {
     let mut lines = Vec::new();
     roof.lines(&mut lines);
-    let keep = |piece: &Vec<P>| piece.len() >= 3 && polygon_area(piece).abs() > 1e-8;
+    // A piece narrower than `SNAP` is a needle between corners that lie almost on one line. It is
+    // left out, and the piece beside it takes its far corner onto its own side instead.
+    let keep = |piece: &Vec<P>| {
+        let longest = (0..piece.len()).map(|k| { let (a, b) = (piece[k], piece[(k + 1) % piece.len()]); (b[0] - a[0]).hypot(b[1] - a[1]) }).fold(0.0, f64::max);
+        let area = polygon_area(piece).abs();
+        piece.len() >= 3 && area > 1e-8 && 2.0 * area >= SNAP * longest
+    };
     let mut pieces: Vec<Vec<P>> = Vec::new();
     for triangle in triangles {
         let mut parts = vec![triangle];
@@ -912,35 +921,73 @@ fn roof_pieces(roof: &Roof, triangles: Vec<Vec<P>>) -> Vec<Vec<P>> {
             corners.push(*p);
         }
     }
-    pieces
-        .into_iter()
-        .map(|piece| {
-            let mut out = Vec::with_capacity(piece.len());
-            for i in 0..piece.len() {
-                let (a, b) = (piece[i], piece[(i + 1) % piece.len()]);
-                out.push(a);
-                let (dx, dz) = (b[0] - a[0], b[1] - a[1]);
-                let length = dx * dx + dz * dz;
-                if length < 1e-12 {
-                    continue;
+    // Again while any piece gains a corner: a side made by one corner put in may have another lying
+    // on it, where several corners lie almost on one line.
+    for _ in 0..8 {
+        let before: usize = pieces.iter().map(Vec::len).sum();
+        pieces = pieces
+            .into_iter()
+            .map(|piece| {
+                let mut out = Vec::with_capacity(piece.len());
+                for i in 0..piece.len() {
+                    let (a, b) = (piece[i], piece[(i + 1) % piece.len()]);
+                    out.push(a);
+                    let (dx, dz) = (b[0] - a[0], b[1] - a[1]);
+                    let length = dx * dx + dz * dz;
+                    if length < 1e-12 {
+                        continue;
+                    }
+                    let (lo, hi) = ([a[0].min(b[0]) - 1e-3, a[1].min(b[1]) - 1e-3], [a[0].max(b[0]) + 1e-3, a[1].max(b[1]) + 1e-3]);
+                    let mut on: Vec<(f64, P)> = corners
+                        .iter()
+                        .filter(|p| p[0] >= lo[0] && p[0] <= hi[0] && p[1] >= lo[1] && p[1] <= hi[1])
+                        .filter(|p| piece.iter().all(|own| key(*own) != key(**p)))
+                        .filter_map(|&p| {
+                            let t = ((p[0] - a[0]) * dx + (p[1] - a[1]) * dz) / length;
+                            let off = ((p[0] - a[0]) * dz - (p[1] - a[1]) * dx).abs() / length.sqrt();
+                            (t > 1e-6 && t < 1.0 - 1e-6 && off < SNAP).then_some((t, p))
+                        })
+                        .collect();
+                    on.sort_by(|x, y| x.0.total_cmp(&y.0));
+                    out.extend(on.into_iter().map(|(_, p)| p));
                 }
-                let (lo, hi) = ([a[0].min(b[0]) - 1e-3, a[1].min(b[1]) - 1e-3], [a[0].max(b[0]) + 1e-3, a[1].max(b[1]) + 1e-3]);
-                let mut on: Vec<(f64, P)> = corners
-                    .iter()
-                    .filter(|p| p[0] >= lo[0] && p[0] <= hi[0] && p[1] >= lo[1] && p[1] <= hi[1])
-                    .filter(|p| key(**p) != key(a) && key(**p) != key(b))
-                    .filter_map(|&p| {
-                        let t = ((p[0] - a[0]) * dx + (p[1] - a[1]) * dz) / length;
-                        let off = ((p[0] - a[0]) * dz - (p[1] - a[1]) * dx).abs() / length.sqrt();
-                        (t > 1e-6 && t < 1.0 - 1e-6 && off < 5e-4).then_some((t, p))
-                    })
-                    .collect();
-                on.sort_by(|x, y| x.0.total_cmp(&y.0));
-                out.extend(on.into_iter().map(|(_, p)| p));
-            }
-            out
-        })
-        .collect()
+                out
+            })
+            .collect();
+        if pieces.iter().map(Vec::len).sum::<usize>() == before {
+            break;
+        }
+    }
+    pieces
+}
+
+/// The shortest stretch of a footprint's side with no wall on it that is given one, metres.
+const BARE: f64 = 0.02;
+
+/// How many stretches of a footprint's side the roof's pieces left without a wall, and were given
+/// one: the importer prints it. Each is a footprint the pieces did not come out right for.
+pub static BARED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// How many footprints could not be cut into triangles, and so were built as nothing: the importer
+/// prints it with the buildings it leaves out.
+pub static UNCUT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// The corners of `footprint` and then of each of `holes`, and the triangles (by corner) that
+/// cover the footprint outside the holes. No triangles when the rings cannot be cut (`UNCUT`).
+pub fn triangulate(footprint: &[P], holes: &[Vec<P>]) -> (Vec<P>, Vec<[usize; 3]>) {
+    let corners: Vec<P> = footprint.iter().chain(holes.iter().flatten()).copied().collect();
+    let flat: Vec<f64> = corners.iter().flat_map(|p| [p[0], p[1]]).collect();
+    let mut starts = Vec::with_capacity(holes.len());
+    let mut at = footprint.len();
+    for hole in holes {
+        starts.push(at);
+        at += hole.len();
+    }
+    let triangles: Vec<[usize; 3]> = earcutr::earcut(&flat, &starts, 2).map(|i| i.chunks_exact(3).map(|t| [t[0], t[1], t[2]]).collect()).unwrap_or_default();
+    if triangles.is_empty() {
+        UNCUT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+    (corners, triangles)
 }
 
 /// Appends a building to `mesh`: walls up to the roof (and steps where parts of the roof differ in
@@ -952,7 +999,7 @@ fn roof_pieces(roof: &Roof, triangles: Vec<Vec<P>>) -> Vec<Vec<P>> {
 /// roof is higher on one than the other, is a step: a wall facing the lower side (a dormer's front
 /// and cheeks, the end of a higher part).
 pub fn build(mesh: &mut CollisionMesh, footprint: &[P], floor: f64, roof: &Roof) -> Parts {
-    build_with(mesh, footprint, floor, roof, Walls::CLOSED)
+    build_with(mesh, footprint, &[], floor, roof, Walls::CLOSED)
 }
 
 /// Which walls a building has, and how low they may be under its roof.
@@ -969,8 +1016,10 @@ impl Walls {
     pub const CLOSED: Walls = Walls { open: None, least: MIN_WALL };
 }
 
-/// `build`, with `walls` saying which side to leave open and how low a wall may be.
-pub fn build_with(mesh: &mut CollisionMesh, footprint: &[P], floor: f64, roof: &Roof, walls: Walls) -> Parts {
+/// `build`, with `walls` saying which side to leave open and how low a wall may be, round the yards
+/// `holes` (rings inside the footprint, either way round): each is left without roof or floor, and
+/// its sides are outer walls, facing into it.
+pub fn build_with(mesh: &mut CollisionMesh, footprint: &[P], holes: &[Vec<P>], floor: f64, roof: &Roof, walls: Walls) -> Parts {
     let mut ids: HashMap<[i32; 3], u32> = HashMap::new();
     let mut vertex = |mesh: &mut CollisionMesh, x: f64, y: f64, z: f64| -> u32 {
         let key = [cm(x), cm(y), cm(z)];
@@ -997,9 +1046,8 @@ pub fn build_with(mesh: &mut CollisionMesh, footprint: &[P], floor: f64, roof: &
         }
     };
 
-    let flat: Vec<f64> = footprint.iter().flat_map(|p| [p[0], p[1]]).collect();
-    let triangles: Vec<[usize; 3]> = earcutr::earcut(&flat, &[], 2).map(|i| i.chunks_exact(3).map(|t| [t[0], t[1], t[2]]).collect()).unwrap_or_default();
-    let pieces = roof_pieces(roof, triangles.iter().map(|t| t.iter().map(|&i| footprint[i]).collect()).collect());
+    let (corners, triangles) = triangulate(footprint, holes);
+    let pieces = roof_pieces(roof, triangles.iter().map(|t| t.iter().map(|&i| corners[i]).collect()).collect());
     let planes: Vec<Plane> = pieces.iter().map(|piece| roof.plane_at(centroid(piece))).collect();
     let height = |piece: usize, p: P| clamp(eval(&planes[piece], p));
 
@@ -1015,12 +1063,16 @@ pub fn build_with(mesh: &mut CollisionMesh, footprint: &[P], floor: f64, roof: &
     order.sort_by_key(|(k, _)| *k);
 
     let first_wall = mesh.triangles.len();
+    // The sides that are outer sides, walled or left open: what the footprint's own sides are checked against.
+    let mut outer: Vec<(P, P)> = Vec::new();
     for &((kp, kq), (i, p, q)) in &order {
-        match sides.get(&(kq, kp)) {
+        // A side whose reverse is in the same piece is not shared with anything.
+        match sides.get(&(kq, kp)).filter(|&&(j, ..)| j != i) {
             // The open side of a shelter: no wall.
-            None if open(p, q) => {}
+            None if open(p, q) => outer.push((p, q)),
             // An outer wall, from the floor to the roof.
             None => {
+                outer.push((p, q));
                 let (tp, tq) = (height(i, p), height(i, q));
                 highest = highest.max(tp).max(tq);
                 let (bp, bq) = (vertex(mesh, p[0], floor, p[1]), vertex(mesh, q[0], floor, q[1]));
@@ -1054,6 +1106,40 @@ pub fn build_with(mesh: &mut CollisionMesh, footprint: &[P], floor: f64, roof: &
             Some(_) => {}
         }
     }
+    // Every side of the footprint and of its yards has a wall, whatever the pieces came to: where
+    // no outer side of a piece lies along a stretch of one, a wall is stood there up to the roof.
+    for ring in std::iter::once(footprint.to_vec()).chain(holes.iter().map(|hole| if polygon_area(hole) > 0.0 { hole.iter().rev().copied().collect() } else { hole.clone() })) {
+        for k in 0..ring.len() {
+            let (a, b) = (ring[k], ring[(k + 1) % ring.len()]);
+            let (dx, dz) = (b[0] - a[0], b[1] - a[1]);
+            let length = dx.hypot(dz);
+            if length < BARE {
+                continue;
+            }
+            let along = |p: P| ((p[0] - a[0]) * dx + (p[1] - a[1]) * dz) / length;
+            let on = |p: P| ((p[0] - a[0]) * dz - (p[1] - a[1]) * dx).abs() / length < 4.0 * SNAP && (-4.0 * SNAP..=length + 4.0 * SNAP).contains(&along(p));
+            let mut spans: Vec<(f64, f64)> = outer.iter().filter(|(p, q)| on(*p) && on(*q)).map(|(p, q)| (along(*p).min(along(*q)), along(*p).max(along(*q)))).collect();
+            spans.sort_by(|x, y| x.0.total_cmp(&y.0));
+            spans.push((length, length));
+            let mut reach = 0.0f64;
+            for (from, to) in spans {
+                if from - reach >= BARE {
+                    BARED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let at = |t: f64| [a[0] + dx * t / length, a[1] + dz * t / length];
+                    let (p, q) = (at(reach), at(from));
+                    // Under the plane of the roof over the middle of the stretch.
+                    let plane = roof.plane_at(at((reach + from) / 2.0));
+                    let (tp, tq) = (clamp(eval(&plane, p)), clamp(eval(&plane, q)));
+                    highest = highest.max(tp).max(tq);
+                    let (bp, bq) = (vertex(mesh, p[0], floor, p[1]), vertex(mesh, q[0], floor, q[1]));
+                    let (up, uq) = (vertex(mesh, p[0], tp, p[1]), vertex(mesh, q[0], tq, q[1]));
+                    push(mesh, [bp, bq, uq]);
+                    push(mesh, [bp, uq, up]);
+                }
+                reach = reach.max(to);
+            }
+        }
+    }
     let walls = (mesh.triangles.len() - first_wall) as u32;
 
     // Roof: each piece is a plane. A piece with a corner in the middle of a side is fanned from its middle.
@@ -1085,7 +1171,7 @@ pub fn build_with(mesh: &mut CollisionMesh, footprint: &[P], floor: f64, roof: &
 
     // Floor, facing down.
     for [a, b, c] in &triangles {
-        let ids = [*c, *b, *a].map(|k| vertex(mesh, footprint[k][0], floor, footprint[k][1]));
+        let ids = [*c, *b, *a].map(|k| vertex(mesh, corners[k][0], floor, corners[k][1]));
         push(mesh, ids);
     }
     Parts { walls, roof: roof_count, top: highest }
@@ -1391,5 +1477,186 @@ pub(crate) mod tests {
         let shape = Shape::Gable { y: 8.0, at: [2.0, 2.0], ridge: [1.0, 0.0], pitch: 0.5 };
         let parts = build(&mut mesh, &l, 0.0, &Roof::Leaf(shape));
         assert!(parts.roof >= 4 && parts.walls >= 12);
+    }
+
+    /// Fails when a side of `ring` is not walled from `floor` up to `top` metres along its whole
+    /// length: the wall triangles standing on the side must cover its length times the height.
+    pub(crate) fn walls_cover(ring: &[P], mesh: &CollisionMesh, parts: Parts, floor: f64, top: f64) {
+        let walls = &mesh.triangles[..parts.walls as usize];
+        let at = |i: u32| mesh.vertices[i as usize].map(|v| f64::from(v) / 100.0);
+        for k in 0..ring.len() {
+            let (a, b) = (ring[k], ring[(k + 1) % ring.len()]);
+            let (dx, dz) = (b[0] - a[0], b[1] - a[1]);
+            let length = dx.hypot(dz);
+            let on = |p: [f64; 3]| {
+                let off = ((p[0] - a[0]) * dz - (p[2] - a[1]) * dx).abs() / length;
+                let along = ((p[0] - a[0]) * dx + (p[2] - a[1]) * dz) / length;
+                off < 0.02 && (-0.02..=length + 0.02).contains(&along)
+            };
+            let mut area = 0.0;
+            for tri in walls {
+                let [p, q, r] = tri.map(at);
+                if on(p) && on(q) && on(r) {
+                    let (u, v) = ([q[0] - p[0], q[1] - p[1], q[2] - p[2]], [r[0] - p[0], r[1] - p[1], r[2] - p[2]]);
+                    let cross = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+                    area += (cross[0] * cross[0] + cross[1] * cross[1] + cross[2] * cross[2]).sqrt() / 2.0;
+                }
+            }
+            let expect = length * (top - floor);
+            assert!((area - expect).abs() < 0.02 * expect + 0.05, "the side {a:?} to {b:?} has {area:.2} m² of wall, not {expect:.2}");
+        }
+    }
+
+    /// A school in Umeå, 50 corners, as the importer had it once its walls were squared. Its
+    /// corner 48 lies a millimetre off the line between corners 45 and 49, and corner 12 as near
+    /// the line between 9 and 13.
+    const SCHOOL: [P; 50] = [
+        [-425.84617084710544, -2052.503009475785], [-427.98819212823435, -2072.857843347264],
+        [-399.8482351111564, -2075.8191245427392], [-397.7019476698374, -2055.4237509330683],
+        [-400.19988613354633, -2055.1608827916725], [-398.7711746283725, -2041.5843671919965],
+        [-394.46104284704563, -2042.0379397467207], [-393.7586007635543, -2035.362893126144],
+        [-398.06765238551907, -2034.909434240947], [-396.63959765742834, -2021.339159750327],
+        [-394.7965820607038, -2021.533107716425], [-393.909120648139, -2013.0998910256064],
+        [-395.75145224444356, -2012.906015039632], [-394.478212664177, -2000.8068914859857],
+        [-391.12014383263454, -2001.160274615815], [-391.29143065155966, -2002.7879497347835],
+        [-382.1928645970964, -2003.7454285449508], [-380.91645716572657, -1991.6162020770596],
+        [-390.0628970721473, -1990.6536853083244], [-390.2720245410758, -1992.6409460911673],
+        [-393.582105355171, -1992.2926129340008], [-392.2490695071882, -1979.62526762354],
+        [-402.9159597886421, -1978.5027477282358], [-402.5579239189192, -1975.1004656349405],
+        [-410.7395586216006, -1974.239479209887], [-414.5946991761731, -2010.8734502310201],
+        [-423.97368187656895, -2009.8864620459808], [-422.58042198396674, -1996.6468299734336],
+        [-435.52968115877235, -1995.2841271922455], [-436.9046575033094, -2008.3500174879368],
+        [-446.0141777681399, -2007.3913859220227], [-443.24618804874365, -1981.0882061204754],
+        [-454.09192110460856, -1979.9468658785559], [-453.7452335585956, -1976.6524226969802],
+        [-461.3809838761108, -1975.8488818879136], [-467.86174459505503, -2037.4331476265795],
+        [-457.64254630197195, -2038.5085550879262], [-457.94965909988673, -2041.4269341145186],
+        [-449.6878909731025, -2042.2963533030545], [-446.89274732604764, -2015.735139796932],
+        [-437.7453266620839, -2016.6977597747398], [-438.720517534141, -2025.9646369848679],
+        [-425.7739419927922, -2027.3270573564814], [-424.82694852660325, -2018.3281296373814],
+        [-415.4844378853209, -2019.3112797205092], [-417.42953036284985, -2037.794772201919],
+        [-420.9033265153503, -2037.4292106192531], [-421.3022028114601, -2041.2195841389355],
+        [-417.82848281655805, -2041.58513770723], [-419.0526473571483, -2053.217919358185],
+    ];
+
+    /// The roof the laser gave the school: a gable over each of its long ranges and a shed between.
+    fn school_roof() -> Roof {
+        let n = [0.994508467927504, -0.10465613799719903];
+        let ridge = [-0.10465613799719903, -0.994508467927504];
+        let west = Roof::Leaf(Shape::Gable { y: 46.96441359508721, at: [-456.9507629070899, -2019.5932414754138], ridge, pitch: 0.27379790812341176 });
+        let middle = Roof::Leaf(Shape::Shed { y: 41.03247222639483, at: [-439.0814188391159, -2021.473704637879], slope: [0.07404030044147294, -0.007310625234012331] });
+        let east = Roof::Leaf(Shape::Gable { y: 49.35485968738867, at: [-407.4039452640712, -2024.80725297134], ridge, pitch: 0.36072188438275804 });
+        Roof::Cut { o: [-430.14674680512894, -2022.4139362191117], n, low: Box::new(Roof::Cut { o: [-448.0160908731029, -2020.5334730566465], n, low: Box::new(west), high: Box::new(middle) }), high: Box::new(east) }
+    }
+
+    /// Fails when a side of `ring` longer than 3 cm has no wall standing on it along its whole
+    /// length, whatever height the wall has: for a roof that is not flat.
+    pub(crate) fn walled_all_along(ring: &[P], mesh: &CollisionMesh, parts: Parts) {
+        let at = |i: u32| mesh.vertices[i as usize].map(|v| f64::from(v) / 100.0);
+        for k in 0..ring.len() {
+            let (a, b) = (ring[k], ring[(k + 1) % ring.len()]);
+            let (dx, dz) = (b[0] - a[0], b[1] - a[1]);
+            let length = dx.hypot(dz);
+            if length < 0.03 {
+                continue;
+            }
+            let mut spans: Vec<(f64, f64)> = Vec::new();
+            for tri in &mesh.triangles[..parts.walls as usize] {
+                let along: Vec<f64> = tri.map(at).iter().filter(|p| ((p[0] - a[0]) * dz - (p[2] - a[1]) * dx).abs() / length < 0.03).map(|p| ((p[0] - a[0]) * dx + (p[2] - a[1]) * dz) / length).filter(|t| (-0.03..=length + 0.03).contains(t)).collect();
+                if along.len() == 3 {
+                    spans.push((along.iter().copied().fold(f64::MAX, f64::min), along.iter().copied().fold(f64::MIN, f64::max)));
+                }
+            }
+            spans.sort_by(|x, y| x.0.total_cmp(&y.0));
+            let reach = spans.iter().fold(0.0f64, |reach, &(from, to)| if from <= reach + 0.03 { reach.max(to) } else { reach });
+            assert!(reach > length - 0.03, "side {k}, {a:?} to {b:?}, is walled for {reach:.2} m of {length:.2}");
+        }
+    }
+
+    #[test]
+    fn the_school_is_walled_all_round_under_the_roof_the_laser_gave_it() {
+        let mut mesh = CollisionMesh::default();
+        let parts = build(&mut mesh, &SCHOOL, 35.67634201049805, &school_roof());
+        walled_all_along(&SCHOOL, &mesh, parts);
+        assert!((roof_area(&mesh, parts) - polygon_area(&SCHOOL).abs()).abs() < 0.5, "the roof covers {} m² of {}", roof_area(&mesh, parts), polygon_area(&SCHOOL).abs());
+    }
+
+    #[test]
+    fn a_school_with_corners_almost_on_a_line_is_walled_all_round() {
+        // As surveyed, and with the two corners moved onto their lines to within a fraction of a
+        // millimetre, either side.
+        let onto = |ring: &mut Vec<P>, k: usize, a: usize, b: usize, off: f64| {
+            let (p, q) = (ring[a], ring[b]);
+            let (dx, dz) = (q[0] - p[0], q[1] - p[1]);
+            let length = dx.hypot(dz);
+            let t = ((ring[k][0] - p[0]) * dx + (ring[k][1] - p[1]) * dz) / (length * length);
+            ring[k] = [p[0] + dx * t + dz / length * off, p[1] + dz * t - dx / length * off];
+        };
+        for off in [None, Some(0.0003), Some(-0.0003), Some(0.0)] {
+            let mut ring = SCHOOL.to_vec();
+            if let Some(off) = off {
+                onto(&mut ring, 48, 45, 49, off);
+                onto(&mut ring, 12, 9, 13, off);
+            }
+            let mut mesh = CollisionMesh::default();
+            let parts = build(&mut mesh, &ring, 30.0, &Roof::Leaf(Shape::Flat { y: 36.0 }));
+            walls_cover(&ring, &mesh, parts, 30.0, 36.0);
+            assert!((roof_area(&mesh, parts) - polygon_area(&ring).abs()).abs() < 0.05, "{off:?}: the roof covers {} m² of {}", roof_area(&mesh, parts), polygon_area(&ring).abs());
+        }
+    }
+
+    #[test]
+    fn a_courtyard_gets_walls_facing_into_it_and_no_roof_or_floor_over_it() {
+        let outer = rectangle(20.0, 16.0, 0.3, [5.0, -3.0]);
+        let yard = rectangle(8.0, 6.0, 0.3, [5.0, -3.0]);
+        for roof in [Roof::Leaf(Shape::Flat { y: 6.0 }), Roof::Leaf(Shape::Gable { y: 9.0, at: [5.0, -3.0], ridge: [0.3f64.cos(), 0.3f64.sin()], pitch: 0.4 })] {
+            // The yard's ring may be drawn either way round.
+            for hole in [yard.clone(), yard.iter().rev().copied().collect()] {
+                let mut mesh = CollisionMesh::default();
+                let parts = build_with(&mut mesh, &outer, std::slice::from_ref(&hole), 0.0, &roof, Walls::CLOSED);
+                // Corners are kept to the centimetre, which moves a turned wall by a little.
+                assert!((roof_area(&mesh, parts) - (320.0 - 48.0)).abs() < 0.5, "the roof covers {} m²", roof_area(&mesh, parts));
+                // The floor is what follows the walls and the roof, facing down.
+                let floor: f64 = mesh.triangles[(parts.walls + parts.roof) as usize..]
+                    .iter()
+                    .map(|tri| {
+                        let p = tri.map(|i| mesh.vertices[i as usize]);
+                        (f64::from(p[1][0] - p[0][0]) * f64::from(p[2][2] - p[0][2]) - f64::from(p[2][0] - p[0][0]) * f64::from(p[1][2] - p[0][2])) / 2.0 / 1e4
+                    })
+                    .sum();
+                assert!((floor + 272.0).abs() < 0.5, "the floor covers {floor} m²");
+                // Every wall is wound the same way to what is built, round the outline and round the
+                // yard alike (towards it, as the mesh is kept: whoever draws it turns it over), so a
+                // yard's walls face into the yard as the outer walls face out.
+                let at = |i: u32| mesh.vertices[i as usize].map(|v| f64::from(v) / 100.0);
+                for tri in &mesh.triangles[..parts.walls as usize] {
+                    let [p, q, r] = tri.map(at);
+                    let normal = [(q[1] - p[1]) * (r[2] - p[2]) - (q[2] - p[2]) * (r[1] - p[1]), (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])];
+                    let length = normal[0].hypot(normal[1]);
+                    let mid = [(p[0] + q[0] + r[0]) / 3.0, (p[2] + q[2] + r[2]) / 3.0];
+                    let ahead = [mid[0] + normal[0] / length * 0.1, mid[1] + normal[1] / length * 0.1];
+                    assert!(inside(ahead, &outer) && !inside(ahead, &yard), "the wall at {mid:?} is wound the other way");
+                }
+                if matches!(roof, Roof::Leaf(Shape::Flat { .. })) {
+                    walls_cover(&outer, &mesh, parts, 0.0, 6.0);
+                    walls_cover(&yard, &mesh, parts, 0.0, 6.0);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn every_side_of_a_footprint_gets_a_wall_when_a_corner_lies_almost_on_a_line() {
+        // A block with a porch on its east wall. Past the porch the wall goes on a fraction of a
+        // millimetre off the line it had before it, to either side, as a surveyed school's did.
+        for off in [0.0003, -0.0003, 0.0009, -0.0009] {
+            for (from, to) in [(3.0, 5.0), (1.0, 2.0), (7.0, 9.0)] {
+                let ring = vec![[0.0, 0.0], [10.0, 0.0], [10.0, from], [12.0, from], [12.0, to], [10.0 + off, to], [10.0, 10.0], [0.0, 10.0]];
+                let mut mesh = CollisionMesh::default();
+                let parts = build(&mut mesh, &ring, 0.0, &Roof::Leaf(Shape::Flat { y: 6.0 }));
+                walls_cover(&ring, &mesh, parts, 0.0, 6.0);
+                let area = 100.0 + 2.0 * (to - from);
+                assert!((roof_area(&mesh, parts) - area).abs() < 0.05, "the roof covers {} m², not {area}", roof_area(&mesh, parts));
+            }
+        }
     }
 }

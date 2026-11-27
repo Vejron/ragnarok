@@ -35,7 +35,7 @@ flowchart LR
 | Thread | Owns | Keeps between tiles | WASM |
 |---|---|---|---|
 | Main | Streaming, the scene graph and GPU upload, prediction and colliders (`ClientSim`), carve and damage state, surface and grass lookups | Everything that is attached | #1, the whole simulation module, initialised by `SimMotor.create` |
-| Tile worker (`render/tile.worker.ts`) | `prepareTile` for every streamed-in tile, and remeshing a tile's terrain at another level of detail | The ground and relief of every tile it prepared, until `drop` | #2, the same module, initialised in the worker and awaited before the first tile with buildings. Only `carve_baked_faces` (and `carve_cut` for a hand-built world) is used |
+| Tile worker (`render/tile.worker.ts`) | `prepareTile` for every streamed-in tile, and remeshing a tile's terrain at another level of detail | The ground and relief of every tile it prepared, until `drop` | #2, the same module, initialised in the worker and awaited before the first tile with buildings. Only `interior_of` (the rooms inside the buildings, `facadeFor`) is used |
 
 Without a worker (no `Worker` or `OffscreenCanvas`: tests, Node), or when a request fails, `attachTile` runs the same `prepareTile` on the main thread. There is one fallback, and it is the same code.
 
@@ -115,7 +115,7 @@ flowchart LR
   IN --> DR["drapedMeshes"]
   DR --> RIB["roadRibbons · railRibbons<br/>one GroundShade"]
   DR --> WAT["surfaceBuffers · streamBuffers"]
-  IN --> BLD["buildingBuffers<br/>carve_baked_faces (WASM) · ranges"]
+  IN --> BLD["buildingBuffers<br/>interior_of (WASM) · ranges"]
   IN --> SUR["rasterSurface"]
   SUR --> GR["grassMask<br/>(reuses the surface raster)"]
   TER & REL & COV & RIB & WAT & BLD & SUR & GR --> OUT["PreparedTile"]

@@ -25,7 +25,7 @@ function house(): TileData {
   const a = box(0, 0)
   const building: Building = {
     height: 6, base: 0, first: 0, walls: 8, roof: 2, roofKind: ROOF_FLAT, kind: 0, front: [0, 0], cells: null, paint: [null, null], clad: [0, 0],
-    footprint: [[0, -5], [10, -5], [10, 5], [0, 5]], look: { first: 0, walls: 8, roof: 2 },
+    footprint: [[0, -5], [10, -5], [10, 5], [0, 5]], holes: [], look: { first: 0, walls: 8, roof: 2 },
   }
   const collision = { vertices: Float32Array.from(a.vertices.flat()), triangles: Uint32Array.from(a.triangles.flat()) }
   return { buildings: [building], roads: [], cover: [], trees: [], streams: [], bridges: [], collision, look: collision, ground: new Float32Array(0), water: new Float32Array(0) } as unknown as TileData

@@ -4,7 +4,7 @@ import { span } from './spans'
 
 /** Mirrors `crates/shared/src/world.rs`. Coordinates are metres: +X east, +Z south, +Y up. */
 
-export const WORLD_VERSION = 45
+export const WORLD_VERSION = 46
 
 /** `Manifest::theme`, mirrors `crates/shared/src/world.rs`. */
 export const THEME_WINTER = 1
@@ -217,6 +217,12 @@ export interface Tree {
 export interface Building {
   height: number
   footprint: Point2[]
+  /**
+   * The yards inside the footprint that are open to the sky, each a ring like `footprint` but
+   * clockwise seen from above: walls stand round each, facing into it, and the building has no roof
+   * or floor over it. Empty for most buildings.
+   */
+  holes: Point2[][]
   /** Height of the floor, metres. The top of the roof is at `base + height`. */
   base: number
   /**
@@ -243,9 +249,22 @@ export interface Building {
   clad: [number, number]
   /**
    * Its own walls and roof in the tile's `look`, to be drawn: `walls` triangles from `first`, then
-   * `roof`. Null when it has none (a world made before looks): it is then drawn as its cubes.
+   * `roof`. Null when it has none (a world built by hand): it is then drawn from its collision triangles.
    */
-  look?: { first: number; walls: number; roof: number; kind?: number; front?: readonly [number, number]; footprint?: Int32Array; inside?: Int32Array } | null
+  look?: { first: number; walls: number; roof: number; kind?: number; front?: readonly [number, number]; footprint?: Int32Array; yards?: Int32Array; inside?: Int32Array } | null
+}
+
+/**
+ * A building's yards (`Building.holes`, here in centimetres) as the numbers the WebAssembly build
+ * takes them in: for each yard how many corners it has, then its corners as `x, z` pairs.
+ */
+export function yardsOf(holes: readonly (readonly (readonly number[])[])[]): Int32Array {
+  const out: number[] = []
+  for (const hole of holes) {
+    out.push(hole.length)
+    for (const p of hole) out.push(p[0]!, p[1]!)
+  }
+  return Int32Array.from(out)
 }
 
 /**
@@ -749,7 +768,7 @@ function flatIndices(triangles: readonly number[][]): Uint32Array {
 
 export function decodeTile(bytes: Uint8Array): TileData {
   const [buildings, roads, [vertices, triangles], ground, cover, trees, water, reach, flow, foam, stir, lane, streams, bridges, detail, rails, ski, lines, stones, crops, look, graves] = decode(bytes) as [
-    [number, number[][], number, number, number, number, number, number, [number, number], [number[], number[], Uint8Array, Uint8Array], [number | null, number | null], [number, number]][],
+    [number, number[][], number[][][], number, number, number, number, number, number, [number, number], [number[], number[], Uint8Array, Uint8Array], [number | null, number | null], [number, number]][],
     [number, number, boolean, number[][], number, number, number, number, boolean][],
     [number[][], number[][]],
     [number, Uint8Array],
@@ -774,9 +793,10 @@ export function decodeTile(bytes: Uint8Array): TileData {
   ]
   const looks = look[2]
   return {
-    buildings: buildings.map(([height, footprint, base, first, walls, roof, roofKind, kind, front, cells, paint, clad], index) => ({
+    buildings: buildings.map(([height, footprint, holes, base, first, walls, roof, roofKind, kind, front, cells, paint, clad], index) => ({
       height: metres(height),
       footprint: footprint.map(point),
+      holes: holes.map((hole) => hole.map(point)),
       base: metres(base),
       first,
       walls,
@@ -791,7 +811,7 @@ export function decodeTile(bytes: Uint8Array): TileData {
           : null,
       paint,
       clad,
-      look: looks[index] && looks[index]![1]! + looks[index]![2]! > 0 ? { first: looks[index]![0]!, walls: looks[index]![1]!, roof: looks[index]![2]!, kind, front, footprint: Int32Array.from(footprint.flat()) } : null,
+      look: looks[index] && looks[index]![1]! + looks[index]![2]! > 0 ? { first: looks[index]![0]!, walls: looks[index]![1]!, roof: looks[index]![2]!, kind, front, footprint: Int32Array.from(footprint.flat()), yards: yardsOf(holes) } : null,
     })),
     roads: roads.map(([width, kind, carried, points, lanes, forward, marks, along, oneWay]) => ({ width: metres(width), kind, carried, points: points.map(point), lanes, forward, marks, along: metres(along), oneWay })),
     cover: cover.map(([kind, rings]) => ({ kind, rings: rings.map((ring) => ring.map(point)) })),
