@@ -3,7 +3,8 @@ import { CELL_HP, type Shell } from '@/sim/carve'
 import { DOOR_RGB, FRAME_RGB, drawnOpenings, facing, openingQuads, openingsFor, type Opening } from './windows'
 import { SOFFIT_RGB, TRIM_RGB, eaveAnchor, eavesFor } from './eaves'
 import { detailColour, detailsOf } from './details'
-import { Surface, trimmed, type Style } from './buildingmesh'
+import { Surface, cornered, trimmed, type Style } from './buildingmesh'
+import { WallRuns, endsAt, type Run } from './corners'
 import { FLOOR_RGB, INSIDE_RGB, INTERIOR_SHADE, facadeFor, innerOf, type Facade } from './facade'
 import { add, centreOf, cross, dot, edgeKey, hash, keyOf, normalOf, split, sub, unit, type P, type Poly, type RGB } from './geom'
 
@@ -24,12 +25,14 @@ export interface LookSoup {
   colors: Float32Array
   /** Four numbers a vertex, as the whole building's have them (`BuildingBuffers.custom`): the surface pattern on it, and with one the building's seed, foot and plinth. */
   custom: Float32Array
+  /** Two numbers a vertex, as the whole building's have them (`BuildingBuffers.uvs`): a wall's two ends, for the boards over its corners. */
+  uvs: Float32Array
 }
 
 /** The surface patterns of a building's walls and roof, its seed, its plinth and its trim (`buildingSurfaces`). */
 export type Surfaces = Style
 
-const PLAIN: Surfaces = { wall: 0, roof: 0, seed: 0, foot: 0, plinth: 0, frame: FRAME_RGB, door: DOOR_RGB }
+const PLAIN: Surfaces = { wall: 0, roof: 0, seed: 0, foot: 0, plinth: 0, corners: 0, frame: FRAME_RGB, door: DOOR_RGB }
 
 /** The patterns `wall` and `roof` (`Surface`) alone: no seed, no plinth, and the trim's own white and brown. */
 export function patterned(wall: Surfaces['wall'], roof: Surfaces['roof']): Surfaces {
@@ -559,10 +562,13 @@ class Writer {
   readonly positions: number[] = []
   readonly colors: number[] = []
   readonly custom: number[] = []
+  readonly uvs: number[] = []
+  /** The run of wall the next polygons are part of, on a building with boards over its corners (`corners.ts`); null for anything else. */
+  run: Run | null = null
   /** The surface pattern the next polygons are drawn with: only walls and roofs whole or cut keep theirs, not edges, chips or windows. */
   surface = 0
   /** The building's seed, its walls' foot and its plinth, written on the faces with a pattern as the whole building's are (`Style`). */
-  style: Pick<Style, 'seed' | 'foot' | 'plinth'> = PLAIN
+  style: Pick<Style, 'seed' | 'foot' | 'plinth' | 'corners'> = PLAIN
   constructor(readonly place: (p: P) => P, private readonly offset: P = [0, 0, 0]) {}
 
   /** `poly` as a fan, each corner in `base` times what `tone` gives it; `placed` when its corners are where they go already. */
@@ -581,8 +587,12 @@ class Writer {
     const [ox, oy, oz] = this.offset
     this.positions.push(p[0] - ox, p[1] - oy, p[2] - oz)
     this.colors.push(base[0] * tone, base[1] * tone, base[2] * tone)
+    const run = this.surface !== 0 && this.style.corners > 0 ? this.run : null
     if (this.surface === 0) this.custom.push(0, 0, 0, 0)
-    else this.custom.push(this.surface, this.style.seed, this.style.foot, this.style.plinth)
+    else this.custom.push(run ? cornered(this.surface as Surface, this.style.corners) : this.surface, this.style.seed, this.style.foot, this.style.plinth)
+    // A corner pushed about at a hole's edge says where it is now along the wall as it stood whole.
+    if (run) this.uvs.push(...endsAt(run, p[0], p[2]))
+    else this.uvs.push(0, 0)
   }
 
   /** The edges in `rims` given their depth, going in from the outer face, in the cross-section colour. */
@@ -599,7 +609,7 @@ class Writer {
   }
 
   soup(): LookSoup {
-    return { positions: Float32Array.from(this.positions), colors: Float32Array.from(this.colors), custom: Float32Array.from(this.custom) }
+    return { positions: Float32Array.from(this.positions), colors: Float32Array.from(this.colors), custom: Float32Array.from(this.custom), uvs: Float32Array.from(this.uvs) }
   }
 }
 
@@ -662,17 +672,23 @@ export function lookFracture(look: CollisionMesh, range: LookRange, shell: Shell
 
   const out = new Writer(place)
   out.style = surfaces
+  // The walls' runs are those of the house as it stood whole: a hole's edge is no corner, and gets no board.
+  const runs = surfaces.corners > 0 ? new WallRuns(facade.walls) : null
+  const runOf = (piece: Piece) => (piece.roof ? null : (runs?.of(piece.normal, piece.poly[0]!) ?? null))
   // A piece drawn whole lies two cells or more from every hole, so none of its corners is pushed about (`outline`).
   for (const piece of whole) {
     out.surface = piece.roof ? surfaces.roof : surfaces.wall
+    out.run = runOf(piece)
     out.poly(piece.poly, piece.roof ? roof : wall, undefined, true)
   }
   for (const piece of kept) {
     out.surface = piece.roof ? surfaces.roof : surfaces.wall
+    out.run = runOf(piece)
     if (thin.has(piece)) out.poly(piece.poly, piece.roof ? roof : wall, undefined, true)
     else out.poly(piece.poly, piece.roof ? roof : wall, shade)
   }
   out.surface = 0
+  out.run = null
   // The room inside: what stands, turned in a wall's thickness, dim, with the same ragged edge; and the floor where the house still stands over it.
   // A bridge has no windows, so only what is next to a hole can be seen into, and its rails are thinner
   // than a wall: their inner faces would stand out beside them.

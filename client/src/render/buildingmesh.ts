@@ -1,4 +1,4 @@
-import { Color } from '@ragnarok/engine'
+import { Color, WALL_KINDS, WALL_TRIMS } from '@ragnarok/engine'
 import type { Sphere } from '@ragnarok/engine'
 import { CLAD_BRICK, CLAD_RENDER, CLAD_SHEET, CLAD_STONE, CLAD_UNKNOWN, CLAD_WOOD, ROOFING_FELT, ROOFING_SHEET, ROOFING_SHINGLES, ROOFING_TILES, ROOFING_UNKNOWN, BUILDING_BARN, BUILDING_BRIDGE, BUILDING_CABIN, BUILDING_CHURCH, BUILDING_FARMHOUSE, BUILDING_FIRE_STATION, BUILDING_FLATS, BUILDING_HALL, BUILDING_PLAIN, BUILDING_VILLA, BUILDING_OUTBUILDING, BUILDING_PUBLIC, BUILDING_SHELTER, BUILDING_SHOP, DECK_ASPHALT, DECK_BALLAST, DECK_PLANKS, ROOF_FLAT, type Bridge, type Building, type TileData } from '@/world'
 import { winter } from './season'
@@ -8,6 +8,7 @@ import { detailColour, detailTriangles, detailsOf, type DetailQuad } from './det
 import { glassBuffers, type Dressing, type GlassBuffers } from './glass'
 import { FLOOR_RGB, INSIDE_RGB, facadeFor, innerOf, type Facade } from './facade'
 import { normalOf, type Poly, type RGB } from './geom'
+import { WallRuns, endsAt, type Run } from './corners'
 import { packableTransferables } from './packing'
 
 /*
@@ -74,8 +75,11 @@ export interface BuildingBuffers {
   /**
    * Four numbers a vertex. On a face with a pattern: the pattern (`Surface`), the building's seed,
    * the height of the foot of its walls and how high its plinth stands over that (`Style`). All 0 on a plain face.
+   * A wall with boards over its corners has their colour added to its pattern (`cornered`).
    */
   custom: Float32Array
+  /** Two numbers a vertex: on a wall with boards over its corners, how far along it its two ends are, metres (`corners.ts`). Else 0. */
+  uvs: Float32Array
   /** Three vertices a triangle. */
   indices: Uint32Array
   bounds: Sphere
@@ -302,12 +306,24 @@ export interface Trim {
 }
 
 /**
- * Window frames and the boards along the roof: white on most houses, now and then cream, grey, dark
- * green, oxblood or blue-grey.
+ * Window frames, the boards along the roof and over the corners: white on most houses, now and then
+ * cream, grey, dark green, oxblood or blue-grey. The colours are the engine's `WALL_TRIMS`, since the
+ * shader paints the corner boards and is told only which of them.
  */
-const FRAME_COLORS: readonly RGB[] = [FRAME_RGB, FRAME_RGB, FRAME_RGB, FRAME_RGB, FRAME_RGB, [0.8, 0.72, 0.52], [0.5, 0.51, 0.5], [0.05, 0.15, 0.085], [0.2, 0.035, 0.03], [0.17, 0.25, 0.33]]
+const FRAME_COLORS: readonly RGB[] = [FRAME_RGB, FRAME_RGB, FRAME_RGB, FRAME_RGB, FRAME_RGB, ...WALL_TRIMS.slice(1)]
 /** Frames on what is not a house: white, or grey. */
-const PLAIN_FRAME_COLORS: readonly RGB[] = [FRAME_RGB, FRAME_RGB, FRAME_RGB, [0.5, 0.51, 0.5]]
+const PLAIN_FRAME_COLORS: readonly RGB[] = [FRAME_RGB, FRAME_RGB, FRAME_RGB, WALL_TRIMS[2]!]
+
+/** The kinds whose boarded walls are sheet metal ribbed like boards, or logs: they have no boards over their corners. */
+const UNCORNERED: ReadonlySet<number> = new Set([BUILDING_HALL, BUILDING_SHELTER])
+
+/** A wall's pattern with the colour of its corner boards added (`Style.corners`), as its vertices' custom x has it; and the pattern alone again. */
+export function cornered(surface: Surface, corners: number): number {
+  return surface + WALL_KINDS * corners
+}
+export function surfaceOf(custom: number): Surface {
+  return (custom % WALL_KINDS) as Surface
+}
 /** Doors: tarred brown on most, or green, blue, red, grey, ochre or white. */
 const DOOR_COLORS: readonly RGB[] = [DOOR_RGB, DOOR_RGB, DOOR_RGB, [0.045, 0.13, 0.07], [0.05, 0.1, 0.2], [0.26, 0.04, 0.03], [0.2, 0.2, 0.19], [0.42, 0.27, 0.07], [0.7, 0.68, 0.62]]
 
@@ -354,6 +370,8 @@ export interface Style extends Trim {
   seed: number
   foot: number
   plinth: number
+  /** 0, or for a boarded house with boards over its corners, one more than the place of their colour (its frames') in the engine's `WALL_TRIMS`. */
+  corners: number
 }
 
 /**
@@ -369,7 +387,7 @@ export function buildingSurfaces(tile: Pick<BuildingTile, 'buildings' | 'look'>,
   const { wall, roof } = buildingColors(tile, index, salt)
   const building = tile.buildings[index]!
   const seed = buildingSeed(salt, index)
-  const bare = { seed: seed / SEED_MOST, foot: 0, plinth: 0, frame: FRAME_RGB, door: DOOR_RGB }
+  const bare = { seed: seed / SEED_MOST, foot: 0, plinth: 0, corners: 0, frame: FRAME_RGB, door: DOOR_RGB }
   // A bridge is plain concrete with what it carries on its deck: asphalt, planks, or for a railway ballast.
   if (building.kind === BUILDING_BRIDGE) {
     const deck = roof === DECK_ASPHALT ? Surface.Asphalt : roof === DECK_PLANKS ? Surface.Planks : roof === DECK_BALLAST || roof === WINTER_BALLAST_COLOR ? Surface.Ballast : Surface.Plain
@@ -384,13 +402,18 @@ export function buildingSurfaces(tile: Pick<BuildingTile, 'buildings' | 'look'>,
   const homely = HOUSES.has(building.kind ?? 0) || building.kind === BUILDING_OUTBUILDING
   const foot = building.kind === BUILDING_SHELTER ? null : footOf(tile, index)
   const [low, high] = DRIVEN.has(building.kind ?? 0) ? FOOTING : PLINTH
+  const wallSurfaced = house === null ? wallSurface(tile, index, salt, wall) : wallSurface(tile, house, salt, wall)
+  const frame = frameOn(wall, pick(homely ? FRAME_COLORS : PLAIN_FRAME_COLORS, painter, Own.Frame))
+  // Boards, and not sheet metal ribbed like them: a board stands over each corner, painted as the frames are.
+  const boarded = (wallSurfaced === Surface.Upright || wallSurfaced === Surface.Lap) && building.clad[0] !== CLAD_SHEET && !UNCORNERED.has(building.kind ?? BUILDING_PLAIN)
   return {
-    wall: house === null ? wallSurface(tile, index, salt, wall) : wallSurface(tile, house, salt, wall),
+    wall: wallSurfaced,
     roof: roofSurface,
     seed: seed / SEED_MOST,
     foot: foot ?? 0,
     plinth: foot === null ? 0 : low + (high - low) * own(seed, Own.Plinth),
-    frame: frameOn(wall, pick(homely ? FRAME_COLORS : PLAIN_FRAME_COLORS, painter, Own.Frame)),
+    corners: boarded ? 1 + Math.max(0, WALL_TRIMS.indexOf(frame === FRAME_RGB ? WALL_TRIMS[0]! : frame)) : 0,
+    frame,
     door: pick(homely ? DOOR_COLORS : [DOOR_RGB], painter, Own.Door),
   }
 }
@@ -426,10 +449,13 @@ class Soup {
   readonly normals: Float32Array
   readonly colors: Float32Array
   readonly custom: Float32Array
+  readonly uvs: Float32Array
   /** The pattern the next triangles are drawn with. */
   surface: Surface = Surface.Plain
-  /** The building the next triangles are of: its seed, its walls' foot and its plinth (`Style`), written on the faces with a pattern. */
-  style: Pick<Style, 'seed' | 'foot' | 'plinth'> = { seed: 0, foot: 0, plinth: 0 }
+  /** The building the next triangles are of: its seed, its walls' foot, its plinth and its corner boards (`Style`), written on the faces with a pattern. */
+  style: Pick<Style, 'seed' | 'foot' | 'plinth' | 'corners'> = { seed: 0, foot: 0, plinth: 0, corners: 0 }
+  /** The run of wall the next triangles are part of, on a building with boards over its corners; null for anything else. */
+  run: Run | null = null
   private at = 0
   /** The box round every corner written: min x, y, z, then max. */
   private readonly box = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity]
@@ -439,6 +465,7 @@ class Soup {
     this.normals = new Float32Array(triangles * 9)
     this.colors = new Float32Array(triangles * 9)
     this.custom = new Float32Array(triangles * 12)
+    this.uvs = new Float32Array(triangles * 6)
   }
 
   /**
@@ -484,11 +511,20 @@ class Soup {
     }
     if (this.surface !== Surface.Plain) {
       const { seed, foot, plinth } = this.style
+      const run = this.style.corners > 0 ? this.run : null
+      const pattern = run ? cornered(this.surface, this.style.corners) : this.surface
       for (let k = (i / 3) * 4; k < (i / 3 + 3) * 4; k += 4) {
-        this.custom[k] = this.surface
+        this.custom[k] = pattern
         this.custom[k + 1] = seed
         this.custom[k + 2] = foot
         this.custom[k + 3] = plinth
+      }
+      if (run) {
+        for (let v = 0; v < 3; v++) {
+          const ends = endsAt(run, positions[i + v * 3]!, positions[i + v * 3 + 2]!)
+          this.uvs[(i / 3 + v) * 2] = ends[0]
+          this.uvs[(i / 3 + v) * 2 + 1] = ends[1]
+        }
       }
     }
     this.at = i + 9
@@ -539,7 +575,7 @@ class Soup {
    * ends, nor between a range and what was written after the last one.
    */
   buffers(ranges?: Uint32Array): BuildingBuffers {
-    return { ...weld(this.positions, this.normals, this.colors, this.custom, this.vertices, ranges), bounds: this.bounds() }
+    return { ...weld(this.positions, this.normals, this.colors, this.custom, this.uvs, this.vertices, ranges), bounds: this.bounds() }
   }
 }
 
@@ -553,8 +589,8 @@ class Soup {
  * `Soup.triangle`), and a vertex costs the GPU 64 bytes where an index costs 4: a town's tile is
  * several MB lighter for it, and draws fewer vertices.
  */
-function weld(positions: Float32Array, normals: Float32Array, colors: Float32Array, custom: Float32Array, count: number, ranges?: Uint32Array): Pick<BuildingBuffers, 'positions' | 'normals' | 'colors' | 'custom' | 'indices'> {
-  const [p, n, c, x] = [bitsOf(positions), bitsOf(normals), bitsOf(colors), bitsOf(custom)]
+function weld(positions: Float32Array, normals: Float32Array, colors: Float32Array, custom: Float32Array, uvs: Float32Array, count: number, ranges?: Uint32Array): Pick<BuildingBuffers, 'positions' | 'normals' | 'colors' | 'custom' | 'uvs' | 'indices'> {
+  const [p, n, c, x, w] = [bitsOf(positions), bitsOf(normals), bitsOf(colors), bitsOf(custom), bitsOf(uvs)]
   const indices = new Uint32Array(count)
   // Open addressing, at most half full: a slot holds a kept vertex's number plus one, or 0.
   let size = 16
@@ -587,7 +623,8 @@ function weld(positions: Float32Array, normals: Float32Array, colors: Float32Arr
             p[u3] === p[v3] && p[u3 + 1] === p[v3 + 1] && p[u3 + 2] === p[v3 + 2] &&
             n[u3] === n[v3] && n[u3 + 1] === n[v3 + 1] && n[u3 + 2] === n[v3 + 2] &&
             c[u3] === c[v3] && c[u3 + 1] === c[v3 + 1] && c[u3 + 2] === c[v3 + 2] &&
-            x[u4] === x[v4] && x[u4 + 1] === x[v4 + 1] && x[u4 + 2] === x[v4 + 2] && x[u4 + 3] === x[v4 + 3]
+            x[u4] === x[v4] && x[u4 + 1] === x[v4 + 1] && x[u4 + 2] === x[v4 + 2] && x[u4 + 3] === x[v4 + 3] &&
+            w[u * 2] === w[v * 2] && w[u * 2 + 1] === w[v * 2 + 1]
           ) {
             found = u
             break
@@ -606,6 +643,8 @@ function weld(positions: Float32Array, normals: Float32Array, colors: Float32Arr
           c[f3 + k] = c[v3 + k]!
         }
         for (let k = 0; k < 4; k++) x[f4 + k] = x[v4 + k]!
+        w[found * 2] = w[v * 2]!
+        w[found * 2 + 1] = w[v * 2 + 1]!
       }
       indices[v] = found
     }
@@ -623,7 +662,7 @@ function weld(positions: Float32Array, normals: Float32Array, colors: Float32Arr
   }
   share(done, count)
   // Copies of the kept part, so the soup's full-size arrays are let go.
-  return { positions: positions.slice(0, kept * 3), normals: normals.slice(0, kept * 3), colors: colors.slice(0, kept * 3), custom: custom.slice(0, kept * 4), indices }
+  return { positions: positions.slice(0, kept * 3), normals: normals.slice(0, kept * 3), colors: colors.slice(0, kept * 3), custom: custom.slice(0, kept * 4), uvs: uvs.slice(0, kept * 2), indices }
 }
 
 /** The bits of `floats`, to tell two of them apart without comparing as numbers. */
@@ -695,7 +734,13 @@ export function buildingBuffers(tile: BuildingTile, salt: number, destroyed: Rea
     if (seen && facade) {
       const dim = (c: Color) => [c.r * facade.shade, c.g * facade.shade, c.b * facade.shade] as const
       soup.surface = surfaces.wall
-      for (const poly of facade.walls) soup.poly(poly, [wall.r, wall.g, wall.b])
+      // A boarded house's walls say where they end, for the boards over its corners.
+      const runs = surfaces.corners > 0 ? new WallRuns(facade.walls) : null
+      for (const poly of facade.walls) {
+        soup.run = runs?.of(normalOf(poly), poly[0]!) ?? null
+        soup.poly(poly, [wall.r, wall.g, wall.b])
+      }
+      soup.run = null
       soup.surface = surfaces.roof
       for (const poly of facade.roof) soup.poly(poly, [roof.r, roof.g, roof.b])
       // A shelter's boards where they end along its open side.
@@ -724,8 +769,10 @@ export function buildingBuffers(tile: BuildingTile, salt: number, destroyed: Rea
       openingQuads(openings[index] ?? [], (corners, rgb, normal, masonry) => {
         // The wall filled in round an arched head is wall, in its colour and pattern.
         soup.surface = masonry ? surfaces.wall : Surface.Plain
+        soup.run = masonry ? (runs?.of(normal, corners[0]!) ?? null) : null
         soup.quad(facing(corners, normal), masonry ? [wall.r, wall.g, wall.b] : trimmed(rgb, surfaces))
       })
+      soup.run = null
       for (const { corners, normal, paint } of details[index] ?? []) {
         const { rgb, surface } = detailColour(paint, [roof.r, roof.g, roof.b], { roof: surfaces.roof, brick: Surface.Brick, planks: Surface.Planks })
         soup.surface = surface as Surface

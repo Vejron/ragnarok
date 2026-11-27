@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { SEED_MOST, buildingBuffers, buildingColors, buildingSeed, buildingSurfaces, dressingOf } from '@/render/buildingmesh'
+import { WALL_TRIMS } from '@ragnarok/engine'
+import { SEED_MOST, Surface, buildingBuffers, buildingColors, buildingSeed, buildingSurfaces, cornered, dressingOf, surfaceOf } from '@/render/buildingmesh'
 import { CURTAIN_RGBA, GLASS_RGBA, PANE_VERTICES, glassBuffers, paneDressing } from '@/render/glass'
-import { openingsOf } from '@/render/windows'
-import { BUILDING_BARN, BUILDING_PLAIN, ROOF_GABLE } from '@/world'
+import { FRAME_RGB, openingsOf } from '@/render/windows'
+import { BUILDING_BARN, BUILDING_PLAIN, CLAD_BRICK, CLAD_WOOD, ROOF_GABLE } from '@/world'
 
 /** A closed box 10 × 10 m, 6 m tall, from `x0` with its foot at `y0`, wound inwards as the importer winds it. */
 function box(x0: number, y0: number, vertexBase: number) {
@@ -100,6 +101,47 @@ describe('a building\'s own style', () => {
       alike.add([building, positions[v * 3], positions[v * 3 + 1], positions[v * 3 + 2], normals[v * 3], normals[v * 3 + 1], normals[v * 3 + 2], colors[v * 3], colors[v * 3 + 1], colors[v * 3 + 2], surface].join())
     }
     expect(alike.size).toBe(custom.length / 4)
+  })
+
+  it('puts a board over each corner of a boarded house in the colour of its frames, none on a brick one, and adds no vertex for them', () => {
+    const tile = street()
+    tile.buildings[0]!.clad = [CLAD_WOOD, 0]
+    tile.buildings[1]!.clad = [CLAD_BRICK, 0]
+    const [wooden, brick] = [0, 1].map((index) => buildingSurfaces(tile, index, 3))
+    expect(wooden!.corners).toBeGreaterThan(0)
+    expect(brick!.corners).toBe(0)
+    // The shader paints the board from the engine's list: the colour there is the frames'.
+    expect([...WALL_TRIMS[0]!]).toEqual([...FRAME_RGB])
+    expect([...WALL_TRIMS[wooden!.corners - 1]!]).toEqual([...wooden!.frame])
+    const buffers = buildingBuffers(tile, 3, new Set())!
+    const { custom, uvs, positions, ranges } = buffers
+    expect(uvs.length).toBe((positions.length / 3) * 2)
+    let [boarded, atCorner] = [0, 0]
+    for (let v = 0; v < custom.length / 4; v++) {
+      const ends = [uvs[v * 2]!, uvs[v * 2 + 1]!]
+      const wall = surfaceOf(custom[v * 4]!) === Surface.Upright || surfaceOf(custom[v * 4]!) === Surface.Lap
+      // Ignore the faces round the windows' reveals and the like: only the outer walls, which stand on the box's sides.
+      if (v >= ranges![2]! || !wall) {
+        expect(ends).toEqual([0, 0])
+        continue
+      }
+      expect(custom[v * 4]).toBe(cornered(wooden!.wall, wooden!.corners))
+      // Each wall of the box is 10 m long: a vertex is as far from one end as it is short of the other.
+      expect(ends[0]! + ends[1]!).toBeCloseTo(10, 4)
+      boarded++
+      const corner = Math.abs(Math.abs(positions[v * 3 + 2]!) - 5) < 1e-4 && (Math.abs(positions[v * 3]!) < 1e-4 || Math.abs(positions[v * 3]! - 10) < 1e-4)
+      if (corner) {
+        expect(Math.min(...ends)).toBeCloseTo(0, 4)
+        atCorner++
+      }
+    }
+    expect(boarded).toBeGreaterThan(0)
+    expect(atCorner).toBeGreaterThan(0)
+    // The same house with no boards over its corners has as many vertices: a wall's ends split none.
+    tile.buildings[0]!.clad = [CLAD_BRICK, 0]
+    const plain = buildingBuffers(tile, 3, new Set())!
+    expect(plain.positions.length).toBe(positions.length)
+    expect(plain.uvs.every((u) => u === 0)).toBe(true)
   })
 })
 

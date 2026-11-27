@@ -77,6 +77,8 @@ export interface SectionBuffers extends PieceBuffers {
 /** A redrawn building, ready to be a `Geometry`: three numbers a corner, four of `custom`; and the sections asked for, in order. */
 export interface LookBuffers extends PieceBuffers {
   custom: Float32Array
+  /** Two numbers a corner: a wall's two ends, for the boards over its corners (`LookSoup.uvs`). */
+  uvs: Float32Array
   sections: SectionBuffers[]
 }
 
@@ -90,9 +92,10 @@ interface Waiting {
 }
 
 /** The buffers of `buffers` that can be handed over without a copy. */
-export function transferablesOf(buffers: PieceBuffers & { custom?: Float32Array; sections?: SectionBuffers[] }): ArrayBuffer[] {
+export function transferablesOf(buffers: PieceBuffers & { custom?: Float32Array; uvs?: Float32Array; sections?: SectionBuffers[] }): ArrayBuffer[] {
   const out = [buffers.positions.buffer, buffers.colors.buffer, buffers.normals.buffer] as ArrayBuffer[]
   if (buffers.custom) out.push(buffers.custom.buffer as ArrayBuffer)
+  if (buffers.uvs) out.push(buffers.uvs.buffer as ArrayBuffer)
   if (buffers.packed) out.push(buffers.packed)
   for (const section of buffers.sections ?? []) out.push(...(transferablesOf(section) as ArrayBuffer[]), section.corners.buffer as ArrayBuffer)
   return out

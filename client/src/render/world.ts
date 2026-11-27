@@ -229,11 +229,11 @@ function mergedMesh(buffers: BuildingBuffers | null, destroyed: ReadonlySet<numb
   if (!buffers) return []
   const out: Mesh[] = []
   if (vertexCountOf(buffers) > 0) {
-    const { positions, normals, colors, custom, indices, bounds, packed } = buffers
+    const { positions, normals, colors, custom, uvs, indices, bounds, packed } = buffers
     // The biggest mesh of a tile by far, and never read again: a building that goes is collapsed in
     // the GPU's copy (`rebuildBuildings`), so the arrays are let go once they are uploaded. Packed by
     // the tile worker, it is only copied.
-    const mesh = new Mesh(new Geometry({ positions, normals, colors, custom, indices, bounds, ...(packed ? { packed } : {}), uploadOnce: true }), buildingMaterial)
+    const mesh = new Mesh(new Geometry({ positions, normals, colors, custom, uvs, indices, bounds, ...(packed ? { packed } : {}), uploadOnce: true }), buildingMaterial)
     mesh.castShadow = true
     mesh.receiveShadow = true
     mesh.userData.merged = true

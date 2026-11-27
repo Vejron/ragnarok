@@ -4,7 +4,7 @@ import { ROCK_WGSL } from './rock.wgsl'
 import { STONES_WGSL } from './stones.wgsl'
 import { SUN_SHADOW_WGSL } from './sunshadow.wgsl'
 import { vertexWgsl } from './vertex.wgsl'
-import { WALLS_WGSL } from './walls.wgsl'
+import { WALLS_WGSL, WALL_KINDS } from './walls.wgsl'
 import { WORN_WGSL } from './worn.wgsl'
 import { ASPHALT_WGSL } from './asphalt.wgsl'
 import { WET_WGSL } from './wet.wgsl'
@@ -137,7 +137,9 @@ ${reflect ? `  if (frame.lightCount.z > 0.5 && dot(in.world, frame.mirror.xyz) <
     rgb *= normalTexel.a * 2.0;
   }
   if ((flags & MAT_WALLS) != 0u && in.custom.x > 0.5) {
-    rgb = wallsLook(rgb, in.world, normalize(in.normal), in.custom.x, facePixel, in.custom.y, in.custom.z, in.custom.w);
+    // Custom x is the pattern, and over ${WALL_KINDS} the colour of the corner boards (WALL_TRIMS); the uv is then the wall's two ends.
+    let trim = floor(in.custom.x / ${WALL_KINDS}.0 + 0.01);
+    rgb = wallsLook(rgb, in.world, normalize(in.normal), in.custom.x - trim * ${WALL_KINDS}.0, facePixel, in.custom.y, in.custom.z, in.custom.w, trim, in.uv);
   }
   if ((flags & MAT_WORN) != 0u) {
     let worn = wornLook(rgb, in.world.xz, in.custom, pixel, ground, onGround);

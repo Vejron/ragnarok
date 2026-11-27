@@ -4,6 +4,24 @@
  * triangles. Every line is antialiased and, where its spacing nears a pixel, evens out into the tone
  * it averages to rather than shimmering. Needs MARSH_WGSL before it, for its hash and noise.
  */
+
+/**
+ * The colours a boarded house's corner boards are painted (linear `[r, g, b]`): the white of window
+ * frames first, then cream, grey, dark green, oxblood and blue-grey. A wall's vertices name one by its
+ * place here (`wallsLook`'s \`trim\`), so whoever paints the frames picks from this list too.
+ */
+export const WALL_TRIMS: readonly (readonly [number, number, number])[] = [
+  [0.86, 0.84, 0.78],
+  [0.8, 0.72, 0.52],
+  [0.5, 0.51, 0.5],
+  [0.05, 0.15, 0.085],
+  [0.2, 0.035, 0.03],
+  [0.17, 0.25, 0.33],
+]
+
+/** How many patterns a vertex's custom x can name: the corner boards' colour is in what is over this (`wallsLook`). */
+export const WALL_KINDS = 16
+
 export const WALLS_WGSL = /* wgsl */ `
 // The kinds, as custom x: plain, upright boards (falu red houses), lap boards, brick, render, roof tiles, sheet metal, felt, cut stone, wooden shingles,
 // and a bridge's deck (its roof): asphalt, timber planks or a railway's ballast.
@@ -53,6 +71,10 @@ const WALL_PLINTH = vec3f(0.33, 0.32, 0.3);
 const WALL_MOSS = vec3f(0.1, 0.15, 0.045);
 const WALL_WEATHERED = vec3f(0.42, 0.4, 0.37);
 const WALL_RUST = vec3f(0.23, 0.09, 0.035);
+
+// The colours of corner boards (WALL_TRIMS), and how wide one is on each of the two walls it covers, metres.
+const WALL_TRIMS = array<vec3f, ${WALL_TRIMS.length}>(${WALL_TRIMS.map(([r, g, b]) => `vec3f(${r}, ${g}, ${b})`).join(', ')});
+const WALL_CORNER = 0.13;
 
 // The pattern of wall \`kind\` on \`rgb\`, \`along\` the wall and \`up\` it (metres), for a building whose
 // own numbers are \`build\` (where its boards start, their width, how far their shades spread, and its
@@ -124,7 +146,9 @@ fn roofMoss(rgb: vec3f, world: vec3f, n: vec3f, age: f32, own: i32, pixel: f32) 
 // spans there. \`seed\` is the building's own number as a share of 65535 (0 for none), which gives its
 // paint a tint of its own, its boards their width and its walls and roof their age; \`foot\` the height
 // of the foot of its walls and \`plinth\` how far over that its plinth stands (metres, 0 for none).
-fn wallsLook(rgb0: vec3f, world: vec3f, n: vec3f, kind: f32, pixel: f32, seed: f32, foot: f32, plinth: f32) -> vec3f {
+// \`trim\` is 0, or one more than the place in WALL_TRIMS of the colour of the boards over the wall's
+// corners, and \`ends\` then how far along the wall its two ends are from here (metres).
+fn wallsLook(rgb0: vec3f, world: vec3f, n: vec3f, kind: f32, pixel: f32, seed: f32, foot: f32, plinth: f32, trim: f32, ends: vec2f) -> vec3f {
   let level = sqrt(n.x * n.x + n.z * n.z);
   let own = i32(seed * 65535.0 + 0.5);
   var rgb = rgb0;
@@ -161,6 +185,18 @@ fn wallsLook(rgb0: vec3f, world: vec3f, n: vec3f, kind: f32, pixel: f32, seed: f
       return WALL_PLINTH * (0.85 + 0.3 * base) * poured;
     }
     var wall = wallPattern(rgb, along, up, kind, pixel, build);
+    if (trim > 0.5) {
+      // A board over each corner of a boarded house, from the plinth to the eaves, in the colour of its
+      // window frames. From afar it thins out to the share of a pixel it covers.
+      let end = min(ends.x, ends.y);
+      if (end < WALL_CORNER + pixel) {
+        let board = WALL_TRIMS[i32(trim - 0.5)] * (0.94 + 0.08 * build.z);
+        let covered = 1.0 - smoothstep(WALL_CORNER - pixel * 0.5, WALL_CORNER + pixel * 0.5, end);
+        // The shadow its edge throws on the wall beside it.
+        wall *= 1.0 - 0.4 * (1.0 - smoothstep(0.0, 0.012 + pixel, abs(end - WALL_CORNER - 0.006))) * (1.0 - smoothstep(0.02, 0.06, pixel));
+        wall = mix(wall, board, covered * min(1.0, WALL_CORNER / max(pixel, 0.001)));
+      }
+    }
     // Weather, on the older half of the houses and near enough to show: paint gone thin and grey in patches.
     if (age > 0.5 && pixel < 0.12) {
       let patches = marshValue(vec2f(along * 0.45, up * 0.3) + vec2f(f32(own & 255), 0.0));

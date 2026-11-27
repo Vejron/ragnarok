@@ -413,7 +413,12 @@ takes its own view of the answer with the tag filter its own Overpass query once
 `osm_water::from`, `osm_golf::from`, `osm_lifts::from`, `osm_ski::from`), so a world comes out the same
 whichever source served it. The read comes from a local extract when one covers every block of the world,
 else from Overpass. Heights
-come from the `height` tag, else `building:levels` × 3 + 1, else a guess of 6–12 m. A building's
+come from the `height` tag, else `building:levels` × 3 + 1, else a guess of 6–12 m. Where the laser
+has too few returns over a building for a roof (a roof too dark to answer, or newer than the flight)
+and the map gives it no height, it is a box of the height those few show instead of the guess
+(`glimpsed` in `assemble.rs`): the height half of them lie under, 12 m at most, and at least a
+storey, or 4 m for a building of 250 m² or more, which is never lower. The import counts them
+(`boxes of the height a few returns show`). A building's
 `building:colour`, `roof:colour`, `building:material` and `roof:material` are kept where it has them
 (`finish.rs`, `Building::paint` and `Building::clad`; [BUILDING-STYLES.md](BUILDING-STYLES.md)), and the import
 prints how many did (`finish:`). `natural=wetland` is

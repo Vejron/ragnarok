@@ -205,6 +205,36 @@ fn building_height(way: &Way) -> f64 {
 
 /// From this footprint, square metres, a building is a barn or a block: the laser is trusted.
 const BIG_HOUSE: f64 = 250.0;
+/// The least a building of `BIG_HOUSE` or more stands when its height is reckoned, metres: a barn
+/// or a hall is never lower.
+const BIG_LOWEST: f64 = 4.0;
+/// The most a building stands when its height is reckoned from a few returns, metres: the top of
+/// what `building_height` guesses. Higher than this, the few are the trees over it.
+const GLIMPSED_HIGHEST: f64 = 12.0;
+/// The fewest returns over a building that its height is reckoned from.
+const GLIMPSED_FEWEST: usize = 10;
+
+/// Whether the map says how high the building is: `building_height` then has no guess in it.
+fn height_mapped(way: &Way) -> bool {
+    ["height", "building:levels"].iter().any(|key| way.tags.contains_key(*key))
+}
+
+/// The flat top (local y, metres) of a building whose roof could not be fitted, from the few
+/// `returns` (`[x, z, y, code]`) the laser has over its `ring`: half of them lie under it. It stands
+/// a storey over its `floor` at least (`BIG_LOWEST` for a big one) and `GLIMPSED_HIGHEST` at most.
+/// `None` with fewer than `GLIMPSED_FEWEST` returns, when the height is guessed (`building_height`).
+///
+/// A roof the laser all but missed (too dark, or newer than the flight) still shows its eaves and
+/// a few hits, which say more of its height than a guess from the way's number does.
+fn glimpsed(ring: &[P], floor: f64, returns: &[[f64; 4]]) -> Option<f64> {
+    if returns.len() < GLIMPSED_FEWEST {
+        return None;
+    }
+    let mut heights: Vec<f64> = returns.iter().map(|r| r[2] - floor).collect();
+    heights.sort_by(f64::total_cmp);
+    let lowest = if signed_area(ring).abs() >= BIG_HOUSE { BIG_LOWEST } else { STOREY + PLINTH };
+    Some(floor + heights[heights.len() / 2].clamp(lowest, GLIMPSED_HIGHEST))
+}
 /// Under this footprint, square metres, a house is one storey (a shed, a sauna); else two at most.
 const SMALL_HOUSE: f64 = 40.0;
 /// One storey, the plinth under them, and the steepest roof (rise per run), in metres.
@@ -221,7 +251,7 @@ const TALL: [&str; 9] = ["church", "chapel", "cathedral", "mosque", "temple", "t
 /// are mostly roof. A small house in an unclassified cloud is otherwise built from the crowns over it.
 fn cap(way: &Way, ring: &[P]) -> Option<[f64; 2]> {
     let area = signed_area(ring).abs();
-    let tagged = ["height", "building:levels"].iter().any(|key| way.tags.contains_key(*key));
+    let tagged = height_mapped(way);
     let tall = way.tags.get("building").is_some_and(|value| TALL.contains(&value.as_str())) || crate::classify::is_church(&way.tags);
     if tagged || tall || area >= BIG_HOUSE {
         return None;
@@ -474,8 +504,9 @@ fn front_of(mid: P, streets: &HashMap<(i32, i32), Vec<[P; 2]>>) -> [i8; 2] {
 type Footprint = (Vec<P>, f64, Option<Top>, Finish, Option<f64>, u8, Option<P>, Vec<Vec<P>>);
 
 /// A footprint to fit a roof to (`fit_roofs`): its ring, the most it may rise over its floor (`cap`),
-/// the roof shape OpenStreetMap names for it, what it is (`BUILDING_*`), and the yards inside it.
-type Ring<'a> = (&'a [P], Option<f64>, Option<Category>, u8, &'a [Vec<P>]);
+/// the roof shape OpenStreetMap names for it, what it is (`BUILDING_*`), the yards inside it, and
+/// whether the map says how high it is (`height_mapped`).
+type Ring<'a> = (&'a [P], Option<f64>, Option<Category>, u8, &'a [Vec<P>], bool);
 
 /// A building outline before its roof is fitted: a `Footprint` without the `Top`.
 type Outline = (Vec<P>, f64, Finish, Option<f64>, u8, Option<P>, Vec<Vec<P>>);
@@ -1205,6 +1236,8 @@ pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::B
     let paint = |rings: &[&[P]]| photo.map(|photo| crate::paint::of(photo, rings, source));
     let squared = std::sync::atomic::AtomicUsize::new(0);
     let mut hints: Vec<Option<Category>> = Vec::new();
+    // Whether the map says how high each outline is (`height_mapped`).
+    let mut mapped: Vec<bool> = Vec::new();
     // What each building is, in the order of the ways: from its tags, the land use it stands in and what stands round it.
     let kinds = {
         let open = |mut ring: Vec<P>| {
@@ -1277,13 +1310,14 @@ pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::B
                 vec![(points.clone(), height, paint, ceiling, kind, facing, holes)]
             };
             hints.extend(found.iter().map(|_| hint));
+            mapped.extend(found.iter().map(|_| height_mapped(way)));
             found
         })
         .collect();
     eprintln!("footprints: {} of {} squared", squared.into_inner(), outlines.len());
     let mapped_finish = osm.ways.iter().filter(|way| is_building(way) && crate::finish::of(&way.tags) != Finish::default()).count();
     eprintln!("finish: {mapped_finish} buildings with a colour or a material mapped");
-    let rings: Vec<Ring> = outlines.iter().zip(&hints).map(|((points, _, _, ceiling, kind, _, holes), hint)| (points.as_slice(), *ceiling, *hint, *kind, holes.as_slice())).collect();
+    let rings: Vec<Ring> = outlines.iter().zip(hints.iter().zip(&mapped)).map(|((points, _, _, ceiling, kind, _, holes), (hint, mapped))| (points.as_slice(), *ceiling, *hint, *kind, holes.as_slice(), *mapped)).collect();
     let shapes = lidar.map(|cloud| fit_roofs(cloud, &source, measured, half, tile_size, mask, &ground, &rings)).unwrap_or_default();
     let mut shapes = shapes.into_iter();
     for (points, height, paint, ceiling, kind, facing, holes) in outlines {
@@ -2764,7 +2798,7 @@ fn fit_roofs(
         let span = |a: f64, b: f64| ((a + half) / tile_size).floor() as i64..=((b + half) / tile_size).floor() as i64;
         span(lo[0], hi[0]).any(|c| span(lo[1], hi[1]).any(|r| c >= 0 && r >= 0 && mask.contains(&(c as u16, r as u16))))
     };
-    let fit = |(points, ceiling, hint, kind, holes): Ring| {
+    let fit = |(points, ceiling, hint, kind, holes, mapped): Ring| {
         let ring = if points.len() > 1 && points.first() == points.last() { &points[..points.len() - 1] } else { points };
         if ring.len() < 3 || !painted(ring) {
             return None;
@@ -2807,7 +2841,17 @@ fn fit_roofs(
         if measured && let Some(field) = crate::field::Field::measure(ring, &[], &returns) {
             return Some(Top::Measured(field));
         }
-        roof::fit(ring, &returns).map(Top::Fitted)
+        if let Some(roof) = roof::fit(ring, &returns) {
+            return Some(Top::Fitted(roof));
+        }
+        // Too few returns for a roof: a building the map gives no height, and `cap` no eaves, is a
+        // box of the height those few show, not of a guess.
+        if mapped || ceiling.is_some() {
+            return None;
+        }
+        let y = glimpsed(ring, floor_of(ground, ring), &returns)?;
+        tally.glimpsed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Some(Top::Fitted(Roof::Leaf(Shape::Flat { y })))
     };
     let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
     let next = std::sync::atomic::AtomicUsize::new(0);
@@ -2826,7 +2870,7 @@ fn fit_roofs(
         }
     });
     let count = |n: &std::sync::atomic::AtomicUsize| n.load(std::sync::atomic::Ordering::Relaxed);
-    eprintln!("roofs from the catalogue: {:?}, {} wings past the first, {} dormers, {} guessed under trees, {} left to the measured roof, {} roofs over {} m²; {} churches fitted as churches", tally.shapes.lock().unwrap(), count(&tally.wings), count(&tally.dormers), count(&tally.guessed), count(&tally.measured), count(&tally.big), roof::SPLIT_FROM, count(&tally.churches));
+    eprintln!("roofs from the catalogue: {:?}, {} wings past the first, {} dormers, {} guessed under trees, {} left to the measured roof, {} roofs over {} m²; {} churches fitted as churches; {} boxes of the height a few returns show", tally.shapes.lock().unwrap(), count(&tally.wings), count(&tally.dormers), count(&tally.guessed), count(&tally.measured), count(&tally.big), roof::SPLIT_FROM, count(&tally.churches), count(&tally.glimpsed));
     slots.into_iter().map(|slot| slot.into_inner().unwrap().expect("every building was taken")).collect()
 }
 
@@ -2839,6 +2883,8 @@ struct Tally {
     measured: std::sync::atomic::AtomicUsize,
     guessed: std::sync::atomic::AtomicUsize,
     churches: std::sync::atomic::AtomicUsize,
+    /// Buildings with too few returns for a roof, boxed at the height those show (`glimpsed`).
+    glimpsed: std::sync::atomic::AtomicUsize,
     /// Buildings past `roof::SPLIT_FROM` the catalogue fitted closely enough to keep.
     big: std::sync::atomic::AtomicUsize,
 }
@@ -4279,12 +4325,43 @@ mod tests {
                 add(e, n, if e > 2.4 { 16.0 } else { 4.0 });
             }
         }
-        let tops = fit_roofs(&cloud, &|x, z| (x, z), false, 100.0, 100.0, None, &Ground::default(), &[(&ring, None, None, BUILDING_PLAIN, &[]), (&ring, Some(9.3), None, BUILDING_PLAIN, &[])]);
+        let tops = fit_roofs(&cloud, &|x, z| (x, z), false, 100.0, 100.0, None, &Ground::default(), &[(&ring, None, None, BUILDING_PLAIN, &[], false), (&ring, Some(9.3), None, BUILDING_PLAIN, &[], false)]);
         let Some(Top::Fitted(Roof::Leaf(Shape::Flat { y }))) = tops[0] else { panic!("{:?}", tops[0]) };
         assert!(y > 15.0, "uncapped, the crown is the roof: {y}");
         let Some(Top::Fitted(Roof::Leaf(Shape::Flat { y }))) = tops[1] else { panic!("{:?}", tops[1]) };
         assert!((y - 4.0).abs() < 0.3, "capped, the roof is {y}");
     }
+
+    #[test]
+    fn a_barn_the_laser_all_but_missed_is_a_box_of_what_it_did_see_and_never_under_four_metres() {
+        use crate::lidar::Point;
+        // A barn of 20 m by 20 m with a line of returns along one eave, 3 m up, and a few on its roof.
+        let ring = square(20.0);
+        let cloud_of = |eave: f64, roof: f64| {
+            let mut cloud = Cloud::new([-10.0, -10.0, 30.0, 30.0]);
+            let mut add = |e: f64, n: f64, z: f64| cloud.add(&Point { e, n, z, class: 1, ret: 1, returns: 1, intensity: 0 }, 0.0);
+            for i in 0..18 {
+                add(0.5, 1.0 + f64::from(i), eave);
+            }
+            for i in 0..8 {
+                add(10.0, 2.0 + 2.0 * f64::from(i), roof);
+            }
+            cloud
+        };
+        let top = |cloud: &Cloud, mapped: bool| fit_roofs(cloud, &|x, z| (x, z), false, 100.0, 100.0, None, &Ground::default(), &[(&ring, None, None, BUILDING_BARN, &[], mapped)]).remove(0);
+        // Low eaves: no lower than a barn is.
+        let Some(Top::Fitted(Roof::Leaf(Shape::Flat { y }))) = top(&cloud_of(3.0, 5.5), false) else { panic!("no box") };
+        assert_eq!(y, BIG_LOWEST);
+        // Higher ones: the height they show.
+        let Some(Top::Fitted(Roof::Leaf(Shape::Flat { y }))) = top(&cloud_of(7.0, 9.0), false) else { panic!("no box") };
+        assert_eq!(y, 7.0);
+        // Crowns over it: no higher than a guess would be.
+        let Some(Top::Fitted(Roof::Leaf(Shape::Flat { y }))) = top(&cloud_of(25.0, 25.0), false) else { panic!("no box") };
+        assert_eq!(y, GLIMPSED_HIGHEST);
+        // A barn the map gives a height keeps it.
+        assert!(top(&cloud_of(3.0, 5.5), true).is_none());
+    }
+
     #[test]
     fn a_road_over_a_trench_gets_a_deck_and_one_down_a_slope_does_not() {
         // A 300 m square of ground at a metre a cell, sloping up to the east at 5 %, with a trench

@@ -30,7 +30,7 @@ export function drawLook(source: LookSource, shell: Shell, ask: LookAsk): LookBu
   const dents = new Map<number, number>()
   for (let i = 0; i < ask.dents.length; i += 2) dents.set(ask.dents[i]!, ask.dents[i + 1]!)
   const soup = lookFracture(source.look, source.range, shell, new Set(ask.removed), dents, ask.wall, ask.roof, ask.surfaces)
-  return { ...piece(soup.positions, soup.colors), custom: soup.custom, sections: ask.sections.map((section) => cutSection(source, shell, section, ask.wall, ask.roof, ask.surfaces)) }
+  return { ...piece(soup.positions, soup.colors), custom: soup.custom, uvs: soup.uvs, sections: ask.sections.map((section) => cutSection(source, shell, section, ask.wall, ask.roof, ask.surfaces)) }
 }
 
 /** Height of `grid` at `(x, z)`, metres: between its four nearest samples, its edge beyond them. */

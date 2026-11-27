@@ -230,6 +230,10 @@ boarded, not brick.
 - **A plinth**: cast concrete from the foot of the walls (the lowest corner of them in the look) up
   30 to 50 cm, about where the floor inside lies (`interior::PLINTH`); 10 to 22 cm on what is driven
   into. A shelter and a bridge have none.
+- **Corner boards** (`Style.corners`): a board 13 cm wide over each corner of a house with upright
+  or lap boards, from the plinth to the eaves, in the colour of its frames, with the shadow of its
+  edge on the wall beside it. A hall's sheet metal, though ribbed like boards, has none, nor a
+  shelter's timber, nor brick, render or stone.
 
 **The shader does the rest** (`wallsLook` in `engine/src/materials/walls.wgsl.ts`). Each patterned
 vertex carries the seed, the foot of the walls and the plinth's height in its custom y, z and w, which
@@ -241,6 +245,19 @@ old house has paint gone thin and grey in patches, a darker damp foot over the p
 tiled, shingled or felt roof (thicker on the slopes turned north) and rust in streaks down a sheet
 roof. The noise of each is worked out only near enough to show.
 
+**The corner boards are the shader's too**, and add no vertex. A wall is cut into many faces by its
+windows, and a face knows nothing of the wall it is part of, so `WallRuns` (`corners.ts`) gathers a
+building's upright faces by the plane they lie in and joins those that touch along it into runs: a
+wall with windows is one run, a wall that goes on in the same plane past a wing is two, and so has
+corners where the wing stands out. Each vertex of a boarded wall then carries how far along the wall
+its two ends are, metres, in its uv, which was unused; both numbers are linear across the wall, so
+they interpolate, and the shader draws the board where the nearer end is within 13 cm. An end where
+the wall only bends a little (under about 30°: a silo's facets) is no corner and is put a kilometre
+off. The board's colour is one of the engine's six `WALL_TRIMS`, the same list the frames are picked
+from, named by its place there in what is over 16 in the vertex's custom x (`cornered`, `surfaceOf`),
+so the shader needs no colour passed to it. From afar the board thins out to the share of a pixel
+it covers.
+
 **Windows** (`glass.ts`, `dressingOf`): each pane's colour, opacity and lamp are its vertices'. About
 three panes in ten of a home have a curtain or blind drawn (paler and hardly seen through), one in
 ten where people work, none in a barn. After dark (`lightWindows`, as `Scene.night` passes 0.35) a
@@ -249,7 +266,8 @@ dimmer behind a curtain; the lit pane is opaque, so the lamp shows and not the d
 curtain and the lamp are on the sheet only, so a broken pane's teeth are clear and dark.
 
 A hurt house (`lookFracture`) is handed the same style, so it keeps its seed, plinth, trim and
-pattern from the first hit. Falling pieces are plain, as before.
+pattern from the first hit, and its corner boards: its walls' runs are those of the house as it
+stood whole, so the edge of a hole is no corner and gets no board. Falling pieces are plain, as before.
 
 An outbuilding is painted as the wooden house nearest it within 40 m in its tile (`houseOf`), and
 roofed as it where both roofs are pitched, so a yard's garage and sheds match its house. Beside a
@@ -271,7 +289,7 @@ brick or rendered house it keeps its own boards.
   the ground or float over it.
 - **Carports** (`building=carport`) are closed garages, and `building=roof` is left out as before.
 - **A fire station is one hall**, with no upper floor over the engines; neither world imported so far has one, so it has been seen in tests only. A block of flats has no balconies or door a stairwell.
-- **A house's quarters and its age are a hash**, not the real age of the street. There are no corner boards and no frieze under the eaves: they need each wall vertex to carry how far it is from the wall's ends. No balconies, shutters or drainpipes either: those are new vertices, in the main pass and both shadow maps.
+- **A house's quarters and its age are a hash**, not the real age of the street. There is no frieze under the eaves: it needs each wall vertex to carry how far under the roof it is, and the vertex has no field left for it. A house drawn from its collision triangles (one with no look) has no corner boards, and where a lower wing's wall lies in the same plane as the house's, no board stands where the two meet. No balconies, shutters or drainpipes either: those are new vertices, in the main pass and both shadow maps.
 - **Every lamp comes on at once** as it gets dark, and stays on all night. A lit window throws no light on the ground outside.
 - **A station house** is a public building like any other.
 - **The kinds needed no new field** (`kind` was already a byte); `Building::front` did, with

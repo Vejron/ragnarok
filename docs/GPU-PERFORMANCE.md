@@ -336,6 +336,10 @@ building's own numbers, half the plinth and the weathering (with both switched o
   at every distance. The hashes and a noise or two are not what a wall pixel costs.
 - The glass's `glow` flag is one more test of a uniform flag in the standard shader, for every
   pixel of every material. It did not measure.
+- **Corner boards** on boarded houses (a wall's two ends in each vertex's uv, a `min`, a compare and
+  a blend near a corner) did not measure either. With them, and with the board's colour forced off
+  in the shader, in runs one after the other: 2.30 to 2.31 ms against 2.30 ms on the street, 2.10
+  to 2.11 ms against 2.10 ms at the wall, and the pattern (`plainwalls`) 0.03 to 0.05 ms both ways.
 
 ## Tried and dropped
 

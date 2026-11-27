@@ -4,7 +4,7 @@ import { lookFracture, openingStands, patterned } from '@/render/lookfracture'
 import { lookSlice } from '@/render/lookworker'
 import { openingsOf } from '@/render/windows'
 import { rubbleSoup } from '@/render/shards'
-import { buildingSurfaces, Surface } from '@/render/buildingmesh'
+import { buildingSurfaces, cornered, Surface, surfaceOf } from '@/render/buildingmesh'
 import { BRIDGE_CONCRETE, BUILDING_BRIDGE, BUILDING_FLATS, BUILDING_PLAIN, CLAD_BRICK, CLAD_SHEET, CLAD_WOOD, ROOFING_FELT, ROOFING_SHINGLES, DECK_ASPHALT, DECK_BALLAST, DECK_PLANKS, ROOF_FLAT, ROOF_GABLE } from '@/world'
 import { lookChunk } from '@/render/lookfracture'
 import type { CollisionMesh } from '@/world'
@@ -204,6 +204,29 @@ describe('lookFracture', () => {
     expect(light.positions.length).toBeGreaterThan(plain.positions.length)
     expect(heavy.positions.length).toBeGreaterThan(light.positions.length)
     expect(Math.min(...heavy.colors)).toBeLessThan(0.5)
+  })
+
+  it('keeps the boards over its corners, and puts none at the edge of a hole', () => {
+    const style = { ...patterned(Surface.Upright, Surface.Tiles), seed: 0.25, corners: 2 }
+    const soup = lookFracture(look, range, shell, new Set([hole]), new Map(), white, white, style)
+    expect(soup.uvs.length).toBe((soup.positions.length / 3) * 2)
+    let walls = 0
+    for (let v = 0; v < soup.custom.length / 4; v++) {
+      const ends = [soup.uvs[v * 2]!, soup.uvs[v * 2 + 1]!]
+      if (surfaceOf(soup.custom[v * 4]!) !== Surface.Upright) {
+        expect(ends).toEqual([0, 0])
+        continue
+      }
+      expect(soup.custom[v * 4]).toBe(cornered(Surface.Upright, 2))
+      // A wall of the box is 5 or 4 m long, hole or no hole: every corner of what stands is measured from the house's own corners.
+      const length = ends[0]! + ends[1]!
+      expect(Math.abs(length - 5) < 0.05 || Math.abs(length - 4) < 0.05).toBe(true)
+      walls++
+    }
+    expect(walls).toBeGreaterThan(0)
+    // A house with none has none hurt either.
+    const bare = lookFracture(look, range, shell, new Set([hole]), new Map(), white, white, patterned(Surface.Upright, Surface.Tiles))
+    expect(bare.uvs.every((u) => u === 0)).toBe(true)
   })
 
   it('keeps the seed, the plinth and the trim the house had whole', () => {

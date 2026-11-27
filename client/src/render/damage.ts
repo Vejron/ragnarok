@@ -13,9 +13,9 @@ import { span as timed } from '@/spans'
 import { reachOf, type Reach } from './reach'
 
 /** A flat-shaded geometry from triangle soup with a colour per vertex. */
-function shardGeometry(positions: Float32Array, colors: Float32Array, custom?: Float32Array): Geometry {
+function shardGeometry(positions: Float32Array, colors: Float32Array, custom?: Float32Array, uvs?: Float32Array): Geometry {
   // Not indexed, so every face has its own normal: flat shading.
-  const geometry = new Geometry({ positions, colors, custom })
+  const geometry = new Geometry({ positions, colors, custom, uvs })
   geometry.computeNormals()
   return geometry
 }
@@ -624,7 +624,7 @@ export class BuildingDamage {
     const looks = this.looks
     if (!looks) {
       const soup = lookFracture(look, range, shell, state.removed, state.dents, rgbOf(wall), rgbOf(roof), surfaces)
-      this.showLook(drawn, index, shardGeometry(soup.positions, soup.colors, soup.custom))
+      this.showLook(drawn, index, shardGeometry(soup.positions, soup.colors, soup.custom, soup.uvs))
       // Sections left waiting when the worker failed are cut out here.
       for (const pending of drawn.sections.splice(0)) this.launchSection(drawn, this.cutHere(drawn, pending), pending)
       return
@@ -651,11 +651,11 @@ export class BuildingDamage {
       sections: sections.map((s) => ({ cells: Uint32Array.from(s.cells), pivot: [s.pivot.x, s.pivot.y, s.pivot.z] as [number, number, number] })),
     }
     looks.draw(this.lookName(drawn), () => this.lookSource(drawn), ask).then(
-      ({ positions, colors, custom, normals, bounds, packed, sections: cut }) => {
+      ({ positions, colors, custom, uvs, normals, bounds, packed, sections: cut }) => {
         drawn.asking = false
         if (drawn.released) return
         timed('damage.showLook', () => {
-          this.showLook(drawn, index, new Geometry({ positions, colors, custom, normals, bounds, ...(packed ? { packed } : {}) }))
+          this.showLook(drawn, index, new Geometry({ positions, colors, custom, uvs, normals, bounds, ...(packed ? { packed } : {}) }))
           // The sections fall now that the hole they leave shows.
           sections.forEach((pending, i) => this.launchSection(drawn, cut[i] ?? null, pending))
         })
