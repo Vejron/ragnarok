@@ -279,10 +279,18 @@ pub(crate) fn lift_colliders(lifts: &[shared::world::Lift]) -> Vec<Collider> {
 
 /// The fuel stations' paving, wash bays, canopies, pumps and sign posts (`shared::station::structure`).
 pub(crate) fn station_colliders(stations: &[shared::world::FuelStation]) -> Vec<Collider> {
+    part_colliders(stations.iter().flat_map(shared::station::structure))
+}
+
+/// The dealers' carports: their floors, posts and roofs (`shared::dealer::structure`).
+pub(crate) fn dealer_colliders(dealers: &[shared::world::Dealer]) -> Vec<Collider> {
+    part_colliders(dealers.iter().flat_map(shared::dealer::structure))
+}
+
+/// A collider for each of `parts`, turned about the vertical as each is.
+fn part_colliders(parts: impl Iterator<Item = shared::lifts::Part>) -> Vec<Collider> {
     use shared::lifts::Shape;
-    stations
-        .iter()
-        .flat_map(shared::station::structure)
+    parts
         .map(|part| {
             let builder = match part.shape {
                 Shape::Box([hx, hy, hz]) => ColliderBuilder::cuboid(hx, hy, hz),
@@ -301,6 +309,13 @@ impl Physics {
             self.insert_static(collider, None);
         }
         self.washes = stations.iter().map(shared::station::Bay::of).collect();
+    }
+
+    /// Stands the dealers' carports (`dealer_colliders`), which stand from the start as the stations do.
+    pub(crate) fn add_dealers(&mut self, dealers: &[shared::world::Dealer]) {
+        for collider in dealer_colliders(dealers) {
+            self.insert_static(collider, None);
+        }
     }
 }
 
@@ -673,6 +688,7 @@ impl Physics {
             physics.insert_static(lift, None);
         }
         physics.add_stations(&world.fuel_stations);
+        physics.add_dealers(&world.dealers);
         for (collider, object) in object_colliders(world)? {
             physics.insert_static(collider, object);
         }

@@ -27,6 +27,12 @@ fn batches<T>(items: impl IntoIterator<Item = T>, weight: impl Fn(&T) -> usize, 
 }
 
 impl Game {
+    /// Every player's score, whole.
+    pub(super) fn scores(&self) -> Scores {
+        let scores = self.world.entities.all::<Player>().map(|(id, player)| Score { id, kills: player.score.kills, deaths: player.score.deaths, held: player.score.held, cash: player.score.cash }).collect();
+        Scores { tag: S_SCORES, scores }
+    }
+
     /// The messages that bring a joiner up to date, in the order they are to be sent. Order matters:
     /// the ground as craters left it comes before the craters marked on it.
     pub(super) fn catch_up(&mut self) -> Vec<Vec<u8>> {
@@ -35,8 +41,7 @@ impl Game {
         let mut out = Vec::new();
         let profiles = world.entities.ids::<With<Player>>().into_iter().map(|id| profile_entry(world, id)).collect();
         out.push(encode(&Profiles { tag: S_PROFILES, players: profiles }));
-        let scores = world.entities.all::<Player>().map(|(id, player)| Score { id, kills: player.score.kills, deaths: player.score.deaths, held: player.score.held, cash: player.score.cash }).collect();
-        out.push(encode(&Scores { tag: S_SCORES, scores }));
+        out.push(encode(&self.scores()));
         // Always sent, even empty: the client takes the first one after the welcome as the catch-up
         // (not news to animate), and snapshots on the datagram channel can overtake it.
         out.push(encode(&Destroyed { tag: S_DESTROYED, objects: world.destroyed.iter().map(|felled| destroyed_entry(felled.object, felled.yaw, 0, felled.stage)).collect() }));

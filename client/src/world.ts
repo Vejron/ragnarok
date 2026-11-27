@@ -4,7 +4,7 @@ import { span } from './spans'
 
 /** Mirrors `crates/shared/src/world.rs`. Coordinates are metres: +X east, +Z south, +Y up. */
 
-export const WORLD_VERSION = 43
+export const WORLD_VERSION = 44
 
 /** `Manifest::theme`, mirrors `crates/shared/src/world.rs`. */
 export const THEME_WINTER = 1
@@ -431,6 +431,18 @@ export interface SkiTrail {
 }
 
 /**
+ * A vehicle dealer's carport (`Dealer` in `crates/shared/src/world.rs`, DEALERS.md), in metres and
+ * radians: the middle of its open mouth, how far its frame is turned (its +Z, out of the mouth onto the
+ * store's car park, goes to `(sin, cos)`), and the height of its floor (`shared::dealer`).
+ */
+export interface Dealer {
+  x: number
+  z: number
+  yaw: number
+  base: number
+}
+
+/**
  * A fuel station (`FuelStation` in `crates/shared/src/world.rs`), in metres and radians: the middle of
  * its lot, how far its frame is turned (its +Z, back from the road, goes to `(sin, cos)`), and the
  * height of its paving (`shared::station`).
@@ -509,6 +521,8 @@ export interface WorldData {
   tintAll?: boolean
   /** The fuel stations (`Manifest::fuel_stations`): a vehicle near one has its tank filled, and one through its wash is healed (FUEL.md). */
   fuelStations?: FuelStation[]
+  /** The vehicle dealers (`Manifest::dealers`): a soldier by one buys a vehicle on the phone (DEALERS.md). */
+  dealers?: Dealer[]
   /**
    * Which tiles of the square grid are part of the world, `grid × grid` row-major, or `null` when
    * every one is. Tiles outside it have no ground and are walled off.
@@ -623,7 +637,7 @@ export function trunkRadiusCm(kind: number, heightCm: number, crownCm: number): 
 const noCollision = (): CollisionMesh => ({ vertices: new Float32Array(), triangles: new Uint32Array() })
 
 export function decodeManifest(bytes: Uint8Array): WorldData {
-  const [version, frame, halfExtent, tileSize, spawns, tiles, groundCell, theme, lifts, openWater, busLines, riverTint, tintAll, fuelStations] = decode(bytes) as [number, [number, number, number], number, number, number[][], number[][], number, number, [number, number, number[][], number[], number[]][], boolean, [number[][], number[], number[][]][], [number, number, number], boolean, [[number, number], number, number][]]
+  const [version, frame, halfExtent, tileSize, spawns, tiles, groundCell, theme, lifts, openWater, busLines, riverTint, tintAll, fuelStations, dealers] = decode(bytes) as [number, [number, number, number], number, number, number[][], number[][], number, number, [number, number, number[][], number[], number[]][], boolean, [number[][], number[], number[][]][], [number, number, number], boolean, [[number, number], number, number][], [[number, number], number, number][]]
   if (version !== WORLD_VERSION) throw new Error(`world version ${version}, expected ${WORLD_VERSION}`)
   const refs = tiles.map(([col, row, hash]) => ({ col: col!, row: row!, hash: hash! }))
   const grid = Math.max(1, Math.ceil((2 * halfExtent) / Math.max(tileSize, 1)))
@@ -646,6 +660,7 @@ export function decodeManifest(bytes: Uint8Array): WorldData {
     riverTint: (riverTint[0] << 16) | (riverTint[1] << 8) | riverTint[2],
     tintAll,
     fuelStations: fuelStations.map(([[x, z], yaw, base]) => ({ x: metres(x), z: metres(z), yaw: yaw / 1000, base: metres(base) })),
+    dealers: dealers.map(([[x, z], yaw, base]) => ({ x: metres(x), z: metres(z), yaw: yaw / 1000, base: metres(base) })),
     inside,
     collision: noCollision(),
     bytes,

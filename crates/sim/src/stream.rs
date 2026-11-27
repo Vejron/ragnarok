@@ -137,6 +137,7 @@ impl Physics {
             physics.insert_static(lift, None);
         }
         physics.add_stations(&manifest.fuel_stations);
+        physics.add_dealers(&manifest.dealers);
         physics.step_pipeline();
         physics
     }

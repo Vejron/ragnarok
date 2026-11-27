@@ -477,6 +477,24 @@ impl ClientSim {
             .collect()
     }
 
+    /// The solid parts of a dealer's carport (`shared::dealer::structure`) at `(x, z)` centimetres,
+    /// turned `yaw` milliradians, its floor at `base` centimetres: nine numbers a part as `stationParts`
+    /// gives them. The client draws one at the origin, unturned, and places it.
+    #[wasm_bindgen(js_name = dealerParts)]
+    pub fn dealer_parts(x: i32, z: i32, yaw: i16, base: i32) -> Vec<f32> {
+        use shared::lifts::Shape;
+        shared::dealer::structure(&shared::world::Dealer { at: [x, z], yaw, base })
+            .into_iter()
+            .flat_map(|part| {
+                let (shape, size) = match part.shape {
+                    Shape::Box(half) => (0.0, half),
+                    Shape::Post { radius, half } => (1.0, [radius, half, 0.0]),
+                };
+                [shape, part.centre[0], part.centre[1], part.centre[2], part.turn, size[0], size[1], size[2], f32::from(part.look)]
+            })
+            .collect()
+    }
+
     /// Chair `index` of a lift at `tick` (`shared::lifts`): its seat's middle, yaw, distance round the
     /// loop and stretch (0 up, 1 round the top, 2 down, 3 round the bottom), then where rider `seat`
     /// sits. `points` is the lift's `[x, z]` pairs and `cable` its cable heights, centimetres. For

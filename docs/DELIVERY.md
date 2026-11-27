@@ -40,7 +40,7 @@ Every number is a `DELIVERY_*` constant in `crates/shared/src/consts.rs` (run `n
 - **Wire.**
   - `phone` (client tag 5) is a tap: `PHONE_ACCEPT` or `PHONE_CANCEL` and the job. It goes down the client's signaling stream, so it is never lost.
   - `jobs` (20) is one player's phone: the board and their own jobs (`JOB_FETCH`, `JOB_CARRY` or `JOB_LOST`, where to go, the pay now and the clock). It is sent to everyone when the board changes, to a player when their own jobs change, once a second while they have one, and to a joiner.
-  - `delivered` (21) goes to everyone: who handed in which job, whose it was, the pay and their cash in all. It is sent before the phones, so a job gone from a phone is known to be delivered, not spoiled.
+  - `delivered` (21) goes to everyone: who handed in which job, whose it was, the pay and their cash in all. A player's cash starts at `STARTING_CASH` (1000), for the dealers ([DEALERS.md](DEALERS.md)). It is sent before the phones, so a job gone from a phone is known to be delivered, not spoiled.
   - `Score` carries `cash`, and the `carry` component's `CARRY_PARCEL` (16) bit puts the bag on a soldier's back. Protocol 92.
 - **Client.**
   - `DeliveryTracker` (`client/src/deliveries.ts`) keeps the phone, names the shops and households, and says what changed.

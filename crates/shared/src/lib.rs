@@ -9,6 +9,7 @@ pub mod armor;
 pub mod carve;
 pub mod consts;
 pub mod construct;
+pub mod dealer;
 pub mod facade;
 pub mod ghost;
 pub mod golf;

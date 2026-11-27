@@ -732,6 +732,11 @@ fn main() -> Result<()> {
         eprintln!("lifts: {} in the world", built.manifest.lifts.len());
         osm_import::fuel::lay(&mut built, &lots);
         eprintln!("fuel: {} stations in the world", built.manifest.fuel_stations.len());
+        let parking = osm_import::dealer::parking(&osm, place.frame);
+        let parks = parking.len();
+        osm_import::dealer::lay(&mut built, parking);
+        let km2 = built.tiles.len() as f64 * (f64::from(built.manifest.tile_size) / 100_000.0).powi(2);
+        eprintln!("dealers: {parks} car parks, {} dealers in the world, {:.1} a square kilometre", built.manifest.dealers.len(), built.manifest.dealers.len() as f64 / km2.max(1e-9));
         if options.buses {
             osm_import::buslines::lay(&mut built, &bus_stops);
             eprintln!("buses: {} stops from OpenStreetMap, {} lines", bus_stops.len(), built.manifest.bus_lines.len());

@@ -10,7 +10,7 @@ const cm = (metres: number) => Math.round(metres * 100)
  * `groundCell` apart (0 for flat), made of the `tiles` `[col, row]` (none listed is every one).
  */
 export function manifestBytes(half: number, tileSize: number, groundCell = 0, tiles: [number, number][] = []): Uint8Array {
-  return encode([WORLD_VERSION, [0, 0, 0], cm(half), cm(tileSize), [], tiles.map(([col, row]) => [col, row, 0]), cm(groundCell), 0, [], false, [], [87, 82, 42], false, []])
+  return encode([WORLD_VERSION, [0, 0, 0], cm(half), cm(tileSize), [], tiles.map(([col, row]) => [col, row, 0]), cm(groundCell), 0, [], false, [], [87, 82, 42], false, [], []])
 }
 
 /** A building's cubes when none were baked: `dims` all 0. */

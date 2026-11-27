@@ -101,6 +101,8 @@ fn samples() -> Vec<(&'static str, Vec<u8>)> {
             mine: vec![JobState { id: 2, stage: crate::consts::JOB_CARRY, x: 4_000, z: -70_000, pay: 51, left: -30 }],
         }),
         case("washed", S_WASHED, &Washed { tag: S_WASHED, vehicles: vec![7, 70_000] }),
+        case("sold", S_SOLD, &Sold { tag: S_SOLD, by: 3, kind: 42, vehicle: 900, pay: 25, cash: 1_275, dealer: 2 }),
+        case("ordered", S_ORDERED, &Ordered { tag: S_ORDERED, by: 3, kind: 42, vehicle: 900, cash: 1_250, dealer: 2 }),
         case("delivered", S_DELIVERED, &Delivered { tag: S_DELIVERED, by: 4, courier: 9, job: 70_000, pay: 87, cash: 1_000 }),
         case("notice", S_NOTICE, &Notice { tag: S_NOTICE, kind: NOTICE_OBJECTIVE, text: "Go".into() }),
         case("destroyed", S_DESTROYED, &Destroyed { tag: S_DESTROYED, objects: vec![DestroyedObject { kind: OBJ_TREE, col: 2, row: 3, index: 70_000, yaw: -1571, force: 51, stage: GROWN_YOUNG }] }),

@@ -1,12 +1,13 @@
 # The phone
 
-The soldier carries a phone. Raised, it is held in both hands in front of the eyes, as the paper map used to be. Its screen has two apps:
+The soldier carries a phone. Raised, it is held in both hands in front of the eyes, as the paper map used to be. Its screen has three apps:
 - **Map:** the world's map, from tiles sharp down to the paving stones.
 - **Deliveries:** the board of food orders ([DELIVERY.md](DELIVERY.md)).
+- **Dealer:** the vehicles a dealer sells and what they cost, bought from the delivery cash at a dealer's carport ([DEALERS.md](DEALERS.md)).
 
 ## Using it
 
-- **M** brings it up on the Map, **T** on the Deliveries. The same key again puts it away, and the other key switches app. The tabs along the bottom of the screen switch app too.
+- **M** brings it up on the Map, **T** on the Deliveries. The same key again puts it away, and the other key switches app. **E** by a dealer's carport, with nothing else to hand, brings it up on the Dealer app. The tabs along the bottom of the screen switch app too.
 - While it is up the mouse is free, as holding Alt is in some games. WASD, run, jump and crouch still work, so you can walk while you read. Nothing fires, because both hands are on the phone.
 - **Click on the screen** to tap. **Drag** pans the map or scrolls the list, and **the wheel** over the screen zooms the map or scrolls the list. The map's **+** and **−** zoom, and **◎** makes the map follow you again after a drag.
 - **Click off the phone** to put it away and take the mouse back. **Esc** puts it away and pauses.
@@ -46,5 +47,5 @@ The soldier carries a phone. Raised, it is held in both hands in front of the ey
 - **Input.** `InputController.phone` is the app shown, or null. `togglePhone(app)` is M and T, `putPhoneAway()` is a click off it, and `dropPhone()` is dying or a seat that cannot use it. With the phone up, `locked` stays true, so the game neither pauses nor stops reading the keys.
 - **Tests.**
   - `phone.spec.ts`: the keys, the pointer and that nothing fires.
-  - `phonescreen.spec.ts`: the corners' map, tabs, taking and giving back an order, panning, zooming and following again.
+  - `phonescreen.spec.ts`: the corners' map, tabs, taking and giving back an order, buying at a dealer, panning, zooming and following again.
   - `maptiles.spec.ts`: picking the level, the coarser tile while one loads, a square with none, and the cache's limit.

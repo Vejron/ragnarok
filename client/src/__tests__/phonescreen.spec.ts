@@ -4,7 +4,7 @@ import { onScreen } from '@/phone/pointer'
 import { PhoneScreen, type PhoneView } from '@/phone/screen'
 import { APP_H, APP_TOP, SCREEN_H, SCREEN_W } from '@/phone/ui'
 import { MapTiles } from '@/hud/maptiles'
-import { PHONE_ACCEPT, PHONE_CANCEL, JOB_FETCH } from '@/sim/consts'
+import { PHONE_ACCEPT, PHONE_CANCEL, PHONE_ORDER, JOB_FETCH, DEALER_KINDS, DEALER_PRICES } from '@/sim/consts'
 import type { DeliveryView } from '@/deliveries'
 
 /** A 2D context that draws nothing and measures every character 10 px wide. */
@@ -72,15 +72,33 @@ describe('PhoneScreen', () => {
     screen.pointerDown(x, y)
     screen.pointerUp(x, y)
   }
-  const view = (app: PhoneView['app'], d: DeliveryView | null = delivery): PhoneView => ({ app, tiles, marks, delivery: d, clock: '12:00' })
+  const away = { cash: 40, distance: 300, near: false }
+  const view = (app: PhoneView['app'], d: DeliveryView | null = delivery, dealer = away): PhoneView => ({ app, tiles, marks, delivery: d, dealer, clock: '12:00' })
 
   it('switches app by its tabs', () => {
     const { screen, actions } = make()
     screen.draw(fakeContext(), view('map'))
-    tap(screen, SCREEN_W * 0.75, SCREEN_H - 60)
+    tap(screen, SCREEN_W * 0.5, SCREEN_H - 60)
     expect(actions.open).toHaveBeenCalledWith('jobs')
-    tap(screen, SCREEN_W * 0.25, SCREEN_H - 60)
+    tap(screen, SCREEN_W * 0.85, SCREEN_H - 60)
+    expect(actions.open).toHaveBeenLastCalledWith('dealer')
+    tap(screen, SCREEN_W * 0.15, SCREEN_H - 60)
     expect(actions.open).toHaveBeenLastCalledWith('map')
+  })
+
+  it('buys a vehicle at a dealer when its price is tapped, and only what the cash covers', () => {
+    const { screen, actions } = make()
+    // The first row's price button: right of the list, under the header and the note.
+    const row = (i: number) => APP_TOP + 104 + 16 + 72 + i * (104 + 10) + 52
+    screen.draw(fakeContext(), view('dealer', delivery, away))
+    tap(screen, SCREEN_W - 16 - 24 - 75, row(0))
+    expect(actions.phone).not.toHaveBeenCalled()
+    screen.draw(fakeContext(), view('dealer', delivery, { cash: DEALER_PRICES[1], distance: 5, near: true }))
+    tap(screen, SCREEN_W - 16 - 24 - 75, row(0))
+    expect(actions.phone).toHaveBeenCalledWith(PHONE_ORDER, DEALER_KINDS[0])
+    // The third costs more than the cash.
+    tap(screen, SCREEN_W - 16 - 24 - 75, row(2))
+    expect(actions.phone).toHaveBeenCalledTimes(1)
   })
 
   it('takes an order when its price is tapped', () => {

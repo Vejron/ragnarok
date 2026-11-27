@@ -26,9 +26,9 @@ use crate::game::{Noise, Player, Seats, Vehicle, World};
 use bevy_ecs::message::MessageCursor;
 pub use medics::Medic;
 pub use officers::{Officer, officer_loadout};
-pub use wanted::{Wanted, clear as clear_wanted, wanted_byte};
+pub use wanted::{Wanted, clear as clear_wanted, stars as wanted_stars, wanted_byte};
 #[cfg(test)]
-pub use wanted::{charge as charge_wanted, stars as wanted_stars};
+pub use wanted::charge as charge_wanted;
 use shared::consts::*;
 use std::collections::VecDeque;
 

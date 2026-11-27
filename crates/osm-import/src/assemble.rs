@@ -2911,7 +2911,7 @@ fn cover_kind(tags: &std::collections::HashMap<String, String>) -> Option<u8> {
     }
     // A car park on the ground is asphalt, whatever land use it also carries; one under the ground,
     // on a roof or in a multi-storey building is not ground at all.
-    if tag("amenity") == Some("parking") && !matches!(tag("parking"), Some("underground" | "multi-storey" | "rooftop")) && tag("location") != Some("underground") {
+    if is_surface_parking(tags) {
         return Some(COVER_ASPHALT);
     }
     match tag("landuse")? {
@@ -2924,6 +2924,13 @@ fn cover_kind(tags: &std::collections::HashMap<String, String>) -> Option<u8> {
         "industrial" | "railway" | "quarry" | "construction" | "brownfield" | "landfill" | "depot" => Some(COVER_INDUSTRIAL),
         _ => None,
     }
+}
+
+/// Whether a way's or relation's tags make it a car park on the ground: not one under the ground, on a
+/// roof or in a multi-storey building.
+pub fn is_surface_parking(tags: &std::collections::HashMap<String, String>) -> bool {
+    let tag = |key: &str| tags.get(key).map(String::as_str);
+    tag("amenity") == Some("parking") && !matches!(tag("parking"), Some("underground" | "multi-storey" | "rooftop")) && tag("location") != Some("underground")
 }
 
 /// Whether a way's or relation's tags make it a field under crops (`lay_crops`): farmland, and not the
@@ -2947,7 +2954,7 @@ fn cover_rank(kind: u8) -> u8 {
 }
 
 /// Joins open polylines that share end points into closed rings; pieces that never close are dropped.
-fn join_rings(mut pieces: Vec<Vec<P>>) -> Vec<Vec<P>> {
+pub(crate) fn join_rings(mut pieces: Vec<Vec<P>>) -> Vec<Vec<P>> {
     let mut rings = Vec::new();
     while let Some(mut ring) = pieces.pop() {
         loop {
@@ -3008,6 +3015,8 @@ pub(crate) fn clip_ring(ring: &[P], [x0, z0, x1, z1]: Rect) -> Vec<P> {
 
 const SYNTHETIC_PITCH: f64 = 58.0;
 const SYNTHETIC_STREET: f64 = 10.0;
+/// The block of the synthetic city, `(column, row)`, that is a store with a car park and a vehicle dealer.
+const SYNTHETIC_DEALER: (i32, i32) = (3, 2);
 /// Which of the synthetic city's parks, in the order they are drawn, is a field of wheat instead: it
 /// keeps its fence and has no trees.
 const SYNTHETIC_FIELD: usize = 2;
@@ -3041,6 +3050,8 @@ pub fn synthetic_city(half: f64, tile_size: f64, ground: Ground, water: Placed) 
     let mut parks = Vec::new();
     // The field's rings: wheat is grown in it once the tiles are built (`lay_crops`).
     let mut fields: Vec<Vec<Vec<P>>> = Vec::new();
+    // The dealer's car park (`SYNTHETIC_DEALER`).
+    let mut dealer_parking: Vec<Vec<P>> = Vec::new();
     let count = (half * 2.0 / PITCH).floor() as i32;
     let start = -(count as f64) * PITCH / 2.0;
     let mut seed: u64 = 0x2545_f491;
@@ -3063,6 +3074,15 @@ pub fn synthetic_city(half: f64, tile_size: f64, ground: Ground, water: Placed) 
         for j in 0..count {
             let (bx, bz) = (start + i as f64 * PITCH + STREET / 2.0 + 2.0, start + j as f64 * PITCH + STREET / 2.0 + 2.0);
             let size = PITCH - STREET - 4.0;
+            if (i, j) == SYNTHETIC_DEALER {
+                // A store along the block's north side and its car park filling the rest, so the offline
+                // world has a vehicle dealer (`crate::dealer`).
+                buildings.push((vec![[bx + 7.0, bz], [bx + 37.0, bz], [bx + 37.0, bz + 14.0], [bx + 7.0, bz + 14.0]], 6.0, None, None, None, BUILDING_SHOP, None));
+                let lot = vec![[bx, bz + 16.0], [bx + size, bz + 16.0], [bx + size, bz + size], [bx, bz + size]];
+                covers.push((COVER_ASPHALT, vec![lot.clone()]));
+                dealer_parking.push(lot);
+                continue;
+            }
             if next() < 0.15 {
                 // A little park, or the one field of wheat.
                 let ring = vec![[bx, bz], [bx + size, bz], [bx + size, bz + size], [bx, bz + size]];
@@ -3148,6 +3168,7 @@ pub fn synthetic_city(half: f64, tile_size: f64, ground: Ground, water: Placed) 
     lay_crops(&mut built, &fields, half, tile_size);
     // A fuel station in the second block of the second row, facing its street, so the offline world has one to fill up at.
     crate::fuel::lay(&mut built, &[station]);
+    crate::dealer::lay(&mut built, dealer_parking);
     built
 }
 

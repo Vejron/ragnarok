@@ -916,6 +916,7 @@ under the deck, and nobody spawns on it. A road that crosses under a bridge is n
 `WORLD_VERSION` 39 added the deck under each piece of track (`Rail::deck`: the bridge's section and the deck's height at each point, "Railways" above).
 `WORLD_VERSION` 42 added the fuel stations to the manifest (`Manifest::fuel_stations`, FUEL.md).
 `WORLD_VERSION` 43 made each fuel station a lot with a turn and a height (`FuelStation { at, yaw, base }`), levelled, paved and cleared of OpenStreetMap's buildings (FUEL.md).
+`WORLD_VERSION` 44 added the vehicle dealers to the manifest (`Manifest::dealers`, `Dealer { at, yaw, base }`): a carport against a store by a big car park, its ground levelled and paved (DEALERS.md).
 
 Both sides check `WORLD_VERSION` and read only the current layout: there is no reading of older
 worlds. When the layout changes, bump it in `crates/shared/src/world.rs` **and**

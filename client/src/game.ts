@@ -9,7 +9,7 @@ import { Transport } from './net/transport'
 import {
   BUTTON_ALT, BUTTON_CHUTE, BUTTON_CROUCH, BUTTON_FIRE, BUTTON_JUMP, BUTTON_LAMP, BUTTON_RELOAD, BUTTON_RUN, BYE_LEAVING, BYE_REJOINING, CROUCH_EYE_DROP, PRONE_EYE_HEIGHT, SLIDE_MIN_SPEED, EYE_HEIGHT, INPUT_REDUNDANCY, PLAYER_MAX_HP, PROTOCOL_VERSION,
   SHELL_COOLDOWN_TICKS, STANDING_Y, STANCE_CHUTE, STANCE_DIVE, STANCE_DOWN, STANCE_PRONE, STANCE_SWIM, STANCE_GHOST,
-  DOOM_TICKS, TICK_MS, TICK_RATE, TITAN_FIST_RADIUS, TITAN_REACH, LIFT_RIDER_CENTRE, BLOOM_RECOVER, STAMINA_FULL, ONE_ARM_SWAY, BACKPACK_SPEED, CARRY_SKIS, SUB_LAUNCH_DEPTH } from './sim/consts'
+  DOOM_TICKS, TICK_MS, TICK_RATE, TITAN_FIST_RADIUS, TITAN_REACH, LIFT_RIDER_CENTRE, BLOOM_RECOVER, STAMINA_FULL, ONE_ARM_SWAY, BACKPACK_SPEED, CARRY_SKIS, SUB_LAUNCH_DEPTH, DEALER_REACH } from './sim/consts'
 import { easeSway, sway, swayAmplitude } from './sway'
 import { mayPlace } from './sim/bricks'
 import { crewGun, vehicleDef } from './sim/vehicles'
@@ -17,7 +17,7 @@ import { blockedAt, lookDir, spreadPixels } from './aimline'
 import { Meter, called } from './sim/golf'
 import { ITEM_DRIVER, ITEM_NONE, aimSpeedScale, effectiveSpread, fillsHands, itemDef, type ItemDef, type ItemSlot } from './sim/items'
 import { backswingPhase, downswingPhase } from './render/golfclub'
-import { InputController } from './sim/input'
+import { InputController, type PhoneApp } from './sim/input'
 import type { Character } from './render/character'
 import { SimMotor, type CharacterState, type Neighbour, type VehiclePose } from './sim/motor'
 import { Terrain } from './sim/terrain'
@@ -89,7 +89,7 @@ import { animationFocus, Crowd } from './render/character'
 import { Events } from './events'
 import { Arcs } from './arcs'
 import { cockpit, mountGun, pilotSights, roofGun, titanSight } from './gauges'
-import { prompt } from './prompt'
+import { DEALER_PROMPT, prompt } from './prompt'
 import { Surroundings } from './surroundings'
 import { Cameras } from './cameras'
 import { crewedSeatView, rideView, seatView, type SeatView } from './seats'
@@ -125,6 +125,7 @@ import type { DoorStep } from './render/character'
 import { LiftRiders } from './entities/presenters/liftriders'
 import { BusStops } from './render/busstops'
 import { FuelStations } from './render/fuelstations'
+import { Dealers } from './render/dealers'
 import { fuelGauge } from './fuel'
 import { LiftView } from './render/lifts'
 import { Seating } from './entities/presenters/seating'
@@ -152,7 +153,7 @@ import { Notices } from './notices'
 import { Scoreboard, sides } from './scoreboard'
 import { Blips, emergencyBlips, type Blip } from './blips'
 import { BackpackTracker } from './backpack'
-import { DeliveryTracker } from './deliveries'
+import { DeliveryTracker, money } from './deliveries'
 import { Bodies } from './bodies'
 import { Bricklayer } from './bricklayer'
 import { LocalPlayer } from './localplayer'
@@ -449,7 +450,7 @@ export class Game {
   })
   private phonePointer: PhonePointer | null = null
   /** The app the phone showed last, so a lowered phone keeps showing it as it goes down. */
-  private phoneApp: 'map' | 'jobs' = 'map'
+  private phoneApp: PhoneApp = 'map'
   /** What the server tells the local player of themself. */
   private readonly player = new LocalPlayer()
   /** Limbs coming off and soldiers thrown down, as drawn. */
@@ -484,6 +485,8 @@ export class Game {
   /** The signs at the world's bus stops, once the world is known. */
   private busStops: BusStops | null = null
   private fuelStations: FuelStations | null = null
+  /** The world's vehicle dealers' carports (DEALERS.md). */
+  private dealers: Dealers | null = null
   /** Where the camera goes while seated, by the seat's rig. */
   private readonly cameras: Cameras
   private predictor: Predictor | null = null
@@ -706,6 +709,8 @@ export class Game {
     this.scene.scene.add(this.busStops.root)
     this.fuelStations = new FuelStations(world.fuelStations ?? [])
     this.scene.scene.add(this.fuelStations.root)
+    this.dealers = new Dealers(world.dealers ?? [])
+    this.scene.scene.add(this.dealers.root)
     this.motor = this.view.motor = motor
     this.ragdolls = new Ragdolls(motor)
     this.driver = new VehicleDriver(motor)
@@ -962,6 +967,20 @@ export class Game {
           if (id === this.seat?.vehicle) this.notices.receive(NOTICE_SAY, 'Washed and mended: the police have lost you', now)
         }
         break
+      case 'ordered': {
+        // Bought at a dealer (DEALERS.md): the buyer's cash goes down, and the carport's door rolls up.
+        this.board.cash(message.by, message.cash)
+        this.dealers?.ordered(message.dealer)
+        if (message.by === this.localId) this.notices.receive(NOTICE_SAY, `Your ${vehicleDef(message.kind).name} is ready in the carport`, now)
+        break
+      }
+      case 'sold': {
+        // Driven in through a dealer's door and sold (DEALERS.md): the seller's cash goes up.
+        this.board.cash(message.by, message.cash)
+        this.dealers?.ordered(message.dealer)
+        if (message.by === this.localId) this.notices.receive(NOTICE_SAY, `Sold the ${vehicleDef(message.kind).name} for ${money(message.pay)}`, now)
+        break
+      }
       case 'delivered': {
         this.board.cash(message.by, message.cash)
         const news = this.deliveries.delivered(message, this.localId, nameFor)
@@ -1340,6 +1359,7 @@ export class Game {
     this.liftView?.update(this.liftTick(now), eye, this.scene.scene.fog?.far ?? Infinity)
     this.busStops?.update(eye, this.scene.scene.fog?.far ?? Infinity, (x, z) => this.terrain?.sample(x, z) ?? null)
     this.fuelStations?.update(eye, this.scene.scene.fog?.far ?? Infinity, nightAt(this.scene.phase), dt, this.vehicles.placed.values())
+    this.dealers?.update(eye, this.scene.scene.fog?.far ?? Infinity, nightAt(this.scene.phase), dt, this.vehicles.placed.values())
 
     const seat = this.seat
     const view = seat ? crewedSeatView(seat.kind, seat.index, this.vehicles.placed.get(seat.vehicle)?.seats ?? []) : null
@@ -1407,7 +1427,9 @@ export class Game {
 
   /** Raises or lowers the phone and redraws its screen when something changed, or every so often. */
   private holdPhone(stats: HudStats, { now, dt, velocity, lookYaw, lookPitch }: Moment) {
-    const marks = { x: stats.x, z: stats.z, yaw: stats.yaw, blips: stats.blips, circle: stats.backpack, target: stats.delivery?.target, stations: stats.fuelStations, pulse: (now % 1600) / 1600 }
+    const marks = { x: stats.x, z: stats.z, yaw: stats.yaw, blips: stats.blips, circle: stats.backpack, target: stats.delivery?.target, stations: stats.fuelStations, dealers: stats.dealers, pulse: (now % 1600) / 1600 }
+    // E by a dealer's carport, with nothing else to hand, brings the phone up on its app.
+    if (this.input.takeUse() && stats.prompt === DEALER_PROMPT && this.input.phone !== 'dealer') this.input.togglePhone('dealer')
     if (this.localId !== null) this.scene.heldPhone.dress(colorFor(this.localId))
     if (this.input.takeStatsToggle()) this.setLook({ ...this.scene.look, netStats: !this.scene.look.netStats })
     const app = this.input.phone
@@ -1416,7 +1438,7 @@ export class Game {
     const urgent = switched || this.phoneScreen.dirty || this.phoneScreen.dragging
     const clock = new Date().toTimeString().slice(0, 5)
     this.scene.heldPhone.update(app !== null, dt, now, Math.hypot(velocity[0], velocity[1]), lookYaw, lookPitch, urgent, (g) =>
-      this.phoneScreen.draw(g, { app: this.phoneApp, tiles: this.mapTiles, marks, delivery: stats.delivery, clock }))
+      this.phoneScreen.draw(g, { app: this.phoneApp, tiles: this.mapTiles, marks, delivery: stats.delivery, dealer: this.dealerView(stats.x, stats.z), clock }))
   }
 
   /** Lays the HUD for `stats` onto the renderer's HUD layer, for the frame about to be drawn. */
@@ -1785,6 +1807,7 @@ export class Game {
       prompt: this.localId === null || player.ghost || player.forming ? null : prompt({
         position, ground: this.terrain?.heightAt(position[0]!, position[2]!) ?? 0, alive: player.alive, grounded: local.grounded, chute: local.chute, seat,
         lift: this.lifted ? 'off' : player.alive && !seated && this.liftView?.boardable(position, (x, z) => this.terrain?.heightAt(x, z) ?? 0, STANDING_Y, this.liftTick(now)) ? 'ride' : null,
+        dealer: !seated && this.nearestDealer(position[0]!, position[2]!) <= DEALER_REACH,
       }, this.lying.lying, cars),
       seat: view?.role ?? null,
       canSwitchSeat: seat !== null && (cars.get(seat.vehicle)?.seats.includes(0) ?? false),
@@ -1801,6 +1824,7 @@ export class Game {
       boost: gauges?.includes('boost') ? (this.driver?.thrust?.air ?? null) : null,
       fuel: ride?.fuel != null ? fuelGauge(ride.fuel, this.fuelStations?.points ?? [], ride.x, ride.z) : null,
       fuelStations: this.fuelStations?.points ?? [],
+      dealers: this.dealers?.points ?? [],
       stamina: !seated && able ? { left: 1 - local.spent / STAMINA_FULL, winded: local.winded } : null,
       breath: !seated && player.alive && player.breath < 1 ? player.breath : null,
       rotor: gauges?.includes('rotor') && seat ? this.rotorGauge(seat.vehicle) : null,
@@ -1862,6 +1886,20 @@ export class Game {
       phoneUp: this.input.phone !== null,
       netStats: this.scene.look.netStats,
     }
+  }
+
+  /** How far the nearest dealer's carport mouth is from `(x, z)`, metres: Infinity in a world with none. */
+  private nearestDealer(x: number, z: number): number {
+    let best = Infinity
+    for (const [dx, dz] of this.dealers?.points ?? []) best = Math.min(best, Math.hypot(dx - x, dz - z))
+    return best
+  }
+
+  /** What the phone's dealer app shows to the local player at `(x, z)`. */
+  private dealerView(x: number, z: number) {
+    const distance = this.nearestDealer(x, z)
+    const seated = this.seat !== null
+    return { cash: this.board.cashOf(this.localId), distance: Number.isFinite(distance) ? distance : null, near: !seated && distance <= DEALER_REACH }
   }
 
   /** A tap on the delivery phone (`PHONE_*`, DELIVERY.md): sent reliably, as it must not be lost. */

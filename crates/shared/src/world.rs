@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::terrain::Ground;
 
-pub const WORLD_VERSION: u8 = 43;
+pub const WORLD_VERSION: u8 = 44;
 
 /// `Manifest::theme`: the world as it always was.
 pub const THEME_PLAIN: u8 = 0;
@@ -154,6 +154,23 @@ pub struct Manifest {
     /// and heals whatever goes through its wash, and the client draws them and marks them on the map.
     /// From OpenStreetMap's `amenity=fuel`.
     pub fuel_stations: Vec<FuelStation>,
+    /// The vehicle dealers (`shared::dealer`, DEALERS.md), whole for the same reason: each a carport
+    /// against an OSM store's wall over its parking, where an ordered vehicle stands ready. The server
+    /// sells from them and the client draws them and marks them on the map.
+    pub dealers: Vec<Dealer>,
+}
+
+/// A vehicle dealer's carport (`shared::dealer`): a roof on posts against a store's wall, open on the
+/// side facing the store's parking.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Dealer {
+    /// The middle of the carport's open mouth, centimetres.
+    pub at: [i32; 2],
+    /// How far the carport's frame is turned about the vertical, milliradians, as a rotation about +Y:
+    /// its +Z (out of the mouth onto the lot) goes to `(sin, cos)`.
+    pub yaw: i16,
+    /// Height of the carport's floor, centimetres.
+    pub base: i32,
 }
 
 /// A fuel station (`shared::station`): a lot with a sign, a canopy over the pumps and behind it a
@@ -679,6 +696,9 @@ pub struct WorldFile {
     /// The fuel stations, from the manifest.
     #[serde(skip)]
     pub fuel_stations: Vec<FuelStation>,
+    /// The vehicle dealers, from the manifest.
+    #[serde(skip)]
+    pub dealers: Vec<Dealer>,
     /// Every ski track. Filled by `assemble`.
     #[serde(skip)]
     pub ski: Vec<SkiTrail>,
@@ -1473,6 +1493,7 @@ impl WorldFile {
             open_water: manifest.open_water,
             bus_lines: manifest.bus_lines.clone(),
             fuel_stations: manifest.fuel_stations.clone(),
+            dealers: manifest.dealers.clone(),
             ..Default::default()
         };
         let grid = manifest.grid() as usize;
@@ -1681,6 +1702,7 @@ mod tests {
             river_tint: [70, 80, 40],
             tint_all: true,
             fuel_stations: vec![FuelStation { at: [1_200, -3_400], yaw: 1_571, base: 250 }],
+            dealers: vec![Dealer { at: [-5_000, 800], yaw: -3_000, base: 410 }],
         };
         assert_eq!(Manifest::decode(&manifest.encode()).unwrap(), manifest);
         // A bus line knows its length, and where it is and which way it runs any distance along it.

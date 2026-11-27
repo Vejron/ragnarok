@@ -50,6 +50,8 @@ export interface HudStats {
   fuel: { left: number; filling: boolean } | null
   /** The world's fuel stations, metres, for the map. */
   fuelStations: readonly (readonly [number, number])[]
+  /** The world's vehicle dealers, metres, for the map (DEALERS.md). */
+  dealers?: readonly (readonly [number, number])[]
   /**
    * A helicopter's pilot: where the collective lever is and how fast the rotor turns, each 0..1 of full, the
    * vertical speed, m/s (+ up), and whether the rotor is low (`THRUST_LOW_ROTOR`); null elsewhere.

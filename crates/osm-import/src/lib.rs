@@ -16,6 +16,7 @@ pub mod dem;
 pub mod field;
 pub mod footprints;
 pub mod fuel;
+pub mod dealer;
 pub mod detail;
 pub mod edges;
 pub mod grid;

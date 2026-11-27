@@ -11,11 +11,12 @@ const LINE: BusLine = { points: [[0, 0], [300, 0], [300, 400]], stops: [0, 300, 
 describe('bus lines', () => {
   it('come with the manifest, in metres', () => {
     const cm = (line: BusLine) => [line.points.map(([x, z]) => [x * 100, z * 100]), line.stops.map((stop) => stop * 100), line.signs.map(([x, z]) => [Math.round(x * 100), Math.round(z * 100)])]
-    const world = decodeManifest(encode([WORLD_VERSION, [0, 0, 0], 50_000, 25_600, [], [], 0, 0, [], false, [cm(LINE)], [87, 82, 42], true, [[[1200, -3400], 1571, 250]]]))
+    const world = decodeManifest(encode([WORLD_VERSION, [0, 0, 0], 50_000, 25_600, [], [], 0, 0, [], false, [cm(LINE)], [87, 82, 42], true, [[[1200, -3400], 1571, 250]], [[[-5000, 800], -3000, 410]]]))
     expect(world.busLines).toEqual([LINE])
     expect(world.riverTint).toBe(0x57522a)
     expect(world.tintAll).toBe(true)
     expect(world.fuelStations).toEqual([{ x: 12, z: -34, yaw: 1.571, base: 2.5 }])
+    expect(world.dealers).toEqual([{ x: -50, z: 8, yaw: -3, base: 4.1 }])
   })
 
   it('are followed by distance along them, as the server follows them', () => {

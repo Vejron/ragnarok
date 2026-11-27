@@ -845,7 +845,9 @@ impl Mechanic for Vehicles {
 
         doomed(world);
 
-        // Riders travel with their car; stuck or fallen cars are put right.
+        // Riders travel with their car; stuck or fallen cars are put right. A bought one is not put
+        // back as new: it goes once burnt out or fallen out of the world.
+        let mut gone = Vec::new();
         for vid in world.entities.ids::<With<Vehicle>>() {
             let Some(pose) = world.physics.car_pose(vid) else { continue };
             // A wreck burns where it lies, then the room puts a fresh one back.
@@ -856,6 +858,7 @@ impl Mechanic for Vehicles {
                     wreck.left = wreck.left.saturating_sub(1);
                     wreck.left == 0
                 });
+            let bought = world.entities.has::<super::dealers::Bought>(vid);
             let mut vehicle = world.entities.of_mut::<Vehicle>(vid);
             // Put back as new: its weapons are restocked once it is let go of.
             let mut fresh = false;
@@ -864,6 +867,10 @@ impl Mechanic for Vehicles {
             // A ship's gun goes where its ship does, which is put right for both.
             let mounted = world.physics.mounted_on(vid).is_some();
             vehicle.stuck_ticks = if pose.up_y < 0.2 && slow && !mounted { vehicle.stuck_ticks + 1 } else { 0 };
+            if bought && ((wrecked && burnt) || (!wrecked && y < KILL_Y)) {
+                gone.push(vid);
+                continue;
+            }
             if wrecked {
                 // A wreck lets go of whatever it tows, and whatever tows it.
                 world.physics.detach(vid);
@@ -903,6 +910,9 @@ impl Mechanic for Vehicles {
                 restore(world, vid, burnt);
             }
         }
+        for vid in gone {
+            remove_vehicle(world, vid);
+        }
         engines(world);
     }
 }
@@ -910,7 +920,8 @@ impl Mechanic for Vehicles {
 /// Takes home, whole and with a full tank, every vehicle that has stood out of fuel with nobody aboard
 /// for `FUEL_STRANDED_SECONDS` and has no player's `eyes` (`[x, z]`, metres) within `HEAL_CLEAR` of
 /// it: nobody sees it go. A car of the traffic or a bus that a player drove off is not taken home:
-/// the traffic and the buses clear away their own.
+/// the traffic and the buses clear away their own. One bought at a dealer has no home to go to, and
+/// is taken away.
 pub(crate) fn reclaim_stranded(world: &mut World, eyes: &[[f32; 2]]) {
     for vid in world.entities.ids::<With<Vehicle>>() {
         let stranded = world.entities.of::<Vehicle>(vid).dry_ticks >= FUEL_STRANDED_SECONDS * TICK_RATE;
@@ -920,6 +931,10 @@ pub(crate) fn reclaim_stranded(world: &mut World, eyes: &[[f32; 2]]) {
         let Some(pose) = world.physics.car_pose(vid) else { continue };
         let [x, _, z] = pose.position;
         if eyes.iter().any(|eye| (eye[0] - x).hypot(eye[1] - z) < HEAL_CLEAR) {
+            continue;
+        }
+        if world.entities.has::<super::dealers::Bought>(vid) {
+            remove_vehicle(world, vid);
             continue;
         }
         world.physics.detach(vid);

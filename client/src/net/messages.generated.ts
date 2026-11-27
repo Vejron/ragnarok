@@ -35,6 +35,8 @@ export const S_DELIVERED = 21
 export const S_HEALED = 22
 export const S_REGROWN = 23
 export const S_WASHED = 24
+export const S_ORDERED = 25
+export const S_SOLD = 26
 
 export interface BulletSpawn {
   id: number
@@ -363,6 +365,25 @@ export interface Washed {
   vehicles: number[]
 }
 
+export interface Ordered {
+  type: 'ordered'
+  by: number
+  kind: number
+  vehicle: number
+  cash: number
+  dealer: number
+}
+
+export interface Sold {
+  type: 'sold'
+  by: number
+  kind: number
+  vehicle: number
+  pay: number
+  cash: number
+  dealer: number
+}
+
 export interface Delivered {
   type: 'delivered'
   by: number
@@ -405,7 +426,7 @@ export interface Rtc {
   json: string
 }
 
-export type ServerMessage = Welcome | Snapshot | Pong | Leave | Kill | Scores | Profiles | Notice | Destroyed | Damaged | Carved | Built | Gates | Cratered | Dug | Regrown | Healed | Marks | Backpack | Jobs | Washed | Delivered | Armor | Hit | Rtc
+export type ServerMessage = Welcome | Snapshot | Pong | Leave | Kill | Scores | Profiles | Notice | Destroyed | Damaged | Carved | Built | Gates | Cratered | Dug | Regrown | Healed | Marks | Backpack | Jobs | Washed | Ordered | Sold | Delivered | Armor | Hit | Rtc
 
 function decodeBulletSpawn(r: unknown): BulletSpawn | undefined {
   if (!Array.isArray(r) || r.length !== 10) return undefined
@@ -786,6 +807,29 @@ function decodeWashed(r: readonly unknown[]): Washed | undefined {
   return { type: 'washed', vehicles }
 }
 
+function decodeOrdered(r: readonly unknown[]): Ordered | undefined {
+  if (r.length !== 6) return undefined
+  const by = w.int(r[1])
+  const kind = w.int(r[2])
+  const vehicle = w.int(r[3])
+  const cash = w.int(r[4])
+  const dealer = w.int(r[5])
+  if (by === undefined || kind === undefined || vehicle === undefined || cash === undefined || dealer === undefined) return undefined
+  return { type: 'ordered', by, kind, vehicle, cash, dealer }
+}
+
+function decodeSold(r: readonly unknown[]): Sold | undefined {
+  if (r.length !== 7) return undefined
+  const by = w.int(r[1])
+  const kind = w.int(r[2])
+  const vehicle = w.int(r[3])
+  const pay = w.int(r[4])
+  const cash = w.int(r[5])
+  const dealer = w.int(r[6])
+  if (by === undefined || kind === undefined || vehicle === undefined || pay === undefined || cash === undefined || dealer === undefined) return undefined
+  return { type: 'sold', by, kind, vehicle, pay, cash, dealer }
+}
+
 function decodeDelivered(r: readonly unknown[]): Delivered | undefined {
   if (r.length !== 6) return undefined
   const by = w.int(r[1])
@@ -881,6 +925,10 @@ export function decodeMessage(r: readonly unknown[]): ServerMessage | undefined 
       return decodeJobs(r)
     case S_WASHED:
       return decodeWashed(r)
+    case S_ORDERED:
+      return decodeOrdered(r)
+    case S_SOLD:
+      return decodeSold(r)
     case S_DELIVERED:
       return decodeDelivered(r)
     case S_ARMOR:

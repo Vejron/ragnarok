@@ -178,10 +178,10 @@ fn delivering_pays_full_before_par_and_less_after() {
     game.step();
     assert!(!carries_parcel(&game.world, id));
     assert!(state(&game).job(job).is_none());
-    assert_eq!(game.world.entities.of::<Player>(id).score.cash, pay);
+    assert_eq!(game.world.entities.of::<Player>(id).score.cash, STARTING_CASH + pay, "paid on top of what they joined with");
     let told = delivered(&mut inbox);
     assert_eq!(told.len(), 1);
-    assert_eq!((told[0].by, told[0].courier, told[0].job, told[0].pay, told[0].cash), (id, id, job, pay, pay));
+    assert_eq!((told[0].by, told[0].courier, told[0].job, told[0].pay, told[0].cash), (id, id, job, pay, STARTING_CASH + pay));
 
     let (mut game, id, job, _inbox) = fetched();
     let entry = state(&game).job(job).unwrap().clone();
@@ -189,7 +189,7 @@ fn delivering_pays_full_before_par_and_less_after() {
     steps(&mut game, (entry.par * 1.5 * TICK_RATE as f32) as u32);
     stand(&mut game, id, HOUSE);
     game.step();
-    let expected = (entry.pay as f32 * (1.0 + DELIVERY_FLOOR) / 2.0).round() as u32;
+    let expected = STARTING_CASH + (entry.pay as f32 * (1.0 + DELIVERY_FLOOR) / 2.0).round() as u32;
     assert!(game.world.entities.of::<Player>(id).score.cash.abs_diff(expected) <= 1, "{} paid, about {expected} expected", game.world.entities.of::<Player>(id).score.cash);
 }
 
@@ -230,8 +230,8 @@ fn a_couriers_parcel_drops_where_they_die_and_a_robber_who_delivers_it_is_paid()
     game.step();
     let told = delivered(&mut robber_inbox);
     assert_eq!((told[0].by, told[0].courier, told[0].job), (robber, courier, job));
-    assert!(game.world.entities.of::<Player>(robber).score.cash > 0);
-    assert_eq!(game.world.entities.of::<Player>(courier).score.cash, 0);
+    assert!(game.world.entities.of::<Player>(robber).score.cash > STARTING_CASH);
+    assert_eq!(game.world.entities.of::<Player>(courier).score.cash, STARTING_CASH);
 }
 
 #[test]

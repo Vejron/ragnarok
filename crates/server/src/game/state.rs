@@ -1160,6 +1160,10 @@ pub struct Fresh {
     pub gates: Vec<(ObjId, u32, bool)>,
     /// Vehicles that came out of a fuel station's wash healed (`carwash`), to go out as one `Washed`.
     pub washed: Vec<u32>,
+    /// Vehicles bought at a dealer this tick (`dealers`), each to go out as an `Ordered`.
+    pub ordered: Vec<shared::protocol::Ordered>,
+    /// Vehicles sold to a dealer this tick (`dealers`), each to go out as a `Sold`.
+    pub sold: Vec<shared::protocol::Sold>,
 }
 
 /// Something of the static world brought down: a tree felled, a piece of fence or wall broken, a building

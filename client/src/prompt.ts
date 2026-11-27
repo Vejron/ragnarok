@@ -1,7 +1,8 @@
 /**
  * The key hint for what E (or G) does where the local player stands, judged as the server will judge
  * it: a ski lift's chair first, then the parachute while falling, then an item within reach, then the nearest vehicle with a
- * free seat, which the server boards into its lowest free seat.
+ * free seat, which the server boards into its lowest free seat; and last, by a dealer's carport, the
+ * phone's dealer app.
  */
 
 import type { Lying } from '@/entities/presenters/pickups'
@@ -28,7 +29,12 @@ export interface Where {
   seat: { kind: number; index: number } | null
   /** Riding a ski lift's chair (`off`), or beside one they can sit on (`ride`), as the server judges it. */
   lift?: 'ride' | 'off' | null
+  /** Standing within reach of a vehicle dealer's carport (DEALERS.md). */
+  dealer?: boolean
 }
+
+/** The hint by a dealer's carport, when nothing else is to hand: E then brings the phone up on its app. */
+export const DEALER_PROMPT = 'E: buy a vehicle'
 
 /** The nearest item on the ground within reach of `position`, as the server will judge it. */
 export function itemInReach(lying: readonly Lying[], position: readonly number[]): Lying | null {
@@ -67,7 +73,8 @@ export function prompt(where: Where, lying: readonly Lying[], cars: ReadonlyMap<
     const board = car.manned ? 'E: drag the driver out' : free < 0 ? undefined : seatView(car.kind, free).board
     if (board && distance <= ENTER_RADIUS && (!best || distance < best.distance)) best = { distance, board }
   }
-  return best?.board ?? null
+  if (best) return best.board
+  return where.dealer && where.alive && where.grounded ? DEALER_PROMPT : null
 }
 
 const spot = new Vector3()

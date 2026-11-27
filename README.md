@@ -46,11 +46,12 @@ The docs are in [docs/](docs/).
 - [HULL-DAMAGE.md](docs/HULL-DAMAGE.md): what a round leaves on a vehicle: dents, soot, holes ringed with blued steel and gouges, drawn by the mesh's own shader, and the blow that rocks it, a Titan too
 - [WRECKS.md](docs/WRECKS.md): a vehicle whose health is gone burns for three seconds while its crew gets out, then goes up as its kind does: a car thrown, a tank where it stands, a Titan falling away from the blow
 - [FUEL.md](docs/FUEL.md): vehicles burn fuel while a player drives them, leak it through a holed tank, fill up at the fuel stations of OpenStreetMap, and go home when left empty where nobody is near; each station has a drive-through wash that mends a car and loses the police
+- [DEALERS.md](docs/DEALERS.md): vehicle dealers at OpenStreetMap stores with big car parks, about one or two to a square kilometre: buy a car, a helicopter or a tank on the phone with your delivery cash, and it comes out of a carport against the store; drive one in through the door to sell it for a sixth, less for damage, while the police are not after you
 - [DRONES.md](docs/DRONES.md): FPV and loitering drones
 - [GYRO-AIM.md](docs/GYRO-AIM.md): aiming on a phone by turning it
 - [BACKPACK.md](docs/BACKPACK.md): backpack mode
 - [DELIVERY.md](docs/DELIVERY.md): delivery mode, food orders on a phone
-- [PHONE.md](docs/PHONE.md): the phone in the soldier's hands, its map and delivery apps
+- [PHONE.md](docs/PHONE.md): the phone in the soldier's hands, its map, delivery and dealer apps
 - [VEHICLES-I.md](docs/VEHICLES-I.md): cars, seats, driving
 - [VEHICLES-II.md](docs/VEHICLES-II.md): the tank, its gunner seat and the shell, driver prediction and the helicopter; how tracks ride over humps, steps and side slopes
 - [HELICOPTER.md](docs/HELICOPTER.md): the helicopter's semi-realistic flight model: collective lever, torque cyclic, pedals to the look, rotor speed, ground effect, translational lift, vortex ring and autorotation

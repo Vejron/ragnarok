@@ -46,7 +46,7 @@ pub use crate::vehicles::police_car::*;
 pub use crate::vehicles::ambulance::*;
 
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
-pub const PROTOCOL_VERSION: u8 = 102;
+pub const PROTOCOL_VERSION: u8 = 104;
 
 /// Why a page closes its session (`Bye`): the tab is closing or reloading.
 pub const BYE_LEAVING: u8 = 0;
@@ -703,6 +703,9 @@ pub const DELIVERY_JOBS: u32 = 6;
 /// What a `Phone` message asks: to take a job off the board, or to give back one not yet fetched.
 pub const PHONE_ACCEPT: u8 = 0;
 pub const PHONE_CANCEL: u8 = 1;
+/// A `Phone` message's action to buy a vehicle at the dealer the player stands by (DEALERS.md): its
+/// `job` is then the kind (`DEALER_KINDS`).
+pub const PHONE_ORDER: u8 = 2;
 /// `JobState::stage`: on the way to the shop, carrying the parcel to the house, or your job's parcel
 /// lost (dropped where you died, or in someone else's hands).
 pub const JOB_FETCH: u8 = 0;
@@ -1030,6 +1033,35 @@ pub const WASH_TAKE_ANGLE: f32 = 0.9;
 pub const WASH_TAKE_ASIDE: f32 = 2.0;
 /// How far ahead along the lane the wash steers for, metres.
 pub const WASH_STEER_AHEAD: f32 = 4.0;
+
+/// A vehicle dealer's carport (DEALERS.md, `shared::dealer`), built against a store's wall over its
+/// parking: its clear width across the mouth and its depth from the wall out to the mouth, metres. Room
+/// for the bus and a tank with its gun.
+pub const DEALER_PORT: [f32; 2] = [8.0, 14.0];
+/// The clear height under the carport's roof, metres.
+pub const DEALER_PORT_HEIGHT: f32 = 5.0;
+/// How near the carport's mouth a soldier on foot must stand to order from its dealer, metres across the ground.
+pub const DEALER_REACH: f32 = 25.0;
+/// The least distance between two dealers, metres: about one or two to a square kilometre in town.
+pub const DEALER_APART: f32 = 700.0;
+/// The least area of car park near a store for its carport to face the car park rather than its road, square metres.
+pub const DEALER_MIN_PARKING: f32 = 800.0;
+/// How far out from the carport's mouth an ordered helicopter is set down on the lot, metres, clear
+/// of the carport's roof under its rotor.
+pub const DEALER_HELI_OUT: f32 = 12.0;
+/// What a dealer sells, in the order its phone app lists them, and what each costs from a player's
+/// delivery cash (`DEALER_PRICES`, the same order). No planes, walkers, boats or the Titan.
+pub const DEALER_KINDS: [u8; 30] = [KIND_SNOWRACER, KIND_GOLF_CART, KIND_EPA, KIND_SNOWMOBILE, KIND_KADETT, KIND_ESCORT, KIND_SIERRA, KIND_VOLVO_240, KIND_GTI, KIND_VOLVO_740, KIND_OMEGA, KIND_SAAB_900, KIND_SAAB_9000, KIND_TRANSPORTER, KIND_JEEP, KIND_ROADSTER, KIND_SPORTS, KIND_POLICE_CAR, KIND_AMBULANCE, KIND_BUS, KIND_TECHNICAL, KIND_PAK, KIND_MORTAR, KIND_PBV, KIND_AMV, KIND_AIR_AMBULANCE, KIND_HELI, KIND_STRF, KIND_TANK, KIND_STRV];
+/// A dealer buys back a vehicle driven in through its door for its price (`DEALER_PRICES`) over this,
+/// when whole; less as its health is less.
+pub const DEALER_RESALE_DIVISOR: u32 = 6;
+/// How near the carport's back wall a vehicle's nose must come for the dealer to take it, metres:
+/// driven up to the roller door.
+pub const DEALER_SELL_REACH: f32 = 1.0;
+/// The cash a player joins with, to spend at a dealer before their first delivery (DEALERS.md).
+pub const STARTING_CASH: u32 = 1000;
+/// What each of `DEALER_KINDS` costs: a delivery pays about 20 to 110.
+pub const DEALER_PRICES: [u32; 30] = [20, 40, 60, 80, 120, 120, 140, 150, 160, 170, 170, 180, 200, 180, 250, 300, 400, 350, 350, 450, 500, 400, 600, 700, 900, 900, 1000, 1200, 1400, 1500];
 
 /// How far back the server will rewind other players to meet a shooter's view, in ticks (250 ms).
 /// A shot never reaches further into the past than this, so a laggy shooter has a cap on how far

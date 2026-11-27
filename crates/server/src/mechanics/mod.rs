@@ -11,6 +11,7 @@ mod carwash;
 mod civilians;
 mod buses;
 mod combat;
+mod dealers;
 mod deliveries;
 mod drones;
 mod emergency;
@@ -40,6 +41,7 @@ mod zombies;
 
 pub use breath::Breath;
 pub use carwash::Carwash;
+pub use dealers::Dealers;
 pub use civilians::{CIVILIAN_SLANT, Civilian, Civilians, is_noncombatant};
 pub use buses::{Bus, BusCall, BusDriver, Buses};
 pub use bots::{Bots, DRIVER, GUNNER, nearest_waypoint, road_route};
@@ -51,7 +53,7 @@ pub(crate) use combat::CARVE_REACH;
 pub(crate) use backpack::{carries, lying as backpack_lying};
 pub use armor::ArmorHit;
 pub use backpack::{Backpack, BackpackState};
-pub(crate) use deliveries::{act as phone, carries_parcel, lying as parcels_lying};
+pub(crate) use deliveries::{carries_parcel, lying as parcels_lying};
 pub use deliveries::{Deliveries, DeliveryState};
 pub use drones::Drones;
 pub use gates::Gates;
@@ -135,6 +137,7 @@ pub fn register_components(ecs: &mut bevy_ecs::world::World) {
     ecs.register_component::<crate::game::Autopilot>();
     ecs.register_component::<traffic::TrafficCar>();
     ecs.register_component::<traffic::Abandoned>();
+    ecs.register_component::<dealers::Bought>();
     ecs.register_component::<traffic::Driver>();
     ecs.register_component::<vehicles::Stepping>();
     ecs.register_component::<crate::game::Player>();
@@ -164,7 +167,19 @@ pub fn register_components(ecs: &mut bevy_ecs::world::World) {
 /// `Vehicles`, which steps the cars it places and drives, and `Carwash` after it heals what that drove out of a wash. `Life` brings the dead back before `Npcs` and `Wildlife` move them.
 /// `Ghosts` goes before `Movement`, so that a ghost that starts taking shape is not flown that tick.
 pub fn default_mechanics() -> Vec<Box<dyn Mechanic>> {
-    vec![Box::<Bots>::default(), Box::<Zombies>::default(), Box::<Emergency>::default(), Box::<Civilians>::default(), Box::<Buses>::default(), Box::new(Spawn), Box::<Titans>::default(), Box::<Lifts>::default(), Box::new(Pickups), Box::new(Submarines), Box::new(Drones), Box::new(Gates::seated()), Box::<Traffic>::default(), Box::new(Vehicles), Box::<Carwash>::default(), Box::<Gates>::default(), Box::new(Gunnery), Box::new(Ghosts), Box::new(Movement), Box::new(Breath), Box::<Mend>::default(), Box::new(Backpack), Box::new(Deliveries), Box::new(Life), Box::new(Npcs), Box::<Wildlife>::default(), Box::new(Combat), Box::new(Golf), Box::new(Structure), Box::new(Scores)]
+    vec![Box::<Bots>::default(), Box::<Zombies>::default(), Box::<Emergency>::default(), Box::<Civilians>::default(), Box::<Buses>::default(), Box::new(Spawn), Box::<Titans>::default(), Box::<Lifts>::default(), Box::new(Pickups), Box::new(Submarines), Box::new(Drones), Box::new(Gates::seated()), Box::<Traffic>::default(), Box::new(Vehicles), Box::<Carwash>::default(), Box::<Dealers>::default(), Box::<Gates>::default(), Box::new(Gunnery), Box::new(Ghosts), Box::new(Movement), Box::new(Breath), Box::<Mend>::default(), Box::new(Backpack), Box::new(Deliveries), Box::new(Life), Box::new(Npcs), Box::<Wildlife>::default(), Box::new(Combat), Box::new(Golf), Box::new(Structure), Box::new(Scores)]
+}
+
+/// What a tap on player `id`'s phone asks: to buy a vehicle at the dealer they stand by
+/// (`PHONE_ORDER`, DEALERS.md), or something of the delivery board.
+pub(crate) fn phone(world: &mut crate::game::World, id: u32, phone: shared::protocol::Phone) {
+    if phone.action == shared::consts::PHONE_ORDER {
+        if let Ok(kind) = u8::try_from(phone.job) {
+            dealers::order(world, id, kind);
+        }
+    } else {
+        deliveries::act(world, id, phone);
+    }
 }
 
 /// What tests outside the mechanics reach in for: setting up a busy room without playing it.

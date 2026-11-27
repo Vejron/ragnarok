@@ -66,13 +66,13 @@ pub struct Lot {
 
 impl Lot {
     /// The station's `(x, z)` in the world, metres.
-    fn world(&self, [x, z]: P) -> P {
+    pub fn world(&self, [x, z]: P) -> P {
         let (sin, cos) = self.yaw.sin_cos();
         [self.middle[0] + x * cos + z * sin, self.middle[1] - x * sin + z * cos]
     }
 
     /// The world's `(x, z)` in the station's frame, metres.
-    fn local(&self, [x, z]: P) -> P {
+    pub fn local(&self, [x, z]: P) -> P {
         let (sin, cos) = self.yaw.sin_cos();
         let (dx, dz) = (x - self.middle[0], z - self.middle[1]);
         [dx * cos - dz * sin, dx * sin + dz * cos]
@@ -213,8 +213,8 @@ pub fn lay(built: &mut Built, lots: &[Lot]) {
         }
         heights.sort_by(f64::total_cmp);
         let base = heights.get(heights.len() / 2).copied().unwrap_or(0.0);
-        level(built, lot, base);
-        pave(built, lot);
+        level(built, lot, [f64::from(STATION_LOT[0]) / 2.0, f64::from(STATION_LOT[1]) / 2.0], base);
+        pave(built, &ring(lot));
         stations.push(FuelStation { at: [cm(lot.middle[0]), cm(lot.middle[1])], yaw: (lot.yaw * 1000.0).round() as i16, base: cm(base) });
     }
     for tile in built.tiles.values_mut() {
@@ -226,17 +226,18 @@ pub fn lay(built: &mut Built, lots: &[Lot]) {
     built.manifest.fuel_stations = stations;
 }
 
-/// Levels the ground of `built` under `lot` to just below its paving at `base` (metres), so the paving
-/// lies flush on it, and eases it back to the ground as it was over `APRON` round the lot: a station on
-/// a slope is cut into it on one side and built up on the other, as one is.
-fn level(built: &mut Built, lot: &Lot, base: f64) {
+/// Levels the ground of `built` under the rectangle of half extents `half` (metres, in `lot`'s frame)
+/// to just below its paving at `base` (metres), so the paving lies flush on it, and eases it back to
+/// the ground as it was over `APRON` round it: a station or a dealer's carport on a slope is cut into
+/// it on one side and built up on the other, as one is.
+pub(crate) fn level(built: &mut Built, lot: &Lot, half_size: P, base: f64) {
     let manifest = &built.manifest;
     if manifest.ground_cell <= 0 {
         return;
     }
     let (half, tile, cell) = (f64::from(manifest.half_extent) / 100.0, f64::from(manifest.tile_size) / 100.0, f64::from(manifest.ground_cell) / 100.0);
     let samples = (manifest.tile_size / manifest.ground_cell) as usize + 1;
-    let (hx, hz) = (f64::from(STATION_LOT[0]) / 2.0 + LEVEL_MARGIN, f64::from(STATION_LOT[1]) / 2.0 + LEVEL_MARGIN);
+    let (hx, hz) = (half_size[0] + LEVEL_MARGIN, half_size[1] + LEVEL_MARGIN);
     let reach = hx.hypot(hz) + APRON;
     let flat = base - UNDER_PAVING;
     for (&(col, row), tile_data) in built.tiles.iter_mut() {
@@ -264,14 +265,13 @@ fn level(built: &mut Built, lot: &Lot, base: f64) {
     }
 }
 
-/// Lays `lot` as asphalt in the cover of every tile it reaches, over whatever cover was there: the
-/// ground under the paving is painted as a car park's, and no grass or forest floor grows through it.
-fn pave(built: &mut Built, lot: &Lot) {
+/// Lays `outline` (metres) as asphalt in the cover of every tile it reaches, over whatever cover was
+/// there: the ground under the paving is painted as a car park's, and no grass or forest floor grows through it.
+pub(crate) fn pave(built: &mut Built, outline: &[P]) {
     let (half, tile) = (f64::from(built.manifest.half_extent) / 100.0, f64::from(built.manifest.tile_size) / 100.0);
-    let outline = ring(lot);
     for (&(col, row), tile_data) in built.tiles.iter_mut() {
         let (x0, z0) = (-half + f64::from(col) * tile, -half + f64::from(row) * tile);
-        let part = crate::assemble::clip_ring(&outline, [x0, z0, x0 + tile, z0 + tile]);
+        let part = crate::assemble::clip_ring(outline, [x0, z0, x0 + tile, z0 + tile]);
         if part.len() >= 3 {
             tile_data.cover.push(Cover { kind: COVER_ASPHALT, rings: vec![part.iter().map(|&[x, z]| [cm(x), cm(z)]).collect()] });
         }
@@ -280,7 +280,7 @@ fn pave(built: &mut Built, lot: &Lot) {
 
 /// The ground's height at `at` (metres) in `built`, from the nearest sample of its tile; `None` off
 /// the tiles or where there is no terrain.
-fn ground(built: &Built, at: P) -> Option<f64> {
+pub(crate) fn ground(built: &Built, at: P) -> Option<f64> {
     let manifest = &built.manifest;
     if manifest.ground_cell <= 0 {
         return None;

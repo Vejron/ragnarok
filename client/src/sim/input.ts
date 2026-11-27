@@ -13,7 +13,7 @@ const LOOK_HOLD_MS = 1500
 const FOLLOW_RATE = 2
 
 /** The phone's apps (PHONE.md). */
-export type PhoneApp = 'map' | 'jobs'
+export type PhoneApp = 'map' | 'jobs' | 'dealer'
 
 export interface InputSample {
   strafe: number
@@ -52,6 +52,8 @@ export class InputController {
    */
   layPitch: number | null = null
   private latched = 0
+  /** E was pressed since `takeUse` last asked. */
+  private used = false
   private readonly abort = new AbortController()
   /** The primary pointer is a finger: no pointer lock, no keyboard. */
   readonly coarse = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches
@@ -268,6 +270,7 @@ export class InputController {
     this.touchHeld = down ? this.touchHeld | mask : this.touchHeld & ~mask
     if (down && mask & (BUTTON_JUMP | BUTTON_CROUCH)) this.proneLatched = false
     if (down) this.latched |= mask | (mask === BUTTON_CROUCH && this.running() ? BUTTON_SLIDE : 0)
+    if (down && mask === BUTTON_USE) this.used = true
   }
 
   /** A button pressed once on screen. Prone is a toggle, as Z is. */
@@ -276,6 +279,7 @@ export class InputController {
     else {
       if (mask & (BUTTON_JUMP | BUTTON_CROUCH)) this.proneLatched = false
       this.latched |= mask
+      if (mask === BUTTON_USE) this.used = true
     }
   }
 
@@ -310,7 +314,10 @@ export class InputController {
       // Z lies down and gets up again; jumping or crouching also gets up.
       if (event.code === 'KeyZ') this.proneLatched = !this.proneLatched
       if (event.code === 'Space' || event.code === 'KeyC' || event.code === 'ControlLeft') this.proneLatched = false
-      if (event.code === 'KeyE') this.latched |= BUTTON_USE
+      if (event.code === 'KeyE') {
+        this.latched |= BUTTON_USE
+        this.used = true
+      }
       if (event.code === 'KeyH') this.latched |= BUTTON_HITCH
       if (event.code === 'KeyG') this.latched |= BUTTON_CHUTE
       if (event.code === 'KeyL') this.latched |= BUTTON_LAMP
@@ -372,6 +379,13 @@ export class InputController {
   /** Puts the phone away without taking the mouse back: dying, or taking a seat that cannot read it. */
   dropPhone() {
     this.phone = null
+  }
+
+  /** Whether E (or the touch use button) was pressed since last asked: what the game reads to open the phone at a dealer. */
+  takeUse() {
+    const used = this.used
+    this.used = false
+    return used
   }
 
   /** Whether F3 was pressed since last asked. */

@@ -2,7 +2,7 @@
 // change the Rust and run `npm run gen:consts`. Client-only constants live in consts.ts.
 
 /** Wire schema version. Bumped on any incompatible protocol or world-format change. */
-export const PROTOCOL_VERSION = 102
+export const PROTOCOL_VERSION = 104
 
 /** Why a page closes its session (`Bye`): the tab is closing or reloading. */
 export const BYE_LEAVING = 0
@@ -1018,6 +1018,12 @@ export const PHONE_ACCEPT = 0
 export const PHONE_CANCEL = 1
 
 /**
+ * A `Phone` message's action to buy a vehicle at the dealer the player stands by (DEALERS.md): its
+ * `job` is then the kind (`DEALER_KINDS`).
+ */
+export const PHONE_ORDER = 2
+
+/**
  * `JobState::stage`: on the way to the shop, carrying the parcel to the house, or your job's parcel
  * lost (dropped where you died, or in someone else's hands).
  */
@@ -1491,6 +1497,55 @@ export const WASH_TAKE_ASIDE = 2.0
 
 /** How far ahead along the lane the wash steers for, metres. */
 export const WASH_STEER_AHEAD = 4.0
+
+/**
+ * A vehicle dealer's carport (DEALERS.md, `shared::dealer`), built against a store's wall over its
+ * parking: its clear width across the mouth and its depth from the wall out to the mouth, metres. Room
+ * for the bus and a tank with its gun.
+ */
+export const DEALER_PORT = [8.0, 14.0] as const
+
+/** The clear height under the carport's roof, metres. */
+export const DEALER_PORT_HEIGHT = 5.0
+
+/** How near the carport's mouth a soldier on foot must stand to order from its dealer, metres across the ground. */
+export const DEALER_REACH = 25.0
+
+/** The least distance between two dealers, metres: about one or two to a square kilometre in town. */
+export const DEALER_APART = 700.0
+
+/** The least area of car park near a store for its carport to face the car park rather than its road, square metres. */
+export const DEALER_MIN_PARKING = 800.0
+
+/**
+ * How far out from the carport's mouth an ordered helicopter is set down on the lot, metres, clear
+ * of the carport's roof under its rotor.
+ */
+export const DEALER_HELI_OUT = 12.0
+
+/**
+ * What a dealer sells, in the order its phone app lists them, and what each costs from a player's
+ * delivery cash (`DEALER_PRICES`, the same order). No planes, walkers, boats or the Titan.
+ */
+export const DEALER_KINDS = [KIND_SNOWRACER, KIND_GOLF_CART, KIND_EPA, KIND_SNOWMOBILE, KIND_KADETT, KIND_ESCORT, KIND_SIERRA, KIND_VOLVO_240, KIND_GTI, KIND_VOLVO_740, KIND_OMEGA, KIND_SAAB_900, KIND_SAAB_9000, KIND_TRANSPORTER, KIND_JEEP, KIND_ROADSTER, KIND_SPORTS, KIND_POLICE_CAR, KIND_AMBULANCE, KIND_BUS, KIND_TECHNICAL, KIND_PAK, KIND_MORTAR, KIND_PBV, KIND_AMV, KIND_AIR_AMBULANCE, KIND_HELI, KIND_STRF, KIND_TANK, KIND_STRV] as const
+
+/**
+ * A dealer buys back a vehicle driven in through its door for its price (`DEALER_PRICES`) over this,
+ * when whole; less as its health is less.
+ */
+export const DEALER_RESALE_DIVISOR = 6
+
+/**
+ * How near the carport's back wall a vehicle's nose must come for the dealer to take it, metres:
+ * driven up to the roller door.
+ */
+export const DEALER_SELL_REACH = 1.0
+
+/** The cash a player joins with, to spend at a dealer before their first delivery (DEALERS.md). */
+export const STARTING_CASH = 1000
+
+/** What each of `DEALER_KINDS` costs: a delivery pays about 20 to 110. */
+export const DEALER_PRICES = [20, 40, 60, 80, 120, 120, 140, 150, 160, 170, 170, 180, 200, 180, 250, 300, 400, 350, 350, 450, 500, 400, 600, 700, 900, 900, 1000, 1200, 1400, 1500] as const
 
 /**
  * How far back the server will rewind other players to meet a shooter's view, in ticks (250 ms).

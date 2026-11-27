@@ -221,13 +221,19 @@ impl Game {
         let name = if profile.name.is_empty() { format!("Player {id}") } else { profile.name };
         let color = profile.color.unwrap_or((id % PLAYER_COLOR_COUNT as u32) as u8);
         let spawns = profile.spawns.into_iter().filter(|&point| crate::mechanics::spawn_usable(&self.world.map, point)).collect();
-        self.world.entities.spawn(id, Player::new(name, color, TEAM_NONE, spawns, loadout));
+        let mut player = Player::new(name, color, TEAM_NONE, spawns, loadout);
+        // Something to spend at a dealer before the first delivery.
+        player.score.cash = STARTING_CASH;
+        self.world.entities.spawn(id, player);
         self.world.entities.insert(id, soldier_life());
         for message in self.catch_up() {
             send_reliable(&outbox, id, &Bytes::from(message), &mut self.stalled);
         }
         let joiner = encode(&Profiles { tag: S_PROFILES, players: vec![profile_entry(&self.world, id)] });
         self.broadcast(joiner);
+        // Everyone else learns the joiner's starting cash: scores are only ever sent whole.
+        let scores = encode(&self.scores());
+        self.broadcast(scores);
         self.outboxes.insert(id, outbox);
         self.replicas.insert(id, Replica::default());
         for mechanic in &mut self.mechanics {
@@ -597,6 +603,7 @@ impl Game {
         self.broadcast_built();
         self.broadcast_gates();
         self.broadcast_washed();
+        self.broadcast_ordered();
         self.broadcast_backpack();
         self.send_deliveries();
         for text in std::mem::take(&mut self.world.fresh.said) {
@@ -739,6 +746,16 @@ impl Game {
         }
         let vehicles = std::mem::take(&mut self.world.fresh.washed);
         self.broadcast(encode(&Washed { tag: S_WASHED, vehicles }));
+    }
+
+    /// Tells everyone who bought what at a dealer this tick, and who sold what to one.
+    fn broadcast_ordered(&mut self) {
+        for ordered in std::mem::take(&mut self.world.fresh.ordered) {
+            self.broadcast(encode(&ordered));
+        }
+        for sold in std::mem::take(&mut self.world.fresh.sold) {
+            self.broadcast(encode(&sold));
+        }
     }
 
     /// Tells everyone where the backpack's circle is, when its mechanic has something to say.

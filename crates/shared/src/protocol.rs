@@ -50,6 +50,8 @@ pub const S_DELIVERED: u8 = 21;
 pub const S_HEALED: u8 = 22;
 pub const S_REGROWN: u8 = 23;
 pub const S_WASHED: u8 = 24;
+pub const S_ORDERED: u8 = 25;
+pub const S_SOLD: u8 = 26;
 
 /// `Hit` roles: whose feedback it is.
 /// You hurt something.
@@ -619,6 +621,18 @@ messages! {
     /// and blood off them.
     #[derive(Eq)]
     [S_WASHED] Washed { vehicles: Vec<u32> }
+
+    /// Sent on a reliable stream to everyone when a vehicle is bought at a dealer (DEALERS.md): `by`
+    /// paid for vehicle `vehicle` of kind `kind`, which left them `cash`, at the dealer that is index
+    /// `dealer` of the manifest's `dealers`, whose carport door rolls up.
+    #[derive(Copy, Eq)]
+    [S_ORDERED] Ordered { by: u32, kind: u8, vehicle: u32, cash: u32, dealer: u16 }
+
+    /// Sent on a reliable stream to everyone when a vehicle is sold to a dealer (DEALERS.md): `by`
+    /// drove vehicle `vehicle` of kind `kind` in through the door of the dealer that is index `dealer`
+    /// of the manifest's `dealers`, and was paid `pay`, which makes `cash` in all.
+    #[derive(Copy, Eq)]
+    [S_SOLD] Sold { by: u32, kind: u8, vehicle: u32, pay: u32, cash: u32, dealer: u16 }
 
     /// Sent on a reliable stream to everyone when a parcel is handed in: `by` delivered job `job`, which
     /// was `courier`'s (someone else's when `by` took it from them), and was paid `pay`, which makes
