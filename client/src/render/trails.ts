@@ -2,24 +2,36 @@ import { Ribbons, type RibbonStyle } from '@ragnarok/engine'
 import { WIND_SPEED } from './particles'
 import { PROJECTILE_AMV_BOMB, PROJECTILE_ROTARY, PROJECTILE_BALL, PROJECTILE_GOLF_BALL, PROJECTILE_BOMB, PROJECTILE_BULLET, PROJECTILE_CANNON, PROJECTILE_CANNON_AP, PROJECTILE_EGG, PROJECTILE_FLARE, PROJECTILE_GRENADE, PROJECTILE_HE, PROJECTILE_MORTAR, PROJECTILE_ROCKET, PROJECTILE_SHELL } from '@/net/codec'
 
+/** A hot streak's sheath is this many times as wide as the streak, and this share as bright along its middle. */
+const SHEATH_WIDTH = 5
+const SHEATH_GLOW = 0.12
+
+/**
+ * The glow round a hot streak: a wide, faint ribbon in the colour the streak cools to, laid along with
+ * it. It is what makes a tracer a soft line of light and not a hard-edged one.
+ */
+const sheath = (hot: RibbonStyle): RibbonStyle => ({ ...hot, color: hot.colorEnd ?? hot.color, width: hot.width * SHEATH_WIDTH, glow: (hot.glow ?? 1) * SHEATH_GLOW, soft: true })
+/** A list of ribbons with a sheath added for each additive one. */
+const glowing = (styles: RibbonStyle[]): RibbonStyle[] => [...styles, ...styles.filter((style) => style.blend === 'additive').map(sheath)]
+
 /** A white-hot core and a pale smoke line behind a rocket: the flame is short, the smoke hangs. */
-const ROCKET: RibbonStyle[] = [
+const ROCKET = glowing([
   { color: 0xd8d8d2, colorEnd: 0x8a8a86, alpha: 0.5, life: 2.4, width: 0.45, taper: 4, step: 0.6, wander: 0.9, drift: 1 },
   { color: 0xfff4c8, colorEnd: 0xff5a10, glow: 6, alpha: 1, life: 0.3, width: 0.5, taper: 0.1, blend: 'additive', fog: false, step: 0.35 },
-]
+])
 /** A tank or mortar shell: a hot streak, and a wake of smoke that widens, kinks and drifts off where it hangs. */
-const SHELL: RibbonStyle[] = [
+const SHELL = glowing([
   { color: 0x6a6a68, colorEnd: 0x9a9a96, alpha: 0.42, life: 3, width: 0.6, taper: 4, step: 1.5, wander: 1.1, drift: 1 },
   { color: 0xffd890, colorEnd: 0xff4a10, glow: 4, alpha: 1, life: 0.28, width: 0.55, taper: 0.1, blend: 'additive', fog: false, step: 0.5 },
-]
+])
 /** An autocannon's or a rotary cannon's round: a hot streak and a thin, short wisp behind it. */
-const CANNON: RibbonStyle[] = [
+const CANNON = glowing([
   { color: 0x7a7a78, colorEnd: 0xa4a4a0, alpha: 0.22, life: 0.9, width: 0.22, taper: 3, step: 2.5, wander: 0.4, drift: 1 },
   { color: 0xffe0a0, colorEnd: 0xff5a10, glow: 5, alpha: 1, life: 0.16, width: 0.24, taper: 0.1, blend: 'additive', fog: false, step: 0.4 },
-]
-const BULLET: RibbonStyle[] = [
+])
+const BULLET = glowing([
   { color: 0xfff6d0, colorEnd: 0xff8a20, glow: 7, alpha: 1, life: 0.1, width: 0.07, taper: 0.2, blend: 'additive', fog: false, step: 0.6 },
-]
+])
 /** Round shot: no tracer, only a thin grey smudge of powder smoke behind the iron. */
 const BALL: RibbonStyle[] = [{ color: 0x8a8a86, colorEnd: 0xb4b4ae, alpha: 0.28, life: 0.9, width: 0.3, taper: 2.5, step: 0.6, wander: 0.4, drift: 1 }]
 const BOMB: RibbonStyle[] = [{ color: 0x707070, colorEnd: 0x9a9a9a, alpha: 0.25, life: 1.2, width: 0.15, taper: 3, step: 0.5 }]
@@ -28,10 +40,10 @@ const GOLF: RibbonStyle[] = [{ color: 0xffffff, colorEnd: 0xe8ecef, alpha: 0.35,
 const GRENADE: RibbonStyle[] = [{ color: 0x909090, colorEnd: 0xb0b0b0, alpha: 0.22, life: 0.7, width: 0.08, taper: 2, step: 0.4 }]
 
 /** A flare's climb: a hot streak and a pale smoke line that hangs where it went up. */
-const FLARE: RibbonStyle[] = [
+const FLARE = glowing([
   { color: 0xe6e2da, colorEnd: 0xa8a6a0, alpha: 0.4, life: 6, width: 0.35, taper: 3, step: 0.8, wander: 1.4, drift: 1 },
   { color: 0xfff2d0, colorEnd: 0xff7020, glow: 6, alpha: 1, life: 0.35, width: 0.3, taper: 0.1, blend: 'additive', fog: false, step: 0.4 },
-]
+])
 
 function stylesFor(kind: number): RibbonStyle[] {
   if (kind === PROJECTILE_FLARE) return FLARE

@@ -413,7 +413,10 @@ takes its own view of the answer with the tag filter its own Overpass query once
 `osm_water::from`, `osm_golf::from`, `osm_lifts::from`, `osm_ski::from`), so a world comes out the same
 whichever source served it. The read comes from a local extract when one covers every block of the world,
 else from Overpass. Heights
-come from the `height` tag, else `building:levels` × 3 + 1, else a guess of 6–12 m. `natural=wetland` is
+come from the `height` tag, else `building:levels` × 3 + 1, else a guess of 6–12 m. A building's
+`building:colour`, `roof:colour`, `building:material` and `roof:material` are kept where it has them
+(`finish.rs`, `Building::paint` and `Building::clad`; [BUILDING-STYLES.md](BUILDING-STYLES.md)), and the import
+prints how many did (`finish:`). `natural=wetland` is
 marsh, by its `wetland` tag: `bog`, `swamp` and `fen` are `COVER_MARSH_DEEP`, `wet_meadow` is
 `COVER_MARSH_FAINT` and the rest `COVER_MARSH` (docs/ORIENTEERING.md has how the client draws them).
 `natural=bare_rock` is `COVER_ROCK`, and `landuse=residential` is `COVER_GARDEN`, lawn with gravel round

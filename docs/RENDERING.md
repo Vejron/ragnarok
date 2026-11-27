@@ -26,8 +26,7 @@ game.frame()
         ├─ effects pass     that target laid over, then particles, ribbons + flashes, depth read-only,
         │                   then the overlay (the gunsight), over everything; the image resolves
         │                   (both left out while every effect is `idle` and there is no overlay)
-        ├─ bloom            bright extract → mip chain → add back (when `scene.bloom`)
-        └─ output pass      ink from depth, bloom, tone mapping, sRGB     → canvas
+        └─ output pass      ink from depth, white-hot, tone mapping, sRGB → canvas
                             then the HUD's flat sprites, in the same pass (a pass of its own
                             reloaded and stored the whole frame on tiled GPUs)
 ```
@@ -104,7 +103,7 @@ The style is flat, bright and few-banded, not physically based.
   The engine does three's `MeshToonMaterial` maths: `colour/π × (sun × ramp(N·L·0.5 + 0.5) × shadow +
   hemisphere(N)) + emissive`, then linear fog. A ramp is a row of one 256 × 64 texture, so the number
   of ramps is not a cost.
-- **Building surfaces.** Walls and roofs carry a pattern drawn in the shader (`MAT_WALLS`, `engine/src/materials/walls.wgsl.ts`), picked per building in `buildingSurfaces` (buildingmesh.ts) and passed as each vertex's custom x: upright boards for falu red and dark wood, lap boards for ochre, white and beige, brick for dark red, mottled render for greys; France's painted walls (`paint::WALLS` in the importer) get cut stone for limestone and sandstone, render for plaster and ochre and brick for its brick. Roof tiles for red and slate roofs, standing-seam sheet for the rest, felt for flat ones. Laid out in world space along each face, so no uvs; every line is antialiased and evens out into its average tone as it nears a pixel, so it does not shimmer far off. Kept on a hurt building's standing walls (`lookFracture`), not on hole edges, chips, windows or falling pieces (those move, and a world-space pattern would slide over them). The roof's pattern carries on over the top of its overhang (`eaves.ts`), which lies in the same plane; the fascia and soffit are plain. Tiles and slate are courses with a deep shadow under each course's edge and a lit lip on the one below, every tile's lower edge a little higher or lower than its neighbours' so the courses run unevenly; the timber roof colour is wooden shingles, shorter and narrower courses of the same. No measurable GPU cost.
+- **Building surfaces.** Walls and roofs carry a pattern drawn in the shader (`MAT_WALLS`, `engine/src/materials/walls.wgsl.ts`), picked per building in `buildingSurfaces` (buildingmesh.ts) and passed as each vertex's custom x: upright boards for falu red and dark wood, lap boards for ochre, white and beige, brick for dark red, mottled render for greys; France's painted walls (`paint::WALLS` in the importer) get cut stone for limestone and sandstone, render for plaster and ochre and brick for its brick. Roof tiles for red and slate roofs, standing-seam sheet for the rest, felt for flat ones. Laid out in world space along each face, so no uvs; every line is antialiased and evens out into its average tone as it nears a pixel, so it does not shimmer far off. Kept on a hurt building's standing walls (`lookFracture`), not on hole edges, chips, windows or falling pieces (those move, and a world-space pattern would slide over them). The roof's pattern carries on over the top of its overhang (`eaves.ts`), which lies in the same plane; the fascia and soffit are plain. Tiles and slate are courses with a deep shadow under each course's edge and a lit lip on the one below, every tile's lower edge a little higher or lower than its neighbours' so the courses run unevenly; the timber roof colour is wooden shingles, shorter and narrower courses of the same. Each patterned vertex also carries its building's seed, the foot of its walls and its plinth's height in custom y, z and w (unused before, so no vertex is added or split), from which the shader gives the building a tint, board widths, a plinth and an age of its own ([BUILDING-STYLES.md](BUILDING-STYLES.md)). The pattern cost 0.02 ms of a frame before that and costs about 0.04 ms now ([GPU-PERFORMANCE.md](GPU-PERFORMANCE.md)). Window glass is one translucent mesh a tile whose material has `glow`: each vertex's custom x scales the material's `emissive`, so some panes are lit after dark and one colour turns every lamp up or down.
 - **Fixed palettes.** Building colours (natural house paint: falu red, ochre, white, render greys, dark wood), roof colours, cover colours (`cover.ts`) and player outfits
   (`character.ts` `PALETTE`) are fixed lists, picked by index so they are stable between reloads.
 - **Baked terrain tone.** `shade.ts` computes a brightness multiplier for the terrain: hillshade
@@ -306,7 +305,7 @@ after the solid scene, with the scene's depth bound read-only so they can be sof
 - **`Particles`** (`particles.ts`, over the engine's `ParticleSystem`): smoke, dust, gravel, spray,
   sparks and flames, 4096 alpha-blended and 2048 additive. A particle can change colour over its life
   (`colorEnd`: fire cooling to ember red, soot greying), spin, stretch along its velocity (`stretch`:
-  sparks), be multiplied past 1 (`glow`, so it blooms) and have a billowy noise-eaten edge
+  sparks), be multiplied past 1 (`glow`, so it burns white) and have a billowy noise-eaten edge
   (`shape: 'puff'`) instead of a smooth disc. Smoke can also churn in the air (`turbulence`), be
   carried by the game's wind (`wind`, set each frame by `Particles.blowing`) and keep its opacity for
   half its life before it thins (`hold`); alpha puffs are shaded by the sun and lit by the frame's
@@ -328,11 +327,9 @@ after the solid scene, with the scene's depth bound read-only so they can be sof
   lights; `Game.blast` flashes one per explosion. They light lit surfaces without shadows, through the
   light grid (see Light below). The shockwave is a `Flash`
   with `ring: true`: a flat ring on the ground whose band is `length` metres thick.
-- **Bloom** is an engine pass chain, not a mesh: `Scene.bloom` (`Bloom`: `strength`, `threshold`,
-  `knee`, `radius`) extracts what is brighter than the threshold from the resolved HDR image at half
-  size, blurs it down a mip chain (13-tap downsample, 3×3 tent upsample added back) and the output pass
-  adds the result before exposure and tone mapping. HDR colours over 1 (`glow`) are what feed it. It
-  is the `bloom` look option, off by default on touch devices.
+- **Glow** is not a pass. Each flash, fire and lamp spawns its own halo, a wide faint `glare` in a
+  half-resolution additive pool, hot ribbons have a soft sheath, and the output pass burns what is far
+  past white to white. [GLOW.md](GLOW.md) has it, and why the bloom pass went.
 - **Skidmarks** are an ordinary `Geometry` + WGSL `ShaderMaterial` with a ring of quads; a new quad is
   written with `needsUpdateRange` (four vertices go to the GPU) and fades by `now − birth` in the
   fragment shader.
@@ -425,7 +422,7 @@ fades into the far one, and the far one fades to light, so no shadow ends in a l
 Five independent switches, in `render/look.ts` (`Look`). The HUD panel in `App.vue` shows them while
 the pointer is not captured; `Game.setLook` applies and saves them to `localStorage`
 (`ragnarok.look`). Defaults are on, except far shadows, which start off on coarse-pointer (touch)
-devices (bloom likewise). (Ambient occlusion was removed with the move to the engine: it added little to a
+devices. (Ambient occlusion was removed with the move to the engine: it added little to a
 flat-shaded look and cost a second geometry pass.)
 
 The saved choice carries a version (`LOOK_VERSION` in `look.ts`). When a default changes for existing
@@ -473,7 +470,7 @@ Part of the engine's output pass (`engine/src/passes/output.wgsl.ts`), not a pas
 the scene's depth while the frame is converted for the screen. It draws a dark line wherever the
 picture's depth bends sharply: a silhouette (a tree against the sky, a car against the grass) or an
 edge where one thing sits in front of another. Each pixel's view depth is compared with its four
-neighbours, `width` CSS pixels (1.2) away. The test is the second difference, `l + r − 2c` and
+neighbours, `width` CSS pixels (1.2) away (further where the pen's line swells). The test is the second difference, `l + r − 2c` and
 `d + u − 2c`, relative to the pixel's own depth, against a threshold of 0.05. A smooth surface, even a
 long slope of ground seen at a low angle, changes its rate but does not bend, so it stays clear of
 ink. The line darkens whatever it is drawn over (to 30% of its brightness, blended at 60%) rather than
@@ -484,8 +481,10 @@ Things to know:
 - **Only silhouettes and depth jumps are outlined.** Creases with no depth change, such as the seam
   of a box, are not, so the lines come from geometry, not from normals.
 - **Overlays and effects have no depth**, so they get no ink and do not break an outline.
-- `Ink` (`darken`, `strength`, `threshold`, `width`) is a plain object on the scene; `Scene.setLook`
-  sets it to `null` when the option is off, which skips the work in the shader.
+- **The line is a pen's.** It fades with distance (`fade`), strays, swells and runs dry (`waver`), and
+  the "Pen hatching" option (`hatch`) shades shadows with strokes: see [GLOW.md](GLOW.md).
+- `Ink` (`darken`, `strength`, `threshold`, `width`, `fade`, `waver`, `hatch`) is a plain object on
+  the scene; `Scene.setLook` sets it to `null` when the option is off, which skips the work in the shader.
 
 ### Far shadows (`far`)
 
@@ -584,8 +583,8 @@ frame, materials, pipelines, and GPU milliseconds per pass when the browser expo
   stretches. On high-resolution screens the cost is pixels, not draws: see
   [GPU-PERFORMANCE.md](GPU-PERFORMANCE.md) for the benchmark (`client/scripts/gpu-bench.mjs`), the
   multisampled image that no longer leaves the tile, and the trees' depth pre-pass.
-- The expensive options are far shadows (4096 map) and ink (one full-screen depth read, most of the
-  output pass). Far shadows are off by default on touch devices.
+- The expensive options are far shadows (4096 map), pen hatching and ink (one full-screen depth read,
+  most of the output pass). Far shadows are off by default on touch devices.
 - Everything here is a rendering concern only: none of it touches the simulation, so options can be
   changed at any time without affecting prediction or the server.
 
@@ -613,11 +612,10 @@ Its own README gives the benchmark against three's two renderers, from when a co
   `127.0.0.1:5173`.
 - Headless Chrome with software rendering is about 100× too slow for timings. Use a real GPU.
 - A pass that averages the HDR image must make each read safe first. One pixel that is not a number,
-  or is infinite (a division by zero, an overflow of half precision), became a white blob through bloom,
-  and a negative infinity a black rectangle a third of the screen wide: the prefilter averaged 13 taps
-  before it clamped, `-inf × 0` is NaN, and the halving mips carry it everywhere. Bloom clamps each tap
-  to 0..64 with NaN as 0 (`tap` in `passes/bloom.ts`); the exposure meter and the shafts' mask read
-  through `finite` (`passes/finite.wgsl.ts`), NaN and −∞ as black and +∞ as their brightest. The bad
+  or is infinite (a division by zero, an overflow of half precision), became a white blob through the
+  bloom pass there once was, and a negative infinity a black rectangle a third of the screen wide: it
+  averaged 13 taps before it clamped, `-inf × 0` is NaN, and halving mips carry it everywhere. The
+  exposure meter and the shafts' mask read through `finite` (`passes/finite.wgsl.ts`), NaN and −∞ as black and +∞ as their brightest. The bad
   pixel itself is still drawn (black); the odd stray one turns up now and then, most after switching from
   high to low quality mid-game, and is not worth hunting.
 - Memory is measured by `client/scripts/mem-bench.mjs` ([MEMORY.md](MEMORY.md)). A mesh or texture made
@@ -698,7 +696,7 @@ banners, the touch controls and invisible tap targets over the drawn hotbar.
 
 - **Engine:** `HudLayer` (`engine/src/hud/layer.ts`) is a list of 2D sprites in CSS pixels from the
   top-left: a colour, an optional texture and uv rect, a rotation. `Renderer.hud` is drawn by the
-  `hud` pass after the output pass, straight onto the canvas, so it is not tone mapped, bloomed or inked,
+  `hud` pass after the output pass, straight onto the canvas, so it is not tone mapped or inked,
   and is emptied after drawing. Consecutive sprites sharing a texture are one instanced draw. Colours
   and textures are taken as sRGB and blended as a web page does: make HUD textures with `srgb: false`.
 - **Client:** `client/src/hud/`. `Game.report()` builds `HudStats` every frame and `InGameHud.draw`

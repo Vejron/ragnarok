@@ -33,7 +33,7 @@ export interface TestBuilding {
  */
 export function tileBytes({ vertices = [], triangles = [], ground = [], buildings = [] }: { vertices?: number[][]; triangles?: number[][]; ground?: ArrayLike<number>; buildings?: TestBuilding[] }): Uint8Array {
   const mesh = [vertices.map((v) => v.map(cm)), triangles]
-  const houses = buildings.map((b) => [cm(b.height), b.footprint.map((p) => p.map(cm)), cm(b.base), b.first, b.walls, b.roof, b.roofKind, 0, [0, 0], NO_CELLS, null])
+  const houses = buildings.map((b) => [cm(b.height), b.footprint.map((p) => p.map(cm)), cm(b.base), b.first, b.walls, b.roof, b.roofKind, 0, [0, 0], NO_CELLS, [null, null], [0, 0]])
   return encode([houses, [], mesh, packGround(Int32Array.from(ground, cm)), [], [], new Uint8Array(), new Uint8Array(), new Uint8Array(), new Uint8Array(), new Uint8Array(), new Uint8Array(), [], [], new Uint8Array(), [], [], [], new Uint8Array(), new Uint8Array(), [[], [], []], []])
 }
 

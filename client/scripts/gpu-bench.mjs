@@ -67,7 +67,6 @@ const PARTS = [
   ['shadows', `(() => { const s = e.sun.shadow; s.enabled = false; return () => { s.enabled = true } })()`],
   ['reflection', `(() => { const p = r.reflectionPlane; r.reflectionPlane = null; return () => { r.reflectionPlane = p } })()`],
   ['sky', `(() => { const k = e.sky; e.sky = null; return () => { e.sky = k } })()`],
-  ['bloom', `(() => { const b = e.bloom; e.bloom = null; return () => { e.bloom = b } })()`],
   ['ink', `(() => { const i = e.ink; e.ink = null; return () => { e.ink = i } })()`],
   ['shafts+flare', `(() => { const a = e.shafts, b = e.flare; e.shafts = null; e.flare = null; return () => { e.shafts = a; e.flare = b } })()`],
   ['effects', `(() => { const hid = []; const walk = (n) => { if (n.prepare && n.draw && n.visible) { n.visible = false; hid.push(n) } n.children.forEach(walk) }; walk(e); return () => hid.forEach((n) => { n.visible = true }) })()`],
@@ -90,6 +89,37 @@ const treesAt = (detail) => `(() => {
   return () => { set(was / ${detail}); r.detail = was }
 })()`
 
+/**
+ * A firefight in front of the camera, two hundredths of a second on, when every flash is at its
+ * brightest: four tank guns and three rifles firing across the view and a shell bursting 25 m ahead.
+ * `halos` is whether the lights have their halos (`halo` in `render/particles.ts`): the two variants'
+ * difference is what the glow costs. The undo runs every particle to its end.
+ */
+const firefight = (halos) => `(async () => {
+  const halos = ${halos}
+  const { CANNON, RIFLE } = await import('/src/render/gunfire.ts')
+  const { explosion, BLASTS } = await import('/src/render/explosion.ts')
+  const c = g.scene.camera, p = c.position, f = c.getWorldDirection({ x: 0, y: 0, z: 0 })
+  const fl = Math.hypot(f.x, f.z) || 1, fx = f.x / fl, fz = f.z / fl, rx = -fz, rz = fx
+  const random = Math.random
+  let seed = 7
+  Math.random = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296
+  const spawn = g.halo.spawn
+  if (!halos) g.halo.spawn = () => {}
+  const shot = (gun, ahead, side, up) => g.effects.gunfire({ x: p.x + fx * ahead + rx * side, y: p.y + up, z: p.z + fz * ahead + rz * side }, { x: rx, y: 0.05, z: rz }, gun, 1, g.fxWorld)
+  for (const side of [-9, -3, 3, 9]) shot(CANNON, 14, side, 0.5)
+  for (const side of [-2, 0, 2]) shot(RIFLE, 6, side, -0.2)
+  const at = p.clone()
+  at.x += fx * 25; at.z += fz * 25; at.y = g.scene.groundAt(at.x, at.z) + 0.3
+  g.effects.burst(at, 5)
+  explosion(g.fxWorld, g.debris, at, 5, BLASTS.shell, [0, 0])
+  Math.random = random
+  g.halo.spawn = spawn
+  for (const pool of [g.smoke, g.glow, g.halo]) pool.update(0.02)
+  g.scene.render()
+  return () => { for (const pool of [g.smoke, g.glow, g.halo]) pool.update(100); g.scene.render(); g.scene.render() }
+})()`
+
 /** What `--parts` can also name, though `--breakdown` leaves them out: the frame drawn another way. */
 const WAYS = [
   // Every tree as its solid, and every tree past a few metres as its impostor.
@@ -97,6 +127,9 @@ const WAYS = [
   ['impostors', treesAt(0.1)],
   // The trees' levels twice as far out.
   ['trees2x', treesAt(2)],
+  // Something added, as `gunsmoke` below is: its number is what it costs, negated.
+  ['firefight', firefight(true)],
+  ['firefightBare', firefight(false)],
   // Not something turned off but something added, so its number is how much it costs, negated: a
   // volley of four tank guns firing across the view 14 m ahead and one at the camera's own muzzle,
   // six tenths of a second on, when the smoke has rolled out. The undo runs every particle to its end.

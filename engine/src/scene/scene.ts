@@ -78,18 +78,12 @@ export class Ink {
   threshold = 0.05
   /** Line width in CSS pixels. */
   width = 1.2
-}
-
-/** Glow around anything brighter than `threshold` in the HDR image (fire, tracers, muzzle flashes). */
-export class Bloom {
-  /** How much of the blurred glow is added back. */
-  strength = 0.6
-  /** Linear HDR brightness where the glow starts. */
-  threshold = 1
-  /** Softness of that start, in the same units. */
-  knee = 0.5
-  /** How wide the glow spreads; 1 is the default tent. */
-  radius = 1
+  /** How far off the lines have faded to nothing, metres; they begin to at about a third of it. */
+  fade = 400
+  /** How much the line wavers like a pen's, swelling, thinning and now and then running dry: 0 is an even line, 1 the most. */
+  waver = 1
+  /** How much what is in shadow, or turned from the sun, is shaded with a pen's hatching strokes, 0 (none) to 1. */
+  hatch = 0
 }
 
 /**
@@ -157,7 +151,8 @@ export class Scene extends Node {
   /** The sky drawn behind the world, which also colours the fog (see `Sky`); null for the flat `background`. */
   sky: Sky | null = null
   ink: Ink | null = null
-  bloom: Bloom | null = null
+  /** How far light well past white burns white in the output pass, 0 to 1: the hearts of flashes, tracers and fire. */
+  whiteHot = 1
   shafts: Shafts | null = null
   beams: Beams | null = null
   flare: LensFlare | null = null

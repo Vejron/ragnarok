@@ -25,7 +25,7 @@ export interface Flash {
   grow?: number
   /** A streak's length along `direction`, or the thickness of a ring's band. */
   length: number
-  /** sRGB hex or a linear Color (a linear one may run past 1, to bloom). */
+  /** sRGB hex or a linear Color (a linear one may run past 1, to burn white). */
   color: number | Color
   opacity?: number
   fade?: 'linear' | 'late'

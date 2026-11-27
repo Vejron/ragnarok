@@ -2,6 +2,7 @@ import { Mesh, boxGeometry, Vector3 } from '@ragnarok/engine'
 import { toonMaterial } from './toon'
 import { SURFACE_ASPHALT, SURFACE_DIRT, SURFACE_MUD, SURFACE_MUD_DEEP, SURFACE_MUD_FAINT, SURFACE_SAND, SURFACE_WATER } from '@/sim/surface'
 import type { Debris } from './debris'
+import { halo } from './particles'
 import type { FxWorld } from './tyres'
 
 /** How much of each layer a kind of blast has; 1 is a grenade-sized one. */
@@ -82,7 +83,8 @@ export function explosion(world: FxWorld, debris: Debris, at: Vector3, radius: n
   const earth = profile.wreck ? 0x2b2b2b : water ? 0xdfeaf0 : DIRT[surface] ?? 0x5a4a30
 
   // Fireball: fat, billowing puffs that swell fast and float up, cooling from white-yellow to a dark ember red
-  // (HDR, so the hottest of it blooms), with a white-hot core.
+  // (HDR, so the hottest of it burns white), with a white-hot core and a glow round it that lasts as long as the fire.
+  halo(world.halo, [at.x, at.y + radius * 0.3, at.z], radius * 1.2, 0.6, 0xff8a2a, 5 * Math.min(profile.fire, 1.5))
   for (let i = 0; i < count(14, profile.fire); i++) {
     const heading = rand(0, Math.PI * 2)
     const out = rand(0, radius * 0.5)
@@ -94,6 +96,7 @@ export function explosion(world: FxWorld, debris: Debris, at: Vector3, radius: n
       color: i % 3 === 0 ? 0xffeaa0 : i % 3 === 1 ? 0xffb347 : 0xff8a2a,
       colorEnd: profile.wreck ? 0x2a1208 : 0x5a1a05,
       glow: 3,
+      emissive: true,
       shape: 'puff',
       spin: [-2, 2],
       alpha: 0.95,

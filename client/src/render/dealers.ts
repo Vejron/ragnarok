@@ -3,6 +3,7 @@ import { DEALER_PORT, DEALER_PORT_HEIGHT } from '@/sim/consts'
 import { ClientSim } from '@/sim/wasm/sim'
 import type { Dealer, Point2 } from '@/world'
 import { painted } from './lines'
+import { LAMP_HALO_RANGE, lampHalo, type Particles } from './particles'
 import { winter } from './season'
 import { toonMaterial } from './toon'
 
@@ -103,13 +104,12 @@ function carportGeometry(): Geometry {
   return Geometry.merge(parts)
 }
 
+/** Where the lamps under a carport's roof are, in its frame (x, z), metres. */
+const LAMPS: Point2[] = [-0.2, -0.5, -0.8].flatMap((z) => [-WIDTH / 4, WIDTH / 4].map((x): Point2 => [x, z * DEPTH]))
+
 /** What of a carport lights up by night: the lamps under its roof. */
 function lampGeometry(): Geometry {
-  const parts: Geometry[] = []
-  for (const z of [-0.2, -0.5, -0.8]) {
-    for (const x of [-WIDTH / 4, WIDTH / 4]) parts.push(block(1.2, 0.04, 0.3, x, ROOF_UNDER - 0.02, z * DEPTH, 0xfff6dc))
-  }
-  return Geometry.merge(parts)
+  return Geometry.merge(LAMPS.map(([x, z]) => block(1.2, 0.04, 0.3, x, ROOF_UNDER - 0.02, z, 0xfff6dc)))
 }
 
 /** The dealer's name, white on nothing. */
@@ -199,9 +199,10 @@ export class Dealers {
   /**
    * Places every carport nearer the eye than `fog` metres (where the distance fog is whole), lights
    * it by `night` (0 by day, 1 at night) and works its door, which rolls up while one of `movers` (the
-   * vehicles, metres) is under the roof. `dt` is the seconds since the last frame.
+   * vehicles, metres) is under the roof. `dt` is the seconds since the last frame. By night the lamps
+   * of the carports near the eye glow into `halos`.
    */
-  update(eye: { x: number; z: number }, fog: number, night: number, dt: number, movers: Iterable<{ x: number; z: number }> = []) {
+  update(eye: { x: number; z: number }, fog: number, night: number, dt: number, movers: Iterable<{ x: number; z: number }> = [], halos?: Pick<Particles, 'spawn'>) {
     if (!this.body) return
     const reach = Math.min(DEALER_REACH, fog)
     for (const mover of movers) {
@@ -229,6 +230,9 @@ export class Dealers {
       // The door hangs from the top of its doorway, rolled up towards it.
       const t = door.up * door.up * (3 - 2 * door.up)
       const [cos, sin] = [Math.cos(dealer.yaw), Math.sin(dealer.yaw)]
+      if (halos && night > 0.05 && Math.hypot(dealer.x - eye.x, dealer.z - eye.z) < LAMP_HALO_RANGE) {
+        for (const [x, z] of LAMPS) lampHalo(halos, [dealer.x + x * cos + z * sin, dealer.base + ROOF_UNDER - 0.1, dealer.z - x * sin + z * cos], 1.1, night, dt)
+      }
       mat4.compose(this.matrix, dealer.x + DOOR_Z * sin, dealer.base + FLOOR + DOOR_TALL, dealer.z + DOOR_Z * cos, 0, qy, 0, qw, 1, 1 - (1 - ROLLED) * t, 1)
       this.doors!.setMatrixAt(placed, this.matrix)
       placed++

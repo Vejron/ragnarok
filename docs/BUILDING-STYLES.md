@@ -197,11 +197,59 @@ and a cabin; a flat canopy over a villa's. They are only drawn (nothing collides
 house, drawn by `lookFracture`, keeps each while the cell it stands on (its `anchor`: the roof just
 under the chimney, the wall over the door) stands and has something to hang from.
 
-## Colours
+## Colours, and a style of its own for each building
 
-`buildingColors` in `client/src/render/buildingmesh.ts` picks from the kind's own palette
-(`KIND_COLORS`). A hall's profiled sheet is drawn with the upright-board pattern, whose ribs read as
-sheet metal at that size. Where the importer painted the building (France), its paint is kept.
+Every building has a **seed** (`buildingSeed` in `client/src/render/buildingmesh.ts`): a whole number
+from 1 to 65 535 hashed from its tile and its index in it, the same on every client and every time
+the tile is drawn. Everything below is drawn from it, so no two houses of a street need be alike, and
+none of it costs a vertex, a draw or a texture.
+
+**What the map says comes first.** The importer reads `building:colour` and `roof:colour` (`#rrggbb`,
+or a name: red is falu red, yellow ochre, white the off-white of linseed paint) into
+`Building::paint`, wall and roof each on its own, and `building:material` (or `building:cladding`)
+and `roof:material` into `Building::clad` as a `CLAD_*` and a `ROOFING_*`
+(`crates/osm-import/src/finish.rs`). Few buildings carry them: 202 of Umeå's 7 691, 4 of Vindeln's
+1 335, none on Holmön. In France the roof's colour still comes from the aerial photo where the map
+says nothing. A material decides the pattern whatever the colour: a dark red house of `wood` is
+boarded, not brick.
+
+**What the map leaves out, the client picks** (`buildingColors`, `buildingSurfaces`):
+
+- **Wall and roof colour**, each by its own draw from the seed, from the palette of what the map says
+  the building is made of (`CLAD_COLORS`, `ROOFING_COLORS`), else of its kind (`KIND_COLORS`). The
+  two used to be one index stepping through both lists, so neighbours came in the palettes' order.
+- **How it is built.** A house the client painted may be built more than one way in a colour
+  (`HOUSE_SURFACES`): a red one is now and then lap-boarded, a white one in upright boards or
+  rendered. A colour of the map's own that no palette has is boards on a kind built of wood, and
+  brick or render by its colour on the rest. A hall's profiled sheet is drawn with the upright-board
+  pattern, whose ribs read as sheet metal at that size.
+- **Trim** (`Trim`): the window frames, the boards along the roof and the porch are white on most
+  houses and now and then cream, grey, dark green, oxblood or blue-grey; a frame colour too near the
+  wall's falls back to white (`frameOn`). The door is tarred brown on most, or green, blue, red,
+  grey, ochre or white. Only houses and their outbuildings vary; a barn keeps its tarred door.
+- **A plinth**: cast concrete from the foot of the walls (the lowest corner of them in the look) up
+  30 to 50 cm, about where the floor inside lies (`interior::PLINTH`); 10 to 22 cm on what is driven
+  into. A shelter and a bridge have none.
+
+**The shader does the rest** (`wallsLook` in `engine/src/materials/walls.wgsl.ts`). Each patterned
+vertex carries the seed, the foot of the walls and the plinth's height in its custom y, z and w, which
+were unused. From the seed the shader draws the building's own numbers: a tint a little lighter or
+darker and warmer or cooler than the next house of the same colour; the width of its boards (16 to
+22 cm, lap boards 14 to 19) and where they start, so boards do not line up from house to house; how
+far the shades of its boards, bricks or tiles spread; its mortar and its bond; and its **age**. An
+old house has paint gone thin and grey in patches, a darker damp foot over the plinth, moss on a
+tiled, shingled or felt roof (thicker on the slopes turned north) and rust in streaks down a sheet
+roof. The noise of each is worked out only near enough to show.
+
+**Windows** (`glass.ts`, `dressingOf`): each pane's colour, opacity and lamp are its vertices'. About
+three panes in ten of a home have a curtain or blind drawn (paler and hardly seen through), one in
+ten where people work, none in a barn. After dark (`lightWindows`, as `Scene.night` passes 0.35) a
+lamp is lit behind about 45% of a home's panes, 22% of a workplace's and 6% of a barn's, warm, and
+dimmer behind a curtain; the lit pane is opaque, so the lamp shows and not the dark room. The
+curtain and the lamp are on the sheet only, so a broken pane's teeth are clear and dark.
+
+A hurt house (`lookFracture`) is handed the same style, so it keeps its seed, plinth, trim and
+pattern from the first hit. Falling pieces are plain, as before.
 
 An outbuilding is painted as the wooden house nearest it within 40 m in its tile (`houseOf`), and
 roofed as it where both roofs are pitched, so a yard's garage and sheds match its house. Beside a
@@ -223,7 +271,8 @@ brick or rendered house it keeps its own boards.
   the ground or float over it.
 - **Carports** (`building=carport`) are closed garages, and `building=roof` is left out as before.
 - **A fire station is one hall**, with no upper floor over the engines; neither world imported so far has one, so it has been seen in tests only. A block of flats has no balconies or door a stairwell.
-- **A house's quarters are a hash**, not the real age of the street, and there are no corner boards or other trim.
+- **A house's quarters and its age are a hash**, not the real age of the street. There are no corner boards and no frieze under the eaves: they need each wall vertex to carry how far it is from the wall's ends. No balconies, shutters or drainpipes either: those are new vertices, in the main pass and both shadow maps.
+- **Every lamp comes on at once** as it gets dark, and stays on all night. A lit window throws no light on the ground outside.
 - **A station house** is a public building like any other.
 - **The kinds needed no new field** (`kind` was already a byte); `Building::front` did, with
-  `WORLD_VERSION` 26. `worlds/vindeln`, `worlds/home` and `fixtures/world` are imported again.
+  `WORLD_VERSION` 26, and the mapped colours and materials (`paint` each on its own, `clad`) with 45. `worlds/vindeln`, `worlds/home` and `fixtures/world` are imported again.

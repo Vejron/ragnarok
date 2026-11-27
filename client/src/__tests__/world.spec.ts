@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { encode } from '@msgpack/msgpack'
-import { BUILDING_BRIDGE, CROP_NONE, CROP_WHEAT, GRAVE_CROSS, GRAVE_KINDS, RAIL_TRAIN, RAIL_TRAM, ROOF_GABLE, decodeManifest, decodeTile, worldHash } from '@/world'
+import { BUILDING_BRIDGE, CLAD_STONE, ROOFING_TILES, CROP_NONE, CROP_WHEAT, GRAVE_CROSS, GRAVE_KINDS, RAIL_TRAIN, RAIL_TRAM, ROOF_GABLE, decodeManifest, decodeTile, worldHash } from '@/world'
 import { buildingColors } from '@/render/buildingmesh'
 import { NO_CELLS } from './worlds'
 
@@ -137,8 +137,9 @@ describe('world files', () => {
 
   it('decodes a building\'s paint, and draws it in its own colours', () => {
     const house = [600, [[0, 0], [100, 0], [100, 100]], 0, 0, 0, 0, ROOF_GABLE, 0, [0, -127], NO_CELLS]
-    const tile = decodeTile(tileWith({ 0: [[...house, null], [...house, [0xf0e6cc, 0x56606e]]] }))
-    expect(tile.buildings.map((b) => b.paint)).toEqual([null, [0xf0e6cc, 0x56606e]])
+    const tile = decodeTile(tileWith({ 0: [[...house, [null, null], [0, 0]], [...house, [0xf0e6cc, 0x56606e], [CLAD_STONE, ROOFING_TILES]]] }))
+    expect(tile.buildings.map((b) => b.paint)).toEqual([[null, null], [0xf0e6cc, 0x56606e]])
+    expect(tile.buildings.map((b) => b.clad)).toEqual([[0, 0], [CLAD_STONE, ROOFING_TILES]])
     expect(tile.buildings[0]!.front).toEqual([0, -127])
     expect(buildingColors(tile, 1, 3)).toEqual({ wall: 0xf0e6cc, roof: 0x56606e })
     // Without paint the client picks from its palettes.
@@ -146,7 +147,7 @@ describe('world files', () => {
   })
 
   it('paints a shed as the wooden house in its yard, and one with no house near as its own kind', () => {
-    const at = (x: number, kind: number) => ({ first: 0, walls: 0, roof: 0, roofKind: ROOF_GABLE, kind, cells: null, paint: null, look: null, footprint: [[x, 0], [x + 6, 0], [x + 6, 5], [x, 5]] as [number, number][] })
+    const at = (x: number, kind: number) => ({ first: 0, walls: 0, roof: 0, roofKind: ROOF_GABLE, kind, cells: null, paint: [null, null] as [number | null, number | null], clad: [0, 0] as [number, number], look: null, footprint: [[x, 0], [x + 6, 0], [x + 6, 5], [x, 5]] as [number, number][] })
     // An old wooden house (kind 9), its shed 15 m off (kind 3), and a shed 200 m away.
     const tile = { buildings: [at(0, 9), at(15, 3), at(200, 3)] }
     for (let salt = 0; salt < 5; salt++) {

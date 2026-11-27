@@ -113,6 +113,9 @@ pub const FLAG_LAMP: u8 = FLAG_GROUNDED;
 /// A vehicle's siren and the beacons of its light bar are on (a police car's or an ambulance's). The
 /// dead bit: a vehicle is wrecked by its health, never by this, and only a vehicle sends it.
 pub const FLAG_SIREN: u8 = FLAG_DEAD;
+/// A vehicle has gone up (its last blast, after it burnt with its health gone), and is now a burnt-out
+/// wreck: clients char its paint only from then. The crouching bit: a vehicle never crouches.
+pub const FLAG_WRECKED: u8 = FLAG_CROUCHING;
 
 const _: () = assert!(
     crate::items::ITEM_COUNT as u16 <= (FLAG_HELD_MASK >> FLAG_HELD_SHIFT) as u16 + 1,

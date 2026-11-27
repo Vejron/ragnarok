@@ -180,7 +180,7 @@ describe('a tile\'s buildings with eaves', () => {
     const look = lookOf([...house.walls, ...house.roof])
     const range = rangeOf(house)
     const tile = {
-      buildings: [{ first: 0, walls: 0, roof: 0, roofKind: ROOF_GABLE, cells: null, paint: [0xa8432f, 0xb5543f] as [number, number], look: range }],
+      buildings: [{ first: 0, walls: 0, roof: 0, roofKind: ROOF_GABLE, cells: null, paint: [0xa8432f, 0xb5543f] as [number, number], clad: [0, 0] as [number, number], look: range }],
       bridges: [],
       collision: { vertices: new Float32Array(), triangles: new Uint32Array() },
       look,

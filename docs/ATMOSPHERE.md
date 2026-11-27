@@ -57,9 +57,9 @@ pass after the opaque world and before anything translucent, with `greater-equal
 pixels nothing else covered. `skyColor(dir, lod)` builds the pixel, back to front:
 
 1. **Haze** (`skyHaze`): the table, never looking below the horizon, greyed by heavy cover.
-   - It is softly capped (`softCap`, on the brightest channel, as the bloom's threshold reads it).
+   - It is softly capped (`softCap`, on the brightest channel, as the output pass reads what burns white).
    - The glare round a low sun is 10 to 40 times brighter than the rest of the sky. A large patch over
-     the bloom's threshold would flood the screen.
+     white would wash the picture out.
 2. **Stars** (`starField`):
    - one hashed star in about a fifth of the cells of a 3D grid over the sphere, a few bright, most
      faint, twinkling;
@@ -74,7 +74,7 @@ pixels nothing else covered. `skyColor(dir, lod)` builds the pixel, back to fron
      runs over 8 game days of the server's clock (`moonPhaseAt`) and starts full.
    - The cloud map gives it darker seas, and it has a faint halo.
 4. **Sun** (`sunDisc`): a disc twice the real size, darker at its limb, coloured by the sunlight that
-   reaches it (`skyLight`, the CPU transmittance), with a close glare. Bloom does the rest.
+   reaches it (`skyLight`, the CPU transmittance), with a close glare. The light shafts and the lens flare do the rest.
 5. **Clouds** (`cloudLayer`), over all of it:
    - **Layer:** a layer at 1800 m (`CLOUD_HEIGHT`), bowed over a small world so it sinks to the
      horizon about 40 km out.
@@ -143,7 +143,7 @@ From it:
 - **Lightning** (`Sky.flash`) in heavy rain:
   - In each 6-second slot there is a 40% chance of a strike, at a moment the slot's hash picks.
   - A strike is a flicker of three flashes over a third of a second.
-  - It lights the sky and the clouds, held under the bloom's threshold so it flashes rather than glows,
+  - It lights the sky and the clouds, held under where light burns white so it flashes rather than glows,
     and raises the sky's fill on the ground.
 - **Rainbow** (`Sky.rainbow`) as a shower clears and the sun is out:
   - The primary bow runs from violet at 40.6° to red at 42.3° from the point opposite the sun.

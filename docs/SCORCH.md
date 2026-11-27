@@ -6,7 +6,7 @@ This adds marks drawn by the terrain's own shader, per pixel, from the list of c
 
 Status: branch `feat/scorch`. Phases 1-3 are written and tested. Phase 1 was looked at in the game by the user and toned down after; phases 2 and 3 are seen only in the engine's `craters` example and compiled in headless Chrome, not yet played.
 
-**Setting.** All of it is the `scorch` look (`render/look.ts`), "Scorched craters" in the in-game menu next to ink outlines and bloom, on by default. Off, the renderer uploads an empty grid (so no shader looks at a crater) and the craters stop smoking; the craters are still kept, so turning it back on shows every one. The dent in the ground is there either way.
+**Setting.** All of it is the `scorch` look (`render/look.ts`), "Scorched craters" in the in-game menu next to ink outlines, on by default. Off, the renderer uploads an empty grid (so no shader looks at a crater) and the craters stop smoking; the craters are still kept, so turning it back on shows every one. The dent in the ground is there either way.
 
 ## How it works
 
@@ -59,7 +59,7 @@ Not seen in a played game yet: the look of the thrown earth, and the glow under 
 ## Phases
 
 1. **Terrain marks** — the crater list and grid in the engine, the bindings, `MAT_CRATERS`, the shading (slope, rim shadow, earth, char, rays, soil, ink); the client feeds it from `WorldView.cratered` (catch-up craters are born long ago). Tests for the grid (hashing, eviction, the ring wrapping).
-2. **Hot craters** — embers glowing in a fresh crater's middle and cooling over `CRATER_EMBER_LIFE` (20 s), from the birth time already in the buffer, nothing per frame; HDR, so they bloom. Smoke rising for `SMOULDER_SECONDS` (30 s) from the game's smoke particles, thick at first and thinning, at most `SMOULDER_MAX` (16) craters smoking at once: a column of puffs leaning downwind (a puff every 0.08 s fresh, 0.45 s cold, alpha 0.6 to 0.25), up to about 1,000 of the 4,096 smoke particles in a barrage.
+2. **Hot craters** — embers glowing in a fresh crater's middle and cooling over `CRATER_EMBER_LIFE` (20 s), from the birth time already in the buffer, nothing per frame; HDR, so they burn bright. Smoke rising for `SMOULDER_SECONDS` (30 s) from the game's smoke particles, thick at first and thinning, at most `SMOULDER_MAX` (16) craters smoking at once: a column of puffs leaning downwind (a puff every 0.08 s fresh, 0.45 s cold, alpha 0.6 to 0.25), up to about 1,000 of the 4,096 smoke particles in a barrage.
 3. **Grass** — blades round a crater's rim lie flat, away from its middle (`craterGrass`, added to the lean in the grass shader's `displace`), and blades over char or rays are burnt dark, most at the tips (in its `surface`). The bowl's bare earth is still the CPU's `Grass.dent`.
 4. **Extras, if wanted** — heat shimmer over a fresh crater; clods of thrown-out dirt.
 

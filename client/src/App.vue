@@ -17,7 +17,7 @@ const error = ref<string | null>(null)
 /** This browser can show the game in a VR headset (WebXR on WebGPU). */
 const vrOk = ref(false)
 const input = shallowRef<InputController | null>(null)
-const look = ref<Look>({ soft: true, contact: true, far: true, ink: true, bloom: true, rays: true, reflect: true, grass: true, scorch: true, adaptive: true, netStats: false })
+const look = ref<Look>({ soft: true, contact: true, far: true, ink: true, hatch: false, rays: true, reflect: true, grass: true, scorch: true, adaptive: true, netStats: false })
 const lookOpen = ref(false)
 const quality = ref<Quality>('auto')
 const controls = ref<Controls>(defaultControls())

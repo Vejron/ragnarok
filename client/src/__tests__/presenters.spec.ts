@@ -30,7 +30,7 @@ function projectileWorld() {
     trails: { follow: (_: string, id: number) => log.push(`trail ${id}`), end: (_: string, id: number) => log.push(`end trail ${id}`) },
     glow: { spawn: () => {} },
     lights: { hold: () => {} },
-    fx: () => ({}),
+    fx: () => ({ halo: { spawn: () => {} } }),
     blips: { fired: (shooter: number, x: number) => log.push(`fired ${shooter} ${x}`) },
   } as unknown as ProjectileWorld
   return { log, heard, world }

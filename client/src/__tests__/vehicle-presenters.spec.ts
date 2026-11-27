@@ -39,7 +39,7 @@ function harness(driven: Driven | null = null) {
   const log: string[] = []
   /** The heat of each barrel that smoked, frame by frame. */
   const smoking: number[] = []
-  const fx = { smoke: new Particles(500), glow: new Particles(100, true), skids: new Skidmarks(100), groundAt: () => 0, surfaceAt: () => 0, camera: new Vec3(0, 5, 10) }
+  const fx = { smoke: new Particles(500), glow: new Particles(100, true), halo: new Particles(64, true, true), skids: new Skidmarks(100), groundAt: () => 0, surfaceAt: () => 0, camera: new Vec3(0, 5, 10) }
   const world: VehicleWorld = {
     root: new Group(),
     sounds: { begin() {}, end() {}, engine() {}, drop: (id: number) => log.push(`drop ${id}`), thud() {}, footstep() {}, cannon: () => log.push('cannon'), laser() {}, machineGun() {} } as never,

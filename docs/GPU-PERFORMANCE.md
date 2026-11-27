@@ -23,7 +23,10 @@ the run falls on both alike.
 - **Views:** `forest` (the spawn), `vista` (the highest ground within 350 m), `water` (the nearest shore,
   looking out) and `night` (the spawn at night with the headlamp on).
 - **`--breakdown`:** times the frame with each costly part turned off in turn: shadows, reflection,
-  sky, bloom, ink, shafts and flare, effects, trees (everything with `levels`) and grass.
+  sky, ink, shafts and flare, effects, trees (everything with `levels`) and grass. (Bloom was one
+  of them until the pass was removed: [GLOW.md](GLOW.md).)
+- **A firefight:** `--parts firefight,firefightBare` adds flashes, fire and a blast to the view, with
+  and without their halos; the two numbers' difference is what the glow costs.
 - **Your own variants:** `--extra 'name=<js>'` adds one. The JS sees `g` (the game), `r` (the renderer)
   and `e` (the engine scene), and returns a function that undoes it.
 - **Screenshots:** a screenshot of each view goes to `client/bench-out/` (untracked), read back from the
@@ -305,6 +308,35 @@ per particle in the compute pass (the churning air, the wind, the point lights t
 it costs by the pool's size and not by the pixels covered. The sun's shading of a puff is the one
 thing added per pixel, and took the 200 puffs from 0.11 to 0.13 ms.
 
+## Houses with a style of their own
+
+Each building's colours, trim, plinth, weathering, curtains and lit windows
+([BUILDING-STYLES.md](BUILDING-STYLES.md)) were added with no new vertex, draw or texture and no
+`discard`: the style is a seed in the building's unused vertex fields, used by the wall shader and
+by the tile worker's choice of colours. Timed on `vindeln` with the old and the new shader in the
+same session, at a street of houses (`--at 'street=-40,5,1.2,-0.05,1.7'`) and with a boarded wall
+filling the frame (`--at 'wall=8,20,-1.2,-0.05,1.7'`), with `--extra` variants that switch the
+pattern off (`walls = false` on the merged meshes' material) and hide the glass:
+
+| | street | wall |
+|---|---|---|
+| Frame, old shader | 2.28 ms | 2.06 ms |
+| Frame, new shader | 2.30 to 2.31 ms | 2.09 to 2.10 ms |
+| The pattern, old (`plainwalls`) | 0.02 ms | 0.02 ms |
+| The pattern, new | 0.04 ms | 0.04 to 0.05 ms |
+| The glass (`noglass`), old and new | 0.08 ms | 0.08 to 0.09 ms |
+
+So the walls cost about 0.02 ms more than they did, 1% of the frame and about what two runs of the
+same build differ by; the curtains and lamps measure nothing. Half of the extra is the tint and the
+building's own numbers, half the plinth and the weathering (with both switched off the pattern was
+0.03 ms).
+
+- Drawing the building's numbers with eight hashes a pixel or with two (`wallOwn` gives four from
+  one) measured the same, as did working out the boards' grain only within a few metres instead of
+  at every distance. The hashes and a noise or two are not what a wall pixel costs.
+- The glass's `glow` flag is one more test of a uniform flag in the standard shader, for every
+  pixel of every material. It did not measure.
+
 ## Tried and dropped
 
 - **Half-precision floats (`shader-f16`) for the water's colour maths.** The tint, the mirror's blend,
@@ -336,8 +368,6 @@ thing added per pixel, and took the 200 puffs from 0.11 to 0.13 ms.
 - **The trees' switch nearer (60 m) or further (160 m):** both slower, by 0.03 to 0.09 ms.
 - **A cheaper mirror image** (one sample a pixel, one shadow tap): the whole reflection is 0.01 to
   0.04 ms in `home` and on `vindeln`'s shore, so there is nothing to win.
-- **Bloom's last upsample done by the output pass:** it would read nine taps a full-size pixel in
-  place of nine a half-size one. Not built.
 
 ## Shadows: two maps, stepped sun, gap-free filter
 

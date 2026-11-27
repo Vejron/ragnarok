@@ -644,7 +644,7 @@ export class BuildingDamage {
     const range = seen?.loaded.tile.buildings[seen.index]?.look
     if (!seen || !shell || !seen.loaded.tile.look || !range) return null
     const { wall, roof } = buildingColors(seen.loaded.tile, seen.index, seen.loaded.salt)
-    return timed('damage.cut', () => lookChunk(seen.loaded.tile.look!, range, shell, new Set(pending.cells), [pending.pivot.x, pending.pivot.y, pending.pivot.z], rgbOf(wall), rgbOf(roof)))
+    return timed('damage.cut', () => lookChunk(seen.loaded.tile.look!, range, shell, new Set(pending.cells), [pending.pivot.x, pending.pivot.y, pending.pivot.z], rgbOf(wall), rgbOf(roof), buildingSurfaces(seen.loaded.tile, seen.index, seen.loaded.salt)))
   }
 
   /**

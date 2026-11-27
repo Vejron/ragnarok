@@ -1,5 +1,5 @@
 import { Vector3 } from '@ragnarok/engine'
-import { DAMAGE_TURRET, TURRET_GONE } from '@/net/codec'
+import { DAMAGE_TURRET, FLAG_WRECKED, TURRET_GONE } from '@/net/codec'
 import { vehicleDef } from '@/sim/vehicles'
 import { CarModel } from '@/render/car'
 import { TankModel } from '@/render/tank'
@@ -12,7 +12,7 @@ import type { VehicleWorld, Vehicles } from './vehicles'
 const STILL = new Vector3()
 
 /**
- * What a vehicle's hurts look like (`damage` and `health`): a car's dents, cracks and parts coming off,
+ * What a vehicle's hurts look like (`damage`, and `flags` once it is a wreck): a car's dents, cracks, parts coming off and burnt paint,
  * and a tank's turret thrown clear when it is shot off, put back when it is repaired.
  */
 export class Wear implements Presenter<Frame> {
@@ -25,13 +25,15 @@ export class Wear implements Presenter<Frame> {
     return entity.orientation !== undefined
   }
 
-  update(id: number, _sampled: Sampled, frame: Frame) {
+  update(id: number, sampled: Sampled, frame: Frame) {
     const model = this.vehicles.model(id)
     const placed = this.vehicles.placed.get(id)
     if (!model || !placed) return
     if (model instanceof CarModel) {
       const velocity = this.vehicles.fx(id)?.velocity ?? STILL
-      model.wear(placed.damage, placed.hp, this.world.debris, velocity)
+      // Charred only once it has gone up, not while it burns with its health gone (`FLAG_WRECKED`).
+      const wrecked = ((sampled.entity.flags?.flags ?? 0) & FLAG_WRECKED) !== 0
+      model.wear(placed.damage, wrecked, this.world.debris, velocity)
       model.swingDoors(placed.doors.left, placed.doors.right, placed.doors.gone, frame.dt, this.world.debris, velocity)
     }
     if (model instanceof TankModel && vehicleDef(placed.kind).shedsTurret) {

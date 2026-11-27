@@ -90,7 +90,7 @@ describe('CarWear', () => {
     const { shell, wear } = model()
     const shared = shell.geometry
     wear.noteImpact(new Vector3(0.6, 0, -2), 0)
-    wear.update(damage([120, 0, 0, 0]), 100, null, still, 10)
+    wear.update(damage([120, 0, 0, 0]), false, null, still, 10)
     expect(shell.geometry).not.toBe(shared)
     const offsets = moved(shell, shared)
     const near = offsets.filter(({ at }) => at.distanceTo(new Vector3(0.6, 0, -2)) < 0.3)
@@ -102,9 +102,9 @@ describe('CarWear', () => {
   it('dents mid-side when no crash event comes', () => {
     const { shell, wear } = model()
     const shared = shell.geometry
-    wear.update(damage([0, 0, 180, 0]), 100, null, still, 0)
+    wear.update(damage([0, 0, 180, 0]), false, null, still, 0)
     expect(shell.geometry).toBe(shared)
-    wear.update(damage([0, 0, 180, 0]), 100, null, still, 500)
+    wear.update(damage([0, 0, 180, 0]), false, null, still, 500)
     const left = moved(shell, shared).filter(({ at }) => at.x < -0.9 && Math.abs(at.z) < 0.3)
     expect(Math.max(...left.map((o) => o.by))).toBeGreaterThan(0.12)
     expect(Math.min(...left.map((o) => o.by))).toBeGreaterThan(0.02)
@@ -113,9 +113,9 @@ describe('CarWear', () => {
   it('breaks the lights and cracks the glass of a battered front', () => {
     const { light, screen, wear } = model()
     const lamp = light.material
-    wear.update(damage([60, 0, 0, 0]), 100, null, still, 1000)
+    wear.update(damage([60, 0, 0, 0]), false, null, still, 1000)
     expect(light.material).toBe(lamp)
-    wear.update(damage([130, 0, 0, 0]), 100, null, still, 2000)
+    wear.update(damage([130, 0, 0, 0]), false, null, still, 2000)
     expect(light.material).not.toBe(lamp)
     expect(screen.material.name).toBe('cracked')
   })
@@ -125,7 +125,7 @@ describe('CarWear', () => {
     const shared = shell.geometry
     const sharedTriangles = shared.indexCount
     const debris = new Debris()
-    wear.update(damage([200, 0, 0, 0], [0, 0, 0, 255]), 40, debris, new Vector3(0, 0, -10), 5000)
+    wear.update(damage([200, 0, 0, 0], [0, 0, 0, 255]), false, debris, new Vector3(0, 0, -10), 5000)
     expect(wear.state.gone).toContain('bumper_F')
     expect(wear.state.wheelsGone).toEqual([false, false, false, true])
     expect(car.getObjectByName('wheel_RR')!.visible).toBe(false)
@@ -135,7 +135,7 @@ describe('CarWear', () => {
     for (let i = 0; i < 300; i++) debris.update(1 / 60)
     expect(debris.count).toBe(2)
     // A fresh car after a respawn.
-    wear.update(damage([0, 0, 0, 0]), 100, debris, still, 9000)
+    wear.update(damage([0, 0, 0, 0]), false, debris, still, 9000)
     expect(shell.geometry).toBe(shared)
     expect(car.getObjectByName('wheel_RR')!.visible).toBe(true)
     expect(wear.state).toEqual({ gone: [], wheelsGone: [false, false, false, false], owned: 0 })
@@ -146,13 +146,24 @@ describe('CarWear', () => {
   it('leans a bent wheel out and dulls the paint', () => {
     const { car, paint, wear } = model()
     const fresh = paint.color.clone()
-    wear.update(damage([0, 0, 0, 0], [128, 0, 0, 200]), 100, null, still, 0)
+    wear.update(damage([0, 0, 0, 0], [128, 0, 0, 200]), false, null, still, 0)
     expect(car.getObjectByName('wheel_FL')!.rotation.z).toBeGreaterThan(0.1)
     expect(car.getObjectByName('wheel_RR')!.rotation.z).toBeLessThan(-0.2)
     expect(car.getObjectByName('wheel_FR')!.rotation.z).toBeCloseTo(0)
     expect(paint.color.r === fresh.r && paint.color.g === fresh.g && paint.color.b === fresh.b).toBe(false)
-    wear.update(damage([0, 0, 0, 0], [128, 0, 0, 200]), 0, null, still, 0)
+    wear.update(damage([0, 0, 0, 0], [128, 0, 0, 200]), true, null, still, 0)
     expect(paint.color.r).toBeLessThan(0.2)
+  })
+
+  it('chars the paint only once the car has gone up, not while it burns before', () => {
+    const { paint, wear } = model()
+    wear.update(damage([0, 0, 0, 0], [128, 0, 0, 200]), false, null, still, 0)
+    const dulled = paint.color.clone()
+    // Health gone, but not blown yet: the same dulled paint.
+    wear.update(damage([0, 0, 0, 0], [128, 0, 0, 200]), false, null, still, 0)
+    expect(paint.color.r).toBeCloseTo(dulled.r)
+    wear.update(damage([0, 0, 0, 0], [128, 0, 0, 200]), true, null, still, 0)
+    expect(paint.color.r).toBeLessThan(dulled.r * 0.5)
   })
 })
 

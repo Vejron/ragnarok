@@ -116,6 +116,7 @@ describe('the submarine', () => {
     const world = {
       smoke: { spawn: () => spawned.smoke++, alive: 0 },
       glow: { spawn: () => spawned.glow++, alive: 0 },
+      halo: { spawn: () => {}, alive: 0 },
       camera: { x: 0, y: 5, z: 30 },
     } as unknown as FxWorld
     missileLaunch(world, { x: 0, y: 1, z: 0 }, { x: 0, y: 1, z: 0 }, null)

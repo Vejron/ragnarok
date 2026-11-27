@@ -51,9 +51,10 @@ describe('scorch marks', () => {
 
 describe('shot effects', () => {
   const pools = () => {
-    const smoke: ParticleSpec[] = [], glow: ParticleSpec[] = [], blood: ParticleSpec[] = []
-    const effects = new Effects({ smoke: { spawn: (s: ParticleSpec) => smoke.push(s) }, glow: { spawn: (s: ParticleSpec) => glow.push(s) }, blood: { spawn: (s: ParticleSpec) => blood.push(s) } }, 64)
-    return { effects, smoke, glow, blood }
+    const smoke: ParticleSpec[] = [], glow: ParticleSpec[] = [], blood: ParticleSpec[] = [], halo: ParticleSpec[] = []
+    const pool = (into: ParticleSpec[]) => ({ spawn: (s: ParticleSpec) => into.push(s) })
+    const effects = new Effects({ smoke: pool(smoke), glow: pool(glow), blood: pool(blood), halo: pool(halo) }, 64)
+    return { effects, smoke, glow, blood, halo }
   }
   const at = { x: 1, y: 2, z: 3 }
   const ahead = { x: 0, y: 0, z: 1 }
@@ -98,6 +99,27 @@ describe('shot effects', () => {
     expect(effects.root.count).toBe(10)
   })
 
+  it('a flash brings a wider, fainter halo of its fire’s colour, its white heart none, and fire is its own light', () => {
+    const { effects, smoke, glow, halo } = pools()
+    effects.gunfire(at, ahead, RIFLE, 1, scene())
+    effects.strike(at)
+    effects.burst(at, 4)
+    const flashes = glow.filter((s) => s.shape === 'glare')
+    // The gun's flash and the blast's each have a white-hot heart inside them, which has no halo.
+    expect(halo.length).toBe(flashes.length - 2)
+    for (const h of halo) {
+      const flash = flashes.find((f) => f.color === h.color && f.life < h.life)!
+      expect(flash).toBeDefined()
+      expect(h.shape).toBe('glare')
+      expect(h.size[1]).toBeGreaterThan(flash.size[1] * 1.5)
+      expect(h.glow!).toBeLessThan(flash.glow! / 2)
+    }
+    expect(halo.some((h) => h.color === 0xffffff)).toBe(false)
+    const flames = smoke.filter((s) => (s.glow ?? 0) > 1)
+    expect(flames.length).toBeGreaterThan(0)
+    expect(flames.every((s) => s.emissive)).toBe(true)
+  })
+
   it('a launcher’s backblast is a cone of fire with fireballs in it, and leaves smoke', () => {
     const { effects, smoke, glow } = pools()
     effects.backblast(at, { x: 0, y: 0, z: -1 })
@@ -113,6 +135,8 @@ describe('shot effects', () => {
     scoped.effects.gunfire(at, ahead, SNIPER, 1, scene(), true)
     expect(scoped.effects.root.count).toBe(0)
     expect(scoped.glow.some((s) => s.shape === 'glare')).toBe(false)
+    expect(scoped.halo.length).toBe(0)
+    expect(open.halo.length).toBeGreaterThan(0)
     const puffs = (smoke: ParticleSpec[]) => smoke.filter((s) => s.hold).length
     expect(puffs(scoped.smoke)).toBeGreaterThan(0)
     expect(puffs(scoped.smoke)).toBeLessThan(puffs(open.smoke) / 2)

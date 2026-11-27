@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { Shell, type Tri } from '@/sim/carve'
-import { lookFracture, openingStands } from '@/render/lookfracture'
+import { lookFracture, openingStands, patterned } from '@/render/lookfracture'
 import { lookSlice } from '@/render/lookworker'
 import { openingsOf } from '@/render/windows'
 import { rubbleSoup } from '@/render/shards'
 import { buildingSurfaces, Surface } from '@/render/buildingmesh'
-import { BRIDGE_CONCRETE, BUILDING_BRIDGE, DECK_ASPHALT, DECK_BALLAST, DECK_PLANKS, ROOF_FLAT, ROOF_GABLE } from '@/world'
+import { BRIDGE_CONCRETE, BUILDING_BRIDGE, BUILDING_FLATS, BUILDING_PLAIN, CLAD_BRICK, CLAD_SHEET, CLAD_WOOD, ROOFING_FELT, ROOFING_SHINGLES, DECK_ASPHALT, DECK_BALLAST, DECK_PLANKS, ROOF_FLAT, ROOF_GABLE } from '@/world'
 import { lookChunk } from '@/render/lookfracture'
 import type { CollisionMesh } from '@/world'
 
@@ -206,8 +206,29 @@ describe('lookFracture', () => {
     expect(Math.min(...heavy.colors)).toBeLessThan(0.5)
   })
 
+  it('keeps the seed, the plinth and the trim the house had whole', () => {
+    const green = [0.05, 0.6, 0.1] as const
+    const style = { ...patterned(Surface.Lap, Surface.Tiles), seed: 0.25, foot: 0, plinth: 0.4, frame: green }
+    const soup = lookFracture(look, range, shell, new Set([hole]), new Map(), white, white, style)
+    let patterned_ = 0
+    for (let v = 0; v < soup.custom.length / 4; v++) {
+      const row = [...soup.custom.subarray(v * 4, v * 4 + 4)]
+      if (row[0] === 0) expect(row).toEqual([0, 0, 0, 0])
+      else {
+        expect(row[1]).toBeCloseTo(0.25, 6)
+        expect(row[2]).toBe(0)
+        expect(row[3]).toBeCloseTo(0.4, 6)
+        patterned_++
+      }
+    }
+    expect(patterned_).toBeGreaterThan(0)
+    // Its window frames are in its own colour, none in the white they are drawn in before they are painted.
+    const has = (rgb: readonly number[]) => { for (let i = 0; i < soup.colors.length; i += 3) if (Math.abs(soup.colors[i]! - rgb[0]!) < 1e-4 && Math.abs(soup.colors[i + 1]! - rgb[1]!) < 1e-4 && Math.abs(soup.colors[i + 2]! - rgb[2]!) < 1e-4) return true; return false }
+    expect(has(green)).toBe(true)
+  })
+
   it('keeps the walls\' and roof\'s patterns on what stands, not on the hole\'s edge or the windows', () => {
-    const soup = lookFracture(look, range, shell, new Set([hole]), new Map(), white, white, { wall: Surface.Lap, roof: Surface.Tiles })
+    const soup = lookFracture(look, range, shell, new Set([hole]), new Map(), white, white, patterned(Surface.Lap, Surface.Tiles))
     expect(soup.custom.length).toBe((soup.positions.length / 3) * 4)
     const kinds = new Set<number>()
     for (let i = 0; i < soup.custom.length; i += 4) kinds.add(soup.custom[i]!)
@@ -243,24 +264,37 @@ describe('lookFracture', () => {
   })
 
   it('picks boards, brick or render from the wall colour, and felt for a flat roof', () => {
-    const tile = (paint: [number, number] | null, roofKind = ROOF_GABLE) => ({ buildings: [{ paint, roofKind } as never] })
-    expect(buildingSurfaces(tile([0xa8432f, 0xb5543f]), 0, 0)).toEqual({ wall: Surface.Upright, roof: Surface.Tiles })
-    expect(buildingSurfaces(tile([0xeee9dc, 0x6d7a8c]), 0, 0)).toEqual({ wall: Surface.Lap, roof: Surface.Sheet })
+    const tile = (paint: [number, number] | null, roofKind = ROOF_GABLE, kind = BUILDING_FLATS, clad: [number, number] = [0, 0]) => ({ buildings: [{ paint: paint ?? [null, null], clad, roofKind, kind } as never] })
+    expect(buildingSurfaces(tile([0xa8432f, 0xb5543f]), 0, 0)).toMatchObject({ wall: Surface.Upright, roof: Surface.Tiles })
+    expect(buildingSurfaces(tile([0xeee9dc, 0x6d7a8c]), 0, 0)).toMatchObject({ wall: Surface.Lap, roof: Surface.Sheet })
     expect(buildingSurfaces(tile([0xeee9dc, 0x4f5d6b]), 0, 0).roof).toBe(Surface.Tiles)
-    expect(buildingSurfaces(tile([0x8f3a2c, 0xb0b4ba], ROOF_FLAT), 0, 0)).toEqual({ wall: Surface.Brick, roof: Surface.Felt })
+    expect(buildingSurfaces(tile([0x8f3a2c, 0xb0b4ba], ROOF_FLAT), 0, 0)).toMatchObject({ wall: Surface.Brick, roof: Surface.Felt })
     // Painted by the importer (France): render, or brick if a dark red.
     expect(buildingSurfaces(tile([0xd8d0c0, 0x9c4a3c]), 0, 0).wall).toBe(Surface.Render)
     expect(buildingSurfaces(tile([0x7a3020, 0x9c4a3c]), 0, 0).wall).toBe(Surface.Brick)
     // France's palette: limestone is cut stone, its brick brick, and slate laid in rows.
-    expect(buildingSurfaces(tile([0xf0e6cc, 0x56606e]), 0, 0)).toEqual({ wall: Surface.Ashlar, roof: Surface.Tiles })
-    expect(buildingSurfaces(tile([0xc0785a, 0xa4acb4]), 0, 0)).toEqual({ wall: Surface.Brick, roof: Surface.Sheet })
+    expect(buildingSurfaces(tile([0xf0e6cc, 0x56606e]), 0, 0)).toMatchObject({ wall: Surface.Ashlar, roof: Surface.Tiles })
+    expect(buildingSurfaces(tile([0xc0785a, 0xa4acb4]), 0, 0)).toMatchObject({ wall: Surface.Brick, roof: Surface.Sheet })
+  })
+
+  it('draws walls and a roof as the map says they are made, whatever their colour, and a house in a colour of the map\'s own in boards', () => {
+    const tile = (paint: [number | null, number | null], kind: number, clad: [number, number]) => ({ buildings: [{ paint, clad, roofKind: ROOF_GABLE, kind } as never] })
+    // A dark red house of wood is boarded, not brick; a pale one of brick is brick.
+    expect([Surface.Upright, Surface.Lap]).toContain(buildingSurfaces(tile([0x7a3020, null], BUILDING_FLATS, [CLAD_WOOD, 0]), 0, 0).wall)
+    expect(buildingSurfaces(tile([0xeee9dc, null], BUILDING_PLAIN, [CLAD_BRICK, 0]), 0, 0).wall).toBe(Surface.Brick)
+    expect(buildingSurfaces(tile([null, null], BUILDING_PLAIN, [CLAD_SHEET, ROOFING_SHINGLES]), 0, 0)).toMatchObject({ wall: Surface.Upright, roof: Surface.Shingles })
+    // A red roof of felt is felt.
+    expect(buildingSurfaces(tile([null, 0xb5543f], BUILDING_PLAIN, [0, ROOFING_FELT]), 0, 0).roof).toBe(Surface.Felt)
+    // No material mapped: a house in a colour no palette has is wooden, a block of flats rendered.
+    expect([Surface.Upright, Surface.Lap]).toContain(buildingSurfaces(tile([0x3355aa, null], BUILDING_PLAIN, [0, 0]), 0, 0).wall)
+    expect(buildingSurfaces(tile([0x3355aa, null], BUILDING_FLATS, [0, 0]), 0, 0).wall).toBe(Surface.Render)
   })
 
   it('draws a bridge as plain concrete with what it carries on the deck: asphalt, planks, or ballast for a railway', () => {
-    const bridge = (deck: number) => ({ buildings: [{ kind: BUILDING_BRIDGE, roofKind: ROOF_FLAT, paint: [BRIDGE_CONCRETE, deck] } as never] })
-    expect(buildingSurfaces(bridge(DECK_ASPHALT), 0, 0)).toEqual({ wall: Surface.Plain, roof: Surface.Asphalt })
-    expect(buildingSurfaces(bridge(DECK_PLANKS), 0, 0)).toEqual({ wall: Surface.Plain, roof: Surface.Planks })
-    expect(buildingSurfaces(bridge(DECK_BALLAST), 0, 0)).toEqual({ wall: Surface.Plain, roof: Surface.Ballast })
+    const bridge = (deck: number) => ({ buildings: [{ kind: BUILDING_BRIDGE, roofKind: ROOF_FLAT, paint: [BRIDGE_CONCRETE, deck], clad: [0, 0] } as never] })
+    expect(buildingSurfaces(bridge(DECK_ASPHALT), 0, 0)).toMatchObject({ wall: Surface.Plain, roof: Surface.Asphalt })
+    expect(buildingSurfaces(bridge(DECK_PLANKS), 0, 0)).toMatchObject({ wall: Surface.Plain, roof: Surface.Planks })
+    expect(buildingSurfaces(bridge(DECK_BALLAST), 0, 0)).toMatchObject({ wall: Surface.Plain, roof: Surface.Ballast })
   })
 
   it('shows broken rafters in a roof\'s hole, splinters at a wooden wall\'s, and cracks across a brick one that stay on it', () => {
@@ -273,8 +307,8 @@ describe('lookFracture', () => {
     const roofHole = new Set([shell.cellAt(2.5, 2.9, 2), shell.cellAt(1.8, 2.9, 2), shell.cellAt(2.5, 2.9, 1.3)])
     expect(count(lookFracture(look, range, shell, roofHole, new Map(), grey, grey), 0.13, 0.04)).toBeGreaterThan(0)
     const wallHole = new Set([hole, shell.cellAt(2.5, 0.8, 0.01), shell.cellAt(1.8, 1.5, 0.01)])
-    expect(count(lookFracture(look, range, shell, wallHole, new Map(), grey, grey, { wall: Surface.Upright, roof: Surface.Tiles }), 0.5, 0.2)).toBeGreaterThan(0)
-    const brick = lookFracture(look, range, shell, wallHole, new Map(), grey, grey, { wall: Surface.Brick, roof: Surface.Tiles })
+    expect(count(lookFracture(look, range, shell, wallHole, new Map(), grey, grey, patterned(Surface.Upright, Surface.Tiles)), 0.5, 0.2)).toBeGreaterThan(0)
+    const brick = lookFracture(look, range, shell, wallHole, new Map(), grey, grey, patterned(Surface.Brick, Surface.Tiles))
     const plain = lookFracture(look, range, shell, wallHole, new Map(), grey, grey)
     expect(brick.positions.length).toBeGreaterThan(plain.positions.length)
     // Every crack corner (in the crack's colour, grey: the door's leaf is as red but browner) is on the front wall, a hair proud of it, within its bounds.
@@ -298,7 +332,7 @@ describe('lookFracture', () => {
     const removed = new Set([hole])
     const dents = new Map([[shell.cellAt(1, 1.5, 0.01), 20]])
     // Brick and tiles: cracks and loose shingles, which look at the standing wall, are drawn too.
-    const brick = { wall: Surface.Brick, roof: Surface.Tiles }
+    const brick = patterned(Surface.Brick, Surface.Tiles)
     const whole = lookFracture(tileLook, own, shell, removed, dents, white, white, brick)
     const slice = lookSlice(tileLook, own)
     const alone = lookFracture(slice.look, slice.range, Shell.ofFlags(shell.flags), removed, dents, white, white, brick)

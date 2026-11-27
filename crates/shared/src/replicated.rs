@@ -329,7 +329,7 @@ replicated! {
     Motion { vy: i16 as cm, knock_x: i16 as cm, knock_z: i16 as cm }
 
     set 3 flags
-    /// `FLAG_*` bits and the `STANCE_*`. A vehicle has it only while its lamps (`FLAG_LAMP`) or its siren (`FLAG_SIREN`) are on.
+    /// `FLAG_*` bits and the `STANCE_*`. A vehicle has it only while its lamps (`FLAG_LAMP`) or its siren (`FLAG_SIREN`) are on, or once it is a wreck (`FLAG_WRECKED`).
     Flags { flags: u8, stance: u8 }
 
     diff 4 orientation

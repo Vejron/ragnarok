@@ -26,8 +26,10 @@ export interface ParticleSpec {
   spin?: number | readonly [number, number]
   /** Metres of extra length per m/s of speed, along its motion (sparks). */
   stretch?: number
-  /** Multiplies the colour past 1 so it blooms. */
+  /** Multiplies the colour past 1, so it burns towards white. */
   glow?: number
+  /** Fire rather than smoke: it is its own light, so neither the sun nor the night dims it. */
+  emissive?: boolean
   /** Metres per second the air's churning carries it about, so that smoke rolls and curls. */
   turbulence?: number
   /** The share of the wind that carries it, 0 to 1. */
@@ -57,6 +59,14 @@ export interface EmitSpec extends Omit<ParticleSpec, 'life'> {
 
 /** The darkest a particle gets at night, against its colour by day, so smoke and dust stay readable. */
 export const NIGHT_FLOOR = 0.05
+
+/** A halo is this many times as wide as the light it is round, but reaches no more than `HALO_REACH` metres past it. */
+const HALO_SPREAD = 4
+const HALO_REACH = 3.5
+/** A halo's brightness at its heart against that of its light. */
+const HALO_STRENGTH = 0.16
+/** A halo lasts this many times as long as its light, so that a flash dies away and does not blink. */
+const HALO_LINGER = 1.6
 
 /** How fast the wind carries smoke, m/s. Which way it blows is the game's wind (`sim/wind.ts`). */
 export const WIND_SPEED = 1.2
@@ -114,7 +124,7 @@ export class Particles {
     if (this.deaths.length >= this.capacity) return
     this.deaths.push(this.clock + spec.life)
     if (spec.bounce) this.bounces = true
-    const dim = this.blend === 'alpha' ? (c: number) => tinted(c, this.light, NIGHT_FLOOR) : (c: number) => c
+    const dim = this.blend === 'alpha' && !spec.emissive ? (c: number) => tinted(c, this.light, NIGHT_FLOOR) : (c: number) => c
     const engine: EngineSpec = {
       position: spec.position,
       velocity: spec.velocity,
@@ -131,6 +141,7 @@ export class Particles {
       spin: spec.spin,
       stretch: spec.stretch,
       glow: spec.glow,
+      emissive: spec.emissive,
       turbulence: spec.turbulence,
       wind: spec.wind,
       shape: spec.shape,
@@ -147,7 +158,7 @@ export class Particles {
     const longest = typeof spec.life === 'number' ? spec.life : spec.life[1]
     for (let i = 0; i < count; i++) this.deaths.push(this.clock + longest)
     if (spec.bounce) this.bounces = true
-    const dim = this.blend === 'alpha' ? (c: number) => tinted(c, this.light, NIGHT_FLOOR) : (c: number) => c
+    const dim = this.blend === 'alpha' && !spec.emissive ? (c: number) => tinted(c, this.light, NIGHT_FLOOR) : (c: number) => c
     const engine: EngineEmit = {
       ...spec,
       count,
@@ -200,6 +211,31 @@ export class Particles {
   dispose() {
     this.root.removeFromParent()
   }
+}
+
+/**
+ * The glow round a light `size` metres across at `at`, of that `color` and `glow`, which is gone in
+ * `life` seconds: a wide faint glare in `pool`, the additive pool drawn at half the screen's size. Each
+ * bright thing brings its own, so the glow costs pixels only where something is burning.
+ */
+export function halo(pool: Pick<Particles, 'spawn'>, at: ParticleSpec['position'], size: number, life: number, color: number, glow: number) {
+  const across = Math.min(size * HALO_SPREAD, size + HALO_REACH * 2)
+  pool.spawn({ position: at, velocity: [0, 0, 0], life: life * HALO_LINGER, size: [across * 0.8, across], color, glow: glow * HALO_STRENGTH, alpha: 1, shape: 'glare' })
+}
+
+/** A lamp has its halo while it is nearer the eye than this, metres. */
+export const LAMP_HALO_RANGE = 160
+/** A lit lamp's colour, and how bright its halo's light counts as at full night. */
+const LAMP_COLOR = 0xffe2b0
+const LAMP_GLOW = 5
+
+/**
+ * The glow round a lamp `size` metres across at `at` that stays lit, `night` of the way to full night
+ * (0 to 1): call it each frame the lamp is lit. Each frame's halo lives two frames of `dt` seconds,
+ * so the lamp is as bright at any frame rate.
+ */
+export function lampHalo(pool: Pick<Particles, 'spawn'>, at: ParticleSpec['position'], size: number, night: number, dt: number) {
+  halo(pool, at, size, Math.max(dt, 1 / 240) * 2, LAMP_COLOR, LAMP_GLOW * night)
 }
 
 /** A billow of dust about `size` metres across at `at`: soft, uneven puffs that swell, rise and thin out, not one round ball. */

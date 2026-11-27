@@ -115,7 +115,7 @@ struct ScarLook {
   // The tempered ring's colour and how much of it shows.
   temper: vec3f,
   temperAmount: f32,
-  // A fresh hit's glow, linear rgb, bright enough to bloom.
+  // A fresh hit's glow, linear rgb, bright enough to burn towards white.
   heat: vec3f,
 }
 

@@ -1,4 +1,5 @@
 import { MISSILE_HALF_EXTENTS, MISSILE_SPEED } from '@/sim/consts'
+import { halo } from './particles'
 import type { FxWorld } from './tyres'
 
 /** Anything with x, y and z. */
@@ -48,6 +49,7 @@ export function missileLaunch(world: FxWorld, mouth: V, up: V, surface: number |
   if (surface !== null) {
     const at = { x: mouth.x, y: surface, z: mouth.z }
     world.glow.spawn({ position: from(at, [0, 0.8, 0]), velocity: [0, 0, 0], life: 0.22, size: [3, 5.5], color: 0xffb060, glow: 7, alpha: 1, shape: 'glare' })
+    halo(world.halo, from(at, [0, 0.8, 0]), 5.5, 0.22, 0xffb060, 7)
     // Steam bursting out over the water and boiling up.
     for (let i = 0; i < 26; i++) {
       const turn = rand(0, Math.PI * 2), out = rand(2, 9)
@@ -70,13 +72,14 @@ export function missileLaunch(world: FxWorld, mouth: V, up: V, surface: number |
     // The motor's fire, seen through it.
     for (let i = 0; i < 10; i++) {
       const o = off(rand(0.4, 2.5), rand(0, 0.4), rand(0, Math.PI * 2))
-      world.smoke.spawn({ position: from(at, o), velocity: [o[0] * 2, rand(3, 9), o[2] * 2], life: rand(0.25, 0.5), size: [0.6, rand(1.4, 2.2)], color: pick(FIRE), colorEnd: 0x4a1405, glow: 3, alpha: 0.9, gravity: -2.5, drag: 3, spin: [-2, 2], shape: 'puff' })
+      world.smoke.spawn({ position: from(at, o), velocity: [o[0] * 2, rand(3, 9), o[2] * 2], life: rand(0.25, 0.5), size: [0.6, rand(1.4, 2.2)], color: pick(FIRE), colorEnd: 0x4a1405, glow: 3, emissive: true, alpha: 0.9, gravity: -2.5, drag: 3, spin: [-2, 2], shape: 'puff' })
     }
     world.waves?.splash(at.x, at.z, 2, 0.6, 1)
     return
   }
 
   world.glow.spawn({ position: from(mouth, off(0.6, 0, 0)), velocity: [0, 0, 0], life: 0.2, size: [3.5, 6.5], color: 0xffb060, glow: 8, alpha: 1, shape: 'glare' })
+  halo(world.halo, from(mouth, off(0.6, 0, 0)), 6.5, 0.2, 0xffb060, 8)
   world.glow.spawn({ position: from(mouth, off(0.3, 0, 0)), velocity: [0, 0, 0], life: 0.1, size: [2, 3.5], color: 0xfff2c8, glow: 12, alpha: 1, shape: 'glare' })
   // The column of fire out of the mouth.
   for (let i = 0; i < 18; i++) {
@@ -84,7 +87,7 @@ export function missileLaunch(world: FxWorld, mouth: V, up: V, surface: number |
     const lean = off(speed, rand(0, 1.5), rand(0, Math.PI * 2))
     world.smoke.spawn({
       position: from(mouth, off(rand(0, 1.6), rand(0, 0.2), rand(0, Math.PI * 2))), velocity: lean,
-      life: rand(0.25, 0.6), size: [rand(0.5, 0.8), rand(1.4, 2.4)], color: pick(FIRE), colorEnd: 0x4a1405, glow: 3, alpha: 0.9, gravity: -2.5, drag: 3, spin: [-2, 2], shape: 'puff',
+      life: rand(0.25, 0.6), size: [rand(0.5, 0.8), rand(1.4, 2.4)], color: pick(FIRE), colorEnd: 0x4a1405, glow: 3, emissive: true, alpha: 0.9, gravity: -2.5, drag: 3, spin: [-2, 2], shape: 'puff',
     })
   }
   // Burning grains thrown up and out, falling back on arcs.
@@ -136,7 +139,7 @@ export function tubeSmoke(world: FxWorld, mouth: V, up: V, heat: number, dt: num
     const speed = rand(2, 6)
     world.smoke.spawn({
       position: [mouth.x + rand(-0.12, 0.12), mouth.y + 0.1, mouth.z + rand(-0.12, 0.12)], velocity: [up.x * speed, up.y * speed, up.z * speed],
-      life: rand(0.2, 0.4), size: [0.4, rand(0.7, 1.1)], color: pick(FIRE), colorEnd: 0x4a1405, glow: 3, alpha: 0.85, gravity: -2.5, drag: 3, spin: [-2, 2], shape: 'puff',
+      life: rand(0.2, 0.4), size: [0.4, rand(0.7, 1.1)], color: pick(FIRE), colorEnd: 0x4a1405, glow: 3, emissive: true, alpha: 0.85, gravity: -2.5, drag: 3, spin: [-2, 2], shape: 'puff',
     })
   }
 }

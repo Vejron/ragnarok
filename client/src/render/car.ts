@@ -301,9 +301,9 @@ export class CarModel implements VehicleModel {
     this.damage.noteImpact(world)
   }
 
-  /** Shows crash `damage` and `hp` as the snapshot has them; parts that come off go into `debris`. */
-  wear(damage: readonly number[], hp: number, debris: Debris | null, velocity: Vector3) {
-    this.damage.update(damage, hp, debris, velocity)
+  /** Shows crash `damage` as the snapshot has it, charred once it has gone up (`wrecked`); parts that come off go into `debris`. */
+  wear(damage: readonly number[], wrecked: boolean, debris: Debris | null, velocity: Vector3) {
+    this.damage.update(damage, wrecked, debris, velocity)
   }
 
   /** Swings its doors as far open as the server says (`Doors.left`, `Doors.right`) and throws off those that have come off (`Doors.gone`). */

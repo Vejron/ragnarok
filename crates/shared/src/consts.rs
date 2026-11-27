@@ -46,7 +46,7 @@ pub use crate::vehicles::police_car::*;
 pub use crate::vehicles::ambulance::*;
 
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
-pub const PROTOCOL_VERSION: u8 = 104;
+pub const PROTOCOL_VERSION: u8 = 105;
 
 /// Why a page closes its session (`Bye`): the tab is closing or reloading.
 pub const BYE_LEAVING: u8 = 0;

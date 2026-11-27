@@ -1,6 +1,7 @@
 use super::*;
 use crate::mechanics::for_tests::{Flying, Harm, add_vehicle, damage_entity, launch_drone};
-use shared::protocol::{FLAG_LAMP, FLAG_SIREN, KIND_DRONE, KIND_JEEP, KIND_POLICE_CAR, PROJECTILE_ROCKET};
+use shared::consts::DOOM_TICKS;
+use shared::protocol::{FLAG_LAMP, FLAG_SIREN, FLAG_WRECKED, KIND_DRONE, KIND_JEEP, KIND_POLICE_CAR, PROJECTILE_ROCKET};
 use shared::world::{WORLD_VERSION, WorldFile};
 use tokio::sync::{mpsc, oneshot};
 
@@ -205,4 +206,23 @@ fn a_vehicle_with_its_siren_on_says_so_in_its_flags_and_one_without_sends_none()
     assert_eq!(flags(&game, police), Some(FLAG_SIREN | FLAG_LAMP), "the lamps' bit beside it");
     game.world.entities.of_mut::<Vehicle>(police).siren = false;
     assert_eq!(flags(&game, police), Some(FLAG_LAMP), "and the lamps alone once the siren stops");
+}
+
+#[test]
+fn a_vehicle_says_it_is_a_wreck_only_once_it_has_gone_up() {
+    let map = WorldFile { version: WORLD_VERSION, half_extent: 20_000, spawns: vec![[0, 0], [3000, 0]], ..Default::default() };
+    let mut game = Game::new(map, 0).unwrap();
+    let jeep = add_vehicle(&mut game.world, KIND_JEEP, [8.0, 1.5, 0.0], 0.0);
+    let flags = |game: &Game| game.seen(jeep).expect("the vehicle is replicated").flags.map_or(0, |flags| flags.flags);
+    crate::mechanics::damage_vehicle(&mut game.world, jeep, 255, None);
+    game.step();
+    assert!(game.world.entities.dead(jeep), "its health is gone");
+    assert_eq!(flags(&game) & FLAG_WRECKED, 0, "it burns before it goes up, and is no wreck yet");
+    for _ in 0..=DOOM_TICKS {
+        if game.world.entities.has::<crate::game::Wreck>(jeep) {
+            break;
+        }
+        game.step();
+    }
+    assert_eq!(flags(&game) & FLAG_WRECKED, FLAG_WRECKED, "once it has gone up it says so");
 }

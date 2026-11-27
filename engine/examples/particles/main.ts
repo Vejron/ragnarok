@@ -1,4 +1,4 @@
-import { Bloom, Fog, Geometry, Material, Mesh, ParticleSystem, Ramp, Ribbons, Scene } from '../../src'
+import { Fog, Geometry, Material, Mesh, ParticleSystem, Ramp, Ribbons, Scene } from '../../src'
 import { orbit, setup, statsOverlay } from '../common'
 import { CEL_BANDS, SKY } from '../shared/layout'
 import { Shots } from '../shared/shots'
@@ -20,7 +20,6 @@ scene.sun.position.set(70, 80, 55)
 scene.sun.shadow.enabled = true
 scene.sun.shadow.span = 120
 scene.toneMapping = 'neutral'
-scene.bloom = new Bloom()
 
 // Rolling ground, and the same heights as the particles' bounce field.
 const side = 161, cell = 1, x0 = -80, z0 = -80
@@ -72,7 +71,7 @@ function explosion(x: number, z: number, radius = 3) {
   // White-hot core flash.
   particles.emit({ count: 6, position: at, spread: radius * 0.2, velocity: [0, 1.5, 0], burst: radius * 0.6, blend: 'additive',
     life: [0.12, 0.28], size: [radius * 1, radius * 1.8], color: 0xfff6d8, colorEnd: 0xff9a30, glow: 8, alpha: 0.9, drag: 3 })
-  // Sparks: stretched along their flight, bright enough to bloom, bouncing on the ground.
+  // Sparks: stretched along their flight, bright enough to burn white, bouncing on the ground.
   particles.emit({ count: 90, position: at, velocity: [0, 5, 0], burst: radius * 9, blend: 'additive', fog: false, bounce: true,
     life: [0.5, 1.6], size: [0.09, 0.02], color: 0xffe08a, color2: 0xff7a22, colorEnd: 0xff3a05, glow: 6, stretch: 0.05,
     alpha: 1, gravity: 9.8, drag: 0.5 })

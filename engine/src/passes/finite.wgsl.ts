@@ -1,6 +1,6 @@
 /**
- * Makes a colour read from the HDR image safe to add up, for the exposure meter and the shafts' mask
- * (bloom clamps its own taps). A shader that divides by zero or overflows half precision leaves a pixel
+ * Makes a colour read from the HDR image safe to add up, for the exposure meter and the shafts' mask.
+ * A shader that divides by zero or overflows half precision leaves a pixel
  * that is not a number, or infinite, and a pass that averages pixels spreads it over all it covers: the
  * exposure eases from its last value, so a NaN there would never leave (RENDERING.md, "Measuring, and
  * traps"). Read through `finite`,

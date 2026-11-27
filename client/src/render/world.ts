@@ -87,8 +87,28 @@ export function replaceRibbons(group: Group, ribbons: readonly Ribbon[]) {
 
 /** Every tile's buildings share this one; each vertex carries its colour. */
 export const buildingMaterial = toonMaterial({ vertexColors: true, walls: true })
-/** Window glass: a pale translucent sheet, lit, drawn after everything solid and after water. */
-export const glassMaterial = toonMaterial({ color: 0xbcd6ea, opacity: 0.45, blend: 'alpha', depthWrite: false, side: 'double' })
+/**
+ * Window glass: a pale translucent sheet, lit, drawn after everything solid and after water. Each
+ * pane's colour and opacity are its vertices' (clear, or a drawn curtain's, `glass.ts`), and so is
+ * the lamp behind it, which `lightWindows` lights after dark.
+ */
+export const glassMaterial = toonMaterial({ vertexColors: true, blend: 'alpha', depthWrite: false, side: 'double', glow: true })
+/** The light of a lamp behind a window after dark: warm, and bright enough to show across a field (linear). */
+const LAMP_RGB = [0.95, 0.5, 0.17] as const
+/** Lamps are lit as `Scene.night` passes the first of these and all on by the second. */
+const LAMPS_ON = [0.35, 0.75] as const
+
+/** Turns the lamps behind the windows up or down for how dark it is (`nightAt`, 0 day to 1 night). */
+export function lightWindows(night: number) {
+  const on = Math.min(Math.max((night - LAMPS_ON[0]) / (LAMPS_ON[1] - LAMPS_ON[0]), 0), 1)
+  const [r, g, b] = [LAMP_RGB[0] * on, LAMP_RGB[1] * on, LAMP_RGB[2] * on]
+  const lit = glassMaterial.emissive
+  if (Math.abs(lit.r - r) < 0.004 && Math.abs(lit.g - g) < 0.004 && Math.abs(lit.b - b) < 0.004) return
+  lit.r = r
+  lit.g = g
+  lit.b = b
+  glassMaterial.needsUpdate()
+}
 /** Where the glass is drawn among what is translucent: over water (1), so a pane seen over a lake is blended on top of it. */
 const GLASS_ORDER = 2
 
@@ -227,7 +247,7 @@ function mergedMesh(buffers: BuildingBuffers | null, destroyed: ReadonlySet<numb
 
 /** The windows' glass of a tile's buildings as one translucent mesh; `Glazing` breaks its panes in place. */
 function glassMesh(glass: GlassBuffers): Mesh {
-  const mesh = new Mesh(new Geometry({ positions: glass.positions, normals: glass.normals, bounds: glass.bounds }), glassMaterial)
+  const mesh = new Mesh(new Geometry({ positions: glass.positions, normals: glass.normals, colors: glass.colors, custom: glass.custom, bounds: glass.bounds }), glassMaterial)
   mesh.castShadow = false
   mesh.receiveShadow = true
   mesh.renderOrder = GLASS_ORDER

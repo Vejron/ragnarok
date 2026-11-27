@@ -265,8 +265,11 @@ impl Game {
             pintle,
             thrust,
             arms,
-            // Only while its lamps or its siren are on: most vehicles send no flags at all.
-            flags: (vehicle.lamp || vehicle.siren).then_some(wire::Flags { flags: if vehicle.lamp { FLAG_LAMP } else { 0 } | if vehicle.siren { FLAG_SIREN } else { 0 }, stance: STANCE_STANDING }),
+            // Only while its lamps or its siren are on, or once it has gone up: most vehicles send no flags at all.
+            flags: {
+                let flags = if vehicle.lamp { FLAG_LAMP } else { 0 } | if vehicle.siren { FLAG_SIREN } else { 0 } | if entities.has::<Wreck>(id) { FLAG_WRECKED } else { 0 };
+                (flags != 0).then_some(wire::Flags { flags, stance: STANCE_STANDING })
+            },
             fuel: def.spec.fuel.map(|_| wire::Fuel { level: crate::mechanics::fuel_byte(vehicle.fuel) }),
             health: Some(wire::Health { hp: entities.get::<Health>(id).map_or(0, |health| health.hp) }),
             damage: (vehicle.damage != [0; shared::protocol::DAMAGE_SLOTS]).then_some(wire::Damage { parts: vehicle.damage }),

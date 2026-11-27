@@ -1,6 +1,6 @@
 import type { PointLights } from '@ragnarok/engine'
 import type { Blips } from '@/blips'
-import type { Particles } from '@/render/particles'
+import { halo, type Particles } from '@/render/particles'
 import type { Rockets } from '@/render/rockets'
 import type { ProjectileTrails } from '@/render/trails'
 import type { FxWorld } from '@/render/tyres'
@@ -90,7 +90,7 @@ export class Projectiles implements Presenter<Frame> {
   }
 
   /**
-   * A burning flare, drawn each frame it is listed: a blooming halo, sparks dripping off it, and a strong,
+   * A burning flare, drawn each frame it is listed: a halo, sparks dripping off it, and a strong,
    * gently flickering light on everything below. The halo lives two frames, so it looks the same at any frame rate.
    */
   private burnFlare(id: number, x: number, y: number, z: number, frame: Frame) {
@@ -101,6 +101,7 @@ export class Projectiles implements Presenter<Frame> {
     const life = Math.max(dt, 1 / 240) * 2
     glow.spawn({ position: [x, y, z], velocity: [0, 0, 0], life, size: [1.6 * flicker, 1.4], color: 0xfff2dc, alpha: 0.6, glow: 2 })
     glow.spawn({ position: [x, y, z], velocity: [0, 0, 0], life, size: [0.5, 0.45], color: 0xffffff, alpha: 1, glow: 4 })
+    halo(this.world.fx().halo, [x, y, z], 1.6 * flicker, life, 0xfff2dc, 6)
     if (Math.random() < dt * 10) {
       glow.spawn({
         position: [x, y, z],

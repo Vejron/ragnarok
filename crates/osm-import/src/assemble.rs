@@ -2,6 +2,7 @@
 //! square of the grid that has anything in it.
 
 use crate::bridge::{self, Pylons};
+use crate::finish::Finish;
 use crate::lanes::Lanes;
 use crate::overpass::{Area, LatLon, Osm, Way};
 use crate::railway::{self, Railway};
@@ -428,16 +429,16 @@ fn front_of(mid: P, streets: &HashMap<(i32, i32), Vec<[P; 2]>>) -> [i8; 2] {
 }
 
 /// A building to assemble: its footprint, its tagged height, its roof (if the laser gave one), its
-/// `[wall, roof]` colours (if the photo or its tags gave them), the most it may rise over its floor
+/// colours and materials (as far as the photo or its tags gave them), the most it may rise over its floor
 /// (`cap`), what it is (`BUILDING_*`) and, for a shelter, the way its open side faces if it is mapped.
-type Footprint = (Vec<P>, f64, Option<Top>, Option<[u32; 2]>, Option<f64>, u8, Option<P>);
+type Footprint = (Vec<P>, f64, Option<Top>, Finish, Option<f64>, u8, Option<P>);
 
 /// A footprint to fit a roof to (`fit_roofs`): its ring, the most it may rise over its floor (`cap`),
 /// the roof shape OpenStreetMap names for it, and what it is (`BUILDING_*`).
 type Ring<'a> = (&'a [P], Option<f64>, Option<Category>, u8);
 
 /// A building outline before its roof is fitted: a `Footprint` without the `Top`.
-type Outline = (Vec<P>, f64, Option<[u32; 2]>, Option<f64>, u8, Option<P>);
+type Outline = (Vec<P>, f64, Finish, Option<f64>, u8, Option<P>);
 
 /// Assembles the world from building outlines (metres, any winding) and road polylines, and cuts
 /// it into square tiles of `tile_size` metres.
@@ -547,7 +548,8 @@ fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collecti
             kind,
             front,
             cells: Default::default(),
-            paint,
+            paint: paint.paint,
+            clad: paint.clad,
         });
         footprints.push(footprint);
         tall.push(parts.top - floor);
@@ -786,7 +788,8 @@ fn assemble(frame: Frame, half: f64, tile_size: f64, mask: Option<&std::collecti
                 kind: BUILDING_BRIDGE,
                 front: [0, 0],
                 cells: Default::default(),
-                paint: Some([BRIDGE_CONCRETE, bridge::deck_paint(*kind)]),
+                paint: [Some(BRIDGE_CONCRETE), Some(bridge::deck_paint(*kind))],
+                clad: [0, 0],
             });
         }
         let mut steel_by_tile: BTreeMap<(u16, u16), Vec<[V3; 3]>> = BTreeMap::new();
@@ -1194,9 +1197,12 @@ pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::B
             let cap = if measured { None } else { cap(way, ring) };
             let height = cap.map_or(building_height(way), |[eaves, _]| building_height(way).min(eaves));
             let ceiling = cap.map(|[_, top]| top);
-            // A shelter is painted as its tags say, and faces where they say.
+            // A shelter is painted as its tags say, and faces where they say. Any other building is
+            // too, where it is mapped so; what its tags leave unsaid the photo gives, or the client picks.
             let shelter = kind == BUILDING_SHELTER;
-            let paint = shelter.then(|| crate::shelter::paint(&way.tags)).flatten().or_else(|| paint(&[ring]));
+            let tagged = crate::finish::of(&way.tags);
+            let seen = Finish::painted(shelter.then(|| crate::shelter::paint(&way.tags)).flatten().or_else(|| paint(&[ring])));
+            let paint = if shelter { seen.or(tagged) } else { tagged.or(seen) };
             let facing = if shelter { crate::shelter::facing(&way.tags) } else { None };
             let found: Vec<Outline> = if big {
                 crate::footprints::pieces(ring).into_iter().map(|piece| (piece, height, paint, ceiling, kind, facing)).collect()
@@ -1208,6 +1214,8 @@ pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::B
         })
         .collect();
     eprintln!("footprints: {} of {} squared", squared.into_inner(), outlines.len());
+    let mapped_finish = osm.ways.iter().filter(|way| is_building(way) && crate::finish::of(&way.tags) != Finish::default()).count();
+    eprintln!("finish: {mapped_finish} buildings with a colour or a material mapped");
     let rings: Vec<Ring> = outlines.iter().zip(&hints).map(|((points, _, _, ceiling, kind, _), hint)| (points.as_slice(), *ceiling, *hint, *kind)).collect();
     let shapes = lidar.map(|cloud| fit_roofs(cloud, &source, measured, half, tile_size, mask, &ground, &rings)).unwrap_or_default();
     let mut shapes = shapes.into_iter();
@@ -1291,7 +1299,7 @@ pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::B
         let before = buildings.len();
         for pieces in found {
             // The pieces of one building share its colours.
-            let paint = paint(&pieces.iter().map(Vec::as_slice).collect::<Vec<_>>());
+            let paint = Finish::painted(paint(&pieces.iter().map(Vec::as_slice).collect::<Vec<_>>()));
             let whole = pieces.len() == 1;
             for ring in pieces {
                 // A building in one piece is squared as OSM's are.
@@ -1318,7 +1326,7 @@ pub fn from_osm(place: &Place, tile_size: f64, mask: Option<&std::collections::B
     if photo.is_some() {
         let mut roofs = std::collections::BTreeMap::new();
         for (.., paint, _, _, _) in &buildings {
-            *roofs.entry(paint.map(|[_, roof]| format!("{roof:06x}"))).or_insert(0usize) += 1;
+            *roofs.entry(paint.paint[1].map(|roof| format!("{roof:06x}"))).or_insert(0usize) += 1;
         }
         eprintln!("roof colours: {roofs:?}");
     }
@@ -3077,7 +3085,7 @@ pub fn synthetic_city(half: f64, tile_size: f64, ground: Ground, water: Placed) 
             if (i, j) == SYNTHETIC_DEALER {
                 // A store along the block's north side and its car park filling the rest, so the offline
                 // world has a vehicle dealer (`crate::dealer`).
-                buildings.push((vec![[bx + 7.0, bz], [bx + 37.0, bz], [bx + 37.0, bz + 14.0], [bx + 7.0, bz + 14.0]], 6.0, None, None, None, BUILDING_SHOP, None));
+                buildings.push((vec![[bx + 7.0, bz], [bx + 37.0, bz], [bx + 37.0, bz + 14.0], [bx + 7.0, bz + 14.0]], 6.0, None, Finish::default(), None, BUILDING_SHOP, None));
                 let lot = vec![[bx, bz + 16.0], [bx + size, bz + 16.0], [bx + size, bz + size], [bx, bz + size]];
                 covers.push((COVER_ASPHALT, vec![lot.clone()]));
                 dealer_parking.push(lot);
@@ -3114,7 +3122,7 @@ pub fn synthetic_city(half: f64, tile_size: f64, ground: Ground, water: Placed) 
                         Shape::Hip { y: top, at, ridge, pitch: 0.6, half: 0.0 }
                     }))
                 });
-                buildings.push((vec![[x, z], [x + half_size, z], [x + half_size, z + half_size], [x, z + half_size]], height, roof, None, None, BUILDING_PLAIN, None));
+                buildings.push((vec![[x, z], [x + half_size, z], [x + half_size, z + half_size], [x, z + half_size]], height, roof, Finish::default(), None, BUILDING_PLAIN, None));
             }
         }
     }
@@ -3555,7 +3563,7 @@ mod tests {
         }
         let sections: Vec<&Building> = built.tiles.values().flat_map(|t| &t.buildings).filter(|b| b.kind == BUILDING_BRIDGE).collect();
         assert!(sections.len() >= 2, "the bridge over the pond is in sections, got {}", sections.len());
-        assert!(sections.iter().all(|b| b.cells.dims.iter().all(|&d| d > 0) && b.paint == Some([BRIDGE_CONCRETE, DECK_ASPHALT]) && b.footprint.len() >= 3));
+        assert!(sections.iter().all(|b| b.cells.dims.iter().all(|&d| d > 0) && b.paint == [Some(BRIDGE_CONCRETE), Some(DECK_ASPHALT)] && b.footprint.len() >= 3));
         // Each section is closed: every edge of its look is shared by two of its faces at least, so no
         // open end is left to be drawn as the rim of a hole.
         for tile in built.tiles.values() {
@@ -3729,7 +3737,7 @@ mod tests {
                     continue;
                 };
                 let section = &tile.buildings[deck.building as usize];
-                assert_eq!((section.kind, section.paint), (BUILDING_BRIDGE, Some([BRIDGE_CONCRETE, DECK_BALLAST])));
+                assert_eq!((section.kind, section.paint), (BUILDING_BRIDGE, [Some(BRIDGE_CONCRETE), Some(DECK_BALLAST)]));
                 assert!(deck.tops.len() == rail.points.len() && deck.tops.iter().all(|top| (0..=15).contains(top)), "level with the track either side: {:?}", deck.tops);
                 on_deck += f64::from((rail.points[rail.points.len() - 1][0] - rail.points[0][0]).abs()) / 100.0;
             }
@@ -3782,7 +3790,7 @@ mod tests {
     #[test]
     fn trees_keep_their_trunks_and_crowns_off_a_house_and_shrubs_need_not() {
         // A 10 m house with its west wall at x = 20; trees west of it, along one line.
-        let house = (vec![[20.0, 20.0], [30.0, 20.0], [30.0, 30.0], [20.0, 30.0]], 6.0, None, None, None, BUILDING_PLAIN, None);
+        let house = (vec![[20.0, 20.0], [30.0, 20.0], [30.0, 30.0], [20.0, 30.0]], 6.0, None, Finish::default(), None, BUILDING_PLAIN, None);
         let trees = vec![
             ([19.0, 22.0], TREE_BIRCH, 8.0, 0.8, true),
             ([17.5, 25.0], TREE_BIRCH, 8.0, 3.0, false),
@@ -3799,7 +3807,7 @@ mod tests {
     #[test]
     fn a_tree_the_laser_found_at_the_roof_of_a_tall_house_beside_it_is_dropped_as_its_wall() {
         // A house 15 m tall with its west wall at x = 20; trees 5 m west of it, clear of the wall.
-        let house = (vec![[20.0, 20.0], [30.0, 20.0], [30.0, 30.0], [20.0, 30.0]], 15.0, None, None, None, BUILDING_PLAIN, None);
+        let house = (vec![[20.0, 20.0], [30.0, 20.0], [30.0, 30.0], [20.0, 30.0]], 15.0, None, Finish::default(), None, BUILDING_PLAIN, None);
         // (The low tree stands east of the house, out of the tall ones' shade.)
         let trees = vec![([15.0, 22.0], TREE_PINE, 14.0, 3.0, false), ([35.0, 25.0], TREE_PINE, 7.0, 3.0, false), ([15.0, 28.0], TREE_PINE, 14.0, 3.0, true), ([-10.0, 25.0], TREE_PINE, 14.0, 3.0, false)];
         let built = assemble(Frame::default(), 150.0, 100.0, None, vec![house], vec![], &[], 0, vec![], vec![], vec![], Railway::default(), vec![], vec![], trees, &[], Ground::default(), Placed::default());

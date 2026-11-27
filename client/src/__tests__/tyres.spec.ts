@@ -174,7 +174,7 @@ describe('VehicleFx', () => {
   function world(surface: number): FxWorld & { smoke: Particles; skids: Skidmarks } {
     return {
       smoke: new Particles(2000),
-      glow: new Particles(100, true),
+      glow: new Particles(100, true), halo: new Particles(64, true, true),
       skids: new Skidmarks(500),
       groundAt: () => 0,
       surfaceAt: () => surface,
@@ -320,6 +320,7 @@ describe('a boat\'s spray', () => {
     const w: FxWorld & { smoke: Particles; skids: Skidmarks } = {
       smoke: new Particles(4000),
       glow,
+      halo: new Particles(64, true, true),
       skids: new Skidmarks(500),
       groundAt: () => -5,
       surfaceAt: () => SURFACE_WATER,
@@ -365,6 +366,7 @@ describe('snow off the tracks', () => {
     const w: FxWorld & { smoke: Particles; skids: Skidmarks } = {
       smoke: new Particles(2000),
       glow,
+      halo: new Particles(64, true, true),
       skids: new Skidmarks(500),
       groundAt: () => 0,
       surfaceAt: () => surface,
@@ -432,7 +434,7 @@ describe('skimming over the water', () => {
     const glow = new Particles(2000, true)
     const jetSpray = new JetSpray(glow)
     const w: FxWorld = {
-      smoke: new Particles(2000), glow, skids: new Skidmarks(500),
+      smoke: new Particles(2000), glow, halo: new Particles(64, true, true), skids: new Skidmarks(500),
       groundAt: () => -5, surfaceAt: () => SURFACE_WATER, waterAt: () => 0,
       camera: new Vec3(0, 5, 10), jetSpray,
     }
@@ -470,7 +472,7 @@ describe('anything going into the water', () => {
     const inLake = (z: number) => z < -10
     const w: FxWorld & { smoke: Particles } = {
       smoke: new Particles(4000),
-      glow: new Particles(100, true),
+      glow: new Particles(100, true), halo: new Particles(64, true, true),
       skids: new Skidmarks(500),
       groundAt: () => 0,
       surfaceAt: (_x, z) => (inLake(z) ? SURFACE_WATER : SURFACE_GRASS),

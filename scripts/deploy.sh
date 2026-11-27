@@ -54,6 +54,24 @@ fi
 echo "==> compressing"
 node client/scripts/precompress.mjs client/dist
 
+# What a JSON file holds, for the log: how many of each list or table the keys name, and with
+# `--others` first, the names of its other keys too. The Python comes in on stdin so that no quotes
+# nest inside "$(...)", which macOS's bash 3.2 gets wrong.
+summarise() {
+  python3 - "$@" 2>/dev/null <<'PY' || echo unknown
+import json, sys
+args = sys.argv[1:]
+others = args[0] == "--others"
+if others:
+    args = args[1:]
+d = json.load(open(args[0]))
+parts = [f"{len(d.get(k, []))} {k}" for k in args[1:]]
+if others:
+    parts += [k for k in d if k not in args[1:]]
+print(", ".join(parts))
+PY
+}
+
 # The hand-placed spawns, vehicles and items live in the world's area.json, which the server reads
 # next to world.msgpack. It is not served, so it goes in through its own path, never client/dist.
 # `.deploy/` is copied into the image as it is: area.json, and scenario.json when there is one.
@@ -61,11 +79,11 @@ mkdir -p .deploy
 if [[ -f "$WORLD_DIR/area.json" ]]; then cp "$WORLD_DIR/area.json" .deploy/area.json; else echo '{}' > .deploy/area.json; fi
 # The world's scenario (scenario.json, if it has one) is read from the same folder.
 rm -f .deploy/scenario.json
-if [[ -f "$WORLD_DIR/scenario.json" ]]; then cp "$WORLD_DIR/scenario.json" .deploy/scenario.json; echo "==> scenario: $(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(", ".join(f"{len(d.get(k,[]))} {k}" for k in ("areas","squads","triggers")))' .deploy/scenario.json 2>/dev/null || echo unknown)"; else echo "==> scenario: none"; fi
+if [[ -f "$WORLD_DIR/scenario.json" ]]; then cp "$WORLD_DIR/scenario.json" .deploy/scenario.json; echo "==> scenario: $(summarise --others .deploy/scenario.json areas squads triggers)"; else echo "==> scenario: none"; fi
 # The world's golf course (golf.json, if it has one), read from the same folder.
 rm -f .deploy/golf.json
-if [[ -f "$WORLD_DIR/golf.json" ]]; then cp "$WORLD_DIR/golf.json" .deploy/golf.json; echo "==> golf: $(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["holes"]), "holes")' .deploy/golf.json 2>/dev/null || echo unknown)"; else echo "==> golf: none"; fi
-echo "==> placements: $(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(", ".join(f"{len(d.get(k,[]))} {k}" for k in ("spawns","vehicles","items")))' .deploy/area.json 2>/dev/null || echo unknown)"
+if [[ -f "$WORLD_DIR/golf.json" ]]; then cp "$WORLD_DIR/golf.json" .deploy/golf.json; echo "==> golf: $(summarise .deploy/golf.json holes)"; else echo "==> golf: none"; fi
+echo "==> placements: $(summarise .deploy/area.json spawns vehicles items)"
 
 echo "==> building image $IMAGE ($PLATFORM)"
 docker buildx build --platform "$PLATFORM" --load --build-arg "CARGO_BUILD_JOBS=$CARGO_JOBS" -t "$IMAGE" -t "$NAME:latest" .

@@ -26,9 +26,37 @@ export const PANE_SLACK = 0.08
 /** A blast breaks every pane within its radius and some out to this many radii, fewer the further. */
 export const GLASS_REACH = 1.6
 
+/** Clear glass: a pale sheet, mostly seen through (linear colour and opacity). */
+export const GLASS_RGBA: readonly [number, number, number, number] = [0.503, 0.672, 0.823, 0.45]
+/** A pane with its curtain or blind drawn: cream, white or a dull red, hardly seen through. */
+export const CURTAIN_RGBA: readonly (readonly [number, number, number, number])[] = [[0.72, 0.68, 0.58, 0.88], [0.66, 0.68, 0.7, 0.85], [0.62, 0.64, 0.6, 0.9], [0.42, 0.2, 0.16, 0.88]]
+
+/**
+ * How a building's panes are dressed: its seed (`buildingSeed`), and the shares of its panes with a
+ * curtain drawn and with a lamp lit behind them after dark.
+ */
+export interface Dressing {
+  seed: number
+  curtained: number
+  lit: number
+}
+
+/** Pane `opening` of a building dressed `dressing`: whether its curtain is drawn (and which, an index into `CURTAIN_RGBA`), and how bright the lamp behind it is after dark, 0 for none. */
+export function paneDressing(dressing: Dressing, opening: number): { curtain: number | null; lamp: number } {
+  const h = (salt: number) => hash(dressing.seed, opening, 0, salt)
+  const curtain = h(61) < dressing.curtained ? Math.floor(h(62) * CURTAIN_RGBA.length) % CURTAIN_RGBA.length : null
+  // A lamp behind a curtain is dimmer; no two lamps are quite alike.
+  const lamp = h(63) < dressing.lit ? (curtain === null ? 1 : 0.7) * (0.7 + 0.5 * h(64)) : 0
+  return { curtain, lamp }
+}
+
 export interface GlassBuffers {
   positions: Float32Array
   normals: Float32Array
+  /** Four numbers a vertex, linear colour and opacity: the sheet's are its pane's (clear, or a curtain's), the teeth's clear glass. */
+  colors: Float32Array
+  /** Four numbers a vertex, the first how bright the lamp behind the sheet is after dark (the material's `glow`); 0 on the teeth. */
+  custom: Float32Array
   bounds: Sphere
   /** Two numbers a pane: the building's index in the tile, and the opening's index in `openingsOf` it. */
   panes: Uint32Array
@@ -111,14 +139,19 @@ export function writePane(positions: Float32Array, normals: Float32Array, pane: 
   teethOf(o).forEach((tooth, k) => tooth.forEach((corner, i) => put(6 + k * 3 + i, corner)))
 }
 
-/** The glass of the buildings' windows (`openings[building]`, null for one without), or null when there is none. */
-export function glassBuffers(openings: readonly (readonly Opening[] | null)[]): GlassBuffers | null {
+/**
+ * The glass of the buildings' windows (`openings[building]`, null for one without), each building's
+ * panes dressed as `dressings[building]` says (clear and dark where it is null); null when there is no glass.
+ */
+export function glassBuffers(openings: readonly (readonly Opening[] | null)[], dressings: readonly (Dressing | null)[]): GlassBuffers | null {
   let count = 0
   openings.forEach((list) => list?.forEach((o) => !o.door && count++))
   if (count === 0) return null
   const positions = new Float32Array(count * PANE_VERTICES * 3)
   const normals = new Float32Array(count * PANE_VERTICES * 3)
   const panes = new Uint32Array(count * 2)
+  const colors = new Float32Array(count * PANE_VERTICES * 4)
+  const custom = new Float32Array(count * PANE_VERTICES * 4)
   const box = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity]
   let pane = 0
   openings.forEach((list, building) =>
@@ -127,6 +160,14 @@ export function glassBuffers(openings: readonly (readonly Opening[] | null)[]): 
       writePane(positions, normals, pane, o, false)
       panes[pane * 2] = building
       panes[pane * 2 + 1] = opening
+      // The sheet is the first six vertices (`writePane`): a broken pane loses its curtain and its lamp with it.
+      const dressing = dressings[building]
+      const { curtain, lamp } = dressing ? paneDressing(dressing, opening) : { curtain: null, lamp: 0 }
+      for (let v = 0; v < PANE_VERTICES; v++) {
+        const at = (pane * PANE_VERTICES + v) * 4
+        colors.set(v < 6 && curtain !== null ? CURTAIN_RGBA[curtain]! : GLASS_RGBA, at)
+        if (v < 6) custom[at] = lamp
+      }
       for (const p of o.corners) for (let k = 0; k < 3; k++) {
         box[k] = Math.min(box[k]!, p[k]!)
         box[k + 3] = Math.max(box[k + 3]!, p[k]!)
@@ -135,7 +176,7 @@ export function glassBuffers(openings: readonly (readonly Opening[] | null)[]): 
     }),
   )
   const bounds = { x: (box[0]! + box[3]!) / 2, y: (box[1]! + box[4]!) / 2, z: (box[2]! + box[5]!) / 2, radius: Math.hypot(box[3]! - box[0]!, box[4]! - box[1]!, box[5]! - box[2]!) / 2 + 0.1 }
-  return { positions, normals, bounds, panes }
+  return { positions, normals, colors, custom, bounds, panes }
 }
 
 /** Whether a round that ended at `at` went through pane `o`: at the sheet, give or take the wall's cell box in front of it. */

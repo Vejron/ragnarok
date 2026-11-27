@@ -8,7 +8,7 @@ export interface RibbonStyle {
   color: number | Color
   /** The colour it has aged to at the tail; defaults to `color`. */
   colorEnd?: number | Color
-  /** Multiplies the colour (HDR), so values over 1 bloom. */
+  /** Multiplies the colour (HDR): past 1 it burns towards white in the output pass. */
   glow?: number
   /** Opacity at the head; it fades to nothing at the tail. */
   alpha?: number
@@ -19,6 +19,8 @@ export interface RibbonStyle {
   /** Width at the tail as a share of `width`, 0 to 1 (default 0: tapering to a point). */
   taper?: number
   blend?: 'alpha' | 'additive'
+  /** Light with no edge, brightest along its middle and gone by its sides: the glow round a hot streak. */
+  soft?: boolean
   /** Metres the head must move before a new point is laid down (default 0.5). */
   step?: number
   /** Fogged with distance; off for things that should glow through haze. */
@@ -32,6 +34,8 @@ export interface RibbonStyle {
 /** Floats per segment; matches `Segment` in the shader. */
 const SEGMENT_FLOATS = 24
 const F_NO_FOG = 2
+/** The ribbon is light with no edge: brightest along its middle and falling away to nothing at its sides. */
+const F_SOFT = 4
 
 interface Trail {
   style: RibbonStyle
@@ -108,7 +112,13 @@ fn vs(@builtin(vertex_index) v: u32, @builtin(instance_index) instance: u32) -> 
 
 @fragment
 fn fs(in: Out) -> @location(0) vec4f {
-  var alpha = in.color.a * smoothstep(1.0, 0.25, abs(in.across));
+  var shape = smoothstep(1.0, 0.25, abs(in.across));
+  if ((in.flags & ${F_SOFT}u) != 0u) {
+    // Light, not a body: the square of the distance from its side, so no edge is ever seen.
+    let g = 1.0 - abs(in.across);
+    shape = g * g;
+  }
+  var alpha = in.color.a * shape;
   if (alpha < 0.004) {
     discard;
   }
@@ -223,7 +233,7 @@ export class Ribbons extends Effect {
         const c = toLinear(style.color, this.color)
         const e = toLinear(style.colorEnd ?? style.color, this.colorEnd)
         const glow = style.glow ?? 1
-        const flags = style.fog === false ? F_NO_FOG : 0
+        const flags = (style.fog === false ? F_NO_FOG : 0) | (style.soft ? F_SOFT : 0)
         for (let i = 0; i + 1 < points && n < this.capacity; i++) {
           const o = n * SEGMENT_FLOATS
           const a = i * 4

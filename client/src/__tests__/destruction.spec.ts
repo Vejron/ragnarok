@@ -150,7 +150,7 @@ function box(x0: number, vertexBase: number) {
 function twoHouses(): TileData {
   const [a, b] = [box(0, 0), box(30, 8)]
   const building = (x0: number, first: number): Building => ({
-    height: 6, base: 0, first, walls: 8, roof: 2, roofKind: ROOF_FLAT, kind: 0, front: [0, 0], cells: null, paint: null,
+    height: 6, base: 0, first, walls: 8, roof: 2, roofKind: ROOF_FLAT, kind: 0, front: [0, 0], cells: null, paint: [null, null], clad: [0, 0],
     footprint: [[x0, -5], [x0 + 10, -5], [x0 + 10, 5], [x0, 5]],
   })
   return {
@@ -636,7 +636,7 @@ describe('a building with cells blasted out of it', () => {
     const positions = join((m) => m.geometry.positions)
     return { geometry: { positions, colors: join((m) => m.geometry.colors!), vertexCount: positions.length / 3 } }
   }
-  const effects = () => new Effects({ smoke: new Particles(64), glow: new Particles(64, true), blood: new Particles(64) }, 64)
+  const effects = () => new Effects({ smoke: new Particles(64), glow: new Particles(64, true), halo: new Particles(64, true, true), blood: new Particles(64) }, 64)
 
   it('is drawn as pieces from the first bite, and says so only once', () => {
     const damage = new BuildingDamage()

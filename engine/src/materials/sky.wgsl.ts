@@ -35,14 +35,15 @@ const MOON_RADIUS = 0.022;
 const MOON_COLOR = vec3f(0.92, 0.94, 1.0);
 const LUMA = vec3f(0.2126, 0.7152, 0.0722);
 // The haze's and the clouds' brightness past which their glare is held back, and how far above it they
-// may still rise (see softCap): a large patch of sky over the bloom's threshold floods the screen.
+// may still rise (see softCap): a large patch of sky far past white washes the picture out, and the
+// light shafts' mask and the eye's adaptation read it as glare.
 const HAZE_KNEE = 0.85;
 const HAZE_ROOM = 0.35;
 const CLOUD_KNEE = 1.0;
 const CLOUD_ROOM = 0.45;
 
 // \`c\` with its brightest channel above \`knee\` eased toward at most \`knee + room\`, keeping its hue. The
-// brightest channel, not the luminance, as the bloom's threshold reads it: a warm glow is mostly red.
+// brightest channel, not the luminance, as the output pass reads what burns white: a warm glow is mostly red.
 fn softCap(c: vec3f, knee: f32, room: f32) -> vec3f {
   let l = max(c.r, max(c.g, c.b));
   if (l <= knee) {
@@ -85,7 +86,7 @@ fn overcast() -> f32 {
 
 // The sky toward \`dir\` with nothing in it, never looking below the horizon: what the fog fades to.
 // The haze's glare round a low sun is many times brighter than the rest of the sky; past \`HAZE_KNEE\` it
-// is held back (softCap), so it glows without washing the world out through the bloom.
+// is held back (softCap), so it glows without washing the world out.
 fn skyHaze(dir: vec3f) -> vec3f {
   let level = normalize(vec3f(dir.x, max(dir.y, 0.0), dir.z) + vec3f(0.0, 1e-4, 0.0));
   let c = softCap(skyAtmosphere(level), HAZE_KNEE, HAZE_ROOM);
@@ -163,7 +164,7 @@ fn cloudLayer(dir: vec3f, lod: f32, behind: vec3f) -> vec4f {
   // Thick clouds are darker underneath; overcast is a flat grey.
   var c = (sunlight + moonlight + ambient) * mix(1.0, 0.72, d * d);
   c = mix(c, vec3f(dot(c, LUMA)), overcast() * 0.9) * (1.0 - 0.3 * overcast() * d);
-  // Bright edges round the sun are held back as the haze is, so they glow without flooding the bloom.
+  // Bright edges round the sun are held back as the haze is, so they glow without flooding the picture.
   c = softCap(c, CLOUD_KNEE, CLOUD_ROOM);
   // Far ones sink into the haze along the horizon.
   let far = smoothstep(4000.0, 60000.0, t);
@@ -276,7 +277,7 @@ fn skyBackdrop(dir: vec3f, lod: f32) -> vec4f {
   return vec4f(c, 1.0 - cloud.a);
 }
 
-// The sky from its backdrop and the discs behind it, its glare held under the bloom's threshold so
+// The sky from its backdrop and the discs behind it, its glare held under where light burns white so
 // lightning flashes rather than glows.
 fn skyFrom(dir: vec3f, backdrop: vec4f) -> vec3f {
   return softCap(backdrop.rgb + skyDiscs(dir) * backdrop.a, CLOUD_KNEE, CLOUD_ROOM);

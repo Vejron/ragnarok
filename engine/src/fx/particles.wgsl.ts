@@ -30,6 +30,7 @@ const PF_DROP = 16u;
 const PF_GLARE = 32u;
 const PF_HOLD = 64u;
 const PF_SCATTER = 128u;
+const PF_EMISSIVE = 256u;
 `
 
 /**
@@ -256,7 +257,7 @@ fn simulate(@builtin(global_invocation_id) id: vec3u) {
   }
   particles[i].posAge = vec4f(pos, age);
   particles[i].velLife = vec4f(v, p.velLife.w);
-  if ((p.state.y & (PF_ADDITIVE | PF_PUFF)) == PF_PUFF) {
+  if ((p.state.y & (PF_ADDITIVE | PF_PUFF | PF_EMISSIVE)) == PF_PUFF) {
     particles[i].lit = vec4f(lightAt(pos), 0.0);
   }
   let blend = select(0u, 1u, (p.state.y & PF_ADDITIVE) != 0u);
@@ -362,6 +363,10 @@ fn vs(@builtin(vertex_index) v: u32, @builtin(instance_index) instance: u32) -> 
 
 // How much of a point light's strength shows on the smoke it reaches.
 const LIT = 0.25;
+// How far in front of a glare a surface must stand to hide it, metres.
+const GLARE_REACH = 0.5;
+// The opacity under which a glare's pixel is not drawn.
+const GLARE_FLOOR = 0.0004;
 
 // View distance of a reversed-depth buffer value.
 fn linearDepth(d: f32) -> f32 {
@@ -399,7 +404,7 @@ fn fs(in: Out) -> @location(0) vec4f {
     }
     let n = noise(r * 7.0 + in.seed);
     edge = smoothstep(0.5, 0.12, d + (n - 0.5) * 0.34);
-    if ((in.flags & PF_ADDITIVE) == 0u) {
+    if ((in.flags & (PF_ADDITIVE | PF_EMISSIVE)) == 0u) {
       // Smoke has a body: a ball's normal over the puff, lumpy with its noise, lit on the side toward the
       // sun and dark away from it, with its thin rim bright when the sun is behind it.
       let s = vec2f(q.x * in.rot.x - q.y * in.rot.y, q.x * in.rot.y + q.y * in.rot.x) * 2.0;
@@ -422,12 +427,21 @@ fn fs(in: Out) -> @location(0) vec4f {
     edge = g * g * g;
   }
   var alpha = in.color.a * edge;
-  if (alpha < 0.01) {
+  // What is too faint to see is not drawn. A glare is held to a far lower bar: its light is added, and
+  // by night the eye's adaptation would show where it was cut off as a ring.
+  if (alpha < select(0.01, GLARE_FLOOR, (in.flags & PF_GLARE) != 0u)) {
     discard;
   }
   // Soft particles: fade out where the billboard nears what is behind it instead of cutting into it.
   ${sceneDepth}
-  alpha *= clamp((scene - in.viewDepth) / max(in.size * 0.5, 0.05), 0.0, 1.0);
+  var soft = clamp((scene - in.viewDepth) / max(in.size * 0.5, 0.05), 0.0, 1.0);
+  if ((in.flags & PF_GLARE) != 0u) {
+    // Light is not a body that a surface cuts into: it shows whole on the wall it is cast from, and is
+    // only lost behind something that stands GLARE_REACH in front of it.
+    let reach = clamp(in.size * 0.5, 0.05, GLARE_REACH);
+    soft = clamp((scene - in.viewDepth + reach) / reach, 0.0, 1.0);
+  }
+  alpha *= soft;
   if ((in.flags & PF_SCATTER) != 0u) {
     // Water scatters sunlight forward (Henyey-Greenstein, g = 0.5, times 4 pi): about 0.5 seen from the
     // side, 6 looking into the sun, so spray and mist blaze against the light and drops glint in it.

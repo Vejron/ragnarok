@@ -16,6 +16,7 @@ import {
 import { ClientSim } from '@/sim/wasm/sim'
 import type { FuelStation, Point2 } from '@/world'
 import { painted } from './lines'
+import { LAMP_HALO_RANGE, lampHalo, type Particles } from './particles'
 import { winter } from './season'
 import { toonMaterial } from './toon'
 
@@ -151,15 +152,12 @@ function stationGeometry(): Geometry {
   return Geometry.merge(parts)
 }
 
+/** Where the canopy's lamps are, in the station's frame (x, z), metres. */
+const LAMPS: Point2[] = [-0.36, -0.12, 0.12, 0.36].flatMap((x) => [-0.3, 0.3].map((z): Point2 => [STATION_CANOPY_AT[0] + x * STATION_CANOPY_SIZE[0], STATION_CANOPY_AT[1] + z * STATION_CANOPY_SIZE[1]]))
+
 /** What of a station lights up by night: the canopy's lamps. */
 function lampGeometry(): Geometry {
-  const [cx, cz] = STATION_CANOPY_AT
-  const [cw, cd] = STATION_CANOPY_SIZE
-  const parts: Geometry[] = []
-  for (const x of [-0.36, -0.12, 0.12, 0.36]) {
-    for (const z of [-0.3, 0.3]) parts.push(block(1.0, 0.04, 0.35, cx + x * cw, FLOOR + STATION_CANOPY_HEIGHT - 0.02, cz + z * cd, 0xfff6dc))
-  }
-  return Geometry.merge(parts)
+  return Geometry.merge(LAMPS.map(([x, z]) => block(1.0, 0.04, 0.35, x, FLOOR + STATION_CANOPY_HEIGHT - 0.02, z, 0xfff6dc)))
 }
 
 /** The orange disc of the sign, which glows by night. */
@@ -313,9 +311,9 @@ export class FuelStations {
    * Places every station nearer the eye than `fog` metres (where the distance fog is whole), lights it
    * by `night` (0 by day, 1 at night), and works its wash: the doors roll up while one of `movers`
    * (the vehicles, metres) is in its lane, and the brushes spin while one is between them. `dt` is
-   * the seconds since the last frame.
+   * the seconds since the last frame. By night the lamps of the stations near the eye glow into `halos`.
    */
-  update(eye: { x: number; z: number }, fog: number, night: number, dt: number, movers: Iterable<{ x: number; z: number }>) {
+  update(eye: { x: number; z: number }, fog: number, night: number, dt: number, movers: Iterable<{ x: number; z: number }>, halos?: Pick<Particles, 'spawn'>) {
     if (!this.body) return
     const reach = Math.min(STATION_REACH, fog)
     for (const wash of this.washes) wash.busy = wash.near = false
@@ -351,6 +349,12 @@ export class FuelStations {
       placed++
       const [cos, sin] = [Math.cos(station.yaw), Math.sin(station.yaw)]
       const world = (x: number, z: number): Point2 => [station.x + x * cos + z * sin, station.z - x * sin + z * cos]
+      if (halos && night > 0.05 && Math.hypot(station.x - eye.x, station.z - eye.z) < LAMP_HALO_RANGE) {
+        for (const [x, z] of LAMPS) {
+          const [wx, wz] = world(x, z)
+          lampHalo(halos, [wx, station.base + FLOOR + STATION_CANOPY_HEIGHT - 0.1, wz], 1, night, dt)
+        }
+      }
       // Each door hangs from the top of its doorway, rolled up towards it.
       const t = wash.doors * wash.doors * (3 - 2 * wash.doors)
       for (const x of WASH_BAY_X) {

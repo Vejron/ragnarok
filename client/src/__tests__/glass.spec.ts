@@ -24,7 +24,7 @@ function box(x0: number, vertexBase: number) {
 function house(): TileData {
   const a = box(0, 0)
   const building: Building = {
-    height: 6, base: 0, first: 0, walls: 8, roof: 2, roofKind: ROOF_FLAT, kind: 0, front: [0, 0], cells: null, paint: null,
+    height: 6, base: 0, first: 0, walls: 8, roof: 2, roofKind: ROOF_FLAT, kind: 0, front: [0, 0], cells: null, paint: [null, null], clad: [0, 0],
     footprint: [[0, -5], [10, -5], [10, 5], [0, 5]], look: { first: 0, walls: 8, roof: 2 },
   }
   const collision = { vertices: Float32Array.from(a.vertices.flat()), triangles: Uint32Array.from(a.triangles.flat()) }
@@ -46,7 +46,7 @@ describe('the glass of a window', () => {
   const windows = openings.filter((o) => !o.door)
 
   it('is a sheet a hair in front of the pane, inside the frame, for each window and no door', () => {
-    const glass = glassBuffers([openings])!
+    const glass = glassBuffers([openings], [null])!
     expect(glass.panes.length / 2).toBe(windows.length)
     expect(glass.positions.length).toBe(windows.length * PANE_VERTICES * 3)
     for (const o of windows) {

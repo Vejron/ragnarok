@@ -4,7 +4,7 @@ import { span } from './spans'
 
 /** Mirrors `crates/shared/src/world.rs`. Coordinates are metres: +X east, +Z south, +Y up. */
 
-export const WORLD_VERSION = 44
+export const WORLD_VERSION = 45
 
 /** `Manifest::theme`, mirrors `crates/shared/src/world.rs`. */
 export const THEME_WINTER = 1
@@ -237,8 +237,10 @@ export interface Building {
   front: [number, number]
   /** Its 1 m cubes as the importer baked them, or null for a building with none (it keeps its triangles). */
   cells: Cells | null
-  /** `[wall, roof]` as `0xRRGGBB` where the importer knows them (France: the roof from the aerial photo), else null. */
-  paint: [number, number] | null
+  /** `[wall, roof]` as `0xRRGGBB`, each where the importer knows it (the map's `building:colour` and `roof:colour`, or in France the roof from the aerial photo), else null. */
+  paint: [number | null, number | null]
+  /** What its walls are clad in (`CLAD_*`) and its roof is laid with (`ROOFING_*`) where the map says, 0 for each it does not. */
+  clad: [number, number]
   /**
    * Its own walls and roof in the tile's `look`, to be drawn: `walls` triangles from `first`, then
    * `roof`. Null when it has none (a world made before looks): it is then drawn as its cubes.
@@ -308,6 +310,19 @@ export const BUILDING_FIRE_STATION = 11
 export const BUILDING_BRIDGE = 12
 /** A lean-to (vindskydd): three walls, its `front` side open, a roof that falls to the back, no door or windows. */
 export const BUILDING_SHELTER = 13
+/** `Building.clad[0]`, what the walls are of: not known, boards or timber, brick, render or concrete, cut stone, profiled sheet metal. Mirrors `CLAD_*`. */
+export const CLAD_UNKNOWN = 0
+export const CLAD_WOOD = 1
+export const CLAD_BRICK = 2
+export const CLAD_RENDER = 3
+export const CLAD_STONE = 4
+export const CLAD_SHEET = 5
+/** `Building.clad[1]`, what the roof is laid with: not known, tiles or slates, sheet metal, felt, wooden shingles. Mirrors `ROOFING_*`. */
+export const ROOFING_UNKNOWN = 0
+export const ROOFING_TILES = 1
+export const ROOFING_SHEET = 2
+export const ROOFING_FELT = 3
+export const ROOFING_SHINGLES = 4
 /** The colour of a bridge's concrete, `0xRRGGBB`: its sides, piers and railings. Mirrors `BRIDGE_CONCRETE`. */
 export const BRIDGE_CONCRETE = 0xb8b6ae
 /** The colour of a bridge's deck under a paved road or path, `0xRRGGBB`: drawn as asphalt. Mirrors `DECK_ASPHALT`. */
@@ -734,7 +749,7 @@ function flatIndices(triangles: readonly number[][]): Uint32Array {
 
 export function decodeTile(bytes: Uint8Array): TileData {
   const [buildings, roads, [vertices, triangles], ground, cover, trees, water, reach, flow, foam, stir, lane, streams, bridges, detail, rails, ski, lines, stones, crops, look, graves] = decode(bytes) as [
-    [number, number[][], number, number, number, number, number, number, [number, number], [number[], number[], Uint8Array, Uint8Array], [number, number] | null][],
+    [number, number[][], number, number, number, number, number, number, [number, number], [number[], number[], Uint8Array, Uint8Array], [number | null, number | null], [number, number]][],
     [number, number, boolean, number[][], number, number, number, number, boolean][],
     [number[][], number[][]],
     [number, Uint8Array],
@@ -759,7 +774,7 @@ export function decodeTile(bytes: Uint8Array): TileData {
   ]
   const looks = look[2]
   return {
-    buildings: buildings.map(([height, footprint, base, first, walls, roof, roofKind, kind, front, cells, paint], index) => ({
+    buildings: buildings.map(([height, footprint, base, first, walls, roof, roofKind, kind, front, cells, paint, clad], index) => ({
       height: metres(height),
       footprint: footprint.map(point),
       base: metres(base),
@@ -775,6 +790,7 @@ export function decodeTile(bytes: Uint8Array): TileData {
             { origin: cells[0] as [number, number, number], dims: cells[1] as [number, number, number], solid: cells[2].slice(), roof: cells[3].slice() }
           : null,
       paint,
+      clad,
       look: looks[index] && looks[index]![1]! + looks[index]![2]! > 0 ? { first: looks[index]![0]!, walls: looks[index]![1]!, roof: looks[index]![2]!, kind, front, footprint: Int32Array.from(footprint.flat()) } : null,
     })),
     roads: roads.map(([width, kind, carried, points, lanes, forward, marks, along, oneWay]) => ({ width: metres(width), kind, carried, points: points.map(point), lanes, forward, marks, along: metres(along), oneWay })),

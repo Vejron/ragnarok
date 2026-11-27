@@ -52,7 +52,46 @@ const CRATER_EARTH = vec3f(0.22, 0.14, 0.075);
 const CRATER_EARTH_DAMP = vec3f(0.115, 0.07, 0.04);
 const CRATER_CHAR = vec3f(0.03, 0.026, 0.022);
 const CRATER_SOIL = vec3f(0.3, 0.22, 0.14);
-// A fresh crater's embers, bright enough to bloom.
+// The pen's hatching: metres between its strokes at their finest, the pixels they are kept apart as
+// they recede, half a stroke's width as a share of that, how many times the gap between strokes a
+// stroke runs before the pen lifts, and how much of the colour a stroke takes.
+const HATCH_SPACING = 0.06;
+const HATCH_PIXELS = 7.0;
+const HATCH_STROKE = 0.15;
+const HATCH_RUN = 9.0;
+const HATCH_DARKEN = 0.26;
+
+// Strokes \`spacing\` metres apart slanting over the plane \`uv\` (metres), 0 to 1, softened over a pixel
+// (\`pixel\` metres). They are a hand's: each wavers, is of its own weight, and is broken where the pen
+// lifted, at places of its own. A stroke is told from the next by where it lies, so the one a coarser
+// spacing shares with a finer is the same stroke.
+fn hatchStrokes(uv: vec2f, spacing: f32, pixel: f32) -> f32 {
+  let across = uv.x + uv.y * 0.6;
+  let along = uv.y - uv.x * 0.6;
+  let s = (across + sin(along * 2.3 + across * 0.7) * 0.012) / spacing;
+  let own = fract(round(s) * spacing * vec2f(7.31, 3.17));
+  let d = abs(fract(s + 0.5) - 0.5);
+  let soft = max(pixel / spacing, 1e-4);
+  let half = HATCH_STROKE * mix(0.55, 1.2, own.x);
+  let lifted = smoothstep(-0.55, -0.25, sin(along / (spacing * HATCH_RUN) * 6.2832 + own.y * 6.2832) + (own.x - 0.5) * 0.6);
+  return (1.0 - smoothstep(half - soft, half + soft, d)) * lifted;
+}
+
+// How much of a pen's hatching falls on the surface at \`world\` facing \`n\`, 0 to 1, where a pixel spans
+// \`pixel\` metres. The strokes lie in the world, on the face's own plane, and stay about HATCH_PIXELS
+// apart on the screen: every other one fades out as the surface recedes, so they never crowd into a moiré.
+fn hatch(world: vec3f, n: vec3f, pixel: f32) -> f32 {
+  let a = abs(n);
+  var uv = world.xz;
+  if (a.y < 0.6) {
+    uv = select(world.xy, world.zy, a.x > a.z);
+  }
+  let level = max(log2(pixel * HATCH_PIXELS / HATCH_SPACING), 0.0);
+  let spacing = HATCH_SPACING * exp2(floor(level));
+  return mix(hatchStrokes(uv, spacing, pixel), hatchStrokes(uv, spacing * 2.0, pixel), fract(level));
+}
+
+// A fresh crater's embers, bright enough to burn towards white.
 const CRATER_EMBER = vec3f(3.0, 0.8, 0.15);
 // The light the embers throw on the bowl round them: too faint to see in daylight, plain in the dark.
 const CRATER_GLOW = vec3f(0.1, 0.028, 0.006);
@@ -98,7 +137,7 @@ ${reflect ? `  if (frame.lightCount.z > 0.5 && dot(in.world, frame.mirror.xyz) <
     rgb *= normalTexel.a * 2.0;
   }
   if ((flags & MAT_WALLS) != 0u && in.custom.x > 0.5) {
-    rgb = wallsLook(rgb, in.world, normalize(in.normal), in.custom.x, facePixel);
+    rgb = wallsLook(rgb, in.world, normalize(in.normal), in.custom.x, facePixel, in.custom.y, in.custom.z, in.custom.w);
   }
   if ((flags & MAT_WORN) != 0u) {
     let worn = wornLook(rgb, in.world.xz, in.custom, pixel, ground, onGround);
@@ -116,6 +155,8 @@ ${edges ? `    if (!asphalt.keep) {
     }` : ''}
     rgb = asphalt.rgb;
   }
+  // How much of the material's own light this pixel gives off: all of it, but for a pane with no lamp behind it.
+  var lamp = 1.0;
   var marks = CraterMark(vec2f(0.0), 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0);
   if ((flags & MAT_CRATERS) != 0u) {
     marks = craterMarks(in.world.xz, pixel, CRATER_SLOPE);
@@ -211,11 +252,28 @@ ${edges ? `    if (!asphalt.keep) {
     let u = u32(clamp(dotNL * 0.5 + 0.5, 0.0, 1.0) * 255.0);
     let ramp = textureLoad(ramps, vec2u(u, material.params.y), 0).r;
     var shadow = marks.sun;
+    // What other things' shadows leave of the light, apart from the clouds': the pen hatches where they fall.
+    var unshadowed = 1.0;
     if ((in.ids.y & OBJ_RECEIVE_SHADOW) != 0u) {
-      shadow *= sunShadow(in.world, n) * cloudShade(in.world);
+      unshadowed = sunShadow(in.world, n);
+      shadow *= unshadowed * cloudShade(in.world);
     }
     let hemi = mix(frame.hemiGround.rgb, frame.hemiSky.rgb, 0.5 * n.y + 0.5) * marks.sky;
-    rgb = rgb / PI * (frame.sunColor.rgb * ramp * shadow + hemi + pointLight(in.world, n)) + material.emissive.rgb;
+    rgb = rgb / PI * (frame.sunColor.rgb * ramp * shadow + hemi + pointLight(in.world, n));
+    if (frame.clip.w > 0.0) {
+      // Hatching: what is in shadow, or turned from the light, is shaded with a pen's strokes too, by
+      // day; the moon's light is too faint to draw by.
+      // A face turned from the light is hatched more lightly than one a shadow falls on.
+      let shade = max(1.0 - unshadowed, 0.55 * (1.0 - smoothstep(-0.15, 0.2, dotNL))) * min(dot(frame.sunColor.rgb, vec3f(0.5)), 1.0);
+      if (shade > 0.02) {
+        rgb *= 1.0 - hatch(in.world, n, facePixel) * shade * frame.clip.w * HATCH_DARKEN;
+      }
+    }
+    // Lamps behind a pane (MAT_GLOW): each vertex says how much of the material's light it has.
+    if ((flags & MAT_GLOW) != 0u) {
+      lamp = in.custom.x;
+    }
+    rgb += material.emissive.rgb * lamp;
     if (wet > 0.0) {
       rgb += marshShine(n, in.world, 0.0, wet * 0.8, shadow);
     }
@@ -234,7 +292,11 @@ ${edges ? `    if (!asphalt.keep) {
   }
   rgb = rgb * (1.0 - marks.ink * CRATER_INK) + CRATER_EMBER * marks.heat + CRATER_GLOW * marks.glow + scar.heat;
   // Broken glass is opaque where it is cracked or holed, however clear the pane round it.
-  let alpha = max(in.color.a * texel.a, max(max(scar.crack * 0.9, scar.blood * 0.85), scar.hole));
+  var alpha = max(in.color.a * texel.a, max(max(scar.crack * 0.9, scar.blood * 0.85), scar.hole));
+  // A lit pane is as opaque as it is bright: the lamp is seen, not the dark room through it.
+  if ((flags & MAT_GLOW) != 0u) {
+    alpha = max(alpha, min(lamp * max(material.emissive.r, max(material.emissive.g, material.emissive.b)), 1.0));
+  }
   return vec4f(applyFog(rgb, flags, in.viewDepth, in.world), alpha);
 }
 `

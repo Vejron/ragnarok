@@ -1,6 +1,6 @@
 import { Color, FlashEffects } from '@ragnarok/engine'
 import type { MuzzleProfile } from './gunfire'
-import { dustCloud, type ParticleSpec, type Particles } from './particles'
+import { dustCloud, halo, type ParticleSpec, type Particles } from './particles'
 
 /** Anything with x, y and z: three's Vector3 or the engine's. */
 type V = { x: number; y: number; z: number }
@@ -42,12 +42,16 @@ export interface GunScene {
 const SOOT = [0x161514, 0x0f0e0e, 0x1f1c1a] as const
 const GRIT = [0xb8ad98, 0x9a948a, 0xa89f8c] as const
 const SPARK = [0xffffff, 0xffe08a, 0xffa23a, 0xff6a1a] as const
-/** A laser's beam, HDR so that it blooms: the core white-hot, and the sheath round it a hard saturated red. */
+/** A laser's beam, HDR so that it burns: the core white-hot, and the sheath round it a hard saturated red. */
 const BEAM_CORE = new Color().set(7, 3.5, 2.6)
 const BEAM_HOT = new Color().set(4, 0.16, 0.05)
 const BEAM_HAZE = new Color().set(1.2, 0.02, 0.01)
 const FLARE = new Color().set(2.5, 0.5, 0.3)
-/** A muzzle flare's fire, HDR so that it blooms: the white-hot core and the orange of its tongue and petals. */
+/** A rifle round's streak, HDR so that it burns white, and the glow round it. */
+const TRACER_CORE = new Color().set(6, 5.2, 3.6)
+const TRACER_HOT = new Color().set(3, 1.1, 0.25)
+const TRACER_GLOW = new Color().set(1.6, 0.5, 0.1)
+/** A muzzle flare's fire, HDR so that it burns: the white-hot core and the orange of its tongue and petals. */
 const FLARE_CORE = new Color().set(6, 5, 3.4)
 const FLARE_FIRE = new Color().set(4, 1.9, 0.6)
 /** Petals of fire round a muzzle flare: a flash hider's star. */
@@ -57,8 +61,8 @@ type Pool = Pick<Particles, 'spawn'>
 
 /**
  * Short-lived shot effects in world space. Flashes, sparks, fire and smoke are particles, the same GPU
- * pools a vehicle's plume and a blast use: `glow` for light, `smoke` for what blocks it and `blood` for
- * what comes out of a body. Spawning one writes a record and the GPU does the rest. Tracers, a laser's
+ * pools a vehicle's plume and a blast use: `glow` for light, `halo` for the glow round it, `smoke` for
+ * what blocks it and `blood` for what comes out of a body. Spawning one writes a record and the GPU does the rest. Tracers, a laser's
  * beam, its lens flares and rings on the ground are records of `FlashEffects`, a formula of their age,
  * as a streak has no use for a particle's motion.
  */
@@ -67,12 +71,14 @@ export class Effects {
   private readonly smoke: Pool
   private readonly glow: Pool
   private readonly blood: Pool
+  private readonly halo: Pool
 
-  constructor(pools: { smoke: Pool; glow: Pool; blood: Pool }, capacity = 4096) {
+  constructor(pools: { smoke: Pool; glow: Pool; blood: Pool; halo: Pool }, capacity = 4096) {
     this.root = new FlashEffects(capacity)
     this.smoke = pools.smoke
     this.glow = pools.glow
     this.blood = pools.blood
+    this.halo = pools.halo
   }
 
   /**
@@ -142,7 +148,7 @@ export class Effects {
    */
   private muzzleFlare(muzzle: V, d: V, gun: MuzzleProfile) {
     const size = gun.flash
-    this.flash(add(muzzle, d, size * 0.08), size * 0.45, 0.035, 0xffffff, 10)
+    this.flash(add(muzzle, d, size * 0.08), size * 0.45, 0.035, 0xffffff, 10, true)
     this.flash(add(muzzle, d, size * 0.2), size, 0.05 + 0.015 * size, 0xffc070, 6)
     // The cone: a wide tongue and a hot core down the middle of it, both shooting a little further out as they go.
     const reach = Math.max(gun.flame * 1.6, size * 0.8)
@@ -196,9 +202,11 @@ export class Effects {
       const streak = Math.min(5, run)
       const life = Math.min(0.4, Math.max(0.05, run / 350))
       const at = add(from, direction, start + streak / 2)
-      for (const [width, color] of [[0.2, 0xfff6d8], [0.55, 0xff9a2e]] as const) {
+      for (const [width, color] of [[0.2, TRACER_CORE], [0.55, TRACER_HOT]] as const) {
         this.root.spawn({ at, direction, along: run - streak, length: streak, size: 0.06 * width, life, color, bright: true, fade: 'late' })
       }
+      // The glow round it: wide, faint and with no edge.
+      this.root.spawn({ at, direction, along: run - streak, length: streak, size: 0.16, life, color: TRACER_GLOW, opacity: 0.4, bright: true, soft: true, fade: 'late' })
     }
     if (hit) this.sparks(to, 5, 0.9)
   }
@@ -206,7 +214,7 @@ export class Effects {
   /** One frame of laser eyes charging at `eye`, `share` of the way: motes of light drawn in, a swelling glare, and arcs near the end. */
   laserCharge(eye: V, share: number, dt: number) {
     this.flash(eye, 0.6 + share * share * 3, 0.06, 0xff2a10, 3 + share * 2)
-    this.flash(eye, 0.25 + share * share, 0.06, 0xfff0e0, 5)
+    this.flash(eye, 0.25 + share * share, 0.06, 0xfff0e0, 5, true)
     const motes = Math.round((30 + share * 150) * dt) + (Math.random() < 0.5 ? 1 : 0)
     for (let i = 0; i < motes; i++) {
       const direction = norm(spread())
@@ -223,7 +231,7 @@ export class Effects {
   /** The instant laser eyes light: a white-hot burst, a lens flare across the sky and a ball of sparks and smoke thrown off. */
   laserIgnite(eye: V) {
     this.flash(eye, 6, 0.35, 0xff3a18, 3)
-    this.flash(eye, 2.4, 0.2, 0xffffff, 5)
+    this.flash(eye, 2.4, 0.2, 0xffffff, 5, true)
     this.lensFlare(eye, 9, 0.3)
     for (let i = 0; i < 40; i++) {
       const direction = norm(spread())
@@ -248,7 +256,7 @@ export class Effects {
     this.root.spawn({ at, direction, length, size: 0.6 * throb, life, color: BEAM_HOT, opacity: 0.9, bright: true, soft: true, fade: 'late' })
     this.root.spawn({ at, direction, length, size: 0.22 * throb, life, color: BEAM_CORE, bright: true, soft: true, fade: 'late' })
     this.flash(from, 2.4 * throb, life, 0xff3010, 3)
-    this.flash(from, 0.9 * throb, life, 0xffffff, 5)
+    this.flash(from, 0.9 * throb, life, 0xffffff, 5, true)
     this.lensFlare(from, 4.5 * throb, life)
     if (Math.random() < dt * 40) {
       const spot = add(from, direction, Math.random() * Math.min(length, 80))
@@ -260,7 +268,7 @@ export class Effects {
   laserBurn(at: V) {
     const above = add(at, { x: 0, y: 1, z: 0 }, 0.25)
     this.flash(above, 3.4, 0.16, 0xff4a18, 3)
-    this.flash(above, 1.2, 0.1, 0xffffff, 5)
+    this.flash(above, 1.2, 0.1, 0xffffff, 5, true)
     this.lensFlare(above, 3.5, 0.1)
     this.sparks(above, 14, 2.2)
     for (let i = 0; i < 6; i++) {
@@ -300,14 +308,18 @@ export class Effects {
     }
   }
 
-  /** Light `size` metres across at `at`, gone in `life` seconds and `glow` times over bright enough to bloom. */
-  private flash(at: V, size: number, life: number, color: number, glow: number) {
+  /**
+   * Light `size` metres across at `at`, gone in `life` seconds and `glow` times over white, with its halo
+   * round it. A white-hot `heart` inside a wider, coloured flash has none: the glow is the colour of the fire.
+   */
+  private flash(at: V, size: number, life: number, color: number, glow: number, heart = false) {
     this.glow.spawn({ position: at, velocity: [0, 0, 0], life, size: [size * 0.7, size], color, glow, alpha: 1, shape: 'glare' })
+    if (!heart) halo(this.halo, at, size, life, color, glow)
   }
 
   /** A lick of fire: a hot puff that cools to a dark ember red. */
   private flame(at: V, velocity: readonly [number, number, number], life: number, size: [number, number], color: number) {
-    this.smoke.spawn({ position: at, velocity, life, size, color, colorEnd: 0x4a1405, glow: 3, alpha: 0.9, gravity: -2.5, drag: 3, spin: [-2, 2], shape: 'puff' })
+    this.smoke.spawn({ position: at, velocity, life, size, color, colorEnd: 0x4a1405, glow: 3, emissive: true, alpha: 0.9, gravity: -2.5, drag: 3, spin: [-2, 2], shape: 'puff' })
   }
 
   /** A puff that rises, swells and thins out, curling as it goes and leaning off with the wind. */
@@ -337,7 +349,7 @@ export class Effects {
    */
   backblast(vent: V, direction: V) {
     const d = norm(direction)
-    this.flash(add(vent, d, 0.6), 2.6, 0.12, 0xfff0b8, 9)
+    this.flash(add(vent, d, 0.6), 2.6, 0.12, 0xfff0b8, 9, true)
     this.flash(add(vent, d, 1.8), 3.4, 0.2, 0xff9a3c, 6)
     // The cone: a wide tongue and a white-hot core down its middle, shooting out as they go.
     for (const [length, width, color, life] of [[4.5, 0.55, FLARE_FIRE, 0.12], [2.8, 0.22, FLARE_CORE, 0.08]] as const) {
@@ -413,7 +425,7 @@ export class Effects {
   pierce(at: V, outward: V, big: boolean, size = 1) {
     const out = norm(outward)
     const scale = (big ? 1 : 0.45) * size
-    this.flash(at, 1.8 * scale, 0.1, 0xffffff, 10)
+    this.flash(at, 1.8 * scale, 0.1, 0xffffff, 10, true)
     this.flash(at, 1.4 * scale, 0.35, 0xff8a2a, 6)
     const count = Math.round((big ? 16 : 6) * Math.min(2, size))
     for (let i = 0; i < count; i++) {
@@ -445,7 +457,7 @@ export class Effects {
   /** The white-hot flash of a blast at `at`; the fire, smoke and debris around it come from `explosion`. */
   burst(at: V, radius: number) {
     this.flash(at, radius * 1.8, 0.25, 0xff9a3c, 8)
-    this.flash(at, radius * 1.2, 0.12, 0xfff0c0, 12)
+    this.flash(at, radius * 1.2, 0.12, 0xfff0c0, 12, true)
   }
 
   /** A ring of pale light racing out over the ground from a blast at `at` (already on the ground) to ~7 radii. */

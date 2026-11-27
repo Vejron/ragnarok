@@ -180,14 +180,15 @@ export class CarWear {
   }
 
   /**
-   * Shows `damage` (as the snapshot carries it) and `hp`. Pieces that come off are thrown into
-   * `debris`, moving with the car's `velocity`.
+   * Shows `damage` (as the snapshot carries it), and the burnt-out paint of a car that has gone up
+   * (`wrecked`, `FLAG_WRECKED`): one whose health is gone but which has yet to blow keeps its colour.
+   * Pieces that come off are thrown into `debris`, moving with the car's `velocity`.
    */
-  update(damage: readonly number[], hp: number, debris: Debris | null, velocity: Vector3, now = performance.now()) {
+  update(damage: readonly number[], wrecked: boolean, debris: Debris | null, velocity: Vector3, now = performance.now()) {
     const total = damage.slice(0, 4).reduce((sum, value) => sum + value, 0) + damage.slice(DAMAGE_WHEELS).reduce((sum, value) => sum + value, 0)
     if (total === 0) {
       if (this.hurt) this.repair()
-      this.tint(hp, 0)
+      this.tint(wrecked, 0)
       return
     }
     this.hurt = true
@@ -225,7 +226,7 @@ export class CarWear {
       wheel.rotation.z = (index % 2 === 0 ? 1 : -1) * MAX_CAMBER * (value / WHEEL_GONE)
       if (value >= WHEEL_GONE && !this.wheelGone[index]) this.lose(index, debris, velocity)
     })
-    this.tint(hp, total / (8 * 255))
+    this.tint(wrecked, total / (8 * 255))
   }
 
   private middleOf(side: number): Vector3 {
@@ -362,9 +363,9 @@ export class CarWear {
   }
 
   /** Paint dulls with damage; a wreck is charred. */
-  private tint(hp: number, worn: number) {
+  private tint(wrecked: boolean, worn: number) {
     this.paint.color.copy(this.baseColor).lerp(DULL, Math.min(0.5, worn * 0.9))
-    if (hp === 0) this.paint.color.lerp(CHARRED, 0.85)
+    if (wrecked) this.paint.color.lerp(CHARRED, 0.85)
     this.paint.needsUpdate()
   }
 

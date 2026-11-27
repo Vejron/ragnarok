@@ -193,7 +193,7 @@ export class LampBeams {
     const live = lights.live
     for (let i = 0; i < live.length; i++) {
       const l = live[i]!
-      // Spot lights only: a point light's glow is the bloom's.
+      // Spot lights only: a point light's glow is its halo's (`halo` in the client's particles).
       if (l.cosOuter <= -1.5) continue
       const distance = Math.hypot(l.x - camera[0], l.y - camera[1], l.z - camera[2])
       if (distance > l.radius + 60) continue

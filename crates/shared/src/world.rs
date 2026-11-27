@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::terrain::Ground;
 
-pub const WORLD_VERSION: u8 = 44;
+pub const WORLD_VERSION: u8 = 45;
 
 /// `Manifest::theme`: the world as it always was.
 pub const THEME_PLAIN: u8 = 0;
@@ -821,9 +821,14 @@ pub struct Building {
     /// draw, from them. Empty
     /// (`dims` all 0) for a building too big to cut, which keeps its own triangles.
     pub cells: Cells,
-    /// `[wall, roof]` as `0xRRGGBB`, where the importer knows them (France: the roof from the aerial
-    /// photo). Without it a client picks the colours itself.
-    pub paint: Option<[u32; 2]>,
+    /// `[wall, roof]` as `0xRRGGBB`, each where the importer knows it: from the map's
+    /// `building:colour` and `roof:colour`, or in France the roof from the aerial photo. A client
+    /// picks the one that is `None` itself.
+    pub paint: [Option<u32>; 2],
+    /// What its walls are clad in (`CLAD_*`) and its roof is laid with (`ROOFING_*`), where the map
+    /// says (`building:material`, `roof:material`); 0 for each it does not, and a client picks the
+    /// pattern itself.
+    pub clad: [u8; 2],
 }
 
 /// A building's cubes as the importer baked them: the grid (`carve::Shell`'s `origin` and `dims`)
@@ -1054,6 +1059,30 @@ pub const ROOF_FLAT: u8 = 0;
 pub const ROOF_SHED: u8 = 1;
 pub const ROOF_GABLE: u8 = 2;
 pub const ROOF_HIP: u8 = 3;
+
+/// `Building::clad[0]`: the map does not say what the walls are of.
+pub const CLAD_UNKNOWN: u8 = 0;
+/// Walls of boards, or of timber.
+pub const CLAD_WOOD: u8 = 1;
+/// Walls of brick.
+pub const CLAD_BRICK: u8 = 2;
+/// Rendered walls: plaster over brick, block or concrete, or bare concrete.
+pub const CLAD_RENDER: u8 = 3;
+/// Walls of cut stone.
+pub const CLAD_STONE: u8 = 4;
+/// Walls of profiled sheet metal.
+pub const CLAD_SHEET: u8 = 5;
+
+/// `Building::clad[1]`: the map does not say what the roof is laid with.
+pub const ROOFING_UNKNOWN: u8 = 0;
+/// A roof of tiles or slates, laid in courses.
+pub const ROOFING_TILES: u8 = 1;
+/// A roof of sheet metal with standing seams.
+pub const ROOFING_SHEET: u8 = 2;
+/// A roof of felt, tar paper or a membrane.
+pub const ROOFING_FELT: u8 = 3;
+/// A roof of wooden shingles.
+pub const ROOFING_SHINGLES: u8 = 4;
 
 /// A building like any other: a house, a block, a barn.
 pub const BUILDING_PLAIN: u8 = 0;
@@ -1716,7 +1745,7 @@ mod tests {
         assert!(!manifest.frozen());
         assert!(Manifest { open_water: false, ..manifest.clone() }.frozen());
         let tile = Tile {
-            buildings: vec![Building { height: 800, footprint: vec![[0, 0], [100, 0], [100, 100]], base: 250, first: 0, walls: 6, roof: 2, roof_kind: ROOF_GABLE, kind: BUILDING_CHURCH, front: [0, -127], cells: Cells { origin: [-100, 0, 200], dims: [2, 1, 5], solid: Bits(vec![0b1011, 3]), roof: Bits(vec![1, 0]) }, paint: Some([0xeee3c8, 0x4f5866]) }, Building { height: 300, ..Default::default() }],
+            buildings: vec![Building { height: 800, footprint: vec![[0, 0], [100, 0], [100, 100]], base: 250, first: 0, walls: 6, roof: 2, roof_kind: ROOF_GABLE, kind: BUILDING_CHURCH, front: [0, -127], cells: Cells { origin: [-100, 0, 200], dims: [2, 1, 5], solid: Bits(vec![0b1011, 3]), roof: Bits(vec![1, 0]) }, paint: [Some(0xeee3c8), None], clad: [CLAD_RENDER, ROOFING_SHEET] }, Building { height: 300, ..Default::default() }],
             roads: vec![Road { width: 600, kind: ROAD_MINOR, carried: false, points: vec![[0, 0], [500, 500]], ..Default::default() }],
             collision: CollisionMesh { vertices: vec![[0, 0, 0]], triangles: vec![[0, 0, 0]] },
             ground: vec![0, 10, 20, 30],

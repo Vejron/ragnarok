@@ -11,7 +11,7 @@ function tileOf(kind: number): TileData {
   const triangles = [[0, 1, 5], [0, 5, 4], [1, 2, 6], [1, 6, 5], [2, 3, 7], [2, 7, 6], [3, 0, 4], [3, 4, 7], [4, 5, 6], [4, 6, 7], [0, 2, 1], [0, 3, 2]]
   const footprint = Int32Array.from([0, -500, 1000, -500, 1000, 500, 0, 500])
   const building = {
-    height: 6, base: 0, first: 0, walls: 8, roof: 2, roofKind: ROOF_FLAT, kind, front: [0, 0], cells: null, paint: null,
+    height: 6, base: 0, first: 0, walls: 8, roof: 2, roofKind: ROOF_FLAT, kind, front: [0, 0], cells: null, paint: [null, null], clad: [0, 0],
     footprint: [[0, -5], [10, -5], [10, 5], [0, 5]], look: { first: 0, walls: 8, roof: 2, kind, footprint },
   } as unknown as Building
   const collision = { vertices: Float32Array.from(vertices.flat()), triangles: Uint32Array.from(triangles.flat()) }

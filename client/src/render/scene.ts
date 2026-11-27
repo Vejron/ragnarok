@@ -1,10 +1,11 @@
-import { Adaptation, Beams, Bloom, Color, Fog, Grade, Ink, LensFlare, PerspectiveCamera, Quaternion, Renderer, Scene as EngineScene, Shafts, Sky, Vector3, type EyeTarget } from '@ragnarok/engine'
+import { Adaptation, Beams, Color, Fog, Grade, Ink, LensFlare, PerspectiveCamera, Quaternion, Renderer, Scene as EngineScene, Shafts, Sky, Vector3, type EyeTarget } from '@ragnarok/engine'
 import type { Eye } from '@/xr/headset'
 import type { WaterPlane } from '@/sim/waters'
 import { GunSightView } from './gunsight'
 import { HeldPhoneView } from './heldphone'
 import { ContactShadows } from './contact'
 import { setWaterLight, setWaterPlane, setWaterReflection } from './water'
+import { lightWindows } from './world'
 import { rebakeTreeImpostors, setTreeDetail } from './trees'
 import { CLASSIC, SOFT, loadLook, wintry, type Look, type Palette } from './look'
 import { winter } from './season'
@@ -318,7 +319,7 @@ export class Scene {
     this.contact.active = look.contact
     this.setShadowReach(look.far)
     scene.ink = look.ink ? (scene.ink ?? new Ink()) : null
-    scene.bloom = look.bloom ? (scene.bloom ?? new Bloom()) : null
+    if (scene.ink) scene.ink.hatch = look.hatch ? 1 : 0
     scene.shafts = look.rays ? (scene.shafts ?? new Shafts()) : null
     scene.flare = look.rays ? (scene.flare ?? new LensFlare()) : null
     scene.beams = look.rays ? (scene.beams ?? new Beams()) : null
@@ -357,6 +358,8 @@ export class Scene {
     this.glint.copy(sky.lightColor).multiplyScalar(sky.lightIntensity / this.palette.sunIntensity)
     // Clouds mirrored in the water are lit as the ground is.
     setWaterLight(sky.sky.getHex(), this.glint.getHex(), sky.tint)
+    // Lamps come on behind the windows as it gets dark.
+    lightWindows(sky.night)
     const target = scene.sun.target
     this.sunOver(target.x, target.y, target.z)
   }

@@ -34,8 +34,10 @@ export interface ParticleSpec {
   spin?: number | readonly [number, number]
   /** Metres of extra length per m/s of speed: the billboard stretches along its motion, for sparks and streaks. */
   stretch?: number
-  /** Multiplies the colour (HDR), so values over 1 bloom. */
+  /** Multiplies the colour (HDR): past 1 it burns towards white in the output pass. */
   glow?: number
+  /** Fire rather than smoke: a puff that is its own light, so the sun does not shade it and lamps do not tint it. */
+  emissive?: boolean
   /** Metres per second the air's churning carries it about: smoke that rolls and curls instead of spreading in straight lines. */
   turbulence?: number
   /** The share of the wind (`setWind`) that carries it, 0 to 1: its drag is against that moving air. */
@@ -82,6 +84,7 @@ const PF_DROP = 16
 const PF_GLARE = 32
 const PF_HOLD = 64
 const PF_SCATTER = 128
+const PF_EMISSIVE = 256
 /** Frames between reads of the live count. */
 const COUNT_EVERY = 10
 
@@ -191,7 +194,7 @@ export class ParticleSystem extends Effect {
     w[o + 20] = count
     w[o + 21] = this.spawnCount
     w[o + 22] = this.seed = (this.seed * 1664525 + 1013904223) >>> 0
-    w[o + 23] = (spec.bounce ? PF_BOUNCE : 0) | (spec.blend === 'additive' ? PF_ADDITIVE : 0) | (spec.fog === false ? PF_NO_FOG : 0) | (spec.shape === 'puff' ? PF_PUFF : 0) | (spec.shape === 'drop' ? PF_DROP : 0) | (spec.shape === 'glare' ? PF_GLARE : 0) | (spec.hold ? PF_HOLD : 0) | (spec.scatter ? PF_SCATTER : 0)
+    w[o + 23] = (spec.bounce ? PF_BOUNCE : 0) | (spec.blend === 'additive' ? PF_ADDITIVE : 0) | (spec.fog === false ? PF_NO_FOG : 0) | (spec.shape === 'puff' ? PF_PUFF : 0) | (spec.shape === 'drop' ? PF_DROP : 0) | (spec.shape === 'glare' ? PF_GLARE : 0) | (spec.hold ? PF_HOLD : 0) | (spec.scatter ? PF_SCATTER : 0) | (spec.emissive ? PF_EMISSIVE : 0)
     const a = toLinear(spec.color, this.color)
     const b = toLinear(color2, this.color2)
     c[o + 24] = a.r; c[o + 25] = a.g; c[o + 26] = a.b

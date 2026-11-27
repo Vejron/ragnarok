@@ -56,17 +56,14 @@ pub fn paint(tags: &Tags) -> Option<[u32; 2]> {
     (walls.is_some() || roof.is_some()).then(|| [walls.unwrap_or(0x4a3828), roof.unwrap_or(0x2e2c2a)])
 }
 
-/// A mapped colour as a shelter is painted: a name or `#rrggbb`.
+/// A named colour as a shelter is painted.
 fn colour_of(colour: &str) -> Option<u32> {
-    let colour = colour.trim().to_lowercase();
-    if let Some(hex) = colour.strip_prefix('#') {
-        return match hex.len() {
-            6 => u32::from_str_radix(hex, 16).ok(),
-            3 => u32::from_str_radix(hex, 16).ok().map(|v| ((v >> 8) & 0xf) * 0x110000 + ((v >> 4) & 0xf) * 0x1100 + (v & 0xf) * 0x11),
-            _ => None,
-        };
-    }
-    Some(match colour.as_str() {
+    crate::finish::colour_of(colour, named)
+}
+
+/// A shelter's named colours: red is falu red and brown tarred timber, as they are in the woods.
+fn named(colour: &str) -> Option<u32> {
+    Some(match colour {
         "red" | "darkred" | "maroon" => 0x7c2b1e,
         "brown" | "saddlebrown" | "sienna" => 0x5a3d28,
         "black" => 0x2a2826,

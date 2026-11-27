@@ -332,11 +332,13 @@ export class Game {
   /** Tyre smoke, dust, gravel and spray; sparks and flames glow on their own pool. */
   private readonly smoke = new Particles(4096, false, true)
   private readonly glow = new Particles(2048, true)
+  /** The glow round flashes and fire: big and soft, so at half the screen's size. */
+  private readonly halo = new Particles(1024, true, true)
   /** The water waterjet boats throw. */
   private readonly jetSpray = new JetSpray(this.glow, this.waves)
   /** Blood has a pool of its own, so a firefight's spray never leaves smoke and dust without room. */
   private readonly blood = new Particles(1536)
-  private readonly effects = new Effects({ smoke: this.smoke, glow: this.glow, blood: this.blood })
+  private readonly effects = new Effects({ smoke: this.smoke, glow: this.glow, blood: this.blood, halo: this.halo })
   private readonly skids = new Skidmarks()
   /** The snow in the air, in a winter world. */
   private snowfall: Snowfall | null = null
@@ -574,7 +576,7 @@ export class Game {
     this.scene.scene.add(this.rocketModels.root, this.trails.root)
     this.scene.scene.add(this.pickupModels.root, this.backpackModels.root, this.parcelModels.root)
     this.scene.scene.add(this.trajectory.root, this.mortarArc.root)
-    this.scene.scene.add(this.waves.root, ...this.jetSpray.roots, this.smoke.root, this.glow.root, this.blood.root, this.stains.root, this.scorches.root, this.skids.root)
+    this.scene.scene.add(this.waves.root, ...this.jetSpray.roots, this.smoke.root, this.glow.root, this.halo.root, this.blood.root, this.stains.root, this.scorches.root, this.skids.root)
     this.smoke.groundAt = (x, z) => this.scene.groundAt(x, z)
     this.glow.groundAt = (x, z) => this.scene.groundAt(x, z)
     this.scene.scene.add(this.debris.root)
@@ -1358,8 +1360,8 @@ export class Game {
     this.followClock(renderTick)
     this.liftView?.update(this.liftTick(now), eye, this.scene.scene.fog?.far ?? Infinity)
     this.busStops?.update(eye, this.scene.scene.fog?.far ?? Infinity, (x, z) => this.terrain?.sample(x, z) ?? null)
-    this.fuelStations?.update(eye, this.scene.scene.fog?.far ?? Infinity, nightAt(this.scene.phase), dt, this.vehicles.placed.values())
-    this.dealers?.update(eye, this.scene.scene.fog?.far ?? Infinity, nightAt(this.scene.phase), dt, this.vehicles.placed.values())
+    this.fuelStations?.update(eye, this.scene.scene.fog?.far ?? Infinity, nightAt(this.scene.phase), dt, this.vehicles.placed.values(), this.halo)
+    this.dealers?.update(eye, this.scene.scene.fog?.far ?? Infinity, nightAt(this.scene.phase), dt, this.vehicles.placed.values(), this.halo)
 
     const seat = this.seat
     const view = seat ? crewedSeatView(seat.kind, seat.index, this.vehicles.placed.get(seat.vehicle)?.seats ?? []) : null
@@ -1729,6 +1731,7 @@ export class Game {
     this.smoke.update(dt)
     this.jetSpray.update(dt)
     this.glow.update(dt)
+    this.halo.update(dt)
     this.blood.update(dt)
     this.skids.update(dt)
     this.stains.update(dt)
@@ -2238,6 +2241,7 @@ export class Game {
     this.fxWorldMade ??= {
       smoke: this.smoke,
       glow: this.glow,
+      halo: this.halo,
       skids: this.skids,
       groundAt: (x, z) => this.scene.groundAt(x, z),
       surfaceAt: (x, z) => this.surfaces?.at(x, z) ?? SURFACE_GRASS,
@@ -2289,6 +2293,7 @@ export class Game {
     this.marshMist?.dispose()
     this.skiTracks?.dispose()
     this.glow.dispose()
+    this.halo.dispose()
     this.blood.dispose()
     this.skids.dispose()
     this.stains.dispose()

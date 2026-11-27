@@ -10,8 +10,8 @@ export interface Look {
   far: boolean
   /** Dark outlines wherever one thing meets another: a cartoon's ink. */
   ink: boolean
-  /** A glow around fire, tracers and flashes. */
-  bloom: boolean
+  /** A pen's hatching strokes over what is in shadow, with the ink. */
+  hatch: boolean
   /** Shafts of sunlight through trees and cloud edges, the sun's glare in a lens, and lamps' beams in the night air. */
   rays: boolean
   /** Water mirrors the scene: the world is drawn a second time, mirrored, at half size. */
@@ -32,7 +32,7 @@ export const LOOK_OPTIONS: { key: keyof Look; label: string; about: string; heav
   { key: 'contact', label: 'Contact shadows', about: 'A dark patch under every character and vehicle, so they sit on the ground.' },
   { key: 'far', label: 'Far shadows', about: 'Sun shadows reach far ahead of you, coarser past the first hundred metres.', heavy: true },
   { key: 'ink', label: 'Ink outlines', about: 'Dark cartoon outlines where one thing meets another.' },
-  { key: 'bloom', label: 'Bloom', about: 'A glow around fire, tracers and flashes.', heavy: true },
+  { key: 'hatch', label: 'Pen hatching', about: 'Shadows shaded with a pen\'s strokes, when the ink outlines are on.' },
   { key: 'rays', label: 'Sun rays', about: 'Shafts of sunlight through trees and clouds, the sun\'s glare, and lamp beams in mist and rain.', heavy: true },
   { key: 'reflect', label: 'Water reflections', about: 'Water mirrors the world, which draws it a second time.', heavy: true },
   { key: 'grass', label: 'Grass', about: 'Grass that sways and parts as you go through it.' },
@@ -53,7 +53,7 @@ const RESET_ON_BUMP: (keyof Look)[] = ['ink']
 /** The long shadows are off on phones and tablets, where they cost fill rate and memory. */
 export function defaultLook(): Look {
   const coarse = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches
-  return { soft: true, contact: true, far: !coarse, ink: true, bloom: !coarse, rays: !coarse, reflect: !coarse, grass: true, scorch: true, adaptive: true, netStats: false }
+  return { soft: true, contact: true, far: !coarse, ink: true, hatch: false, rays: !coarse, reflect: !coarse, grass: true, scorch: true, adaptive: true, netStats: false }
 }
 
 export function loadLook(): Look {

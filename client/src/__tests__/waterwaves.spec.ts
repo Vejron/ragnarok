@@ -182,6 +182,7 @@ describe('a boat in the waves', () => {
     const w: FxWorld = {
       smoke: new Particles(4000),
       glow,
+      halo: new Particles(64, true, true),
       skids: new Skidmarks(500),
       groundAt: () => -5,
       surfaceAt: () => SURFACE_WATER,
@@ -233,7 +234,7 @@ describe('a boat in the waves', () => {
     const depthAt = (y: number) => {
       const hulls: number[] = []
       const stir = { hull: (_key: string, st: { depth: number }) => hulls.push(st.depth), splash: () => {} }
-      const w: FxWorld = { smoke: new Particles(100), glow: new Particles(100, true), skids: new Skidmarks(10), groundAt: () => -40, surfaceAt: () => SURFACE_WATER, waterAt: () => 0, camera: new Vec3(0, 5, 10), waves: stir }
+      const w: FxWorld = { smoke: new Particles(100), glow: new Particles(100, true), halo: new Particles(64, true, true), skids: new Skidmarks(10), groundAt: () => -40, surfaceAt: () => SURFACE_WATER, waterAt: () => 0, camera: new Vec3(0, 5, 10), waves: stir }
       const fx = new VehicleFx(2, KIND_SUBMARINE)
       for (let i = 0; i < 30; i++) fx.update(w, [0, y, -i * 8 / 60], [0, 0, 0, 1], 0, true, 1 / 60)
       return hulls.length ? hulls[hulls.length - 1]! : 0
@@ -246,7 +247,7 @@ describe('a boat in the waves', () => {
     const wakes = (current: readonly [number, number]) => {
       const hulls: number[] = []
       const stir = { hull: (_key: string, st: { depth: number }) => hulls.push(st.depth), splash: () => {} }
-      const w: FxWorld = { smoke: new Particles(100), glow: new Particles(100, true), skids: new Skidmarks(10), groundAt: () => -40, surfaceAt: () => SURFACE_WATER, waterAt: () => 0, currentAt: () => current, camera: new Vec3(0, 5, 10), waves: stir }
+      const w: FxWorld = { smoke: new Particles(100), glow: new Particles(100, true), halo: new Particles(64, true, true), skids: new Skidmarks(10), groundAt: () => -40, surfaceAt: () => SURFACE_WATER, waterAt: () => 0, currentAt: () => current, camera: new Vec3(0, 5, 10), waves: stir }
       const fx = new VehicleFx(3, KIND_SUBMARINE)
       // Over the ground it goes 3 m/s towards -Z.
       // The first frames, before its velocity is known, are not counted.

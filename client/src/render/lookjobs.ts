@@ -1,6 +1,6 @@
 import { Geometry } from '@ragnarok/engine'
 import type { Shell } from '@/sim/carve'
-import { lookChunk, lookFracture } from './lookfracture'
+import { lookChunk, lookFracture, type Surfaces } from './lookfracture'
 import { rubbleSoup, type RubbleMemo } from './shards'
 import { reachOf } from './reach'
 import type { GroundGrid, HeapAsk, LookAsk, LookBuffers, LookSource, PieceBuffers, SectionAsk, SectionBuffers } from './lookworker'
@@ -20,8 +20,8 @@ function piece(positions: Float32Array, colors: Float32Array): PieceBuffers {
 }
 
 /** Section `section` of the building cut out to fall whole, about its pivot, with what its fall is measured by. */
-export function cutSection(source: LookSource, shell: Shell, section: SectionAsk, wall: RGB, roof: RGB): SectionBuffers {
-  const soup = lookChunk(source.look, source.range, shell, new Set(section.cells), section.pivot, wall, roof)
+export function cutSection(source: LookSource, shell: Shell, section: SectionAsk, wall: RGB, roof: RGB, trim: Surfaces): SectionBuffers {
+  const soup = lookChunk(source.look, source.range, shell, new Set(section.cells), section.pivot, wall, roof, trim)
   return { ...piece(soup.positions, soup.colors), ...reachOf(soup.positions) }
 }
 
@@ -30,7 +30,7 @@ export function drawLook(source: LookSource, shell: Shell, ask: LookAsk): LookBu
   const dents = new Map<number, number>()
   for (let i = 0; i < ask.dents.length; i += 2) dents.set(ask.dents[i]!, ask.dents[i + 1]!)
   const soup = lookFracture(source.look, source.range, shell, new Set(ask.removed), dents, ask.wall, ask.roof, ask.surfaces)
-  return { ...piece(soup.positions, soup.colors), custom: soup.custom, sections: ask.sections.map((section) => cutSection(source, shell, section, ask.wall, ask.roof)) }
+  return { ...piece(soup.positions, soup.colors), custom: soup.custom, sections: ask.sections.map((section) => cutSection(source, shell, section, ask.wall, ask.roof, ask.surfaces)) }
 }
 
 /** Height of `grid` at `(x, z)`, metres: between its four nearest samples, its edge beyond them. */

@@ -103,6 +103,7 @@ export function damageSmoke(
         color: i % 3 === 0 ? 0xffeaa0 : i % 3 === 1 ? 0xffb347 : 0xff8a2a,
         colorEnd: 0x4a1405,
         glow: 3,
+        emissive: true,
         shape: 'puff',
         spin: [-2, 2],
         alpha: 0.9,

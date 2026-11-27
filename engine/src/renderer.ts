@@ -13,7 +13,6 @@ import { SHADOW_WGSL } from './materials/shadow.wgsl'
 import { standardWgsl } from './materials/standard.wgsl'
 import { Frustum } from './math/frustum'
 import * as mat4 from './math/mat4'
-import { Bloom } from './passes/bloom'
 import { SkyPass } from './passes/sky'
 import { LightShafts, type ShaftLight } from './passes/shafts'
 import { EyeAdaptation } from './passes/exposure'
@@ -64,6 +63,8 @@ const FAR_CASTER_MIN_RADIUS = 1.5
 const CLOUD_SUNLIGHT = 0.12
 /** The sun's angular radius as drawn (`SUN_RADIUS` in sky.wgsl), radians: how wide the flare's visibility taps spread. */
 const SUN_RADIUS = 0.0095
+/** The side of the square of random numbers the ink's pen reads, texels. */
+const PEN_NOISE = 64
 /** How much the moon's shafts count against the sun's, at full moonlight. */
 const MOON_SHAFTS = 0.3
 const HDR_FORMAT: GPUTextureFormat = 'rgba16float'
@@ -238,7 +239,7 @@ export class Renderer {
   private readonly lightGrid = new LightGrid()
   private readonly lightVisible = (x: number, y: number, z: number, radius: number) =>
     this.frustum.intersectsSphere(x, y, z, radius) || (this.reflectionOn && this.reflectionFrustum.intersectsSphere(x, y, z, radius))
-  private readonly outputData = new Float32Array(28)
+  private readonly outputData = new Float32Array(40)
   private readonly beams: LampBeams
   private beamsDrawn = false
   private readonly cameraAt: [number, number, number] = [0, 0, 0]
@@ -294,8 +295,10 @@ export class Renderer {
   private readonly farShadowPipelines: GPURenderPipeline[]
   private readonly outputPipeline: GPURenderPipeline
   private readonly outputUniform: GPUBuffer
-  private readonly bloom: Bloom
-  private readonly bloomSampler: GPUSampler
+  private readonly linearSampler: GPUSampler
+  /** Random numbers for the ink's wavering line (`penNoise` in the output pass), and the sampler that repeats them. */
+  private readonly penNoise: GPUTexture
+  private readonly penSampler: GPUSampler
   private readonly comparisonSampler: GPUSampler
   private sceneGroup: GPUBindGroup | null = null
   private sceneGroupKey = ''
@@ -529,9 +532,14 @@ export class Renderer {
       fragment: { module: outputModule, entryPoint: 'fs', targets: [{ format: this.format }] },
       primitive: { topology: 'triangle-list' },
     })
-    this.bloom = new Bloom(device)
     this.halfResolution = new HalfResolution(device, HDR_FORMAT)
-    this.bloomSampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' })
+    this.linearSampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' })
+    this.penNoise = device.createTexture({ label: 'pen noise', size: [PEN_NOISE, PEN_NOISE], format: 'rgba8unorm', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST })
+    const random = new Uint8Array(PEN_NOISE * PEN_NOISE * 4)
+    // The same numbers every run, so a picture can be compared with an earlier one.
+    for (let i = 0, seed = 0x9e3779b9; i < random.length; i++) random[i] = (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) >>> 24
+    device.queue.writeTexture({ texture: this.penNoise }, random, { bytesPerRow: PEN_NOISE * 4 }, [PEN_NOISE, PEN_NOISE])
+    this.penSampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear', addressModeU: 'repeat', addressModeV: 'repeat' })
     this.outputUniform = device.createBuffer({ size: this.outputData.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
     this.shafts = new LightShafts(device, false)
     this.adaptation = new EyeAdaptation(device)
@@ -579,7 +587,6 @@ export class Renderer {
       format: HDR_FORMAT,
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
     })
-    this.bloom.resize(w, h, this.hdrTarget)
     this.shafts.resize(w, h, this.hdrTarget, this.sceneDepth)
     this.adaptation.resize(this.hdrTarget)
     this.flare.resize(this.sceneDepth)
@@ -593,12 +600,13 @@ export class Renderer {
         { binding: 0, resource: { buffer: this.outputUniform } },
         { binding: 1, resource: this.hdrTarget.createView() },
         { binding: 2, resource: this.sceneDepth.createView() },
-        { binding: 3, resource: this.bloom.view },
-        { binding: 4, resource: this.bloomSampler },
-        { binding: 5, resource: this.shafts.view! },
-        { binding: 6, resource: { buffer: this.adaptation.state } },
-        { binding: 7, resource: this.beams.view! },
-        { binding: 8, resource: this.halfResolution.view! },
+        { binding: 3, resource: this.linearSampler },
+        { binding: 4, resource: this.shafts.view! },
+        { binding: 5, resource: { buffer: this.adaptation.state } },
+        { binding: 6, resource: this.beams.view! },
+        { binding: 7, resource: this.halfResolution.view! },
+        { binding: 8, resource: this.penNoise.createView() },
+        { binding: 9, resource: this.penSampler },
       ],
     })
   }
@@ -689,7 +697,7 @@ export class Renderer {
     stats.shadowDraws = 0
     const effects = this.effectContext()
     for (const effect of this.effects) effect.prepare(effects, encoder)
-    const inverted = (scene.sky || scene.beams) && mat4.invert(this.inverseViewProj, camera.viewProjection) !== null
+    const inverted = (scene.sky || scene.beams || scene.ink) && mat4.invert(this.inverseViewProj, camera.viewProjection) !== null
     if (scene.sky) {
       this.sky.update(encoder, scene.sky)
       if (inverted) this.sky.setView(this.inverseViewProj)
@@ -728,8 +736,6 @@ export class Renderer {
       this.beamsDrawn = this.beams.encode(encoder, scene, this.inverseViewProj, this.cameraAt, this.cameraForward, camera.near, camera.far, this.timer.pass('beams'))
     }
     this.shafts.encode(encoder, light && scene.shafts ? this.shaftLight : null, this.width / this.height, (name) => this.timer.pass(name))
-    const bloom = scene.bloom
-    if (bloom && bloom.strength > 0) this.bloom.encode(encoder, bloom.threshold, bloom.knee, bloom.radius)
     const screen = this.eye?.view ?? this.context.getCurrentTexture().createView()
     this.outputPass(encoder, scene, camera, screen, light)
     this.timer.resolve(encoder)
@@ -1258,6 +1264,7 @@ export class Renderer {
     f[83] = shadow.taps === 1 ? 1 : 0
     f[84] = camera.near
     f[85] = camera.far
+    f[87] = scene.ink?.hatch ?? 0
     f.set(this.farShadowMatrix, 128)
     f[144] = shadow.farSpan / shadow.farMapSize
     f[145] = this.farShadowsOn ? 1 : 0
@@ -1702,6 +1709,30 @@ export class Renderer {
     return shaft.strength > 0 || light.strength > 0
   }
 
+  /**
+   * Writes the way the picture's pixels look out into the world into `out` from `at`, as three rows of
+   * four: the ray through its top left corner, and what is added to that across its width and down
+   * its height. They come from the frame's inverse view-projection, so any lens gives the right ones.
+   */
+  private viewRays(out: Float32Array, at: number) {
+    const m = this.inverseViewProj
+    // A corner's ray: from its point on the near plane (depth 1, reversed) to the same point half way into the depth range.
+    const ray = (x: number, y: number, into: number) => {
+      for (let i = 0; i < 3; i++) {
+        const near = (m[i]! * x + m[4 + i]! * y + m[8 + i]! + m[12 + i]!) / (m[3]! * x + m[7]! * y + m[11]! + m[15]!)
+        const deep = (m[i]! * x + m[4 + i]! * y + m[8 + i]! * 0.5 + m[12 + i]!) / (m[3]! * x + m[7]! * y + m[11]! * 0.5 + m[15]!)
+        out[into + i] = deep - near
+      }
+    }
+    ray(-1, 1, at)
+    ray(1, 1, at + 4)
+    ray(-1, -1, at + 8)
+    for (let i = 0; i < 3; i++) {
+      out[at + 4 + i]! -= out[at + i]!
+      out[at + 8 + i]! -= out[at + i]!
+    }
+  }
+
   private outputPass(encoder: GPUCommandEncoder, scene: Scene, camera: PerspectiveCamera, screen: GPUTextureView, light: boolean) {
     const o = this.outputData
     const ink = scene.ink
@@ -1712,12 +1743,13 @@ export class Renderer {
     o[4] = ink?.darken ?? 0
     o[5] = ink?.strength ?? 0
     o[6] = ink?.threshold ?? 0
+    o[7] = ink?.fade ?? 0
     o[8] = camera.near
     o[9] = camera.far
     // Where in the target the picture starts: an eye's corner in a headset's texture.
     o[10] = this.eye?.x ?? 0
     o[11] = this.eye?.y ?? 0
-    o[12] = scene.bloom?.strength ?? 0
+    o[12] = scene.whiteHot
     o[13] = light && scene.shafts ? 1 : 0
     const grade = scene.grade
     o[14] = grade?.vignette ?? 0
@@ -1733,6 +1765,8 @@ export class Renderer {
     o[24] = this.beamsDrawn ? 1 : 0
     o[25] = this.sharpen
     o[26] = this.smokeDrawn ? 1 : 0
+    o[27] = ink?.waver ?? 0
+    if (ink && ink.waver > 0) this.viewRays(o, 28)
     this.device.queue.writeBuffer(this.outputUniform, 0, o)
     const pass = encoder.beginRenderPass({
       label: 'output',

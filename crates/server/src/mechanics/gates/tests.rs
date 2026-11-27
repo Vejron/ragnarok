@@ -32,7 +32,7 @@ fn barn() -> WorldFile {
         collision.vertices.extend([[t[0], t[1], t[2]], [t[3], t[4], t[5]], [t[6], t[7], t[8]]]);
         collision.triangles.push([base, base + 1, base + 2]);
     }
-    let building = Building { height: h, footprint, base: 0, first: 0, walls: 0, roof: 0, roof_kind: 0, kind: BUILDING_BARN, front: [0, 0], cells: Shell::new(&walls, &roof).unwrap().cells(), paint: None };
+    let building = Building { height: h, footprint, base: 0, first: 0, walls: 0, roof: 0, roof_kind: 0, kind: BUILDING_BARN, front: [0, 0], cells: Shell::new(&walls, &roof).unwrap().cells(), paint: [None, None], clad: [0, 0] };
     let shut = shared::windows::gates(&windows);
     WorldFile {
         version: WORLD_VERSION,

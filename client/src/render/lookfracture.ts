@@ -1,9 +1,9 @@
 import { BUILDING_BRIDGE, type CollisionMesh } from '@/world'
 import { CELL_HP, type Shell } from '@/sim/carve'
-import { drawnOpenings, facing, openingQuads, openingsFor, type Opening } from './windows'
+import { DOOR_RGB, FRAME_RGB, drawnOpenings, facing, openingQuads, openingsFor, type Opening } from './windows'
 import { SOFFIT_RGB, TRIM_RGB, eaveAnchor, eavesFor } from './eaves'
 import { detailColour, detailsOf } from './details'
-import { Surface } from './buildingmesh'
+import { Surface, trimmed, type Style } from './buildingmesh'
 import { FLOOR_RGB, INSIDE_RGB, INTERIOR_SHADE, facadeFor, innerOf, type Facade } from './facade'
 import { add, centreOf, cross, dot, edgeKey, hash, keyOf, normalOf, split, sub, unit, type P, type Poly, type RGB } from './geom'
 
@@ -22,17 +22,19 @@ export type LookRange = import('./windows').LookRange
 export interface LookSoup {
   positions: Float32Array
   colors: Float32Array
-  /** Four numbers a vertex, the first the surface pattern on it (`Surface` in buildingmesh.ts). */
+  /** Four numbers a vertex, as the whole building's have them (`BuildingBuffers.custom`): the surface pattern on it, and with one the building's seed, foot and plinth. */
   custom: Float32Array
 }
 
-/** The surface patterns of a building's walls and roof (`buildingSurfaces`). */
-export interface Surfaces {
-  wall: number
-  roof: number
-}
+/** The surface patterns of a building's walls and roof, its seed, its plinth and its trim (`buildingSurfaces`). */
+export type Surfaces = Style
 
-const PLAIN: Surfaces = { wall: 0, roof: 0 }
+const PLAIN: Surfaces = { wall: 0, roof: 0, seed: 0, foot: 0, plinth: 0, frame: FRAME_RGB, door: DOOR_RGB }
+
+/** The patterns `wall` and `roof` (`Surface`) alone: no seed, no plinth, and the trim's own white and brown. */
+export function patterned(wall: Surfaces['wall'], roof: Surfaces['roof']): Surfaces {
+  return { ...PLAIN, wall, roof }
+}
 
 /** Broken rafters in a roof's hole: the share of its edges with one, their size and how far they reach (metres), and their colour. */
 const RAFTER_CHANCE = 0.7
@@ -559,6 +561,8 @@ class Writer {
   readonly custom: number[] = []
   /** The surface pattern the next polygons are drawn with: only walls and roofs whole or cut keep theirs, not edges, chips or windows. */
   surface = 0
+  /** The building's seed, its walls' foot and its plinth, written on the faces with a pattern as the whole building's are (`Style`). */
+  style: Pick<Style, 'seed' | 'foot' | 'plinth'> = PLAIN
   constructor(readonly place: (p: P) => P, private readonly offset: P = [0, 0, 0]) {}
 
   /** `poly` as a fan, each corner in `base` times what `tone` gives it; `placed` when its corners are where they go already. */
@@ -577,7 +581,8 @@ class Writer {
     const [ox, oy, oz] = this.offset
     this.positions.push(p[0] - ox, p[1] - oy, p[2] - oz)
     this.colors.push(base[0] * tone, base[1] * tone, base[2] * tone)
-    this.custom.push(this.surface, 0, 0, 0)
+    if (this.surface === 0) this.custom.push(0, 0, 0, 0)
+    else this.custom.push(this.surface, this.style.seed, this.style.foot, this.style.plinth)
   }
 
   /** The edges in `rims` given their depth, going in from the outer face, in the cross-section colour. */
@@ -656,6 +661,7 @@ export function lookFracture(look: CollisionMesh, range: LookRange, shell: Shell
   }
 
   const out = new Writer(place)
+  out.style = surfaces
   // A piece drawn whole lies two cells or more from every hole, so none of its corners is pushed about (`outline`).
   for (const piece of whole) {
     out.surface = piece.roof ? surfaces.roof : surfaces.wall
@@ -683,7 +689,7 @@ export function lookFracture(look: CollisionMesh, range: LookRange, shell: Shell
     if (grid.has(x, y, z) && removed.has(shell.index(x, y, z))) continue
     for (const { corners, part } of strip.quads) {
       out.surface = part === 'top' ? surfaces.roof : 0
-      out.poly(corners, part === 'top' ? roof : part === 'soffit' ? SOFFIT_RGB : TRIM_RGB, shade, true)
+      out.poly(corners, part === 'top' ? roof : trimmed(part === 'soffit' ? SOFFIT_RGB : TRIM_RGB, surfaces), shade, true)
     }
   }
   out.surface = 0
@@ -730,7 +736,7 @@ export function lookFracture(look: CollisionMesh, range: LookRange, shell: Shell
   }
   // Windows and doors, but only those with wall still standing round them: a frame does not hang in the air.
   const framed = drawnOpenings(removed.size === 0 ? openings : openings.filter((o) => openingStands(shell, removed, o)), facade.inside.length > 0)
-  openingQuads(framed, (corners, rgb, _normal, masonry) => out.poly(corners, masonry ? wall : rgb, shade, true))
+  openingQuads(framed, (corners, rgb, _normal, masonry) => out.poly(corners, masonry ? wall : trimmed(rgb, surfaces), shade, true))
   // The chimney and porch, each while the cell it stands on stands, and has something to hang from.
   const cut = (id: number) => removed.has(id)
   for (const { corners, normal, paint, anchor } of detailsOf(look, range, drawnOpenings(openings, facade.inside.length > 0))) {
@@ -738,7 +744,7 @@ export function lookFracture(look: CollisionMesh, range: LookRange, shell: Shell
     if ((grid.has(x, y, z) && cut(shell.index(x, y, z))) || orphan(grid, x, y, z, cut)) continue
     const { rgb, surface } = detailColour(paint, roof, { roof: surfaces.roof, brick: Surface.Brick, planks: Surface.Planks })
     out.surface = surface
-    out.poly(facing(corners, normal), rgb, shade, true)
+    out.poly(facing(corners, normal), trimmed(rgb, surfaces), shade, true)
   }
   out.surface = 0
   return out.soup()
@@ -912,7 +918,7 @@ function chips(out: Writer, piece: Piece, id: number, count: number, base: RGB) 
  * hold, to fall whole. Its edge matches the hole it leaves (`lookFracture`). Empty when no wall or
  * roof passes through those cells.
  */
-export function lookChunk(look: CollisionMesh, range: LookRange, shell: Shell, cells: ReadonlySet<number>, pivot: readonly [number, number, number], wall: RGB, roof: RGB): LookSoup {
+export function lookChunk(look: CollisionMesh, range: LookRange, shell: Shell, cells: ReadonlySet<number>, pivot: readonly [number, number, number], wall: RGB, roof: RGB, trim: Surfaces = PLAIN): LookSoup {
   const grid = new Grid(shell)
   const sliced = slice(facadeFor(look, range), grid, [...cells].map((id) => shell.coords(id)), (id) => cells.has(id))
   const [kept, taken] = [sliced.kept, sliced.taken].map((pieces) => pieces.filter((piece) => piece.inside === undefined)) as [Piece[], Piece[]]
@@ -935,7 +941,7 @@ export function lookChunk(look: CollisionMesh, range: LookRange, shell: Shell, c
     const at = eaveAnchor(strip)
     const [x, y, z] = [0, 1, 2].map((a) => grid.of(at[a]!, a)) as P
     if (!grid.has(x, y, z) || !cells.has(shell.index(x, y, z))) continue
-    for (const { corners, part } of strip.quads) out.poly(corners, part === 'top' ? roof : part === 'soffit' ? SOFFIT_RGB : TRIM_RGB, undefined, true)
+    for (const { corners, part } of strip.quads) out.poly(corners, part === 'top' ? roof : trimmed(part === 'soffit' ? SOFFIT_RGB : TRIM_RGB, trim), undefined, true)
   }
   return out.soup()
 }

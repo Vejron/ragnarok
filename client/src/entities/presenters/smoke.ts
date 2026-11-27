@@ -1,4 +1,5 @@
 import { Quaternion, Vector3 } from '@ragnarok/engine'
+import { halo } from '@/render/particles'
 import { bayOutlet, damageSmoke, type Outlet } from '@/render/vehiclesmoke'
 import { GONE, HURT, PART_ENGINE, burning, partState } from '@/sim/armor'
 import { vehicleMaxHp } from '@/sim/consts'
@@ -51,6 +52,8 @@ export class Smoke implements Presenter<Frame> {
       const flicker = 0.7 + 0.3 * Math.sin(frame.now * 0.021 + id * 1.7) * Math.sin(frame.now * 0.0073 + id)
       const { x, y, z } = outlets[0]!
       this.world.lights.flash(x, y + 0.8, z, { color: 0xff7a24, intensity: 2.2 * flicker, radius: 16, life: 0.08 })
+      // And glows: a halo that lives two frames, so it is as bright at any frame rate.
+      halo(this.world.fx().halo, [x, y + 0.5, z], 1.1 * flicker, Math.max(frame.dt, 1 / 240) * 2, 0xff7a24, 5)
     }
   }
 

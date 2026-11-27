@@ -30,6 +30,7 @@ pub mod minimap;
 pub mod network;
 pub mod ocad;
 pub mod osm;
+pub mod finish;
 pub mod paint;
 pub mod pbf;
 pub mod osm_golf;

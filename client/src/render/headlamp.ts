@@ -1,7 +1,7 @@
 import { Group, Mesh, boxGeometry, cylinderGeometry, type Geometry, type Material } from '@ragnarok/engine'
 import { toonMaterial } from './toon'
 
-/** Warm-less LED white for the lens, past 1 so that it blooms. */
+/** Warm-less LED white for the lens, past 1 so that it burns white. */
 const LENS_ON = 0xffffff
 const HOUSING = 0x1b1e24
 const LENS_OFF = 0x6d7480

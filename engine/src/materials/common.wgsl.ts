@@ -27,7 +27,7 @@ struct Frame {
   shadowMatrix: mat4x4f,
   // texel size, blur radius in texels, on (0 or 1), one tap instead of the 3×3 filter (0 or 1).
   shadow: vec4f,
-  // camera near, camera far, seconds since the last frame, unused.
+  // camera near, camera far, seconds since the last frame, how much the ink hatches what is in shadow (0 to 1).
   clip: vec4f,
   // Number of lights listed, unused, whether this is the mirror image's pass (0 or 1), unused.
   lightCount: vec4f,
@@ -87,6 +87,7 @@ const MAT_WALLS = 1024u;
 const MAT_ASPHALT = 2048u;
 const MAT_GROUND = 4096u;
 const MAT_ROCK = 8192u;
+const MAT_GLOW = 16384u;
 const SNOW_COLOR = vec3f(0.93, 0.95, 0.98);
 const SNOW_ROCK = vec3f(0.3, 0.31, 0.33);
 const OBJ_RECEIVE_SHADOW = 1u;

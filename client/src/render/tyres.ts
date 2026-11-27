@@ -21,6 +21,8 @@ export interface FxWorld {
   smoke: Particles
   /** Additive particles: sparks and flames. */
   glow: Particles
+  /** The glow round what burns: wide faint light, drawn at half the screen's size (`halo` in `particles.ts`). */
+  halo: Particles
   skids: Skidmarks
   groundAt(x: number, z: number): number
   surfaceAt(x: number, z: number): number

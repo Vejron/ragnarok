@@ -71,6 +71,12 @@ export interface MaterialParams {
    * sheet metal or felt. 0 leaves the face plain.
    */
   walls?: boolean
+  /**
+   * Lamps behind it: the geometry's custom x scales `emissive` at each vertex, from 0 for none, and
+   * what glows is opaque by as much. So one mesh of window panes has some lit and the rest dark, and
+   * `emissive` alone turns every lamp up or down.
+   */
+  glow?: boolean
   ramp?: Ramp | null
   blend?: Blend
   side?: Side
@@ -108,6 +114,7 @@ export class Material {
   asphalt: boolean
   ground: boolean
   walls: boolean
+  glow: boolean
   ramp: Ramp | null
   blend: Blend
   side: Side
@@ -141,6 +148,7 @@ export class Material {
     this.asphalt = params.asphalt ?? false
     this.ground = params.ground ?? false
     this.walls = params.walls ?? false
+    this.glow = params.glow ?? false
     this.ramp = params.ramp ?? null
     this.blend = params.blend ?? 'opaque'
     this.side = params.side ?? 'front'
@@ -178,6 +186,7 @@ export class Material {
       asphalt: this.asphalt,
       ground: this.ground,
       walls: this.walls,
+      glow: this.glow,
       ramp: this.ramp,
       blend: this.blend,
       side: this.side,

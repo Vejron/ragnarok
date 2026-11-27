@@ -46,6 +46,8 @@ export const FLAG_CLAWING = FLAG_CROWING
 export const FLAG_LAMP = FLAG_GROUNDED
 /** A vehicle's siren and the beacons of its light bar are on: the dead bit, as a vehicle is wrecked by its health and only a vehicle sends this. */
 export const FLAG_SIREN = FLAG_DEAD
+/** A vehicle has gone up and is a burnt-out wreck: the crouching bit, as a vehicle never crouches. */
+export const FLAG_WRECKED = FLAG_CROUCHING
 
 /** The AK5. */
 export const WEAPON_RIFLE = 0

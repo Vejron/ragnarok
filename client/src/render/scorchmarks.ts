@@ -14,7 +14,7 @@ const MAX_SWEEP = 30
 // Per vertex: uv across the burn (-1 to 1), and in `custom` its birth time. Like a stain it draws only
 // its shape, and everything else comes from noise over the world, not the burn: overlapping burns read as
 // one scar. Soot black at the heart, baked brown towards its edge with a little pale ash. It starts
-// red-hot and is left with veins that glow orange (HDR, so they bloom) and go out over a few seconds.
+// red-hot and is left with veins that glow orange (HDR, so they burn bright) and go out over a few seconds.
 const WGSL = /* wgsl */ `
 ${GROUND_LIGHT_WGSL}
 ${STAIN_NOISE_WGSL}
