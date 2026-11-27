@@ -207,7 +207,7 @@ async fn put_world(req: &mut Request, res: &mut Response) {
 }
 
 /// The scenario file's top-level keys, as `crates/server/src/scenario.rs` reads them.
-const SCENARIO_KEYS: [&str; 6] = ["areas", "squads", "triggers", "restart", "backpack", "zombies"];
+const SCENARIO_KEYS: [&str; 9] = ["areas", "squads", "triggers", "restart", "backpack", "zombies", "traffic", "emergency", "deliveries"];
 
 fn scenario_path(name: &str) -> PathBuf {
     worlds_dir().join(name).join("scenario.json")
@@ -542,7 +542,7 @@ mod tests {
 
     #[test]
     fn a_scenario_keeps_only_the_fields_the_server_reads() {
-        let known = r#"{"restart":30,"areas":{},"squads":{},"triggers":[],"backpack":{"lat":0,"lon":0},"zombies":{"areas":[]}}"#;
+        let known = r#"{"restart":30,"areas":{},"squads":{},"triggers":[],"backpack":{"lat":0,"lon":0},"zombies":{"areas":[]},"traffic":{"per_km":2},"emergency":{"patrols":2,"police":true,"ambulance":true},"deliveries":{}}"#;
         let value: serde_json::Value = serde_json::from_str(known).unwrap();
         assert!(value.as_object().unwrap().keys().all(|key| SCENARIO_KEYS.contains(&key.as_str())));
         let typo: serde_json::Value = serde_json::from_str(r#"{"trigers":[]}"#).unwrap();

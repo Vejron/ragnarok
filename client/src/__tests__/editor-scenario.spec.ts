@@ -56,6 +56,22 @@ describe('validateScenario', () => {
     expect(messages(s)).toEqual(['triggers[0]: needs a condition: start, after, enter, cleared or done', 'triggers.cleared.when.by: "by" goes with "enter"'])
   })
 
+  it('checks traffic, police and deliveries, and needs traffic for the police', () => {
+    const s = sample()
+    s.traffic = { per_km: 2 }
+    s.emergency = { patrols: 2, police: true, ambulance: true }
+    s.deliveries = {}
+    expect(messages(s)).toEqual([])
+    s.traffic = { per_km: 0 }
+    s.emergency.patrols = 21
+    s.deliveries.jobs = 0
+    expect(messages(s)).toEqual(['traffic.per_km: must be more than 0 cars a kilometre', 'emergency.patrols: must be a whole number from 0 to 20', 'deliveries.jobs: must be a whole number, 1 or more'])
+    s.traffic = undefined
+    s.emergency.patrols = 2
+    s.deliveries.jobs = 6
+    expect(messages(s)).toEqual(['emergency: police and ambulances drive with the traffic: turn traffic on'])
+  })
+
   it('flags duplicate trigger names', () => {
     const s = sample()
     s.triggers.push({ name: 'cleared', when: { start: true }, do: [] })

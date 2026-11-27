@@ -4,7 +4,7 @@ A game mode for any world with shops and houses: a phone full of food orders. Ta
 
 ## Turning it on
 
-Put a top-level `deliveries` in the world's `scenario.json` (see [SCENARIOS.md](SCENARIOS.md)):
+Tick **Delivery jobs** under Streets in the editor's Scenario panel, or put a top-level `deliveries` in the world's `scenario.json` (see [SCENARIOS.md](SCENARIOS.md)):
 
 ```json
 { "deliveries": {} }

@@ -77,7 +77,7 @@ It is built not to run away with itself. There are twenty police cars and two am
 
 | Where | What |
 |---|---|
-| `scenario.json` | `"emergency": { "patrols": 2, "police": true, "ambulance": true }` |
+| `scenario.json` | `"emergency": { "patrols": 2, "police": true, "ambulance": true }`, or **Police and ambulances** under Streets in the editor's Scenario panel (it needs traffic) |
 | `RAGNAROK_EMERGENCY=n` | police and ambulances with `n` patrols, whatever the scenario says |
 
 It needs roads to drive (200 m of driven lane, as traffic does), and works with the traffic itself turned off. In a world with none, the dead lie their 10 seconds as before.

@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { DELIVERY_JOBS } from '@/sim/consts.generated'
 import { api } from './api'
-import { LOADOUT_ITEMS, type Action, type NameKind, type ScenarioZombies, type When } from './scenario'
+import { LOADOUT_ITEMS, MAX_PATROLS, type Action, type NameKind, type ScenarioEmergency, type ScenarioZombies, type When } from './scenario'
 import {
   addSquad, addTrigger, message, name, patchScenario, patchSquad, patchTrigger, pickedSquad, rename, removeArea, removeSquad, removeTrigger,
   scenario, scenarioDirty, scenarioIssues, saveScenario, scenarioTool, setScenario, type ScenarioTool,
@@ -44,6 +45,19 @@ function setZombies(on: boolean) {
 
 function patchZombies(patch: Partial<ScenarioZombies>) {
   if (zombies.value) patchScenario({ zombies: { ...zombies.value, ...patch } })
+}
+
+/** Street life's defaults: the density and patrols a new world gets (TRAFFIC.md, EMERGENCY.md, DELIVERY.md). */
+const TRAFFIC_DEFAULT = 2
+const EMERGENCY_DEFAULT: ScenarioEmergency = { patrols: 2, police: true, ambulance: true }
+
+/** Turns traffic on at the usual density, or off along with the police and ambulances that drive in it. */
+function setTraffic(on: boolean) {
+  patchScenario(on ? { traffic: { per_km: TRAFFIC_DEFAULT } } : { traffic: undefined, emergency: undefined })
+}
+
+function patchEmergency(patch: Partial<ScenarioEmergency>) {
+  if (scenario.value.emergency) patchScenario({ emergency: { ...scenario.value.emergency, ...patch } })
 }
 
 /** A checkbox's value: only a tick counts as on. */
@@ -174,6 +188,45 @@ function removeSquadNow() {
       </li>
       <li v-if="!areaNames.length" class="text-xs text-muted">No areas. Use the Area tool on the map.</li>
     </ul>
+
+    <h3 class="pt-2 text-sm font-semibold">Streets</h3>
+    <p class="text-xs text-muted">Fuel stations and car dealers come from OpenStreetMap with every world; buses are in the World panel.</p>
+    <UCheckbox
+      :model-value="!!scenario.traffic"
+      label="Traffic on the roads"
+      title="Civilian cars that drive the world's road network (TRAFFIC.md)"
+      @update:model-value="(v: boolean | 'indeterminate') => setTraffic(checked(v))"
+    />
+    <div v-if="scenario.traffic" class="space-y-2 rounded bg-elevated p-2 text-sm">
+      <label class="flex items-center gap-2 text-xs" title="How many cars for each kilometre of lane the traffic drives">
+        Cars per km of lane
+        <UInput :model-value="scenario.traffic.per_km" type="number" min="0.1" step="0.5" class="w-24" @update:model-value="(v: string | number) => patchScenario({ traffic: { per_km: Number(v) } })" />
+      </label>
+      <UCheckbox
+        :model-value="!!scenario.emergency"
+        label="Police and ambulances"
+        title="A wanted level for hurting civilians, police who come for the player, ambulances for the casualties (EMERGENCY.md)"
+        @update:model-value="(v: boolean | 'indeterminate') => patchScenario({ emergency: checked(v) ? { ...EMERGENCY_DEFAULT } : undefined })"
+      />
+      <div v-if="scenario.emergency" class="space-y-2 pl-6 text-xs">
+        <UCheckbox :model-value="scenario.emergency.police" label="Police" @update:model-value="(v: boolean | 'indeterminate') => patchEmergency({ police: checked(v) })" />
+        <UCheckbox :model-value="scenario.emergency.ambulance" label="Ambulances" @update:model-value="(v: boolean | 'indeterminate') => patchEmergency({ ambulance: checked(v) })" />
+        <label class="flex items-center gap-2" :title="`Police cars out on patrol when nothing is going on, ${MAX_PATROLS} at the most`">
+          Patrols
+          <UInput :model-value="scenario.emergency.patrols" type="number" min="0" :max="MAX_PATROLS" class="w-20" @update:model-value="(v: string | number) => patchEmergency({ patrols: Number(v) })" />
+        </label>
+      </div>
+    </div>
+    <UCheckbox
+      :model-value="!!scenario.deliveries"
+      label="Delivery jobs"
+      title="A board of delivery jobs (DELIVERY.md)"
+      @update:model-value="(v: boolean | 'indeterminate') => patchScenario({ deliveries: checked(v) ? {} : undefined })"
+    />
+    <label v-if="scenario.deliveries" class="flex items-center gap-2 rounded bg-elevated p-2 text-xs" title="Jobs on the board at once">
+      Jobs at once
+      <UInput :model-value="scenario.deliveries.jobs ?? DELIVERY_JOBS" type="number" min="1" class="w-20" @update:model-value="(v: string | number) => patchScenario({ deliveries: { jobs: Number(v) } })" />
+    </label>
 
     <h3 class="pt-2 text-sm font-semibold">Zombies</h3>
     <UCheckbox

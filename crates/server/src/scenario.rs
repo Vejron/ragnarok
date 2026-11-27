@@ -59,7 +59,7 @@ struct FileSpec {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct EmergencySpec {
-    /// How many police cars are out on patrol when nothing is going on, 6 at the most.
+    /// How many police cars are out on patrol when nothing is going on, 20 at the most (`fleet::POLICE`).
     patrols: usize,
     /// Whether the world has police, who come for a player who hurts people, and ambulances, which
     /// come for the casualties.

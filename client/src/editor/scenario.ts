@@ -73,6 +73,26 @@ export interface ScenarioZombies {
   day?: boolean
 }
 
+/** Cars that drive the world's roads (TRAFFIC.md). Mirrors `TrafficSpec` in scenario.rs. */
+export interface ScenarioTraffic {
+  /** How many cars there are for each kilometre of lane that traffic drives. */
+  per_km: number
+}
+
+/** Police and ambulances on those roads (EMERGENCY.md). Mirrors `EmergencySpec` in scenario.rs. */
+export interface ScenarioEmergency {
+  /** Police cars out on patrol when nothing is going on, 20 at the most. */
+  patrols: number
+  police: boolean
+  ambulance: boolean
+}
+
+/** The delivery mode's board (DELIVERY.md). Mirrors `DeliveriesSpec` in scenario.rs. */
+export interface ScenarioDeliveries {
+  /** Jobs on the board at once (6). */
+  jobs?: number
+}
+
 export interface Scenario {
   /** Seconds from the end until it starts again. */
   restart?: number
@@ -80,7 +100,13 @@ export interface Scenario {
   squads: Record<string, ScenarioSquad>
   triggers: Trigger[]
   zombies?: ScenarioZombies
+  traffic?: ScenarioTraffic
+  emergency?: ScenarioEmergency
+  deliveries?: ScenarioDeliveries
 }
+
+/** The most police cars a scenario may put on patrol (`fleet::POLICE`). */
+export const MAX_PATROLS = 20
 
 export const MAX_LOADOUT = 5
 export const MAX_TEXT = 200
@@ -160,6 +186,15 @@ export function validateScenario(scenario: Scenario, inside: (lat: number, lon: 
     }
     if (zombies.every !== undefined && !(zombies.every > 0)) add('zombies.every', 'must be more than 0 seconds')
   }
+
+  if (scenario.traffic && !(scenario.traffic.per_km > 0)) add('traffic.per_km', 'must be more than 0 cars a kilometre')
+  const emergency = scenario.emergency
+  if (emergency) {
+    if (!(Number.isInteger(emergency.patrols) && emergency.patrols >= 0 && emergency.patrols <= MAX_PATROLS)) add('emergency.patrols', `must be a whole number from 0 to ${MAX_PATROLS}`)
+    if (!scenario.traffic) add('emergency', 'police and ambulances drive with the traffic: turn traffic on')
+  }
+  const jobs = scenario.deliveries?.jobs
+  if (jobs !== undefined && !(Number.isInteger(jobs) && jobs >= 1)) add('deliveries.jobs', 'must be a whole number, 1 or more')
 
   scenario.triggers.forEach((trigger, n) => {
     const path = trigger.name ? `triggers.${trigger.name}` : `triggers[${n}]`

@@ -34,7 +34,7 @@ Not there yet: passengers, lamps at night, parked cars and traffic lights.
 
 | Where | What |
 |---|---|
-| `worlds/<name>/scenario.json` | `"traffic": { "per_km": 2 }` |
+| `worlds/<name>/scenario.json` | `"traffic": { "per_km": 2 }`, or **Traffic on the roads** under Streets in the editor's Scenario panel |
 | Server | `RAGNAROK_TRAFFIC=n` puts `n` cars on each kilometre of driven lane whatever the scenario says |
 | `World::traffic` | How many cars the room wants for each kilometre of lane the traffic drives. `Traffic` does nothing while it is 0. At most `TRAFFIC_MAX` (4000) cars |
 
