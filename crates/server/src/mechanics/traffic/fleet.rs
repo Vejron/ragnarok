@@ -2,7 +2,7 @@
 //! with somewhere to be.
 //!
 //! A world with emergency services (`Fleet::on`) has `FLEET` rows ahead of its traffic's, one a
-//! unit. A unit with nothing to do is `Dormant`: on no road, and nothing at all. A police car on
+//! unit: the police cars, then the police vans, then the ambulances. A unit with nothing to do is `Dormant`: on no road, and nothing at all. A police car on
 //! patrol drives as traffic does. One that is sent somewhere (`FleetOrder::Send`) plans the way
 //! there by road (`route`), drives it fast with the traffic ahead pulling over for it, and parks on
 //! the verge at the end of it (`OnScene`). Let go again (`FleetOrder::Release`) it drives off as
@@ -23,10 +23,14 @@ use shared::consts::*;
 use sim::CarControls;
 use std::collections::VecDeque;
 
-/// How many units a world's emergency services have, and how many of them are police cars: the
-/// first `POLICE` rows, with the ambulances after them.
-pub const FLEET: usize = 22;
-pub const POLICE: usize = 20;
+/// How many units a world's emergency services have, and how many of them are the police's: the
+/// first `POLICE` rows, with the ambulances after them. The last `VANS` of the police's rows are
+/// police vans, and the rest police cars.
+pub const FLEET: usize = 26;
+pub const POLICE: usize = 24;
+pub const VANS: usize = 8;
+/// How many of the police's rows are police cars: the first of them.
+pub const CARS: usize = POLICE - VANS;
 /// A place is on the road nearest it within this, metres; one further than that from any road is
 /// not driven to.
 const REACH: f32 = 150.0;
@@ -124,13 +128,20 @@ impl Service {
         }
     }
 
-    /// The vehicle it drives, `KIND_*`.
-    pub fn kind(self) -> u8 {
-        match self {
-            Service::Police => KIND_POLICE_CAR,
-            Service::Ambulance => KIND_AMBULANCE,
+    /// The vehicle the unit in row `slot` drives, `KIND_*`.
+    pub fn kind_of(slot: usize) -> u8 {
+        match slot {
+            _ if slot < CARS => KIND_POLICE_CAR,
+            _ if slot < POLICE => KIND_POLICE_VAN,
+            _ => KIND_AMBULANCE,
         }
     }
+}
+
+/// How many of the crew of a vehicle of `kind` get out of it where it is sent: the four officers of
+/// a police van, by its first four seats, and the two of a police car or an ambulance.
+pub fn crew_size(kind: u8) -> usize {
+    if kind == KIND_POLICE_VAN { 4 } else { 2 }
 }
 
 /// What a car of the traffic is on the road for.
@@ -156,6 +167,8 @@ pub enum Duty {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Unit {
     pub service: Service,
+    /// The vehicle it drives, `KIND_*`.
+    pub kind: u8,
     pub duty: Duty,
     /// Where it is, metres, and the way it points, radians. Of no meaning while it is dormant.
     pub at: [f32; 3],
@@ -171,11 +184,11 @@ pub struct Unit {
 /// What the fleet is told to do.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum FleetOrder {
-    /// A unit of `service` goes to `to`, for `tag`: the nearest one on the road, or a fresh one from
-    /// out of sight. With `ahead`, it is after someone there who goes at that (m/s over the ground,
+    /// A unit of `service` that drives a `kind` goes to `to`, for `tag`: the nearest one on the road,
+    /// or a fresh one from out of sight. With `ahead`, it is after someone there who goes at that (m/s over the ground,
     /// x and z), and a fresh one starts near them, ahead of them; without, it is seen to arrive from
     /// far off. Nothing comes of it when none is free or no road leads there.
-    Send { service: Service, to: [f32; 3], tag: u32, ahead: Option<[f32; 2]> },
+    Send { service: Service, kind: u8, to: [f32; 3], tag: u32, ahead: Option<[f32; 2]> },
     /// Unit `unit`, which was sent somewhere, goes on to `to` instead.
     Redirect { unit: usize, to: [f32; 3] },
     /// Unit `unit`, on its way, pulls onto the verge just ahead of where it is and stops there.
@@ -188,6 +201,9 @@ pub enum FleetOrder {
     /// Unit `unit`, which has nobody out of it and is no use where it is, is gone at once if nobody
     /// sees it go, and else drives off.
     Recall { unit: usize },
+    /// Unit `unit`, which was let go and is driving off where it can be seen, is wanted again where
+    /// it is, for `tag`: it stops on the verge just ahead.
+    Hail { unit: usize, tag: u32 },
 }
 
 /// A world's emergency fleet, as `Traffic` and whoever commands it share it.
@@ -253,7 +269,7 @@ impl Traffic {
         for car in &mut self.cars {
             car.passing = car.passing.map(|other| other + FLEET as u32);
         }
-        self.cars.splice(0..0, (0..FLEET).map(|slot| Car { duty: Duty::Dormant, ..Car::new(Service::of(slot).kind(), 1.0) }));
+        self.cars.splice(0..0, (0..FLEET).map(|slot| Car { duty: Duty::Dormant, ..Car::new(Service::kind_of(slot), 1.0) }));
         self.plans = vec![Plan::default(); FLEET];
         self.fleet = FLEET;
     }
@@ -359,18 +375,18 @@ impl Traffic {
         }
     }
 
-    /// A unit of `service` is sent to `to` for `tag`: the one that can be there soonest of those on
-    /// the road near it and a fresh one, which with `ahead` starts out of sight near the place, ahead
+    /// A unit of `service` that drives a `kind` is sent to `to` for `tag`: the one that can be there
+    /// soonest of those on the road near it and a fresh one, which with `ahead` starts out of sight near the place, ahead
     /// of whoever is there going at that.
-    fn send(&mut self, service: Service, to: [f32; 3], tag: u32, ahead: Option<[f32; 2]>, world: &World) {
+    fn send(&mut self, service: Service, kind: u8, to: [f32; 3], tag: u32, ahead: Option<[f32; 2]>, world: &World) {
         let Some(spot) = self.graph.locate(to, REACH) else { return };
         // One that is already out, if it is near by road.
         let near = service
             .slots()
-            .filter(|&i| matches!(self.cars[i].duty, Duty::Patrol | Duty::Leaving))
+            .filter(|&i| self.cars[i].kind == kind && matches!(self.cars[i].duty, Duty::Patrol | Duty::Leaving))
             .filter_map(|i| self.graph.route(self.cars[i].way, self.cars[i].along, spot, NEAR).map(|route| (route.cost, i)))
             .min_by(|a, b| a.0.total_cmp(&b.0));
-        let dormant = service.slots().find(|&i| self.cars[i].duty == Duty::Dormant);
+        let dormant = service.slots().find(|&i| self.cars[i].kind == kind && self.cars[i].duty == Duty::Dormant);
         let fresh = ahead.filter(|_| dormant.is_some()).and_then(|ahead| self.start_near(to, spot, ahead, world));
         if let Some((cost, i)) = near
             && fresh.as_ref().is_none_or(|(.., route)| cost <= route.cost)
@@ -489,6 +505,17 @@ impl Traffic {
         plan.to = Some(Spot { way, along, off: 0.0 });
         plan.ways = if way == car.way { VecDeque::new() } else { VecDeque::from([way]) };
         (plan.last, plan.stop, plan.pulled) = (way, along, true);
+    }
+
+    /// Unit `i`, driving off, is wanted again where it is, for `tag`: its siren is on and it stops
+    /// on the verge just ahead, as one that was sent there would.
+    fn hail(&mut self, i: usize, tag: u32) {
+        if i >= self.fleet || self.cars[i].duty != Duty::Leaving || self.cars[i].vid.is_none() {
+            return;
+        }
+        self.plans[i] = Plan { tag, ..Plan::default() };
+        (self.cars[i].duty, self.cars[i].mood) = (Duty::Responding, Mood::Responding);
+        self.pull_over(i);
     }
 
     /// Unit `i` leaves the road after player `quarry`.
@@ -677,16 +704,17 @@ impl Traffic {
         }
         for order in std::mem::take(&mut world.fleet.orders) {
             match order {
-                FleetOrder::Send { service, to, tag, ahead } => self.send(service, to, tag, ahead, world),
+                FleetOrder::Send { service, kind, to, tag, ahead } => self.send(service, kind, to, tag, ahead, world),
                 FleetOrder::Redirect { unit, to } => self.redirect(unit, to),
                 FleetOrder::Pull { unit } => self.pull_over(unit),
                 FleetOrder::Chase { unit, quarry } => self.pursue(unit, quarry),
                 FleetOrder::Release { unit } => self.dismiss(unit),
                 FleetOrder::Recall { unit } => self.recall(unit, world),
+                FleetOrder::Hail { unit, tag } => self.hail(unit, tag),
             }
         }
         let tick = world.tick;
-        let wanted = if world.fleet.police { world.fleet.patrols.min(POLICE) } else { 0 };
+        let wanted = if world.fleet.police { world.fleet.patrols.min(CARS) } else { 0 };
         for i in 0..self.fleet {
             let car = self.cars[i];
             match car.duty {
@@ -698,11 +726,11 @@ impl Traffic {
                         self.clear_road(i);
                     }
                 }
-                // Out of everyone's sight: back on patrol if the patrols are short of a car, and
-                // else gone.
+                // Out of everyone's sight: a police car is back on patrol if the patrols are short
+                // of one, and anything else is gone.
                 Duty::Leaving if car.vid.is_none() && car.nearest > HIDE_BEYOND => {
-                    let patrols = self.cars[..POLICE].iter().filter(|car| car.duty == Duty::Patrol).count();
-                    if Service::of(i) == Service::Police && patrols < wanted {
+                    let patrols = self.cars[..CARS].iter().filter(|car| car.duty == Duty::Patrol).count();
+                    if i < CARS && patrols < wanted {
                         self.cars[i].duty = Duty::Patrol;
                     } else {
                         self.retire(i, world);
@@ -713,8 +741,8 @@ impl Traffic {
         }
         // A patrol car short: one comes into the world, or starts where nobody is looking.
         if tick.is_multiple_of(TICK_RATE)
-            && self.cars[..POLICE].iter().filter(|car| car.duty == Duty::Patrol).count() < wanted
-            && let Some(i) = (0..POLICE).find(|&i| self.cars[i].duty == Duty::Dormant)
+            && self.cars[..CARS].iter().filter(|car| car.duty == Duty::Patrol).count() < wanted
+            && let Some(i) = (0..CARS).find(|&i| self.cars[i].duty == Duty::Dormant)
         {
             self.cars[i].duty = Duty::Patrol;
             self.start(i, true);
@@ -738,7 +766,7 @@ impl Traffic {
                         (p, yaw_of(d))
                     }
                 };
-                Unit { service: Service::of(i), duty: car.duty, at, yaw, vid: car.vid, tag: self.plans[i].tag, siren: car.mood == Mood::Responding }
+                Unit { service: Service::of(i), kind: car.kind, duty: car.duty, at, yaw, vid: car.vid, tag: self.plans[i].tag, siren: car.mood == Mood::Responding }
             })
             .collect();
     }

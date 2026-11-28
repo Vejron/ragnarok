@@ -228,6 +228,12 @@ export const KIND_OFFICER = 52
  */
 export const KIND_MEDIC = 53
 
+/**
+ * A police van: a Transporter van in police white and blue with a light bar and a siren, which
+ * brings four armed officers.
+ */
+export const KIND_POLICE_VAN = 54
+
 /** Fixed simulation rate, in ticks per second. */
 export const TICK_RATE = 60
 
@@ -2998,6 +3004,31 @@ export const POLICE_CAR_MAX_SPEED = 41.5
 
 /** The driver on the left, then the passengers, front to back. */
 export const POLICE_CAR_SEAT_HEADS = [[-0.38, 0.67, 0.0], [0.38, 0.67, 0.0], [-0.4, 0.65, 0.88], [0.4, 0.65, 0.88], [0.0, 0.65, 0.88]] as const
+
+/**
+ * The police van (`KIND_POLICE_VAN`): a Volkswagen Transporter T3 in police white with a blue
+ * stripe and a light bar on its roof, which brings a squad of four armed officers for a suspect
+ * with four stars or more (EMERGENCY.md). The same body, weight and springs as the Transporter
+ * (`transporter.rs`) and its seven seats behind glass: the driver and a passenger over the front
+ * wheels, then two by the sliding door and three at the back. As fast flat out as the ambulance.
+ */
+export const POLICE_VAN_SEATS = 7
+export const POLICE_VAN_HALF_EXTENTS = [0.92, 0.5, 2.25] as const
+export const POLICE_VAN_WHEEL_RADIUS = 0.33
+export const POLICE_VAN_TRACK_HALF = 0.785
+export const POLICE_VAN_AXLE_Z = 1.23
+export const POLICE_VAN_HARD_POINT_Y = 0.0
+export const POLICE_VAN_SUSPENSION_REST = 0.486
+
+/** Measured by `ride_heights_differ_between_cars` in vehicle.rs. */
+export const POLICE_VAN_RIDE_HEIGHT = 0.685
+export const POLICE_VAN_MAX_STEER = 0.6
+
+/** Flat out, m/s: the ambulance's, a little more than the Transporter's. */
+export const POLICE_VAN_MAX_SPEED = 34.0
+
+/** The driver on the left, then the passengers, front to back. */
+export const POLICE_VAN_SEAT_HEADS = [[-0.45, 0.87, -1.25], [0.45, 0.87, -1.25], [-0.4, 0.87, 0.05], [0.4, 0.87, 0.05], [-0.5, 0.87, 1.15], [0.0, 0.87, 1.15], [0.5, 0.87, 1.15]] as const
 
 /**
  * The raft (`KIND_RAFT`): a small inflatable river-rafting boat for two, 3.6 m long and 1.6 m across

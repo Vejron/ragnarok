@@ -447,7 +447,7 @@ impl Game {
                 EmergencyCall::Officer { id, feet, yaw, officer } => {
                     let hp = self.crew_hp(id);
                     // Armed, and after one person only; no coming back from the dead either.
-                    self.world.entities.spawn(id, Player::new("Police".into(), 0, TEAM_SERVICES, vec![[feet[0], feet[2]].map(to_cm)], hotbar_of(officer_loadout(officer.seat))));
+                    self.world.entities.spawn(id, Player::new("Police".into(), 0, TEAM_SERVICES, vec![[feet[0], feet[2]].map(to_cm)], hotbar_of(officer_loadout(officer.heavy, officer.seat))));
                     // A soldier's mind too, for when it comes to shooting (`Officer::armed`): steady,
                     // a fair shot, and at home where they got out.
                     let temper = Temper::rolled(|| self.world.rng.next_f64() as f32);

@@ -7,6 +7,8 @@
 //!   off in long runs until it is far enough. Then it keeps down and watches, and once it has not
 //!   seen the threat for a while it goes back to looking for whoever it was after. Kept down out of
 //!   a tank's way, it fires on it now and then with what it has, for all the good that does.
+//! - **An officer** (`emergency::officers`) who has nothing for a tank does not hide from it: they
+//!   back off to `OFFICER_KEEP_AWAY` and stay in sight of it there, firing on it most of the time.
 
 use super::*;
 use crate::game::Threat;
@@ -34,6 +36,13 @@ const THERE: f32 = 2.0;
 /// and waits this long between.
 const HARASS_FIRE: [f32; 2] = [1.5, 3.0];
 const HARASS_WAIT: [f32; 2] = [3.0, 6.0];
+/// A police officer is far enough from a tank at this distance, metres, and stays where they can
+/// see it; they fire on it for this long, seconds at the least and the most, and wait this long between.
+const OFFICER_KEEP_AWAY: f32 = 40.0;
+/// They back off this much further than that, metres, so as not to be at the edge of it.
+const OFFICER_MARGIN: f32 = 5.0;
+const OFFICER_HARASS_FIRE: [f32; 2] = [2.0, 4.0];
+const OFFICER_HARASS_WAIT: [f32; 2] = [1.0, 2.0];
 
 /// A vehicle on the move: its id, where it is and how fast it goes which way, m/s.
 pub(super) type Mover = (u32, [f32; 3], [f32; 3]);
@@ -97,12 +106,12 @@ pub(super) fn start_dodge(bot: &mut Bot, yaw: f32) {
 }
 
 /// It gets away from where it last saw its threat: from a tank it cannot fight, for as long as it
-/// keeps seeing one; or, broken, for a few seconds.
-pub(super) fn start(world: &mut World, bot: &mut Bot, broken: bool) {
+/// keeps seeing one; or, broken, for a few seconds. An `officer` is sooner to fire on the tank.
+pub(super) fn start(world: &mut World, bot: &mut Bot, broken: bool, officer: bool) {
     let left = if broken { lerp(FLEE_FOR[0], FLEE_FOR[1], world.rng.next_f64() as f32) } else { EVADE_FOR };
     if bot.mode != BotMode::Evade {
         // It waits a spell before it fires on what it gets away from.
-        (bot.bound, bot.bounding) = (ticks_between(world, HARASS_WAIT), false);
+        (bot.bound, bot.bounding) = (ticks_between(world, if officer { OFFICER_HARASS_WAIT } else { HARASS_WAIT }), false);
         bot.cover = None;
         bot.flank = None;
         bot.walk.path.clear();
@@ -113,11 +122,15 @@ pub(super) fn start(world: &mut World, bot: &mut Bot, broken: bool) {
     bot.mode_left = (left * TICK_RATE as f32) as u32;
 }
 
-/// One tick of getting away: where to run to, or the input for keeping down where it is.
+/// One tick of getting away: where to run to, or the input for keeping down where it is. An
+/// `officer` gets no further from a tank than `OFFICER_KEEP_AWAY`, and does not hide from it.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn plan(world: &mut World, id: u32, bot: &mut Bot, at: [f32; 3], dt: f32, rays: &mut usize, budget: &mut usize, idle: InputFrame) -> Result<([f32; 3], bool), InputFrame> {
+pub(super) fn plan(world: &mut World, id: u32, bot: &mut Bot, at: [f32; 3], dt: f32, rays: &mut usize, budget: &mut usize, idle: InputFrame, officer: bool) -> Result<([f32; 3], bool), InputFrame> {
     let threat = bot.sight.last_seen;
     let armour = bot.sight.threat == Threat::Armour;
+    // An officer stands off from a tank in the open, to go on firing at it.
+    let stands_off = officer && armour;
+    let keep_away = if stands_off { OFFICER_KEEP_AWAY } else { KEEP_AWAY };
     if armour && bot.sight.sees {
         bot.mode_left = bot.mode_left.max((EVADE_FOR * TICK_RATE as f32) as u32);
     }
@@ -131,24 +144,32 @@ pub(super) fn plan(world: &mut World, id: u32, bot: &mut Bot, at: [f32; 3], dt: 
     }
     let far = distance_2d(at, threat);
     if bot.cover.is_none() {
-        bot.cover = cover::find(world, bot, at, threat, rays, budget);
-        if bot.cover.is_none() && (far < KEEP_AWAY || bot.sight.sees) {
+        bot.cover = if stands_off { None } else { cover::find(world, bot, at, threat, rays, budget) };
+        if bot.cover.is_none() && (far < keep_away || (bot.sight.sees && !stands_off)) {
             let slant = if id.is_multiple_of(2) { SLANT } else { -SLANT };
             bot.cover = crate::mechanics::civilians::away(world, at, threat, slant);
+        }
+        // An officer goes only as far as is far enough, not the whole of a run, and so keeps the
+        // tank in sight.
+        if stands_off && let Some(spot) = bot.cover {
+            let share = ((keep_away + OFFICER_MARGIN - far) / distance_2d(at, spot).max(0.1)).clamp(0.0, 1.0);
+            let (x, z) = (at[0] + (spot[0] - at[0]) * share, at[2] + (spot[2] - at[2]) * share);
+            bot.cover = crate::mechanics::life::open_ground(world, x, z).map(|floor| [x, floor + sim::STANDING_Y, z]).or(bot.cover);
         }
         bot.walk.path.clear();
         new_goal(bot);
     }
     let Some(spot) = bot.cover else {
-        // Nowhere to go and far enough: down where it is, watching.
+        // Nowhere to go and far enough: down where it is, watching. Flat on the ground for a tank,
+        // but for an officer, who kneels to keep it in sight.
         bot.yaw = turn_towards(bot.yaw, heading(at, threat), TURN_RATE * dt);
-        return Err(InputFrame { yaw: to_mrad(bot.yaw), buttons: if armour { BUTTON_PRONE } else { BUTTON_CROUCH }, ..idle });
+        return Err(InputFrame { yaw: to_mrad(bot.yaw), buttons: if armour && !stands_off { BUTTON_PRONE } else { BUTTON_CROUCH }, ..idle });
     };
     if distance_2d(at, spot) < THERE {
         // There: down, watching, unless it is in plain sight of what it runs from close by, when it
         // runs on.
         let eye = [threat[0], threat[1] + EYE_HEIGHT, threat[2]];
-        let seen = (world.tick + id).is_multiple_of(LOOK_EVERY) && far < KEEP_AWAY && clear_line_past(world, eye, [at[0], at[1] + EYE_HEIGHT - CROUCH_EYE_DROP, at[2]], bot.sight.vehicle);
+        let seen = (world.tick + id).is_multiple_of(LOOK_EVERY) && far < keep_away && clear_line_past(world, eye, [at[0], at[1] + EYE_HEIGHT - CROUCH_EYE_DROP, at[2]], bot.sight.vehicle);
         if seen {
             bot.cover = None;
             return Err(idle);
@@ -160,8 +181,9 @@ pub(super) fn plan(world: &mut World, id: u32, bot: &mut Bot, at: [f32; 3], dt: 
 }
 
 /// Whether bot `bot`, at `at`, kept down out of the way of a tank it can see and is not too near,
-/// fires on it this tick: in spells now and then, with whatever else it has.
-pub(super) fn harass(world: &mut World, bot: &mut Bot, at: [f32; 3]) -> bool {
+/// fires on it this tick: in spells now and then, with whatever else it has. An `officer`'s spells
+/// are longer and the waits between them short.
+pub(super) fn harass(world: &mut World, bot: &mut Bot, at: [f32; 3], officer: bool) -> bool {
     let holding = bot.cover.is_none_or(|spot| distance_2d(at, spot) < THERE);
     if bot.mode != BotMode::Evade || bot.sight.threat != Threat::Armour || !bot.sight.sees || !holding || distance_2d(at, bot.sight.last_seen) < TOO_CLOSE {
         return false;
@@ -169,7 +191,13 @@ pub(super) fn harass(world: &mut World, bot: &mut Bot, at: [f32; 3]) -> bool {
     bot.bound = bot.bound.saturating_sub(1);
     if bot.bound == 0 {
         bot.bounding = !bot.bounding;
-        bot.bound = ticks_between(world, if bot.bounding { HARASS_FIRE } else { HARASS_WAIT });
+        let spell = match (bot.bounding, officer) {
+            (true, false) => HARASS_FIRE,
+            (false, false) => HARASS_WAIT,
+            (true, true) => OFFICER_HARASS_FIRE,
+            (false, true) => OFFICER_HARASS_WAIT,
+        };
+        bot.bound = ticks_between(world, spell);
     }
     bot.bounding
 }

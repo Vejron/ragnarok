@@ -13,10 +13,10 @@ import { CarModel, parseCarModel } from '@/render/car'
 import { DAY_SECONDS } from '@/render/daynight'
 import { Particles } from '@/render/particles'
 import { Skidmarks } from '@/render/skidmarks'
-import { AMBULANCE_HALF_EXTENTS, POLICE_CAR_HALF_EXTENTS, TICK_RATE } from '@/sim/consts'
+import { AMBULANCE_HALF_EXTENTS, POLICE_CAR_HALF_EXTENTS, POLICE_VAN_HALF_EXTENTS, TICK_RATE } from '@/sim/consts'
 
 beforeAll(async () => {
-  for (const name of ['police_car', 'ambulance', 'volvo_240'] as const) {
+  for (const name of ['police_car', 'ambulance', 'police_van', 'volvo_240'] as const) {
     const bytes = readFileSync(resolve(process.cwd(), `public/models/${name}.glb`))
     const copy = new Uint8Array(bytes.length)
     copy.set(bytes)
@@ -75,9 +75,9 @@ function harness() {
   return { store, draw, lenses, wailing, dropped, vehicles }
 }
 
-describe('the light bar of a police car or an ambulance', () => {
+describe('the light bar of a police car, a police van or an ambulance', () => {
   it('is two lenses on the roof, one each side, which no other car has', () => {
-    for (const [name, half] of [['police_car', POLICE_CAR_HALF_EXTENTS], ['ambulance', AMBULANCE_HALF_EXTENTS]] as const) {
+    for (const [name, half] of [['police_car', POLICE_CAR_HALF_EXTENTS], ['ambulance', AMBULANCE_HALF_EXTENTS], ['police_van', POLICE_VAN_HALF_EXTENTS]] as const) {
       const car = new CarModel(name, 1)
       car.update([0, 0, 0], [0, 0, 0, 1], 0)
       expect(car.hasBeacons).toBe(true)

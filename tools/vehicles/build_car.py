@@ -84,6 +84,8 @@ SPECS = {
     # POLICE_CAR_* and AMBULANCE_* (VEHICLES-XXV.md): the Volvo 240's and the Transporter's bodies.
     "police_car": dict(half=(0.86, 0.36, 2.4), wheel_radius=0.32, wheel_width=0.2, track=0.73, axle=1.32, ride=0.506),
     "ambulance": dict(half=(0.92, 0.5, 2.25), wheel_radius=0.33, wheel_width=0.21, track=0.785, axle=1.23, ride=0.685),
+    # POLICE_VAN_* (VEHICLES-XXVI.md): the Transporter's body again.
+    "police_van": dict(half=(0.92, 0.5, 2.25), wheel_radius=0.33, wheel_width=0.21, track=0.785, axle=1.23, ride=0.685),
 }
 
 MATERIAL_COLORS = {
@@ -949,6 +951,7 @@ HEADS = {
     "sports": [(-0.37, 0.72, 0.1), (0.37, 0.72, 0.1), (-0.38, 0.66, 0.85), (0.38, 0.66, 0.85)],
     "police_car": [(-0.38, 0.67, 0.0), (0.38, 0.67, 0.0), (-0.4, 0.65, 0.88), (0.4, 0.65, 0.88), (0.0, 0.65, 0.88)],
     "ambulance": [(-0.45, 0.87, -1.25), (0.45, 0.87, -1.25), (-0.4, 0.87, 0.05), (0.4, 0.87, 0.05), (-0.5, 0.87, 1.15), (0.0, 0.87, 1.15), (0.5, 0.87, 1.15)],
+    "police_van": [(-0.45, 0.87, -1.25), (0.45, 0.87, -1.25), (-0.4, 0.87, 0.05), (0.4, 0.87, 0.05), (-0.5, 0.87, 1.15), (0.0, 0.87, 1.15), (0.5, 0.87, 1.15)],
 }
 
 
@@ -2077,6 +2080,7 @@ HEADS = {
     "sports": [(-0.37, 0.72, 0.1), (0.37, 0.72, 0.1), (-0.38, 0.66, 0.85), (0.38, 0.66, 0.85)],
     "police_car": [(-0.38, 0.67, 0.0), (0.38, 0.67, 0.0), (-0.4, 0.65, 0.88), (0.4, 0.65, 0.88), (0.0, 0.65, 0.88)],
     "ambulance": [(-0.45, 0.87, -1.25), (0.45, 0.87, -1.25), (-0.4, 0.87, 0.05), (0.4, 0.87, 0.05), (-0.5, 0.87, 1.15), (0.0, 0.87, 1.15), (0.5, 0.87, 1.15)],
+    "police_van": [(-0.45, 0.87, -1.25), (0.45, 0.87, -1.25), (-0.4, 0.87, 0.05), (0.4, 0.87, 0.05), (-0.5, 0.87, 1.15), (0.0, 0.87, 1.15), (0.5, 0.87, 1.15)],
 }
 
 
@@ -2984,7 +2988,28 @@ def build_ambulance():
     return [*objects, *beacons]
 
 
-BUILDERS = {"amv": build_amv, "bus": build_bus, "jeep": build_jeep, "sports": build_sports, "roadster": build_roadster, "snowmobile": build_snowmobile, "golf_cart": build_golf_cart, "technical": build_technical, "snowracer": build_snowracer, "epa": build_epa, "saab_900": build_saab_900, "saab_9000": build_saab_9000, "volvo_240": build_volvo_240, "volvo_740": build_volvo_740, "gti": build_gti, "transporter": build_transporter, "kadett": build_kadett, "omega": build_omega, "sierra": build_sierra, "escort": build_escort, "police_car": build_police_car, "ambulance": build_ambulance}
+def build_police_van():
+    blue, lens = livery("blue", (0.05, 0.16, 0.5)), livery("beacon", (0.08, 0.25, 0.9))
+    beacons = []
+
+    def details(body, c):
+        hx, z, y_of = c["hx"], c["z"], c["y_of"]
+        # The sliding door's track on the right and the second grille under the windscreen, as the van's.
+        body.decal((hx + 0.004, y_of(2.35), z(1.09)), (1.4, 0.03), (1, 0, 0), DARK)
+        body.decal((0.0, c["face"] + 0.002, z(0.99)), (1.4, 0.06), (0, 1, 0), DARK)
+        light_bar(body, y_of(0.95), z(c["roof"]), 0.6, lens, beacons)
+        # The police car's blue stripe down each side under the windows, and POLIS on the panels
+        # between the cab's doors and the back wheels.
+        a0, a1 = 0.15, 2 * c["hz"] - 0.15
+        mirrored_decal(body, hx + 0.004, y_of((a0 + a1) / 2), z(0.84), (a1 - a0, 0.12), (1, 0, 0), blue)
+        lettering(body, "POLIS", (-hx - 0.004, y_of(2.3), z(0.58)), (0, -1, 0), (0, 0, 1), 0.22, blue)
+        lettering(body, "POLIS", (hx + 0.004, y_of(2.3), z(0.58)), (0, 1, 0), (0, 0, 1), 0.22, blue)
+
+    objects = build_saloon("police_van", transporter_shape(), HEADS["police_van"], details)
+    return [*objects, *beacons]
+
+
+BUILDERS = {"amv": build_amv, "bus": build_bus, "jeep": build_jeep, "sports": build_sports, "roadster": build_roadster, "snowmobile": build_snowmobile, "golf_cart": build_golf_cart, "technical": build_technical, "snowracer": build_snowracer, "epa": build_epa, "saab_900": build_saab_900, "saab_9000": build_saab_9000, "volvo_240": build_volvo_240, "volvo_740": build_volvo_740, "gti": build_gti, "transporter": build_transporter, "kadett": build_kadett, "omega": build_omega, "sierra": build_sierra, "escort": build_escort, "police_car": build_police_car, "ambulance": build_ambulance, "police_van": build_police_van}
 
 
 # --------------------------------------------------------------------------------------------------

@@ -45,7 +45,7 @@ pub use dealers::Dealers;
 pub use civilians::{CIVILIAN_SLANT, Civilian, Civilians, is_noncombatant};
 pub use buses::{Bus, BusCall, BusDriver, Buses};
 pub use bots::{Bots, DRIVER, GUNNER, nearest_waypoint, road_route};
-pub use combat::{Combat, bearing, position_of};
+pub use combat::{Combat, armoured, bearing, position_of};
 #[cfg(test)]
 pub use combat::{cook_off, damage_object, damage_vehicle};
 #[cfg(test)]

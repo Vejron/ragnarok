@@ -44,6 +44,7 @@ pub use crate::vehicles::sierra::*;
 pub use crate::vehicles::escort::*;
 pub use crate::vehicles::police_car::*;
 pub use crate::vehicles::ambulance::*;
+pub use crate::vehicles::police_van::*;
 
 /// Wire schema version. Bumped on any incompatible protocol or world-format change.
 pub const PROTOCOL_VERSION: u8 = 105;
@@ -179,6 +180,9 @@ pub const KIND_OFFICER: u8 = 52;
 /// An ambulance medic on foot or in a seat: a person the server runs, drawn as a soldier in green
 /// and yellow. Replicated as a civilian is.
 pub const KIND_MEDIC: u8 = 53;
+/// A police van: a Transporter van in police white and blue with a light bar and a siren, which
+/// brings four armed officers.
+pub const KIND_POLICE_VAN: u8 = 54;
 
 /// Fixed simulation rate, in ticks per second.
 pub const TICK_RATE: u32 = 60;

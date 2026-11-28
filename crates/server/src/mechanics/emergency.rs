@@ -10,8 +10,9 @@
 //!   enough to see any of it, the casualties are simply gone when the ambulance has arrived.
 //! - **The wanted.** A player who does what the police will not have (`wanted`) is theirs to
 //!   catch: police cars are sent to where they were last seen, more of them the more stars the
-//!   player has, and follow by road as they are seen elsewhere. Parked near them, a car's two
-//!   officers get out (`officers`) to arrest or to shoot. One rule ends every chase: a unit whose
+//!   player has, and from four stars police vans too, and follow by road as they are seen
+//!   elsewhere. Parked near them, a car's two officers get out with their revolvers (`officers`)
+//!   to arrest or to shoot, and a van's four with rifles and Carl Gustafs. One rule ends every chase: a unit whose
 //!   suspect is wanted no more goes home, whether they died, were arrested, got away or left.
 
 mod medics;
@@ -19,7 +20,7 @@ mod officers;
 mod wanted;
 
 use super::Mechanic;
-use super::traffic::{Duty, FleetOrder, Service, viewers};
+use super::traffic::{Duty, FleetOrder, Service, crew_size, viewers};
 use super::vehicles::exit_position;
 use crate::entities::With;
 use crate::game::{Noise, Player, Seats, Vehicle, World};
@@ -37,7 +38,7 @@ pub const TEAM_SERVICES: u8 = 254;
 /// What the medics and officers are drawn as, `KIND_*`.
 pub const MEDIC_KIND: u8 = KIND_MEDIC;
 pub const OFFICER_KIND: u8 = KIND_OFFICER;
-/// A police car parked within this of where its suspect was last seen puts its officers out,
+/// A police car or van parked within this of where its suspect was last seen puts its officers out,
 /// metres; one further off is sent on first.
 const DEPLOY_WITHIN: f32 = 60.0;
 /// A police car on its way pulls over where it is once it is this near where it looks for its
@@ -233,7 +234,7 @@ fn boarding(world: &World, id: u32, unit: usize) -> Option<(u32, usize)> {
     let vid = world.fleet.units.get(unit).filter(|unit| unit.duty == Duty::OnScene)?.vid?;
     let at = world.entities.get::<Player>(id).filter(|_| world.entities.alive(id))?.character.position;
     let crew = super::traffic::crew_of(world, vid);
-    (0..2)
+    (0..crew_size(world.fleet.units[unit].kind))
         .filter(|seat| !crew.iter().any(|&(_, taken)| taken == *seat))
         .filter_map(|seat| door(world, vid, seat).map(|(feet, _)| (seat, distance_2d(at, feet))))
         .filter(|&(_, off)| off < BY_DOOR)
@@ -342,8 +343,9 @@ impl Emergency {
                 called_off.push(unit);
                 continue;
             }
-            // In sight and near: the car goes straight for them, across whatever is between.
-            let near = at.vid.is_some() && in_sight.contains(&suspect) && now.is_some_and(|p| distance_2d(at.at, p) < CHASE_WITHIN);
+            // In sight and near: the car goes straight for them, across whatever is between. Not
+            // for one in a tank: it keeps to the road, and stops well short of them.
+            let near = at.vid.is_some() && in_sight.contains(&suspect) && now.is_some_and(|p| distance_2d(at.at, p) < CHASE_WITHIN) && !crate::mechanics::armoured(world, suspect);
             match at.duty {
                 Duty::Chasing => {
                     self.sent_on[unit] = false;
@@ -375,10 +377,11 @@ impl Emergency {
                         world.fleet.orders.push(FleetOrder::Redirect { unit, to: seen_at });
                         self.sent_on[unit] = true;
                     } else if let Some(vid) = at.vid {
-                        // Both of the crew at once, by their own doors.
+                        // All of the crew at once, by their own doors: a van's with what a fight takes.
                         let yaw = world.physics.car_pose(vid).map_or(0.0, |pose| pose.yaw());
-                        for seat in 0..2 {
-                            let call = EmergencyCall::Officer { id: 0, feet: [0.0; 3], yaw, officer: Box::new(Officer::new(unit, suspect, seat, yaw)) };
+                        let heavy = at.kind == KIND_POLICE_VAN;
+                        for seat in 0..crew_size(at.kind) {
+                            let call = EmergencyCall::Officer { id: 0, feet: [0.0; 3], yaw, officer: Box::new(Officer::new(unit, suspect, seat, yaw, heavy)) };
                             if let Some(id) = self.put_out(world, vid, seat, call) {
                                 self.crews[unit].push(id);
                             }
@@ -392,14 +395,33 @@ impl Emergency {
         if !full {
             return;
         }
-        // More cars for whoever has fewer than their stars call for, the most wanted first, from
-        // ahead of where they are going.
+        // More cars, and from four stars vans, for whoever has fewer than their stars call for, the
+        // most wanted first, from ahead of where they are going.
+        let mut hailed: Vec<usize> = Vec::new();
         for &(id, heat, to) in &hunted {
             let star = wanted::stars_of(heat).clamp(1, 5) as usize;
-            let have = units.iter().enumerate().filter(|&(unit, at)| at.tag == id && !called_off.contains(&unit)).count();
+            let have = |kind: u8| units.iter().enumerate().filter(|&(unit, at)| at.tag == id && at.kind == kind && !called_off.contains(&unit)).count();
             let ahead = Some(world.entities.get::<Wanted>(id).map_or([0.0; 2], |wanted| wanted.heading));
-            for _ in 0..wanted::CARS[star - 1].saturating_sub(have).min(SENDS_PER_SECOND) {
-                world.fleet.orders.push(FleetOrder::Send { service: Service::Police, to, tag: id, ahead });
+            let cars = wanted::CARS[star - 1].saturating_sub(have(KIND_POLICE_CAR));
+            let vans = wanted::VANS[star - 1].saturating_sub(have(KIND_POLICE_VAN));
+            let short = std::iter::repeat_n(KIND_POLICE_CAR, cars).chain(std::iter::repeat_n(KIND_POLICE_VAN, vans));
+            for kind in short.take(SENDS_PER_SECOND) {
+                // One that was let go and is still driving off near by is the one that answers,
+                // where it is: the police a player fires on as they leave do not drive on.
+                let leaving = units
+                    .iter()
+                    .enumerate()
+                    .filter(|&(unit, at)| at.service == Service::Police && at.kind == kind && at.duty == Duty::Leaving && at.tag == 0 && at.vid.is_some() && !hailed.contains(&unit))
+                    .map(|(unit, at)| (unit, distance_2d(at.at, to)))
+                    .filter(|&(_, off)| off < CHASE_WITHIN)
+                    .min_by(|a, b| a.1.total_cmp(&b.1));
+                match leaving {
+                    Some((unit, _)) => {
+                        hailed.push(unit);
+                        world.fleet.orders.push(FleetOrder::Hail { unit, tag: id });
+                    }
+                    None => world.fleet.orders.push(FleetOrder::Send { service: Service::Police, kind, to, tag: id, ahead }),
+                }
             }
         }
     }
@@ -475,7 +497,7 @@ impl Emergency {
             if incident.casualties.is_empty() || age > ticks(GIVE_UP + MERGE_FOR) || (incident.lost.is_none() && age > ticks(GIVE_UP)) {
                 incident.done = true;
             } else if waited && world.fleet.ambulance {
-                world.fleet.orders.push(FleetOrder::Send { service: Service::Ambulance, to: incident.at, tag: incident.tag, ahead: None });
+                world.fleet.orders.push(FleetOrder::Send { service: Service::Ambulance, kind: KIND_AMBULANCE, to: incident.at, tag: incident.tag, ahead: None });
             }
             return;
         };

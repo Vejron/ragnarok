@@ -13,7 +13,7 @@ use crate::consts::*;
 use crate::mounts::{Aim, Ammo, Dial, Eye, Fire, MountDef, Muzzle, Need, Refill, Show};
 use crate::items::*;
 use crate::protocol::{
-    KIND_AIR_AMBULANCE, KIND_AMBULANCE, KIND_POLICE_CAR, KIND_AMV, KIND_BUS, KIND_CB90, KIND_DRONE, KIND_EPA, KIND_SAAB_900, KIND_SAAB_9000, KIND_VOLVO_240, KIND_VOLVO_740, KIND_GTI, KIND_TRANSPORTER, KIND_KADETT, KIND_OMEGA, KIND_SIERRA, KIND_ESCORT, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MISSILE, KIND_MORTAR, KIND_PAK, KIND_PBV, KIND_PLANE, KIND_RAFT, KIND_ROADSTER, KIND_SEAPLANE, KIND_SHIP, KIND_SHIP_GUN, KIND_SNOWMOBILE, KIND_SNOWRACER, KIND_SPORTS, KIND_STRF, KIND_STRV, KIND_SUBMARINE, KIND_TANK, KIND_TECHNICAL, KIND_TITAN, KIND_TUPP, KIND_WALKER, PROJECTILE_AMV_BOMB, PROJECTILE_BALL, PROJECTILE_BOMB, PROJECTILE_CANNON, PROJECTILE_CANNON_AP,
+    KIND_AIR_AMBULANCE, KIND_AMBULANCE, KIND_POLICE_CAR, KIND_POLICE_VAN, KIND_AMV, KIND_BUS, KIND_CB90, KIND_DRONE, KIND_EPA, KIND_SAAB_900, KIND_SAAB_9000, KIND_VOLVO_240, KIND_VOLVO_740, KIND_GTI, KIND_TRANSPORTER, KIND_KADETT, KIND_OMEGA, KIND_SIERRA, KIND_ESCORT, KIND_GOLF_CART, KIND_HELI, KIND_HEN, KIND_JEEP, KIND_LOITER, KIND_MISSILE, KIND_MORTAR, KIND_PAK, KIND_PBV, KIND_PLANE, KIND_RAFT, KIND_ROADSTER, KIND_SEAPLANE, KIND_SHIP, KIND_SHIP_GUN, KIND_SNOWMOBILE, KIND_SNOWRACER, KIND_SPORTS, KIND_STRF, KIND_STRV, KIND_SUBMARINE, KIND_TANK, KIND_TECHNICAL, KIND_TITAN, KIND_TUPP, KIND_WALKER, PROJECTILE_AMV_BOMB, PROJECTILE_BALL, PROJECTILE_BOMB, PROJECTILE_CANNON, PROJECTILE_CANNON_AP,
     PROJECTILE_EGG, PROJECTILE_HE, PROJECTILE_MORTAR, PROJECTILE_ROTARY, PROJECTILE_SHELL, WEAPON_AUTOCANNON, WEAPON_DRONE, WEAPON_LASER, WEAPON_LOITER, WEAPON_MG, WEAPON_MISSILE, WEAPON_ROCKET, WEAPON_SHELL,
 };
 
@@ -62,6 +62,7 @@ pub mod sierra;
 pub mod escort;
 pub mod police_car;
 pub mod ambulance;
+pub mod police_van;
 
 pub use spec::{Airframe, Arms, Boat, Boost, BOOST_DRAIN, BOOST_FULL, BOOST_REFILL, Buttons, Drive, Feet, Floats, Gait, Jets, Lift, Role, Rotorcraft, Runners, Shape, Skim, Solid, Spec, Springs, Step, Swim, STEER_FADE};
 pub use crate::armor::{ALLOY, Armor, Box3, GLAZED, Module, On, Part, Pen, Plate, SHEET, SOFT, Zone};
@@ -385,6 +386,7 @@ pub static VEHICLES: &[VehicleDef] = &[
     escort::ESCORT,
     police_car::POLICE_CAR,
     ambulance::AMBULANCE,
+    police_van::POLICE_VAN,
 ];
 
 /// Where each kind id's definition is in `VEHICLES`: 0, the jeep's, for ids that are not a vehicle.
@@ -451,7 +453,7 @@ mod tests {
     #[test]
     fn every_door_hangs_on_its_cars_side_by_a_front_seat_and_opens_onto_the_ground_beside_it() {
         let with_doors: Vec<&VehicleDef> = VEHICLES.iter().filter(|def| !def.doors.is_empty()).collect();
-        assert_eq!(with_doors.len(), 13, "every saloon has its front doors");
+        assert_eq!(with_doors.len(), 14, "every saloon has its front doors");
         for def in with_doors {
             let [hx, hy, hz] = def.spec.half_extents;
             assert_eq!(def.doors.len(), 2, "{}", def.name);
@@ -554,7 +556,7 @@ mod tests {
     #[test]
     fn only_the_wheeled_cars_have_a_swept_underside_and_it_leaves_a_flat_floor_between() {
         for def in VEHICLES {
-            let swept = [KIND_JEEP, KIND_SPORTS, KIND_ROADSTER, KIND_GOLF_CART, KIND_TECHNICAL, KIND_BUS, KIND_EPA, KIND_SAAB_900, KIND_SAAB_9000, KIND_VOLVO_240, KIND_VOLVO_740, KIND_GTI, KIND_TRANSPORTER, KIND_KADETT, KIND_OMEGA, KIND_SIERRA, KIND_ESCORT, KIND_POLICE_CAR, KIND_AMBULANCE].contains(&def.kind);
+            let swept = [KIND_JEEP, KIND_SPORTS, KIND_ROADSTER, KIND_GOLF_CART, KIND_TECHNICAL, KIND_BUS, KIND_EPA, KIND_SAAB_900, KIND_SAAB_9000, KIND_VOLVO_240, KIND_VOLVO_740, KIND_GTI, KIND_TRANSPORTER, KIND_KADETT, KIND_OMEGA, KIND_SIERRA, KIND_ESCORT, KIND_POLICE_CAR, KIND_AMBULANCE, KIND_POLICE_VAN].contains(&def.kind);
             assert_eq!(def.spec.sweep > 0.0, swept, "{}", def.name);
             // A hull has one shape: a sweep goes with no outline, bow or nose of its own.
             assert!(!swept || (def.spec.profile.is_empty() && def.spec.bow == 0.0 && def.spec.nose == 0.0), "{}", def.name);

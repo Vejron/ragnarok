@@ -273,6 +273,16 @@ fn police(game: &Game, suspect: u32) -> Vec<Duty> {
     game.world.fleet.units.iter().filter(|unit| unit.service == Service::Police && unit.tag == suspect).map(|unit| unit.duty).collect()
 }
 
+/// How many vehicles of `kind` are out for `suspect`.
+fn sent(game: &Game, suspect: u32, kind: u8) -> usize {
+    game.world.fleet.units.iter().filter(|unit| unit.tag == suspect && unit.kind == kind).count()
+}
+
+/// What officer `id` carries, slot by slot.
+fn carried(game: &Game, id: u32) -> [u8; shared::items::HOTBAR_SLOTS] {
+    game.world.entities.of::<Player>(id).hands.hotbar.map(|slot| slot.item)
+}
+
 /// `by` wounds `victim` with a rifle, taking `amount` of their health.
 fn shoot(game: &mut Game, by: u32, victim: u32, amount: u8) {
     damage_entity(&mut game.world, victim, Harm::new(amount, Some(by), WEAPON_RIFLE));
@@ -313,7 +323,7 @@ fn a_player_who_hurts_a_civilian_is_wanted_and_one_police_car_comes_for_them() {
 }
 
 #[test]
-fn each_worse_crime_is_another_star_and_more_police_cars_up_to_eight() {
+fn each_worse_crime_is_another_star_and_more_police_up_to_four_cars_and_four_vans() {
     let mut game = game(true);
     let soldier = join(&mut game, [215.0, 20.0]);
     let victims: Vec<u32> = (0..6).map(|n| civilian(&mut game, [205.0 + n as f32 * 2.0, 0.0])).collect();
@@ -328,7 +338,7 @@ fn each_worse_crime_is_another_star_and_more_police_cars_up_to_eight() {
     run(&mut game, 1.0);
     assert!(police(&game, soldier).len() <= 2, "two cars a second at most");
     run(&mut game, 5.0);
-    assert_eq!(police(&game, soldier).len(), 4, "as many as the stars call for");
+    assert_eq!((sent(&game, soldier, KIND_POLICE_CAR), sent(&game, soldier, KIND_POLICE_VAN)), (4, 0), "as many as the stars call for, and no vans yet");
     for &victim in &victims[2..] {
         shoot(&mut game, soldier, victim, PLAYER_MAX_HP);
     }
@@ -343,7 +353,7 @@ fn each_worse_crime_is_another_star_and_more_police_cars_up_to_eight() {
         assert!(game.world.entities.alive(soldier), "shot dead");
         assert!(police(&game, soldier).len() <= 8, "never more than eight");
     }
-    assert_eq!(police(&game, soldier).len(), 8);
+    assert_eq!((sent(&game, soldier, KIND_POLICE_CAR), sent(&game, soldier, KIND_POLICE_VAN)), (4, 4), "the four cars, and four vans on top of them");
     assert!(game.world.entities.of::<Wanted>(soldier).heat <= 200.0);
 }
 
@@ -489,7 +499,7 @@ fn firing_a_gun_is_a_crime_only_in_earshot_of_the_police_and_never_more_than_two
     assert_eq!(stars(&game, soldier), 0);
     // With a police car parked across the road, each burst is a little heat, up to two stars. (Into
     // the air: a round past an officer who has come for them is worse.)
-    game.world.fleet.orders.push(FleetOrder::Send { service: Service::Police, to: [200.0, 0.0, 20.0], tag: TAG_INCIDENT | 77, ahead: None });
+    game.world.fleet.orders.push(FleetOrder::Send { service: Service::Police, kind: KIND_POLICE_CAR, to: [200.0, 0.0, 20.0], tag: TAG_INCIDENT | 77, ahead: None });
     assert!(until(&mut game, 240.0, |game| game.world.fleet.units.iter().any(|unit| unit.tag == TAG_INCIDENT | 77 && unit.duty == Duty::OnScene && unit.vid.is_some())), "a police car is there");
     // (The police that come for it arrest whoever stands still, so the most heat there was is what counts.)
     let mut most = 0.0f32;
@@ -507,7 +517,7 @@ fn firing_a_gun_is_a_crime_only_in_earshot_of_the_police_and_never_more_than_two
 fn taking_a_police_car_is_a_crime_and_taking_a_car_of_the_traffic_only_where_the_police_see_it() {
     let mut game = game(true);
     let soldier = join(&mut game, [215.0, 20.0]);
-    game.world.fleet.orders.push(FleetOrder::Send { service: Service::Police, to: [200.0, 0.0, 20.0], tag: TAG_INCIDENT | 77, ahead: None });
+    game.world.fleet.orders.push(FleetOrder::Send { service: Service::Police, kind: KIND_POLICE_CAR, to: [200.0, 0.0, 20.0], tag: TAG_INCIDENT | 77, ahead: None });
     assert!(until(&mut game, 240.0, |game| game.world.fleet.units.iter().any(|unit| unit.tag == TAG_INCIDENT | 77 && unit.duty == Duty::OnScene && unit.vid.is_some())), "a police car is there");
     let vid = game.world.fleet.units.iter().find(|unit| unit.tag == TAG_INCIDENT | 77).and_then(|unit| unit.vid).unwrap();
     crate::mechanics::seat(&mut game.world, soldier, vid, 0);
@@ -637,6 +647,66 @@ fn the_police_who_get_out_are_the_ones_who_drove_and_leave_their_doors_open_and_
     assert!(until(&mut game, 3.0, |game| game.world.entities.get::<Vehicle>(vid).is_some_and(|vehicle| vehicle.doors.open == 0)), "with the doors pulled shut behind them");
 }
 
+#[test]
+fn officers_walking_back_to_their_car_turn_on_a_suspect_who_is_wanted_again() {
+    let mut game = game(true);
+    let (soldier, _) = lethal(&mut game);
+    let keep = |game: &mut Game| {
+        hold(game, soldier, [215.0, 20.0]);
+        game.world.entities.get_mut::<crate::entities::Health>(soldier).unwrap().hp = PLAYER_MAX_HP;
+    };
+    // They come away from their car after the suspect, who is then wanted no more.
+    for _ in 0..(4 * TICK_RATE) {
+        keep(&mut game);
+        game.step();
+    }
+    wanted::clear(&mut game.world, soldier);
+    keep(&mut game);
+    game.step();
+    let out = officers(&game);
+    assert!(!out.is_empty(), "some are still on their way back");
+    assert!(out.iter().all(|&id| !game.world.entities.of::<Officer>(id).armed), "and after nobody");
+    // A round into one of them, and another: three stars again, before they are in the car.
+    keep(&mut game);
+    shoot(&mut game, soldier, out[0], 20);
+    keep(&mut game);
+    shoot(&mut game, soldier, out[0], 20);
+    assert!(stars(&game, soldier) >= 3, "{} stars", stars(&game, soldier));
+    let vid = game.world.fleet.units[game.world.entities.of::<Officer>(out[0]).unit].vid.unwrap();
+    let aboard = crate::mechanics::traffic::crew_of(&game.world, vid).len();
+    let (mut armed, mut boarded) = (false, false);
+    for _ in 0..(3 * TICK_RATE) {
+        keep(&mut game);
+        game.step();
+        armed |= officers(&game).iter().any(|&id| game.world.entities.of::<Officer>(id).armed);
+        boarded |= crate::mechanics::traffic::crew_of(&game.world, vid).len() > aboard;
+    }
+    assert!(armed, "they are after the suspect again, to kill");
+    assert!(!boarded, "from where they were, without getting into the car first");
+    assert!(police(&game, soldier).contains(&Duty::OnScene), "and their car waits for them: {:?}", police(&game, soldier));
+}
+
+#[test]
+fn a_police_car_driving_off_stops_and_its_officers_get_out_when_it_is_shot_at() {
+    let mut game = game(true);
+    let soldier = suspect(&mut game, [215.0, 20.0], wanted::HEAT[0], [0.0; 2], 0.0);
+    let crew = |game: &Game, unit: usize| game.world.entities.all::<Officer>().filter(|(_, officer)| officer.unit == unit).count();
+    assert!(until(&mut game, 240.0, |game| !officers(game).is_empty()), "officers got out");
+    let unit = game.world.entities.of::<Officer>(officers(&game)[0]).unit;
+    let vid = game.world.fleet.units[unit].vid.unwrap();
+    // Wanted no more: they get back in, and the car is let go and drives off.
+    wanted::clear(&mut game.world, soldier);
+    assert!(until(&mut game, 90.0, |game| game.world.fleet.units[unit].duty == Duty::Leaving), "the car drives off");
+    assert_eq!(game.world.fleet.units[unit].vid, Some(vid), "still there to be seen");
+    // A round into the car as it goes: a star, and it is this car that answers.
+    crate::mechanics::damage_vehicle(&mut game.world, vid, 10, Some(soldier));
+    game.step();
+    assert_eq!(stars(&game, soldier), 1, "firing on a police car is a crime");
+    assert!(until(&mut game, 30.0, |game| crew(game, unit) == 2), "its officers get out again: {:?}", game.world.fleet.units[unit]);
+    assert_eq!(game.world.fleet.units[unit].tag, soldier, "for the one who fired on it");
+    assert_eq!(sent(&game, soldier, KIND_POLICE_CAR), 1, "and no other car is sent");
+}
+
 fn lethal(game: &mut Game) -> (u32, Vec<u32>) {
     let soldier = join(game, [215.0, 20.0]);
     let victims: Vec<u32> = (0..2).map(|n| civilian(game, [205.0 + n as f32 * 3.0, 0.0])).collect();
@@ -762,14 +832,26 @@ fn seen(game: &mut Game, id: u32, [x, z]: [f32; 2]) {
 }
 
 #[test]
-fn at_five_stars_eight_police_cars_are_after_you_within_five_seconds() {
+fn at_five_stars_four_police_cars_and_four_vans_are_after_you_within_five_seconds() {
     let mut game = game(true);
     let soldier = suspect(&mut game, [215.0, 20.0], 150.0, [0.0; 2], 0.0);
     for _ in 0..(5 * TICK_RATE) {
         hold(&mut game, soldier, [215.0, 20.0]);
         game.step();
     }
-    assert_eq!(police(&game, soldier).len(), 8);
+    assert_eq!((sent(&game, soldier, KIND_POLICE_CAR), sent(&game, soldier, KIND_POLICE_VAN)), (4, 4));
+}
+
+#[test]
+fn at_four_stars_two_police_vans_come_as_well_as_the_four_cars() {
+    let mut game = game(true);
+    let soldier = suspect(&mut game, [215.0, 20.0], wanted::HEAT[3], [0.0; 2], 0.0);
+    for _ in 0..(5 * TICK_RATE) {
+        hold(&mut game, soldier, [215.0, 20.0]);
+        game.step();
+    }
+    assert_eq!(stars(&game, soldier), 4);
+    assert_eq!((sent(&game, soldier, KIND_POLICE_CAR), sent(&game, soldier, KIND_POLICE_VAN)), (4, 2));
 }
 
 #[test]
@@ -930,29 +1012,166 @@ fn police_on_a_real_world() {
     }
 }
 
+/// A suspect with four stars stood on the road along the north of the block, and the four officers
+/// of the first police van to put its crew out by them. The suspect is kept alive and in the
+/// police's sight meanwhile.
+fn squad(game: &mut Game) -> (u32, usize, Vec<u32>) {
+    let soldier = suspect(game, [100.0, 150.0], wanted::HEAT[3], [0.0; 2], 0.0);
+    let of_van = |game: &Game| {
+        let unit = game.world.fleet.units.iter().position(|unit| unit.tag == soldier && unit.kind == KIND_POLICE_VAN && game.world.entities.all::<Officer>().filter(|(_, officer)| officer.unit == game.world.fleet.units.iter().position(|other| other == unit).unwrap()).count() == 4)?;
+        Some((unit, game.world.entities.all::<Officer>().filter(|(_, officer)| officer.unit == unit).map(|(id, _)| id).collect::<Vec<u32>>()))
+    };
+    for _ in 0..(120 * TICK_RATE) {
+        if of_van(game).is_some() {
+            break;
+        }
+        seen(game, soldier, [100.0, 150.0]);
+        game.world.entities.get_mut::<crate::entities::Health>(soldier).unwrap().hp = PLAYER_MAX_HP;
+        game.step();
+    }
+    let (unit, mut out) = of_van(game).expect("a police van put its four officers out");
+    out.sort_unstable();
+    (soldier, unit, out)
+}
+
 #[test]
-fn one_officer_of_a_car_carries_a_carl_gustaf_and_fires_it_at_a_suspect_who_takes_to_a_tank() {
+fn officers_of_a_police_car_carry_a_revolver_and_nothing_else() {
     let mut game = game(true);
-    let (soldier, out) = lethal(&mut game);
+    let (_, out) = lethal(&mut game);
+    for &officer in &out {
+        assert!(!game.world.entities.of::<Officer>(officer).heavy);
+        assert_eq!(carried(&game, officer), [shared::items::ITEM_REVOLVER, 0, 0, 0, 0], "at three stars too");
+    }
+}
+
+#[test]
+fn four_officers_get_out_of_a_police_van_each_with_a_rifle_and_two_with_a_carl_gustaf() {
+    use shared::items::{ITEM_AK5, ITEM_CARL_GUSTAF, ITEM_REVOLVER};
+    let mut game = game(true);
+    let (soldier, unit, out) = squad(&mut game);
+    assert_eq!(game.world.fleet.units[unit].duty, Duty::OnScene);
+    let mut seats: Vec<usize> = out.iter().map(|&officer| game.world.entities.of::<Officer>(officer).seat).collect();
+    seats.sort_unstable();
+    assert_eq!(seats, [0, 1, 2, 3], "one by each of its first four seats");
+    for &officer in &out {
+        let mind = game.world.entities.of::<Officer>(officer);
+        assert!(mind.heavy && mind.suspect == soldier);
+        let items = carried(&game, officer);
+        assert_eq!(items[..2], [ITEM_REVOLVER, ITEM_AK5], "a rifle each");
+        assert_eq!(items[2], if mind.seat % 2 == 1 { ITEM_CARL_GUSTAF } else { 0 }, "and a Carl Gustaf for every second one");
+    }
+    // Stood apart, not all on one spot.
+    let feet: Vec<[f32; 3]> = out.iter().map(|&officer| game.world.entities.of::<Player>(officer).character.position).collect();
+    let van = game.world.fleet.units[unit].at;
+    assert!(feet.iter().all(|at| distance_2d(*at, van) < 6.0), "beside their van: {feet:?} by {van:?}");
+    // The officers of the cars that came have their revolvers still.
+    let light: Vec<u32> = officers(&game).into_iter().filter(|&officer| !game.world.entities.of::<Officer>(officer).heavy).collect();
+    assert!(light.iter().all(|&officer| carried(&game, officer) == [ITEM_REVOLVER, 0, 0, 0, 0]));
+}
+
+#[test]
+fn a_vans_officers_all_get_back_in_and_it_drives_off_when_the_suspect_is_wanted_no_more() {
+    let mut game = game(true);
+    let (soldier, unit, out) = squad(&mut game);
+    let vid = game.world.fleet.units[unit].vid.unwrap();
+    wanted::clear(&mut game.world, soldier);
+    assert!(until(&mut game, 60.0, |game| crate::mechanics::traffic::crew_of(&game.world, vid).len() == 4), "all four are back in: {:?}", crate::mechanics::traffic::crew_of(&game.world, vid));
+    let mut back: Vec<u32> = crate::mechanics::traffic::crew_of(&game.world, vid).into_iter().map(|(id, _)| id).collect();
+    back.sort_unstable();
+    assert_eq!(back, out, "the same four");
+    let mut seats: Vec<usize> = crate::mechanics::traffic::crew_of(&game.world, vid).into_iter().map(|(_, seat)| seat).collect();
+    seats.sort_unstable();
+    assert_eq!(seats, [0, 1, 2, 3], "each in a seat of their own");
+    assert!(until(&mut game, 30.0, |game| game.world.fleet.units[unit].duty != Duty::OnScene), "and it drives off");
+}
+
+#[test]
+fn an_officer_of_a_van_fires_a_carl_gustaf_at_a_suspect_who_takes_to_a_tank() {
+    let mut game = game(true);
+    let (soldier, _, out) = squad(&mut game);
     let tube = |game: &Game, officer: u32| game.world.entities.get::<Player>(officer).and_then(|player| player.hands.hotbar.iter().find(|slot| slot.item == shared::items::ITEM_CARL_GUSTAF).map(|slot| slot.count));
     let carriers: Vec<u32> = out.iter().copied().filter(|&officer| tube(&game, officer).is_some()).collect();
-    assert_eq!(carriers.len(), 1, "one of the two carries one");
-    let rounds = tube(&game, carriers[0]).unwrap();
-    let y = game.world.map.ground.height_at(215.0, 20.0) + 1.0;
-    let tank = crate::mechanics::for_tests::add_vehicle(&mut game.world, KIND_TANK, [215.0, y, 20.0], 0.0);
+    assert_eq!(carriers.len(), 2, "two of the four carry one");
+    let rounds: Vec<u8> = carriers.iter().map(|&officer| tube(&game, officer).unwrap()).collect();
+    let y = game.world.map.ground.height_at(100.0, 150.0) + 1.0;
+    let tank = crate::mechanics::for_tests::add_vehicle(&mut game.world, KIND_TANK, [100.0, y, 150.0], 0.0);
     assert!(crate::mechanics::seat(&mut game.world, soldier, tank, 0));
     let mut fired = false;
-    for _ in 0..(30 * TICK_RATE) {
+    for _ in 0..(40 * TICK_RATE) {
         game.step();
         if let Some(mut health) = game.world.entities.get_mut::<crate::entities::Health>(tank) {
             health.hp = health.max;
         }
-        if tube(&game, carriers[0]).is_some_and(|left| left < rounds) {
+        if carriers.iter().zip(&rounds).any(|(&officer, &had)| tube(&game, officer).is_some_and(|left| left < had)) {
             fired = true;
             break;
         }
     }
-    assert!(fired, "they fired it at the tank");
+    assert!(fired, "one of them fired it at the tank");
+}
+
+/// A suspect with `heat` who sits in a tank at `[x, z]`, and the tank.
+fn in_a_tank(game: &mut Game, [x, z]: [f32; 2], heat: f32) -> (u32, u32) {
+    let y = game.world.map.ground.height_at(x, z) + 1.0;
+    let tank = crate::mechanics::for_tests::add_vehicle(&mut game.world, KIND_TANK, [x, y, z], 0.0);
+    let soldier = suspect(game, [x, z], heat, [0.0; 2], 0.0);
+    assert!(crate::mechanics::seat(&mut game.world, soldier, tank, 0));
+    (soldier, tank)
+}
+
+#[test]
+fn officers_with_only_revolvers_keep_away_from_a_suspect_in_a_tank_and_fire_on_it_often() {
+    // With one star, when they would arrest someone on foot, and with three.
+    for heat in [wanted::HEAT[0], wanted::HEAT[2]] {
+        let mut game = game(true);
+        let (soldier, tank) = in_a_tank(&mut game, [215.0, 20.0], heat);
+        assert!(until(&mut game, 240.0, |game| officers(game).len() >= 2), "heat {heat}: officers got out");
+        let out = officers(&game);
+        let ammo = |game: &Game, officer: u32| game.world.entities.get::<Player>(officer).map_or(0, |player| player.hands.hotbar[0].ammo);
+        let mut was: Vec<u8> = out.iter().map(|&officer| ammo(&game, officer)).collect();
+        let mut shots = vec![0u32; out.len()];
+        let seconds = 40;
+        for _ in 0..(seconds * TICK_RATE) {
+            game.step();
+            for (n, &officer) in out.iter().enumerate() {
+                let left = ammo(&game, officer);
+                if left < was[n] {
+                    shots[n] += (was[n] - left) as u32;
+                    let away = distance_2d(game.world.entities.of::<Player>(officer).character.position, [215.0, 0.0, 20.0]);
+                    assert!(away > 20.0, "heat {heat}: fired from {away} m, right by the tank");
+                }
+                was[n] = left;
+            }
+        }
+        assert!(game.world.entities.alive(soldier) && game.world.entities.of::<Player>(soldier).seat.is_some(), "heat {heat}: nobody was arrested out of a tank");
+        assert_eq!(game.world.entities.of::<crate::entities::Health>(tank).hp, game.world.entities.of::<crate::entities::Health>(tank).max, "heat {heat}: for all the good it does");
+        for (n, &officer) in out.iter().enumerate() {
+            let away = distance_2d(game.world.entities.of::<Player>(officer).character.position, [215.0, 0.0, 20.0]);
+            assert!(away > 30.0, "heat {heat}: an officer is {away} m from the tank");
+            assert_eq!(carried(&game, officer), [shared::items::ITEM_REVOLVER, 0, 0, 0, 0]);
+            assert!(shots[n] >= 15, "heat {heat}: an officer fired {} rounds in {seconds} s", shots[n]);
+        }
+    }
+}
+
+#[test]
+fn a_police_car_does_not_drive_up_to_a_suspect_in_a_tank() {
+    let mut game = game(true);
+    // In the middle of a field, 100 m from the nearest road, where a car goes straight for one on foot.
+    let (soldier, _) = in_a_tank(&mut game, [100.0, 0.0], wanted::HEAT[0]);
+    let mut chased = false;
+    for _ in 0..(120 * TICK_RATE) {
+        // In the police's sight all the while, as one a car would go straight for is.
+        let mut wanted = game.world.entities.get_mut::<Wanted>(soldier).unwrap();
+        (wanted.seen_at, wanted.unseen) = ([100.0, sim::STANDING_Y, 0.0], 0);
+        game.step();
+        chased |= police(&game, soldier).contains(&Duty::Chasing);
+        for unit in game.world.fleet.units.iter().filter(|unit| unit.tag == soldier && unit.vid.is_some()) {
+            assert!(distance_2d(unit.at, [100.0, 0.0, 0.0]) > 40.0, "a police car came within {} m of the tank", distance_2d(unit.at, [100.0, 0.0, 0.0]));
+        }
+    }
+    assert!(!chased, "it kept to the road");
+    assert!(!police(&game, soldier).is_empty(), "though one came");
 }
 
 #[test]

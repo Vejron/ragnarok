@@ -1262,7 +1262,8 @@ fn services(game: &mut Game, patrols: usize) {
 /// leaves the unit to the test.
 fn send(game: &mut Game, service: Service, to: [f32; 3], tag: u32) -> usize {
     let tag = tag | 1 << 31;
-    game.world.fleet.orders.push(FleetOrder::Send { service, to, tag, ahead: None });
+    let kind = if service == Service::Police { KIND_POLICE_CAR } else { KIND_AMBULANCE };
+    game.world.fleet.orders.push(FleetOrder::Send { service, kind, to, tag, ahead: None });
     game.step();
     game.world.fleet.units.iter().position(|unit| unit.tag == tag).expect("a unit was sent")
 }
@@ -1530,10 +1531,11 @@ fn a_world_with_patrols_keeps_that_many_police_cars_on_the_roads_and_sends_the_n
     run(&mut game, 2.0);
     assert_eq!(game.world.fleet.units[unit].duty, Duty::Dormant);
     assert_eq!(patrols(&game), 2);
-    // No more than there are police cars, whatever is asked for.
+    // No more than there are police cars, whatever is asked for: the vans do not patrol.
     game.world.fleet.patrols = 50;
     run(&mut game, 20.0);
-    assert_eq!(patrols(&game), POLICE);
+    assert_eq!(patrols(&game), fleet::CARS);
+    assert!(game.world.fleet.units.iter().all(|unit| unit.duty != Duty::Patrol || unit.kind == KIND_POLICE_CAR));
     assert_eq!(traffic(&game).counts().0, 10);
 }
 
@@ -1541,11 +1543,11 @@ fn a_world_with_patrols_keeps_that_many_police_cars_on_the_roads_and_sends_the_n
 fn nothing_is_sent_to_a_place_no_road_leads_to_or_when_every_unit_is_out() {
     let mut game = game(0);
     services(&mut game, 0);
-    game.world.fleet.orders.push(FleetOrder::Send { service: Service::Ambulance, to: [-500.0, 0.0, 500.0], tag: 1, ahead: None });
+    game.world.fleet.orders.push(FleetOrder::Send { service: Service::Ambulance, kind: KIND_AMBULANCE, to: [-500.0, 0.0, 500.0], tag: 1, ahead: None });
     run(&mut game, 1.0);
     assert!(game.world.fleet.units.iter().all(|unit| unit.duty == Duty::Dormant), "a field far from any road");
     for tag in 1..=3 {
-        game.world.fleet.orders.push(FleetOrder::Send { service: Service::Ambulance, to: [200.0, 0.0, 0.0], tag, ahead: None });
+        game.world.fleet.orders.push(FleetOrder::Send { service: Service::Ambulance, kind: KIND_AMBULANCE, to: [200.0, 0.0, 0.0], tag, ahead: None });
         game.step();
     }
     let out: Vec<u32> = game.world.fleet.units.iter().filter(|unit| unit.duty != Duty::Dormant).map(|unit| unit.tag).collect();

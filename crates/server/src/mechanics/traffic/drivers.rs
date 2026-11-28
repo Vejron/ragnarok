@@ -152,7 +152,8 @@ pub struct Driver {
     pub vehicle: u32,
     /// What they are drawn as, `KIND_*`: a civilian, or the officer or medic whose car it is.
     pub kind: u8,
-    /// The seat they sit in: 0 at the wheel, 1 beside it for the second of a crew.
+    /// The seat they sit in: 0 at the wheel, 1 beside it for the second of a crew, and 2 and 3
+    /// behind them for the rest of a police van's.
     pub seat: usize,
 }
 
@@ -175,7 +176,8 @@ pub fn seat_crew(world: &mut World, id: u32, vehicle: u32, seat: usize, kind: u8
     crate::mechanics::vehicles::doors::start_in(world, id, vehicle, seat, 0);
 }
 
-/// The crew of vehicle `vid` still in it, by seat: whoever of the traffic sits at its wheel and beside it.
+/// The crew of vehicle `vid` still in it, by seat: whoever of the traffic sits at its wheel, beside
+/// it and, in a police van, behind them.
 pub fn crew_of(world: &World, vid: u32) -> Vec<(u32, usize)> {
     world.entities.all::<Driver>().filter(|(_, driver)| driver.vehicle == vid).map(|(id, driver)| (id, driver.seat)).collect()
 }
@@ -238,11 +240,11 @@ impl Traffic {
                 (_, super::Service::Police) => KIND_OFFICER,
                 (_, super::Service::Ambulance) => KIND_MEDIC,
             };
-            // A crew of two in a police car or an ambulance. Those who got back in after being out
-            // of it are its crew again, the same people.
-            let seats = if kind == KIND_CIVILIAN { 1 } else { 2 };
+            // A crew of two in a police car or an ambulance, and of four in a police van. Those who
+            // got back in after being out of it are its crew again, the same people.
+            let seats = if kind == KIND_CIVILIAN { 1 } else { super::crew_size(car.kind) };
             let back = crew_of(world, vid);
-            let mut crew = [None; 2];
+            let mut crew = [None; 4];
             for (seat, slot) in crew.iter_mut().enumerate().take(seats) {
                 *slot = Some(back.iter().find(|&&(_, at)| at == seat).map_or_else(
                     || {
@@ -255,15 +257,16 @@ impl Traffic {
             }
             let hurt = crew[0].and_then(|id| world.entities.get::<Health>(id)).map_or(PLAYER_MAX_HP, |health| health.hp);
             let car = &mut self.cars[i];
-            (car.driver, car.mate, car.hp, car.hurt) = (crew[0], crew[1], world.entities.get::<Health>(vid).map_or(0, |health| health.hp), hurt);
+            (car.driver, car.mate, car.rear, car.hp, car.hurt) = (crew[0], crew[1], [crew[2], crew[3]], world.entities.get::<Health>(vid).map_or(0, |health| health.hp), hurt);
         } else if car.driver.is_some() && car.nearest > DRIVER_BEYOND && car.mood == Mood::Calm {
             self.unman(i, world);
         }
     }
 
-    /// Takes the driver of car `i`, and their mate, out of the world with their car.
+    /// Takes the driver of car `i`, and the rest of its crew, out of the world with their car.
     pub(super) fn unman(&mut self, i: usize, world: &mut World) {
-        for id in [self.cars[i].driver.take(), self.cars[i].mate.take()].into_iter().flatten() {
+        let car = &mut self.cars[i];
+        for id in [car.driver.take(), car.mate.take(), car.rear[0].take(), car.rear[1].take()].into_iter().flatten() {
             if world.entities.has::<Driver>(id) {
                 world.entities.despawn(id);
             }
@@ -274,7 +277,8 @@ impl Traffic {
     /// own to see to now (`mechanics::emergency`), and its crew again only when they get back in.
     pub(super) fn crew_out(&mut self, i: usize, world: &World) {
         let car = &mut self.cars[i];
-        for slot in [&mut car.driver, &mut car.mate] {
+        let [third, fourth] = &mut car.rear;
+        for slot in [&mut car.driver, &mut car.mate, third, fourth] {
             if slot.is_some_and(|id| !world.entities.has::<Driver>(id)) {
                 *slot = None;
             }
@@ -315,11 +319,12 @@ impl Traffic {
     /// the car. A wreck's driver is gone with it.
     pub(super) fn put_out(&mut self, i: usize, world: &mut World) {
         let car = self.cars[i];
-        let mate = self.cars[i].mate.take();
+        let mates = [self.cars[i].mate.take(), self.cars[i].rear[0].take(), self.cars[i].rear[1].take()];
         let Some(id) = self.cars[i].driver.take() else { return };
-        // The crew of a police car or an ambulance is no civilian: lost with the car, they are gone.
+        // The crew of a police car, a police van or an ambulance is no civilian: lost with the car,
+        // they are gone.
         if car.duty != super::Duty::Civil {
-            for id in [Some(id), mate].into_iter().flatten() {
+            for id in [Some(id)].into_iter().chain(mates).flatten() {
                 world.entities.despawn(id);
             }
             return;

@@ -1,37 +1,44 @@
-//! The officers of a police car, out of it (EMERGENCY.md). Each is a player with no connection,
-//! armed, with a mind that knows one person: the suspect their car was sent for. While the suspect
-//! has fewer than `LETHAL_STARS` stars they run them down and arrest them, which takes standing by
-//! them a moment while they keep still; from then on they stop where they have a shot and fire.
+//! The officers of a police car or a police van, out of it (EMERGENCY.md). Each is a player with
+//! no connection, armed, with a mind that knows one person: the suspect their car was sent for. A
+//! car's two carry a revolver each; a van's four, who come from four stars, a rifle too, and two of
+//! them a Carl Gustaf. While the suspect has fewer than `LETHAL_STARS` stars they run them down
+//! and arrest them, which takes standing by them a moment while they keep still; from then on they
+//! stop where they have a shot and fire. A suspect in a tank is not to be arrested at any number of
+//! stars: they keep away from it and fire on it, for all the good a revolver does.
 //! When the suspect is wanted no more, or has got too far from the car to follow on foot, they
 //! walk back to it and get in.
 
-use super::wanted::{LETHAL_STARS, SIGHT, Wanted, stars};
+use super::wanted::{LETHAL_STARS, SIGHT, Wanted, in_sight, stars};
 use super::{Emergency, EmergencyCall, UNSEEN, distance_2d, door, ticks};
 use crate::entities::{Component, With};
 use crate::game::{Player, Walk, World};
-use crate::mechanics::bots::{bend, clear_line, follow, fresh_goal, heading, push, steer};
+use crate::mechanics::bots::{bend, follow, fresh_goal, heading, push, steer};
 use crate::mechanics::npcs::turn_towards;
 use crate::mechanics::position_of;
-use crate::mechanics::traffic::Duty;
+use crate::mechanics::traffic::{Duty, crew_size};
 use shared::consts::*;
 use shared::items::{HOTBAR_SLOTS, ITEM_AK5, ITEM_CARL_GUSTAF, ITEM_NONE, ITEM_REVOLVER};
 use shared::protocol::InputFrame;
 use shared::quant::to_mrad;
 use std::f32::consts::PI;
 
-/// What an officer carries: a revolver, and a rifle for when it has come to that; and the one who
-/// gets out by the second seat a Carl Gustaf too, for a suspect in a tank.
-pub fn officer_loadout(seat: usize) -> [u8; HOTBAR_SLOTS] {
+/// What the officer who gets out by seat `seat` carries: a revolver and nothing else, out of a
+/// police car; and `heavy`, out of a police van, a rifle too, and every second one a Carl Gustaf
+/// for a suspect in a tank.
+pub fn officer_loadout(heavy: bool, seat: usize) -> [u8; HOTBAR_SLOTS] {
     let mut items = [ITEM_NONE; HOTBAR_SLOTS];
     items[0] = ITEM_REVOLVER;
-    items[1] = ITEM_AK5;
-    if seat == ANTI_TANK_SEAT {
-        items[2] = ITEM_CARL_GUSTAF;
+    if heavy {
+        items[1] = ITEM_AK5;
+        if seat % 2 == ANTI_TANK_SEATS {
+            items[2] = ITEM_CARL_GUSTAF;
+        }
     }
     items
 }
-/// The seat the officer who carries a Carl Gustaf gets out by.
-const ANTI_TANK_SEAT: usize = 1;
+/// The officers of a van who carry a Carl Gustaf get out by the seats on this side: 1 for the
+/// right, which is seats 1 and 3.
+const ANTI_TANK_SEATS: usize = 1;
 /// How fast an officer turns, radians a second, and how nearly they must face their way to walk on, radians.
 const TURN_RATE: f32 = 7.0;
 const WALK_WITHIN: f32 = 1.2;
@@ -68,11 +75,14 @@ pub struct Officer {
     pub unit: usize,
     pub suspect: u32,
     pub seat: usize,
+    /// Out of a police van, armed for a fight (`officer_loadout`).
+    pub heavy: bool,
     /// Facing and looking up or down, radians.
     pub yaw: f32,
     pub pitch: f32,
     pub walk: Walk,
-    /// Going back to the car.
+    /// Going back to the car for it to take them nearer: too far from it, or done searching where
+    /// the suspect was. Once set it stays. One with nobody to go after walks back without it.
     pub returning: bool,
     /// Out to kill their suspect: the soldier's mind it also has (`Bot`) does the fighting.
     pub armed: bool,
@@ -90,8 +100,8 @@ pub struct Officer {
 }
 
 impl Officer {
-    pub fn new(unit: usize, suspect: u32, seat: usize, yaw: f32) -> Self {
-        Officer { unit, suspect, seat, yaw, pitch: 0.0, walk: Walk::new(), returning: false, armed: false, tracked: 0, lost: 0, arrest: 0, was_at: [0.0; 3], out: 0, stranded: 0, lain: 0 }
+    pub fn new(unit: usize, suspect: u32, seat: usize, yaw: f32, heavy: bool) -> Self {
+        Officer { unit, suspect, seat, heavy, yaw, pitch: 0.0, walk: Walk::new(), returning: false, armed: false, tracked: 0, lost: 0, arrest: 0, was_at: [0.0; 3], out: 0, stranded: 0, lain: 0 }
     }
 }
 
@@ -120,7 +130,7 @@ impl Emergency {
         let mut budget = SEARCH_PER_TICK;
         for &id in &ids {
             let Some(mut mind) = world.entities.get_mut::<Officer>(id) else { continue };
-            let mut officer = std::mem::replace(&mut *mind, Officer::new(0, 0, 0, 0.0));
+            let mut officer = std::mem::replace(&mut *mind, Officer::new(0, 0, 0, 0.0, false));
             let (input, gone) = think(world, id, &mut officer, dt, viewers, &crowd, &mut budget);
             let armed = officer.armed;
             *world.entities.of_mut::<Officer>(id) = officer;
@@ -151,10 +161,11 @@ fn think(world: &mut World, id: u32, officer: &mut Officer, dt: f32, viewers: &[
         return (idle, officer.lain > ticks(LIES));
     }
     // Their car, if it still stands where it parked for them.
-    let unit = world.fleet.units.get(officer.unit).filter(|unit| unit.tag == officer.suspect && unit.duty == Duty::OnScene).and_then(|unit| unit.vid.map(|vid| (vid, unit.at)));
-    let doors = unit.map(|(vid, _)| [0, 1].map(|seat| door(world, vid, seat))).into_iter().flatten().flatten();
+    let unit = world.fleet.units.get(officer.unit).filter(|unit| unit.tag == officer.suspect && unit.duty == Duty::OnScene).and_then(|unit| unit.vid.map(|vid| (vid, unit.at, unit.kind)));
+    let seen: &World = world;
+    let doors = unit.into_iter().flat_map(|(vid, _, kind)| (0..crew_size(kind)).filter_map(move |seat| door(seen, vid, seat)));
     let home = doors.min_by(|a, b| distance_2d(at, a.0).total_cmp(&distance_2d(at, b.0))).map(|(feet, _)| [feet[0], feet[1] + sim::STANDING_Y, feet[2]]);
-    let (Some(home), Some((_, car))) = (home, unit) else {
+    let (Some(home), Some((_, car, _))) = (home, unit) else {
         // It is gone without them: they stand there until nobody is looking.
         officer.stranded += 1;
         let unseen = viewers.iter().all(|v| distance_2d(*v, at) > UNSEEN);
@@ -169,7 +180,7 @@ fn think(world: &mut World, id: u32, officer: &mut Officer, dt: f32, viewers: &[
     }
     let star = stars(world, officer.suspect);
     let target = position_of(world, officer.suspect).filter(|_| star > 0 && world.entities.alive(officer.suspect));
-    let sees = target.is_some_and(|target| distance_2d(at, target) < SIGHT && clear_line(world, eye, [target[0], target[1] + 0.5, target[2]]));
+    let sees = target.is_some_and(|target| distance_2d(at, target) < SIGHT && in_sight(world, eye, officer.suspect, target));
     (officer.tracked, officer.lost) = if sees { (officer.tracked + 1, 0) } else { (0, officer.lost + 1) };
     // How fast the suspect goes, from where they were a tick ago.
     let speed = target.map_or(0.0, |target| distance_2d(officer.was_at, target) * TICK_RATE as f32);
@@ -183,10 +194,14 @@ fn think(world: &mut World, id: u32, officer: &mut Officer, dt: f32, viewers: &[
         return (idle, true);
     }
     let searched = officer.lost > ticks(SEARCH) && goal.is_none_or(|goal| distance_2d(at, goal) < 6.0);
-    if target.is_none() || distance_2d(at, car) > LEASH || goal.is_none_or(|goal| distance_2d(goal, car) > LEASH) || searched {
+    if target.is_none() {
+        // Nobody to go after: back to the car, but not for good. A suspect who is wanted again
+        // before they are in it is theirs to go after again, and not one they have searched for.
+        (officer.lost, officer.arrest) = (0, 0);
+    } else if distance_2d(at, car) > LEASH || goal.is_none_or(|goal| distance_2d(goal, car) > LEASH) || searched {
         officer.returning = true;
     }
-    if officer.returning {
+    if target.is_none() || officer.returning {
         if distance_2d(at, home) < BY_DOOR {
             return (idle, true);
         }
@@ -194,7 +209,8 @@ fn think(world: &mut World, id: u32, officer: &mut Officer, dt: f32, viewers: &[
     }
     let (Some(target), Some(goal)) = (target, goal) else { return (idle, false) };
     let distance = distance_2d(at, target);
-    if star < LETHAL_STARS {
+    // One in a tank is not to be arrested, however few their stars: that takes shooting too.
+    if star < LETHAL_STARS && !crate::mechanics::armoured(world, officer.suspect) {
         // To arrest them: up to them, and standing by them while they keep still.
         let seated = world.entities.get::<Player>(officer.suspect).is_some_and(|suspect| suspect.seat.is_some());
         let still = world.entities.get::<Player>(officer.suspect).is_some_and(|suspect| suspect.character.down > 0) || speed < if seated { ARREST_DRIVING } else { ARREST_SPEED };
@@ -202,7 +218,6 @@ fn think(world: &mut World, id: u32, officer: &mut Officer, dt: f32, viewers: &[
             officer.arrest = if still { officer.arrest + 1 } else { 0 };
             if officer.arrest > ticks(ARREST_FOR) {
                 bust(world, officer.suspect);
-                officer.returning = true;
             }
             officer.yaw = turn_towards(officer.yaw, heading(at, target), TURN_RATE * dt);
             return (InputFrame { yaw: to_mrad(officer.yaw), ..idle }, false);

@@ -20,6 +20,7 @@ import { OMEGA } from './omega'
 import { SIERRA } from './sierra'
 import { ESCORT } from './escort'
 import { POLICE_CAR } from './policecar'
+import { POLICE_VAN } from './policevan'
 import { AMBULANCE } from './ambulance'
 import { GOLF_CART } from './golfcart'
 import { HELI } from './heli'
@@ -51,7 +52,7 @@ import { WALKER } from './walker'
 
 export type { VehicleKind } from './kind'
 
-export const KINDS: readonly VehicleKind[] = [JEEP, TANK, HELI, SPORTS, PLANE, WALKER, STRV, MORTAR, ROADSTER, DRONE, HEN, LOITER, PAK, TUPP, SNOWMOBILE, SHIP, SHIP_GUN, GOLF_CART, TECHNICAL, SUBMARINE, MISSILE, SEAPLANE, STRF, SNOWRACER, TITAN, BUS, PBV, AMV, CB90, RAFT, AIR_AMBULANCE, EPA, SAAB_900, SAAB_9000, VOLVO_240, VOLVO_740, GTI, TRANSPORTER, KADETT, OMEGA, SIERRA, ESCORT, POLICE_CAR, AMBULANCE]
+export const KINDS: readonly VehicleKind[] = [JEEP, TANK, HELI, SPORTS, PLANE, WALKER, STRV, MORTAR, ROADSTER, DRONE, HEN, LOITER, PAK, TUPP, SNOWMOBILE, SHIP, SHIP_GUN, GOLF_CART, TECHNICAL, SUBMARINE, MISSILE, SEAPLANE, STRF, SNOWRACER, TITAN, BUS, PBV, AMV, CB90, RAFT, AIR_AMBULANCE, EPA, SAAB_900, SAAB_9000, VOLVO_240, VOLVO_740, GTI, TRANSPORTER, KADETT, OMEGA, SIERRA, ESCORT, POLICE_CAR, AMBULANCE, POLICE_VAN]
 
 const byKind = new Map(KINDS.map((kind) => [kind.kind, kind]))
 

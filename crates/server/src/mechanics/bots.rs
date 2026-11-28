@@ -815,7 +815,7 @@ fn think(world: &mut World, id: u32, bot: &mut Bot, dt: f32, noises: &[Noise], c
     let blind = shot_at && !bot.sight.sees;
     // A tank it cannot hurt, or one too close to fight: it gets away from it.
     if fighting && threat == Threat::Armour && (gun.is_none() || distance < TOO_CLOSE) && matches!(bot.mode, BotMode::Pursue | BotMode::Evade) {
-        evade::start(world, bot, false);
+        evade::start(world, bot, false, officer);
     }
     // Far enough again from a tank it has something for: it turns to fight it with that.
     if bot.mode == BotMode::Evade && bot.sight.sees && bot.sight.threat == Threat::Armour && carries_anti_tank && distance_2d(at, bot.sight.last_seen) > FIGHT_FROM && !nerve::broken(bot) {
@@ -826,7 +826,7 @@ fn think(world: &mut World, id: u32, bot: &mut Bot, dt: f32, noises: &[Noise], c
         cover::seek(world, bot, at, rays, budget);
         // A coward that has broken and found nowhere to hide runs for it.
         if bot.mode == BotMode::Pursue && nerve::broken(bot) && !nerve::frozen(bot) && bot.temper.courage < COWARD && bot.cover_wait > 0 && fighting && !world.entities.has::<crate::mechanics::Officer>(id) {
-            evade::start(world, bot, true);
+            evade::start(world, bot, true, officer);
         }
     }
     if bot.mode == BotMode::Pursue && fighting && nerve::frozen(bot) && bot.cover_wait > 0 && !world.entities.has::<super::Officer>(id) {
@@ -987,11 +987,11 @@ fn think(world: &mut World, id: u32, bot: &mut Bot, dt: f32, noises: &[Noise], c
             }
             return InputFrame { buttons: BUTTON_PRONE, yaw: to_mrad(bot.yaw), ..idle };
         }
-        BotMode::Evade => match evade::plan(world, id, bot, at, dt, rays, budget, idle) {
+        BotMode::Evade => match evade::plan(world, id, bot, at, dt, rays, budget, idle, officer) {
             Ok(plan) => plan,
             // Kept down out of the way of a tank, now and then it fires on it anyway.
             Err(_) if let Some(slot) = small_arm
-                && evade::harass(world, bot, at) =>
+                && evade::harass(world, bot, at, officer) =>
             {
                 bot.slot = slot;
                 return fight(world, id, bot, eye, slot, distance_2d(at, bot.sight.last_seen), dt, away, false);

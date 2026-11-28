@@ -18,8 +18,10 @@ use shared::consts::*;
 /// The heat at which a player has one star, two, and so on up to five, and the most heat there is.
 pub const HEAT: [f32; 5] = [10.0, 30.0, 60.0, 100.0, 150.0];
 const HEAT_MAX: f32 = 200.0;
-/// How many police cars come for a player with one star, two, and so on.
-pub const CARS: [usize; 5] = [1, 2, 4, 6, 8];
+/// How many police cars come for a player with one star, two, and so on, and how many police vans
+/// on top of them, each with four officers armed for a fight.
+pub const CARS: [usize; 5] = [1, 2, 4, 4, 4];
+pub const VANS: [usize; 5] = [0, 0, 0, 2, 4];
 /// From this many stars the police shoot to kill; below it they arrest.
 pub const LETHAL_STARS: u8 = 3;
 /// How long a player with one star, two, and so on must go unseen to be wanted no more, seconds.
@@ -137,6 +139,14 @@ fn again(tick: u32, last: u32, every: f32) -> bool {
     last == 0 || tick.wrapping_sub(last) > ticks(every)
 }
 
+/// Whether player `id`, who is at `at`, is to be seen from `eye` with nothing between. One who sits
+/// in a vehicle is seen when it is (`bots::sighting`): a line to the middle of a hull as big as a
+/// tank's ends well inside it, and would never be clear.
+pub(super) fn in_sight(world: &World, eye: [f32; 3], id: u32, at: [f32; 3]) -> bool {
+    let seated = world.entities.get::<Player>(id).is_some_and(|player| player.seat.is_some_and(|seat| !seat.remote));
+    if seated { crate::mechanics::bots::sighting(world, eye, id).is_some() } else { clear_line(world, eye, [at[0], at[1] + 0.5, at[2]]) }
+}
+
 impl Emergency {
     /// Where the police are who can see or hear something: the officers on foot, and the police
     /// cars that are out and near enough a player to be there at all.
@@ -240,6 +250,7 @@ impl Emergency {
         let tick = world.tick;
         let witnesses = self.witnesses(world);
         let seen_from = |world: &World, at: [f32; 3], within: f32| witnesses.iter().any(|&witness| distance_2d(witness, at) < within && clear_line(world, witness, [at[0], at[1] + 0.5, at[2]]));
+        let seen_by_any = |world: &World, id: u32, at: [f32; 3]| witnesses.iter().any(|&witness| distance_2d(witness, at) < SIGHT && in_sight(world, witness, id, at));
         // A police car or an ambulance with someone at its wheel who is not its crew is stolen,
         // whoever sees it; a car of the traffic only where the police do.
         let mut thieves: Vec<(u32, f32)> = world.fleet.units.iter().filter_map(|unit| unit.vid).filter_map(|vid| world.entities.get::<Seats>(vid).and_then(|seats| seats.rider(0))).map(|id| (id, HEAT_TAKE_SERVICE)).collect();
@@ -267,7 +278,7 @@ impl Emergency {
                 clear(world, id);
                 continue;
             };
-            let seen = seen_from(world, at, SIGHT);
+            let seen = seen_by_any(world, id, at);
             let searched = world.fleet.units.iter().any(|unit| unit.tag == id && unit.duty == Duty::OnScene);
             let mut wanted = world.entities.of_mut::<Wanted>(id);
             let look = LOOK_EVERY as f32 / TICK_RATE as f32;

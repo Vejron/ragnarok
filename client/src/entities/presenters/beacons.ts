@@ -1,4 +1,4 @@
-import { FLAG_SIREN, KIND_AMBULANCE, KIND_POLICE_CAR } from '@/net/codec'
+import { FLAG_SIREN, KIND_AMBULANCE, KIND_POLICE_CAR, KIND_POLICE_VAN } from '@/net/codec'
 import { CarModel } from '@/render/car'
 import { dayPhase, nightAt } from '@/render/daynight'
 import { TICK_RATE } from '@/sim/consts'
@@ -21,7 +21,7 @@ const LIFT = 0.15
 export const BEACON_SIDE_MS = 250
 
 /** The kinds with a light bar and a siren. */
-const KINDS = new Set([KIND_POLICE_CAR, KIND_AMBULANCE])
+const KINDS = new Set([KIND_POLICE_CAR, KIND_AMBULANCE, KIND_POLICE_VAN])
 
 /**
  * A police car's or an ambulance's light bar and siren, on while the server says so (`FLAG_SIREN`) and

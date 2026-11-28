@@ -35,7 +35,7 @@ pub use graph::{Graph, Way};
 pub use drivers::{DRAG_SPEED, Driver, TrafficCall, crew_of, crewed, seat_crew};
 use drivers::{Mood, Nerve};
 use fleet::{PARK_FROM, Plan};
-pub use fleet::{Duty, Fleet, FleetOrder, Service};
+pub use fleet::{Duty, Fleet, FleetOrder, Service, crew_size};
 #[cfg(test)]
 pub use fleet::POLICE;
 #[cfg(test)]
@@ -317,6 +317,8 @@ struct Car {
     driver: Option<u32>,
     /// The driver's mate beside them in seat 1: the second of a police car's or an ambulance's crew.
     mate: Option<u32>,
+    /// The two behind them in seats 2 and 3: the rest of a police van's crew.
+    rear: [Option<u32>; 2],
     /// What its driver does when threatened, and what they are about now.
     nerve: Nerve,
     mood: Mood,
@@ -339,7 +341,7 @@ struct Car {
 impl Car {
     /// A car of `kind` that likes to drive at `pace` of its road's speed, not yet on any road.
     fn new(kind: u8, pace: f32) -> Self {
-        Car { kind, way: Way { edge: 0, back: false }, along: 0.0, speed: 0.0, before: None, after: None, holds: None, vid: None, physical: false, blocked: f32::MAX, held: 0, waiting: 0, stood: 0, nearest: f32::MAX, stalled: 0, reverse_left: 0, tries: 0, pace, shift: 0.0, aside: 0.0, passing: None, swerve_to: 0.0, upon: 0.0, lateral: 0.0, easing: false, back: false, still: false, rest: 0, driver: None, mate: None, nerve: Nerve::Flees, mood: Mood::Calm, aimed: 0, threat: [0.0; 2], hp: 0, hurt: 0, boxed: 0, rash: false, by: 0, duty: Duty::Civil }
+        Car { kind, way: Way { edge: 0, back: false }, along: 0.0, speed: 0.0, before: None, after: None, holds: None, vid: None, physical: false, blocked: f32::MAX, held: 0, waiting: 0, stood: 0, nearest: f32::MAX, stalled: 0, reverse_left: 0, tries: 0, pace, shift: 0.0, aside: 0.0, passing: None, swerve_to: 0.0, upon: 0.0, lateral: 0.0, easing: false, back: false, still: false, rest: 0, driver: None, mate: None, rear: [None; 2], nerve: Nerve::Flees, mood: Mood::Calm, aimed: 0, threat: [0.0; 2], hp: 0, hurt: 0, boxed: 0, rash: false, by: 0, duty: Duty::Civil }
     }
 }
 

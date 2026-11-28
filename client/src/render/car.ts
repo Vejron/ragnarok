@@ -5,9 +5,9 @@ import {
   AMV_MAX_STEER, AMV_SEATS, AMV_WHEEL_RADIUS, BUS_MAX_STEER, BUS_SEATS, BUS_WHEEL_RADIUS, EPA_MAX_STEER, EPA_SEATS, EPA_WHEEL_RADIUS, GOLF_CART_MAX_STEER, GOLF_CART_SEATS, GOLF_CART_WHEEL_RADIUS, TECHNICAL_MAX_STEER, TECHNICAL_SEATS, TECHNICAL_WHEEL_RADIUS, JEEP_MAX_STEER, JEEP_WHEEL_RADIUS, ROADSTER_MAX_STEER, ROADSTER_SEATS, ROADSTER_WHEEL_RADIUS, SNOWMOBILE_MAX_STEER, SNOWMOBILE_SEATS, SNOWMOBILE_WHEEL_RADIUS, SNOWRACER_MAX_STEER, SNOWRACER_SEATS, SNOWRACER_WHEEL_RADIUS, SPORTS_MAX_STEER, SPORTS_SEATS,
   SPORTS_WHEEL_RADIUS, CAR_SEATS,
   SAAB_900_MAX_STEER, SAAB_900_SEATS, SAAB_900_WHEEL_RADIUS, SAAB_9000_MAX_STEER, SAAB_9000_SEATS, SAAB_9000_WHEEL_RADIUS, VOLVO_240_MAX_STEER, VOLVO_240_SEATS, VOLVO_240_WHEEL_RADIUS, VOLVO_740_MAX_STEER, VOLVO_740_SEATS, VOLVO_740_WHEEL_RADIUS, GTI_MAX_STEER, GTI_SEATS, GTI_WHEEL_RADIUS, TRANSPORTER_MAX_STEER, TRANSPORTER_SEATS, TRANSPORTER_WHEEL_RADIUS, KADETT_MAX_STEER, KADETT_SEATS, KADETT_WHEEL_RADIUS, OMEGA_MAX_STEER, OMEGA_SEATS, OMEGA_WHEEL_RADIUS, SIERRA_MAX_STEER, SIERRA_SEATS, SIERRA_WHEEL_RADIUS, ESCORT_MAX_STEER, ESCORT_SEATS, ESCORT_WHEEL_RADIUS,
-  POLICE_CAR_MAX_STEER, POLICE_CAR_SEATS, POLICE_CAR_WHEEL_RADIUS, AMBULANCE_MAX_STEER, AMBULANCE_SEATS, AMBULANCE_WHEEL_RADIUS,
+  POLICE_CAR_MAX_STEER, POLICE_CAR_SEATS, POLICE_CAR_WHEEL_RADIUS, AMBULANCE_MAX_STEER, AMBULANCE_SEATS, AMBULANCE_WHEEL_RADIUS, POLICE_VAN_MAX_STEER, POLICE_VAN_SEATS, POLICE_VAN_WHEEL_RADIUS,
 } from '@/sim/consts'
-import { KIND_AMV, KIND_BUS, KIND_EPA, KIND_SAAB_900, KIND_SAAB_9000, KIND_VOLVO_240, KIND_VOLVO_740, KIND_GTI, KIND_TRANSPORTER, KIND_KADETT, KIND_OMEGA, KIND_SIERRA, KIND_ESCORT, KIND_POLICE_CAR, KIND_AMBULANCE, KIND_GOLF_CART, KIND_JEEP, KIND_TECHNICAL, KIND_ROADSTER, KIND_SNOWMOBILE, KIND_SNOWRACER, KIND_SPORTS, THRUST_BOOST, THRUST_LIFT } from '@/net/codec'
+import { KIND_AMV, KIND_BUS, KIND_EPA, KIND_SAAB_900, KIND_SAAB_9000, KIND_VOLVO_240, KIND_VOLVO_740, KIND_GTI, KIND_TRANSPORTER, KIND_KADETT, KIND_OMEGA, KIND_SIERRA, KIND_ESCORT, KIND_POLICE_CAR, KIND_POLICE_VAN, KIND_AMBULANCE, KIND_GOLF_CART, KIND_JEEP, KIND_TECHNICAL, KIND_ROADSTER, KIND_SNOWMOBILE, KIND_SNOWRACER, KIND_SPORTS, THRUST_BOOST, THRUST_LIFT } from '@/net/codec'
 import type { Arms, Turret } from '@/entities/units'
 import { CarWear } from './carwear'
 import type { Debris } from './debris'
@@ -28,7 +28,7 @@ export interface VehicleModel {
   dispose(): void
 }
 
-export type CarKind = 'jeep' | 'sports' | 'roadster' | 'snowmobile' | 'golf_cart' | 'technical' | 'snowracer' | 'bus' | 'amv' | 'epa' | 'saab_900' | 'saab_9000' | 'volvo_240' | 'volvo_740' | 'gti' | 'transporter' | 'kadett' | 'omega' | 'sierra' | 'escort' | 'police_car' | 'ambulance'
+export type CarKind = 'jeep' | 'sports' | 'roadster' | 'snowmobile' | 'golf_cart' | 'technical' | 'snowracer' | 'bus' | 'amv' | 'epa' | 'saab_900' | 'saab_9000' | 'volvo_240' | 'volvo_740' | 'gti' | 'transporter' | 'kadett' | 'omega' | 'sierra' | 'escort' | 'police_car' | 'ambulance' | 'police_van'
 
 /**
  * Per-body facts the model needs: its vehicle kind, where its mesh is, how big its wheels are and how far
@@ -75,6 +75,7 @@ const KINDS: Record<CarKind, { kind: number; url: string; wheelRadius: number; m
   escort: { kind: KIND_ESCORT, url: `${import.meta.env.BASE_URL}models/escort.glb`, wheelRadius: ESCORT_WHEEL_RADIUS, maxSteer: ESCORT_MAX_STEER, seats: ESCORT_SEATS, palette: [0xc9b98d, 0x6f8e9e, 0xa7201f, 0xeeebe3, 0x3f5b3a], glass: 0.4 },
   // Police white, every one of them, under the blue stripe of its model.
   police_car: { kind: KIND_POLICE_CAR, url: `${import.meta.env.BASE_URL}models/police_car.glb`, wheelRadius: POLICE_CAR_WHEEL_RADIUS, maxSteer: POLICE_CAR_MAX_STEER, seats: POLICE_CAR_SEATS, paint: 0xf1f0ea, glass: 0.4 },
+  police_van: { kind: KIND_POLICE_VAN, url: `${import.meta.env.BASE_URL}models/police_van.glb`, wheelRadius: POLICE_VAN_WHEEL_RADIUS, maxSteer: POLICE_VAN_MAX_STEER, seats: POLICE_VAN_SEATS, paint: 0xf1f0ea, glass: 0.4 },
   // Signal yellow below its white top and red stripe.
   ambulance: { kind: KIND_AMBULANCE, url: `${import.meta.env.BASE_URL}models/ambulance.glb`, wheelRadius: AMBULANCE_WHEEL_RADIUS, maxSteer: AMBULANCE_MAX_STEER, seats: AMBULANCE_SEATS, paint: 0xf2c81e, glass: 0.4 },
 }
@@ -272,7 +273,7 @@ export class CarModel implements VehicleModel {
     return this.beam
   }
 
-  /** Whether it has a light bar to flash: a police car or an ambulance. */
+  /** Whether it has a light bar to flash: a police car, a police van or an ambulance. */
   get hasBeacons(): boolean {
     return this.beacons.length === 2
   }

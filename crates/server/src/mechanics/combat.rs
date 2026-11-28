@@ -102,6 +102,13 @@ pub fn rewind_ticks(now: u32, view: u16) -> u32 {
     (back.max(0) as u32).min(MAX_REWIND_TICKS)
 }
 
+/// Whether player `id` sits inside armour: in a seat of a vehicle whose crew is sealed in, a tank
+/// or the like, where small arms cannot reach them.
+pub fn armoured(world: &World, id: u32) -> bool {
+    let seat = world.entities.get::<Player>(id).and_then(|player| player.seat).filter(|seat| !seat.remote);
+    seat.and_then(|seat| world.entities.get::<crate::game::Vehicle>(seat.vehicle)).is_some_and(|vehicle| shared::vehicles::vehicle_def(vehicle.kind).crew == shared::vehicles::Exposure::Sealed)
+}
+
 /// Where player `id` is: on foot (or flying a drone) where they stand, seated where their vehicle is.
 pub fn position_of(world: &World, id: u32) -> Option<[f32; 3]> {
     let player = world.entities.get::<Player>(id)?;
