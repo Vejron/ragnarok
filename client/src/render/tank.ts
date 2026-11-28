@@ -7,8 +7,9 @@ import { wrapAngle } from '@/net/codec'
 import type { Pintle, Turret } from '@/entities/units'
 import { colorFor } from '@/profile'
 import type { VehicleModel } from './car'
+import { assetUrl } from '@/assets'
 
-export const TANK_MODEL_URL = `${import.meta.env.BASE_URL}models/tank.glb`
+export const TANK_MODEL_URL = assetUrl('models/tank.glb')
 
 /** Radius of the road wheels in the model (`WHEEL_RADIUS` in build_tank.py): the tracks' speed over them is what rolls them. */
 const WHEEL_RADIUS = 0.38

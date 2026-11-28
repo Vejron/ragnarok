@@ -10,6 +10,12 @@ const MAX_FETCHES = 4
 const RETRY_MS = 5000
 /** The game starts without the tiles around it if they take longer than this. */
 const PRIME_TIMEOUT_MS = 20000
+/**
+ * The first frame waits for the tiles within this many metres of the player, not for all in range: the
+ * ground to stand on and what is close enough to make out. The rest arrive behind the pause screen
+ * over the next second or two, as they do when walking (LOAD-TIME.md).
+ */
+export const PRIME_RADIUS = 150
 /** Wanted tiles are recomputed once the player has moved this far, metres. */
 const RECHECK_DISTANCE = 12
 /**
@@ -89,12 +95,29 @@ export class TileStreamer {
     this.checkedAt = null
   }
 
-  /** Loads everything in range of `(x, z)` and resolves once it is attached: the first frame needs it. */
-  async prime(x: number, z: number, timeoutMs = PRIME_TIMEOUT_MS) {
-    this.update(x, z)
+  /**
+   * Starts fetching and preparing what is in range of `(x, z)`, nearest first, and attaches nothing:
+   * for the start of the game, while what attaching needs (the GPU, the physics) is still on its way.
+   */
+  seek(x: number, z: number) {
+    this.x = x
+    this.z = z
+    this.checkedAt = [x, z]
+    this.schedule()
+  }
+
+  /**
+   * Loads what is around `(x, z)` and resolves once every tile within `radius` metres of it is
+   * attached: the first frame needs those. The rest of what is in range goes on loading, for `update`
+   * to attach. `progress` is told how many of the awaited tiles are attached, each time one more is.
+   */
+  async prime(x: number, z: number, radius = this.loadRadius, progress: (done: number, of: number) => void = () => {}, timeoutMs = PRIME_TIMEOUT_MS) {
+    this.seek(x, z)
     const deadline = this.now() + timeoutMs
+    const wanted = this.pending(radius)
+    progress(0, wanted)
     // Nothing is drawn yet, so there is no frame to keep: attach everything as it arrives.
-    while (!this.disposed && (this.drain(Infinity), this.pending() > 0) && this.now() < deadline) {
+    while (!this.disposed && (this.drain(Infinity), progress(wanted - this.pending(radius), wanted), this.pending(radius) > 0) && this.now() < deadline) {
       // Woken when a fetch ends; the timer is for failed tiles, which wait out their retry delay.
       await new Promise<void>((resolve) => {
         this.waiting.push(resolve)
@@ -149,10 +172,11 @@ export class TileStreamer {
   }
 
   /** Loaded tiles are not counted as pending: only wanted ones that are not there yet. */
-  private pending() {
+  /** How many tiles within `radius` metres are not attached yet. */
+  private pending(radius: number) {
     let count = 0
     for (const entry of this.entries.values()) {
-      if (entry.state !== 'loaded' && this.distance(entry.ref) <= this.loadRadius) count++
+      if (entry.state !== 'loaded' && this.distance(entry.ref) <= radius) count++
     }
     return count
   }

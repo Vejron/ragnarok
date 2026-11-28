@@ -1,8 +1,9 @@
 import type { Node } from '@ragnarok/engine'
 import { TankModel, parseTankAsset, type TankLayout } from './tank'
 import { CB90_MG_BARREL_X } from '@/sim/consts'
+import { assetUrl } from '@/assets'
 
-export const CB90_MODEL_URL = `${import.meta.env.BASE_URL}models/cb90.glb`
+export const CB90_MODEL_URL = assetUrl('models/cb90.glb')
 
 /**
  * The Swedish navy's coastal splinter camo, base coat first: grey-green with a darker green and a

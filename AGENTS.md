@@ -107,6 +107,9 @@ has the numbers.
   what the page, the workers and the GPU hold, and the garbage a frame makes. A big mesh or texture
   that nothing reads again is made with `uploadOnce`, so only the GPU keeps it; it must then be made
   again when the renderer is replaced (`Scene.onRendererReplaced`).
+- **A cold start is measured with `node client/scripts/load-bench.mjs`** ([docs/LOAD-TIME.md](docs/LOAD-TIME.md)):
+  each stage of `Game.start` and the time to the first frame, on a fresh build with an empty cache,
+  optionally on a throttled line. Anything new the first frame waits for shows up there.
 - [RENDERING.md](docs/RENDERING.md)'s "Measuring, and traps" lists the headless and WGSL traps.
 
 ## Deploying

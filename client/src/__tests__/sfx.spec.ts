@@ -10,17 +10,19 @@ describe('SampleBank', () => {
     const decoded = { duration: 1 } as AudioBuffer
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(4) })))
     const ctx = { decodeAudioData: vi.fn(async () => decoded) } as unknown as BaseAudioContext
-    const bank = new SampleBank(ctx, '/sfx/')
+    const bank = new SampleBank(ctx)
     expect(bank.pick('rifle')).toBeNull()
     bank.load()
     await vi.waitFor(() => expect(bank.pick('rifle')).toBe(decoded))
     expect(fetch).toHaveBeenCalledTimes(Object.values(SAMPLES).reduce((a, b) => a + b, 0))
+    // Each is asked for by its content's hash, so it can be kept for good.
+    expect(vi.mocked(fetch).mock.calls.every(([url]) => /^\/sfx\/\w+\.m4a\?h=[0-9a-f]{12}$/.test(String(url)))).toBe(true)
     expect(bank.pick('nothing')).toBeNull()
   })
 
   it('survives files that are missing or will not decode', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false })))
-    const bank = new SampleBank({ decodeAudioData: async () => ({}) } as unknown as BaseAudioContext, '/sfx/')
+    const bank = new SampleBank({ decodeAudioData: async () => ({}) } as unknown as BaseAudioContext)
     bank.load()
     await new Promise((r) => setTimeout(r, 0))
     expect(bank.pick('boom')).toBeNull()

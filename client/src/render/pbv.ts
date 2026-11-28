@@ -1,8 +1,9 @@
 import type { Node } from '@ragnarok/engine'
 import { TankModel, parseTankAsset, type TankLayout } from './tank'
 import { PBV_TRACK_HALF } from '@/sim/consts'
+import { assetUrl } from '@/assets'
 
-export const PBV_MODEL_URL = `${import.meta.env.BASE_URL}models/pbv.glb`
+export const PBV_MODEL_URL = assetUrl('models/pbv.glb')
 
 /** Radius of the road wheels in the model (`WHEEL_RADIUS` in build_pbv.py). */
 const WHEEL_RADIUS = 0.33

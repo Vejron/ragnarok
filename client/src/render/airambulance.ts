@@ -3,8 +3,9 @@ import { AIR_AMBULANCE_LAMP } from '@/sim/consts'
 import { parseToonModel } from './models'
 import { RotorModel, type RotorLook } from './rotor'
 import { toonMaterial } from './toon'
+import { assetUrl } from '@/assets'
 
-export const AIR_AMBULANCE_MODEL_URL = `${import.meta.env.BASE_URL}models/air_ambulance.glb`
+export const AIR_AMBULANCE_MODEL_URL = assetUrl('models/air_ambulance.glb')
 
 /**
  * The fan's ten blades turn slower than the main rotor here, where a real one's turn nine times as

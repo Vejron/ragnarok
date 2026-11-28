@@ -1,8 +1,9 @@
 import type { Node } from '@ragnarok/engine'
 import { SEAPLANE_BOMB_PIVOT } from '@/sim/consts'
 import { parsePlaneAsset, PlaneModel } from './plane'
+import { assetUrl } from '@/assets'
 
-export const SEAPLANE_MODEL_URL = `${import.meta.env.BASE_URL}models/seaplane.glb`
+export const SEAPLANE_MODEL_URL = assetUrl('models/seaplane.glb')
 
 /** Paint handed out by vehicle id: naval greys and blues, a rescue orange and a mail plane's cream. */
 const PAINTS = [0x5f7786, 0xc8672a, 0x2f4d7a, 0xd8cfae] as const

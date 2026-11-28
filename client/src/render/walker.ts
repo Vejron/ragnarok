@@ -6,10 +6,11 @@ import { WALKER_FOOT_HALF, WALKER_GUN_BARREL_DROP, WALKER_GUN_BARREL_X, WALKER_H
 import type { Turret } from '@/entities/units'
 import { colorFor } from '@/profile'
 import type { VehicleModel } from './car'
+import { assetUrl } from '@/assets'
 
 /** Paint colours handed out by vehicle id, so neighbouring walkers are told apart. */
 const PAINTS = [0x7d8a8f, 0x8f8a7d, 0x6e7a73, 0x857c72] as const
-export const WALKER_MODEL_URL = `${import.meta.env.BASE_URL}models/walker.glb`
+export const WALKER_MODEL_URL = assetUrl('models/walker.glb')
 /** Where the driver's head shows, in the upper body's frame: out of the roof hatch. */
 const HEAD = [0.25, 1.4, 0.3] as const
 /** How far the guns kick back when they fire, metres, and how fast they return, per second. */

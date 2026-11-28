@@ -4,13 +4,14 @@ import { parseToonModel, unlitMaterial } from './models'
 import { toonMaterial } from './toon'
 import { TUPP_EYE_AHEAD, TUPP_EYE_X } from '@/sim/consts'
 import type { Arms, Turret } from '@/entities/units'
+import { assetUrl } from '@/assets'
 
 /** The Hedemora's two commonest looks, handed out by vehicle id: black with a gold hackle, and lavender with a pale one. */
 const BREEDS: readonly (Breed & { hackle: number })[] = [
   { paint: 0x1e1b1d, comb: null, hackle: 0xd9962e },
   { paint: 0x83808f, comb: null, hackle: 0xcfc6da },
 ]
-export const TUPP_MODEL_URL = `${import.meta.env.BASE_URL}models/tupp.glb`
+export const TUPP_MODEL_URL = assetUrl('models/tupp.glb')
 const X = new Vector3(1, 0, 0)
 const Y = new Vector3(0, 1, 0)
 /** How far the skull shakes while the beam burns, metres. */

@@ -116,7 +116,9 @@ input lag, which is what a page kept from before a deploy did.
 - **The world is always asked for.** The server sends `world.msgpack`, `minimap.webp` and
   `worlds/active.json` with `Cache-Control: no-cache`, so a browser revalidates them (a 304 when they
   are unchanged), and the client fetches the manifest with `cache: 'no-cache'`, so the service worker's
-  NetworkFirst cannot hand back an old one either. Tiles are named by their hash and are never stale.
+  NetworkFirst cannot hand back an old one either. Tiles are named by their hash and are never stale;
+  so are map tiles, models and sounds (`?h=`), which the server sends as `immutable`
+  ([LOAD-TIME.md](LOAD-TIME.md)).
 - **A mismatch stops the page and reloads it** (`Game.outdated`, `updateNow` in `pwa.ts`): it says
   `bye`, drops the service worker's `world` cache, switches to a waiting build if there is one and
   reloads. It reloads once for each thing the server runs, so a page that still does not match after

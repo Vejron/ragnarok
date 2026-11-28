@@ -14,6 +14,7 @@ The docs are in [docs/](docs/).
 - [engine/README.md](engine/README.md): the WebGPU render engine the client draws with, a package of its own
 - [SERVER-PERFORMANCE.md](docs/SERVER-PERFORMANCE.md): what a full room costs per tick, how it is measured, what is and is not worth optimising, and what shelling a big house costs server and client
 - [TILE-STREAMING.md](docs/TILE-STREAMING.md): how the map reaches the browser
+- [LOAD-TIME.md](docs/LOAD-TIME.md): a cold start, measured by a benchmark that loads the built game with an empty cache: the start run in parallel, the near tiles awaited and the rest left to stream, the trees' atlas baked in a worker, the models' idle tracks pruned, and the loading screen
 - [FRAME-PERFORMANCE.md](docs/FRAME-PERFORMANCE.md): the main thread's frame while tiles stream in and houses come down: a benchmark that drives and shells the real game, and what was taken out of the frame (buildings made solid from a queue, meshes packed in the workers, falling sections and heaps cut in the look worker, a house's faces kept between cuts)
 - [MEMORY.md](docs/MEMORY.md): what the client holds in memory and how to measure it: a tile's buildings welded and kept on the GPU only, the multisampled image given no memory, and the per-frame garbage
 

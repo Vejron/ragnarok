@@ -7,6 +7,7 @@ import { THRUST_AIR, THRUST_GLIDE, THRUST_LIFT } from '@/net/codec'
 import type { Arms } from '@/entities/units'
 import { colorFor } from '@/profile'
 import type { VehicleModel } from './car'
+import { assetUrl } from '@/assets'
 
 /** A bird's plumage, and its comb and wattles' colour if they are not the model's own. */
 export interface Breed {
@@ -19,7 +20,7 @@ const BREEDS: readonly Breed[] = [
   { paint: 0xf2efe6, comb: null },
   { paint: 0xa9adb3, comb: 0x3b3d40 },
 ]
-export const HEN_MODEL_URL = `${import.meta.env.BASE_URL}models/hen.glb`
+export const HEN_MODEL_URL = assetUrl('models/hen.glb')
 /** Where the driver's head shows, in the hull's frame: in the glass cockpit on the back. */
 const HEAD = [0, 1.3, 0.35] as const
 /** The walker's legs: thigh and shin, the foot's thickness, and how far the hips sit above the ground. */

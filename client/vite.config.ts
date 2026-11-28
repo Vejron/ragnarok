@@ -1,4 +1,5 @@
-import { createReadStream, existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { extname, join, normalize } from 'node:path'
 import { fileURLToPath, URL } from 'node:url'
 
@@ -111,11 +112,17 @@ const pwa = VitePWA({
         handler: 'NetworkFirst',
         options: { cacheName: 'world', networkTimeoutSeconds: 5 },
       },
+      // Models and sounds are asked for with their content's hash (`assetUrl`), so they too are never stale.
+      {
+        urlPattern: /\/(models|sfx)\/[^/]+\?h=/,
+        handler: 'CacheFirst',
+        options: { cacheName: 'models', expiration: { maxEntries: 400, purgeOnQuotaError: true } },
+      },
       // Not hashed: served from the cache, refreshed behind it for the next launch.
       {
-        urlPattern: /\/(models|sfx|music)\//,
+        urlPattern: /\/music\//,
         handler: 'StaleWhileRevalidate',
-        options: { cacheName: 'assets', expiration: { maxEntries: 400, maxAgeSeconds: 60 * 60 * 24 * 30, purgeOnQuotaError: true } },
+        options: { cacheName: 'assets', expiration: { maxEntries: 20, maxAgeSeconds: 60 * 60 * 24 * 30, purgeOnQuotaError: true } },
       },
     ],
   },
@@ -137,9 +144,31 @@ const buildId: Plugin = {
   },
 }
 
+const PUBLIC = fileURLToPath(new URL('./public', import.meta.url))
+
+/**
+ * `virtual:assets`: the hash of every model and sound under `public/`, by its path. They keep their
+ * names in the build, so the page asks for each with its hash (`assetUrl`, `?h=`), which lets the
+ * server and the service worker keep it for good: a deploy then sends again only what changed.
+ */
+const assetHashes: Plugin = {
+  name: 'asset-hashes',
+  resolveId: (id) => (id === 'virtual:assets' ? '\0virtual:assets' : undefined),
+  load(id) {
+    if (id !== '\0virtual:assets') return
+    const hashes: Record<string, string> = {}
+    for (const dir of ['models', 'sfx']) {
+      for (const name of readdirSync(join(PUBLIC, dir)).sort()) {
+        hashes[`${dir}/${name}`] = createHash('sha256').update(readFileSync(join(PUBLIC, dir, name))).digest('hex').slice(0, 12)
+      }
+    }
+    return `export default ${JSON.stringify(hashes)}`
+  },
+}
+
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [vue(), ui({ ui: { colors: { primary: 'amber', neutral: 'zinc' } } }), editorWorlds, screenshots, buildId, pwa],
+  plugins: [vue(), ui({ ui: { colors: { primary: 'amber', neutral: 'zinc' } } }), editorWorlds, screenshots, buildId, assetHashes, pwa],
   server: {
     proxy: {
       // The map editor's API (`cargo run -p editor`).

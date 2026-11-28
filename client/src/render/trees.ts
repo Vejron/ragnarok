@@ -11,7 +11,7 @@ import {
   TREE_SPRUCE,
   type Tree,
 } from '@/world'
-import { IMPOSTOR_ATLAS_PX, IMPOSTOR_FRAMES, IMPOSTOR_FRAME_PX, IMPOSTOR_MARGIN, IMPOSTOR_SPREAD, IMPOSTOR_TILES, bakeImpostor, emptyAtlas, type ImpostorFrame } from './impostors'
+import { IMPOSTOR_ATLAS_PX, IMPOSTOR_FRAMES, IMPOSTOR_FRAME_PX, IMPOSTOR_MARGIN, IMPOSTOR_SPREAD, IMPOSTOR_TILES, bakeImpostor, emptyAtlas, type ImpostorAtlas, type ImpostorFrame } from './impostors'
 import { buildRocks, isRock } from './rocks'
 import type { Shore } from './shore'
 import { winter } from './season'
@@ -1302,15 +1302,36 @@ function foliage(atlas: { albedo: Texture; normalDepth: Texture }, fadeFrom: num
   })
 }
 
+/** The atlas a worker baked before the first tree was built, until `prototypes` takes it. */
+let ahead: ImpostorAtlas | null = null
+
+/** Every kind's impostor pictures, baked from its solid: half a second of work, with no scene or DOM in it. */
+export function bakeTreeAtlas(): ImpostorAtlas {
+  const pixels = emptyAtlas()
+  for (const kind of KIND_TILES) {
+    const { full, frame } = treeGeometries(kind)
+    bakeImpostor(full, frame, KIND_TILES.indexOf(kind), pixels)
+  }
+  return pixels
+}
+
+/** Hands over an atlas baked elsewhere (`bakeTreeAtlas` in a worker), for the first tree built to use. */
+export function adoptTreeAtlas(pixels: ImpostorAtlas) {
+  if (!shared) ahead = pixels
+}
+
 function prototypes() {
   if (!shared) {
     const geometries = new Map<number, Shapes>()
     const frames = new Map<number, ImpostorFrame>()
-    const pixels = emptyAtlas()
+    // Baked ahead in a worker (`bakeTreesAhead`) where there is one, else here and now.
+    const pixels = ahead ?? emptyAtlas()
+    const baked = ahead !== null
+    ahead = null
     for (const kind of KIND_TILES) {
       const { full, impostor, coarse, shadow, frame } = treeGeometries(kind)
       frames.set(kind, frame)
-      bakeImpostor(full, frame, KIND_TILES.indexOf(kind), pixels)
+      if (!baked) bakeImpostor(full, frame, KIND_TILES.indexOf(kind), pixels)
       // The impostor is turned in the vertex shader, which the shadow pass does not run: it casts from solids.
       const levels: DetailLevel[] = [
         { geometry: impostor, from: TREE_LEVELS_FROM[0]!, fade: TREE_FADE, shadow: coarse },

@@ -137,6 +137,9 @@ export interface Neighbour extends VehiclePose {
   driven: boolean
 }
 
+/** Fetches and compiles the physics' WebAssembly module. Safe to call again: it is loaded once. */
+export const loadSim = (): Promise<unknown> => init()
+
 /**
  * The local soldier's world: the server's own physics (`crates/sim`, built to WASM by
  * `npm run build:wasm`), fed the tiles the client streams and the vehicles of the newest snapshot,

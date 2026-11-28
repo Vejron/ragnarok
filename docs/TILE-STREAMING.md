@@ -80,7 +80,7 @@ sequenceDiagram
 The rest (cover, roads, trees, the collision mesh) are arrays of numbers.
 
 **Streaming** (`stream.ts`):
-- **Load and unload:** tiles within 450 m of the player are loaded, and dropped again beyond 550 m, with four fetches at a time.
+- **Load and unload:** tiles within 450 m of the player are loaded, and dropped again beyond 550 m, with four fetches at a time. The game's first frame waits only for those within 150 m ([LOAD-TIME.md](LOAD-TIME.md)).
 - **Prepare:** `prepare` runs off the frame and is always awaited before a tile is attached or discarded, so a worker reply never arrives for a tile the view has already dropped.
 - **Attach:** the ready queue attaches the nearest tiles first, for up to 4 ms a frame, but always at least one, whatever it costs. That is why everything costly happens in `prepare`.
 

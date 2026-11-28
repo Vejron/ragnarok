@@ -1,8 +1,9 @@
 import type { Node } from '@ragnarok/engine'
 import { TankModel, parseTankAsset, type TankLayout } from './tank'
 import { STRV_TRACK_HALF } from '@/sim/consts'
+import { assetUrl } from '@/assets'
 
-export const STRV_MODEL_URL = `${import.meta.env.BASE_URL}models/strvs.glb`
+export const STRV_MODEL_URL = assetUrl('models/strvs.glb')
 
 /** Radius of the road wheels in the model (`WHEEL_RADIUS` in build_strvs.py). */
 const WHEEL_RADIUS = 0.4

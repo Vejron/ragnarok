@@ -73,6 +73,9 @@ import library  # noqa: E402
 import retarget  # noqa: E402
 from parts import MAT_GEAR, MAT_OUTFIT, MAT_SKIN, Builder, grey, sharpen, srgb  # noqa: E402
 
+sys.path.insert(0, os.path.join(HERE, ".."))
+import gltf_prune  # noqa: E402
+
 argv = sys.argv[sys.argv.index("--") + 1 :] if "--" in sys.argv else []
 
 
@@ -2350,6 +2353,9 @@ def export():
     )
     valid = bpy.ops.export_scene.gltf.get_rna_type().properties.keys()
     bpy.ops.export_scene.gltf(**{k: v for k, v in kwargs.items() if k in valid})
+    # Blender writes every bone's every track; the ones that only hold the rest pose go (tools/gltf_prune.py).
+    tracks, left, _, _ = gltf_prune.prune(OUT)
+    print(f"pruned {tracks} tracks to {left}")
 
 
 export()

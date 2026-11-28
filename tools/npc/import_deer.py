@@ -35,6 +35,8 @@ def arg(name, default=None):
 
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(HERE, ".."))
+import gltf_prune  # noqa: E402
 ANIMAL = arg("--animal", "deer")
 SOURCE = arg("--source")
 OUT = arg("--out", os.path.normpath(os.path.join(HERE, f"../../client/public/models/{ANIMAL}.glb")))
@@ -105,6 +107,9 @@ def export():
     )
     valid = bpy.ops.export_scene.gltf.get_rna_type().properties.keys()
     bpy.ops.export_scene.gltf(**{k: v for k, v in kwargs.items() if k in valid})
+    # Blender writes every bone's every track; the ones that only hold the rest pose go (tools/gltf_prune.py).
+    tracks, left, _, _ = gltf_prune.prune(OUT)
+    print(f"pruned {tracks} tracks to {left}")
 
 
 export()

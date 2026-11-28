@@ -4,8 +4,9 @@ import { toonMaterial } from './toon'
 import { HELI_GUN_LENGTH } from '@/sim/consts'
 import type { Turret } from '@/entities/units'
 import { RotorModel, type RotorLook } from './rotor'
+import { assetUrl } from '@/assets'
 
-export const HELI_MODEL_URL = `${import.meta.env.BASE_URL}models/heli.glb`
+export const HELI_MODEL_URL = assetUrl('models/heli.glb')
 
 const ROTORS: RotorLook = { speed: 28, tail: 1.6 }
 const RECOIL_STROKE = 0.08

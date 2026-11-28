@@ -134,7 +134,7 @@ them hidden, timed alternately):
   saved 0.2 ms. Every tree as a solid saved 0.3 ms, at 0.5 M more triangles: the levels stay for
   weaker GPUs, which take `treeDetail` 0.7 and 0.5.
 - **The pictures frame the tree's cylinder and store a distance to the true outline** (`impostors.ts`),
-  and their views crowd the horizon. These change only what is baked (130 to 300 ms, once) and where a
+  and their views crowd the horizon. These change only what is baked (once, in a worker while the game starts: [LOAD-TIME.md](LOAD-TIME.md)) and where a
   picture is looked up: the trees' share was 0.61 ms before and 0.63 ms after, within the noise.
 - **The fade and the impostor's edge are counted out in samples** (`ShaderMaterial.coverage`): the
   fragment writes a sample mask, the impostor taking a share of a pixel's four samples and the solid

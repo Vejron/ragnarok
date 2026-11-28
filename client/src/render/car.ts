@@ -13,6 +13,7 @@ import { CarWear } from './carwear'
 import type { Debris } from './debris'
 import { halfExtentsOf } from '@/sim/kinds'
 import { AMV_STEER_SHARES } from '@/sim/slip'
+import { assetUrl } from '@/assets'
 
 /** What `Game` needs from a vehicle's model, whatever the kind. */
 export interface VehicleModel {
@@ -38,46 +39,46 @@ export type CarKind = 'jeep' | 'sports' | 'roadster' | 'snowmobile' | 'golf_cart
  */
 const KINDS: Record<CarKind, { kind: number; url: string; wheelRadius: number; maxSteer: number; seats: number; paint?: number; palette?: readonly number[]; secondSteer?: number; glass?: number }> = {
   // The Bronco's two-tones: tan, red, blue, brown and white over the tub.
-  jeep: { kind: KIND_JEEP, url: `${import.meta.env.BASE_URL}models/jeep.glb`, wheelRadius: JEEP_WHEEL_RADIUS, maxSteer: JEEP_MAX_STEER, seats: CAR_SEATS, palette: [0xc79a5b, 0x9b2a22, 0x2d4a78, 0x5a3b26, 0xe8e2d2] },
+  jeep: { kind: KIND_JEEP, url: assetUrl('models/jeep.glb'), wheelRadius: JEEP_WHEEL_RADIUS, maxSteer: JEEP_MAX_STEER, seats: CAR_SEATS, palette: [0xc79a5b, 0x9b2a22, 0x2d4a78, 0x5a3b26, 0xe8e2d2] },
   // Signal yellow, red, white, black and silver, as the Mantas came; clear glass, so its four are seen.
-  sports: { kind: KIND_SPORTS, url: `${import.meta.env.BASE_URL}models/sports.glb`, wheelRadius: SPORTS_WHEEL_RADIUS, maxSteer: SPORTS_MAX_STEER, seats: SPORTS_SEATS, palette: [0xf0c419, 0xb3161c, 0xf0eee8, 0x151517, 0xa4a8ab], glass: 0.4 },
-  roadster: { kind: KIND_ROADSTER, url: `${import.meta.env.BASE_URL}models/roadster.glb`, wheelRadius: ROADSTER_WHEEL_RADIUS, maxSteer: ROADSTER_MAX_STEER, seats: ROADSTER_SEATS },
+  sports: { kind: KIND_SPORTS, url: assetUrl('models/sports.glb'), wheelRadius: SPORTS_WHEEL_RADIUS, maxSteer: SPORTS_MAX_STEER, seats: SPORTS_SEATS, palette: [0xf0c419, 0xb3161c, 0xf0eee8, 0x151517, 0xa4a8ab], glass: 0.4 },
+  roadster: { kind: KIND_ROADSTER, url: assetUrl('models/roadster.glb'), wheelRadius: ROADSTER_WHEEL_RADIUS, maxSteer: ROADSTER_MAX_STEER, seats: ROADSTER_SEATS },
   // Its skis steer on the front pivots and do not roll; the idlers in its track do.
-  snowmobile: { kind: KIND_SNOWMOBILE, url: `${import.meta.env.BASE_URL}models/snowmobile.glb`, wheelRadius: SNOWMOBILE_WHEEL_RADIUS, maxSteer: SNOWMOBILE_MAX_STEER, seats: SNOWMOBILE_SEATS },
-  golf_cart: { kind: KIND_GOLF_CART, url: `${import.meta.env.BASE_URL}models/golf_cart.glb`, wheelRadius: GOLF_CART_WHEEL_RADIUS, maxSteer: GOLF_CART_MAX_STEER, seats: GOLF_CART_SEATS },
-  technical: { kind: KIND_TECHNICAL, url: `${import.meta.env.BASE_URL}models/technical.glb`, wheelRadius: TECHNICAL_WHEEL_RADIUS, maxSteer: TECHNICAL_MAX_STEER, seats: TECHNICAL_SEATS },
+  snowmobile: { kind: KIND_SNOWMOBILE, url: assetUrl('models/snowmobile.glb'), wheelRadius: SNOWMOBILE_WHEEL_RADIUS, maxSteer: SNOWMOBILE_MAX_STEER, seats: SNOWMOBILE_SEATS },
+  golf_cart: { kind: KIND_GOLF_CART, url: assetUrl('models/golf_cart.glb'), wheelRadius: GOLF_CART_WHEEL_RADIUS, maxSteer: GOLF_CART_MAX_STEER, seats: GOLF_CART_SEATS },
+  technical: { kind: KIND_TECHNICAL, url: assetUrl('models/technical.glb'), wheelRadius: TECHNICAL_WHEEL_RADIUS, maxSteer: TECHNICAL_MAX_STEER, seats: TECHNICAL_SEATS },
   // One steering ski on its front pivot, and runners that are part of the body: nothing rolls.
-  snowracer: { kind: KIND_SNOWRACER, url: `${import.meta.env.BASE_URL}models/snowracer.glb`, wheelRadius: SNOWRACER_WHEEL_RADIUS, maxSteer: SNOWRACER_MAX_STEER, seats: SNOWRACER_SEATS },
-  bus: { kind: KIND_BUS, url: `${import.meta.env.BASE_URL}models/bus.glb`, wheelRadius: BUS_WHEEL_RADIUS, maxSteer: BUS_MAX_STEER, seats: BUS_SEATS },
+  snowracer: { kind: KIND_SNOWRACER, url: assetUrl('models/snowracer.glb'), wheelRadius: SNOWRACER_WHEEL_RADIUS, maxSteer: SNOWRACER_MAX_STEER, seats: SNOWRACER_SEATS },
+  bus: { kind: KIND_BUS, url: assetUrl('models/bus.glb'), wheelRadius: BUS_WHEEL_RADIUS, maxSteer: BUS_MAX_STEER, seats: BUS_SEATS },
   // Army green, whoever drives it.
-  amv: { kind: KIND_AMV, url: `${import.meta.env.BASE_URL}models/amv.glb`, wheelRadius: AMV_WHEEL_RADIUS, maxSteer: AMV_MAX_STEER, seats: AMV_SEATS, paint: 0x5b6440, secondSteer: AMV_STEER_SHARES[1] },
+  amv: { kind: KIND_AMV, url: assetUrl('models/amv.glb'), wheelRadius: AMV_WHEEL_RADIUS, maxSteer: AMV_MAX_STEER, seats: AMV_SEATS, paint: 0x5b6440, secondSteer: AMV_STEER_SHARES[1] },
   // Old white paint, as most of them wear, and clear glass, so the two in its cab are seen.
-  epa: { kind: KIND_EPA, url: `${import.meta.env.BASE_URL}models/epa.glb`, wheelRadius: EPA_WHEEL_RADIUS, maxSteer: EPA_MAX_STEER, seats: EPA_SEATS, paint: 0xe9e6dc, glass: 0.4 },
+  epa: { kind: KIND_EPA, url: assetUrl('models/epa.glb'), wheelRadius: EPA_WHEEL_RADIUS, maxSteer: EPA_MAX_STEER, seats: EPA_SEATS, paint: 0xe9e6dc, glass: 0.4 },
   // Cherry red, silver, dark blue, racing green and beige.
-  saab_900: { kind: KIND_SAAB_900, url: `${import.meta.env.BASE_URL}models/saab_900.glb`, wheelRadius: SAAB_900_WHEEL_RADIUS, maxSteer: SAAB_900_MAX_STEER, seats: SAAB_900_SEATS, palette: [0x8c1c22, 0xb9bcbf, 0x1f2a36, 0x2f4a3a, 0xd9cfae], glass: 0.4 },
+  saab_900: { kind: KIND_SAAB_900, url: assetUrl('models/saab_900.glb'), wheelRadius: SAAB_900_WHEEL_RADIUS, maxSteer: SAAB_900_MAX_STEER, seats: SAAB_900_SEATS, palette: [0x8c1c22, 0xb9bcbf, 0x1f2a36, 0x2f4a3a, 0xd9cfae], glass: 0.4 },
   // Midnight blue, silver, burgundy, green and black.
-  saab_9000: { kind: KIND_SAAB_9000, url: `${import.meta.env.BASE_URL}models/saab_9000.glb`, wheelRadius: SAAB_9000_WHEEL_RADIUS, maxSteer: SAAB_9000_MAX_STEER, seats: SAAB_9000_SEATS, palette: [0x1b2433, 0x9a9ea3, 0x5e1a1f, 0x3c4a3e, 0x111214], glass: 0.4 },
+  saab_9000: { kind: KIND_SAAB_9000, url: assetUrl('models/saab_9000.glb'), wheelRadius: SAAB_9000_WHEEL_RADIUS, maxSteer: SAAB_9000_MAX_STEER, seats: SAAB_9000_SEATS, palette: [0x1b2433, 0x9a9ea3, 0x5e1a1f, 0x3c4a3e, 0x111214], glass: 0.4 },
   // Navy, beige, dark red, white, olive and grey.
-  volvo_240: { kind: KIND_VOLVO_240, url: `${import.meta.env.BASE_URL}models/volvo_240.glb`, wheelRadius: VOLVO_240_WHEEL_RADIUS, maxSteer: VOLVO_240_MAX_STEER, seats: VOLVO_240_SEATS, palette: [0x1e3252, 0xd8ccab, 0x7a1d1d, 0xe8e4d8, 0x4d5a3a, 0x8b8f92], glass: 0.4 },
+  volvo_240: { kind: KIND_VOLVO_240, url: assetUrl('models/volvo_240.glb'), wheelRadius: VOLVO_240_WHEEL_RADIUS, maxSteer: VOLVO_240_MAX_STEER, seats: VOLVO_240_SEATS, palette: [0x1e3252, 0xd8ccab, 0x7a1d1d, 0xe8e4d8, 0x4d5a3a, 0x8b8f92], glass: 0.4 },
   // Black, steel blue, silver, wine red and white.
-  volvo_740: { kind: KIND_VOLVO_740, url: `${import.meta.env.BASE_URL}models/volvo_740.glb`, wheelRadius: VOLVO_740_WHEEL_RADIUS, maxSteer: VOLVO_740_MAX_STEER, seats: VOLVO_740_SEATS, palette: [0x2b2d30, 0x2a3b5c, 0xa8abad, 0x6b1e23, 0xe2ddd0], glass: 0.4 },
+  volvo_740: { kind: KIND_VOLVO_740, url: assetUrl('models/volvo_740.glb'), wheelRadius: VOLVO_740_WHEEL_RADIUS, maxSteer: VOLVO_740_MAX_STEER, seats: VOLVO_740_SEATS, palette: [0x2b2d30, 0x2a3b5c, 0xa8abad, 0x6b1e23, 0xe2ddd0], glass: 0.4 },
   // Tornado red, black, white, blue and grey.
-  gti: { kind: KIND_GTI, url: `${import.meta.env.BASE_URL}models/gti.glb`, wheelRadius: GTI_WHEEL_RADIUS, maxSteer: GTI_MAX_STEER, seats: GTI_SEATS, palette: [0xb2141b, 0x0f0f10, 0xe9e7e1, 0x24365e, 0x7d8285], glass: 0.4 },
+  gti: { kind: KIND_GTI, url: assetUrl('models/gti.glb'), wheelRadius: GTI_WHEEL_RADIUS, maxSteer: GTI_MAX_STEER, seats: GTI_SEATS, palette: [0xb2141b, 0x0f0f10, 0xe9e7e1, 0x24365e, 0x7d8285], glass: 0.4 },
   // Beige, red, blue, white and olive.
-  transporter: { kind: KIND_TRANSPORTER, url: `${import.meta.env.BASE_URL}models/transporter.glb`, wheelRadius: TRANSPORTER_WHEEL_RADIUS, maxSteer: TRANSPORTER_MAX_STEER, seats: TRANSPORTER_SEATS, palette: [0xd9cfae, 0x8a2a1d, 0x2f4f7a, 0xe8e4d8, 0x5d6b3a], glass: 0.4 },
+  transporter: { kind: KIND_TRANSPORTER, url: assetUrl('models/transporter.glb'), wheelRadius: TRANSPORTER_WHEEL_RADIUS, maxSteer: TRANSPORTER_MAX_STEER, seats: TRANSPORTER_SEATS, palette: [0xd9cfae, 0x8a2a1d, 0x2f4f7a, 0xe8e4d8, 0x5d6b3a], glass: 0.4 },
   // White, signal yellow, blue, red and grey.
-  kadett: { kind: KIND_KADETT, url: `${import.meta.env.BASE_URL}models/kadett.glb`, wheelRadius: KADETT_WHEEL_RADIUS, maxSteer: KADETT_MAX_STEER, seats: KADETT_SEATS, palette: [0xf2f0ea, 0xf0c419, 0x2c4f8c, 0xaa1f24, 0x8d9295], glass: 0.4 },
+  kadett: { kind: KIND_KADETT, url: assetUrl('models/kadett.glb'), wheelRadius: KADETT_WHEEL_RADIUS, maxSteer: KADETT_MAX_STEER, seats: KADETT_SEATS, palette: [0xf2f0ea, 0xf0c419, 0x2c4f8c, 0xaa1f24, 0x8d9295], glass: 0.4 },
   // Graphite, dark blue, silver, maroon and white.
-  omega: { kind: KIND_OMEGA, url: `${import.meta.env.BASE_URL}models/omega.glb`, wheelRadius: OMEGA_WHEEL_RADIUS, maxSteer: OMEGA_MAX_STEER, seats: OMEGA_SEATS, palette: [0x3a3f45, 0x1d2c4a, 0xa6a9ab, 0x4e1a22, 0xece9e1], glass: 0.4 },
+  omega: { kind: KIND_OMEGA, url: assetUrl('models/omega.glb'), wheelRadius: OMEGA_WHEEL_RADIUS, maxSteer: OMEGA_MAX_STEER, seats: OMEGA_SEATS, palette: [0x3a3f45, 0x1d2c4a, 0xa6a9ab, 0x4e1a22, 0xece9e1], glass: 0.4 },
   // Metallic blue, silver, red, white and black.
-  sierra: { kind: KIND_SIERRA, url: `${import.meta.env.BASE_URL}models/sierra.glb`, wheelRadius: SIERRA_WHEEL_RADIUS, maxSteer: SIERRA_MAX_STEER, seats: SIERRA_SEATS, palette: [0x2b4f86, 0x9fa3a6, 0x7c1c20, 0xe6e2d6, 0x1a1b1d], glass: 0.4 },
+  sierra: { kind: KIND_SIERRA, url: assetUrl('models/sierra.glb'), wheelRadius: SIERRA_WHEEL_RADIUS, maxSteer: SIERRA_MAX_STEER, seats: SIERRA_SEATS, palette: [0x2b4f86, 0x9fa3a6, 0x7c1c20, 0xe6e2d6, 0x1a1b1d], glass: 0.4 },
   // Sand, pale blue, red, white and green.
-  escort: { kind: KIND_ESCORT, url: `${import.meta.env.BASE_URL}models/escort.glb`, wheelRadius: ESCORT_WHEEL_RADIUS, maxSteer: ESCORT_MAX_STEER, seats: ESCORT_SEATS, palette: [0xc9b98d, 0x6f8e9e, 0xa7201f, 0xeeebe3, 0x3f5b3a], glass: 0.4 },
+  escort: { kind: KIND_ESCORT, url: assetUrl('models/escort.glb'), wheelRadius: ESCORT_WHEEL_RADIUS, maxSteer: ESCORT_MAX_STEER, seats: ESCORT_SEATS, palette: [0xc9b98d, 0x6f8e9e, 0xa7201f, 0xeeebe3, 0x3f5b3a], glass: 0.4 },
   // Police white, every one of them, under the blue stripe of its model.
-  police_car: { kind: KIND_POLICE_CAR, url: `${import.meta.env.BASE_URL}models/police_car.glb`, wheelRadius: POLICE_CAR_WHEEL_RADIUS, maxSteer: POLICE_CAR_MAX_STEER, seats: POLICE_CAR_SEATS, paint: 0xf1f0ea, glass: 0.4 },
-  police_van: { kind: KIND_POLICE_VAN, url: `${import.meta.env.BASE_URL}models/police_van.glb`, wheelRadius: POLICE_VAN_WHEEL_RADIUS, maxSteer: POLICE_VAN_MAX_STEER, seats: POLICE_VAN_SEATS, paint: 0xf1f0ea, glass: 0.4 },
+  police_car: { kind: KIND_POLICE_CAR, url: assetUrl('models/police_car.glb'), wheelRadius: POLICE_CAR_WHEEL_RADIUS, maxSteer: POLICE_CAR_MAX_STEER, seats: POLICE_CAR_SEATS, paint: 0xf1f0ea, glass: 0.4 },
+  police_van: { kind: KIND_POLICE_VAN, url: assetUrl('models/police_van.glb'), wheelRadius: POLICE_VAN_WHEEL_RADIUS, maxSteer: POLICE_VAN_MAX_STEER, seats: POLICE_VAN_SEATS, paint: 0xf1f0ea, glass: 0.4 },
   // Signal yellow below its white top and red stripe.
-  ambulance: { kind: KIND_AMBULANCE, url: `${import.meta.env.BASE_URL}models/ambulance.glb`, wheelRadius: AMBULANCE_WHEEL_RADIUS, maxSteer: AMBULANCE_MAX_STEER, seats: AMBULANCE_SEATS, paint: 0xf2c81e, glass: 0.4 },
+  ambulance: { kind: KIND_AMBULANCE, url: assetUrl('models/ambulance.glb'), wheelRadius: AMBULANCE_WHEEL_RADIUS, maxSteer: AMBULANCE_MAX_STEER, seats: AMBULANCE_SEATS, paint: 0xf2c81e, glass: 0.4 },
 }
 
 const BODY_COLORS = [0xff9f1c, 0x2ec4b6, 0xe71d36, 0x5aa9e6, 0xb5e48c, 0xf15bb5, 0xffd23f, 0x9d4edd]

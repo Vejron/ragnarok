@@ -1,11 +1,12 @@
 import { Animator, boxGeometry, Color, Group, Mesh, parseGlb, type AnimationClip, type Geometry, type Material, type Node, Vector3 } from '@ragnarok/engine'
 import { KIND_DEER, KIND_STAG } from '@/net/codec'
 import { toonMaterial } from './toon'
+import { assetUrl } from '@/assets'
 
 /** The wild animals' models, by kind: Quaternius' deer and stag, brought in by `tools/npc/import_deer.py`. */
 export const ANIMAL_URLS: ReadonlyMap<number, string> = new Map([
-  [KIND_DEER, `${import.meta.env.BASE_URL}models/deer.glb`],
-  [KIND_STAG, `${import.meta.env.BASE_URL}models/stag.glb`],
+  [KIND_DEER, assetUrl('models/deer.glb')],
+  [KIND_STAG, assetUrl('models/stag.glb')],
 ])
 
 /** Ground speed above which it walks, and above which it gallops, m/s. The server walks them at 1.3 m/s and gallops them at 9. */

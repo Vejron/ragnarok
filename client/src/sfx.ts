@@ -4,6 +4,8 @@
  * caller plays its synthesised stand-in, so a slow network or a missing file is never silent or broken.
  */
 
+import { assetUrl } from './assets'
+
 /** Sound name -> number of variations, files `<name>_<n>.m4a`, n from 1. */
 export const SAMPLES: Readonly<Record<string, number>> = {
   rifle: 4,
@@ -26,7 +28,7 @@ export class SampleBank {
   private readonly buffers = new Map<string, AudioBuffer[]>()
   private loading = false
 
-  constructor(private readonly ctx: BaseAudioContext, private readonly base = `${import.meta.env?.BASE_URL ?? '/'}sfx/`) {}
+  constructor(private readonly ctx: BaseAudioContext) {}
 
   /** Starts fetching and decoding everything. Harmless to call again, or without fetch or decoding. */
   load() {
@@ -34,7 +36,7 @@ export class SampleBank {
     this.loading = true
     if (typeof fetch !== 'function' || typeof this.ctx.decodeAudioData !== 'function') return
     for (const [name, count] of Object.entries(SAMPLES)) {
-      for (let n = 1; n <= count; n++) void this.fetch(name, `${this.base}${name}_${n}.m4a`)
+      for (let n = 1; n <= count; n++) void this.fetch(name, assetUrl(`sfx/${name}_${n}.m4a`))
     }
   }
 

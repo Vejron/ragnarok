@@ -5,8 +5,9 @@ import { PLANE_BOMB_PIVOT, PLANE_BOMBS, PLANE_REAR_LENGTH } from '@/sim/consts'
 import { ARMS_CUT } from '@/net/codec'
 import type { Arms, Turret } from '@/entities/units'
 import type { VehicleModel } from './car'
+import { assetUrl } from '@/assets'
 
-export const PLANE_MODEL_URL = `${import.meta.env.BASE_URL}models/plane.glb`
+export const PLANE_MODEL_URL = assetUrl('models/plane.glb')
 
 /**
  * Propeller speed with the engine running, and windmilling with the blip switch in, rad/s, and how fast

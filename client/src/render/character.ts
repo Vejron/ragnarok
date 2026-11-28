@@ -13,6 +13,7 @@ import { POLE_REACH, SOLE_DROP, buildPole, buildSki } from './skigear'
 import { buildClub, swingLength, swingPhase } from './golfclub'
 import { smoothstep } from '@/math'
 import { Feet, Follow, Grip, Inertia, Sway } from './ik'
+import { assetUrl } from '@/assets'
 
 /** The worn backpack's bottom: this high above the feet standing, this much lower crouched, and this far behind the body's middle. */
 const PACK_Y = 0.85
@@ -21,7 +22,7 @@ const PACK_BACK = 0.2
 /** Feet sit this far below the capsule centre. */
 const FOOT_OFFSET = CAPSULE_HALF_HEIGHT + CAPSULE_RADIUS
 
-export const MODEL_URL = `${import.meta.env.BASE_URL}models/player.glb`
+export const MODEL_URL = assetUrl('models/player.glb')
 
 /** A zombie's rags, whatever colour it had, the grey-green of its skin and the dirt its clothes and shoes are dulled with. */
 const ZOMBIE_RAGS = 0x4a4636

@@ -133,14 +133,20 @@ fn served_build() -> u32 {
     }
 }
 
-/// How long browsers keep the client's files: Vite's hashed `assets/` for good, and whatever names the
-/// current build (the pages, the service worker, the app manifest) only after asking, so a new build
-/// reaches installed apps on their next check.
+/// Whether a request names its content: Vite's hashed `assets/`, or a tile, map tile, model or sound
+/// asked for with its hash in the query (`?h=`). What it gets back never changes.
+fn names_its_content(path: &str, query: Option<&str>) -> bool {
+    path.starts_with("/assets/") || query.is_some_and(|query| query.split('&').any(|part| part.starts_with("h=")))
+}
+
+/// How long browsers keep the client's files: what names its content (`names_its_content`) for good,
+/// and whatever names the current build (the pages, the service worker, the app manifest) only after
+/// asking, so a new build reaches installed apps on their next check.
 #[handler]
 async fn cache_headers(req: &mut Request, depot: &mut Depot, res: &mut Response, ctrl: &mut FlowCtrl) {
     ctrl.call_next(req, depot, res).await;
     let path = req.uri().path();
-    let policy = if path.starts_with("/assets/") {
+    let policy = if names_its_content(path, req.uri().query()) {
         "public, max-age=31536000, immutable"
     } else if path == "/"
         || path.ends_with(".html")
@@ -266,4 +272,19 @@ async fn main() -> Result<()> {
         Server::new(listener).serve(router).await;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::names_its_content;
+
+    #[test]
+    fn a_file_asked_for_by_its_hash_is_kept_for_good_and_a_bare_one_is_not() {
+        assert!(names_its_content("/assets/main-abc123.js", None));
+        assert!(names_its_content("/tiles/3_4.msgpack", Some("h=1f2e3d4c")));
+        assert!(names_its_content("/models/player.glb", Some("h=0123456789ab")));
+        assert!(!names_its_content("/models/player.glb", None));
+        assert!(!names_its_content("/models/player.glb", Some("hash=1")));
+        assert!(!names_its_content("/world.msgpack", None));
+    }
 }

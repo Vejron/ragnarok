@@ -19,7 +19,7 @@ import { ITEM_DRIVER, ITEM_NONE, aimSpeedScale, effectiveSpread, fillsHands, ite
 import { backswingPhase, downswingPhase } from './render/golfclub'
 import { InputController, type PhoneApp } from './sim/input'
 import type { Character } from './render/character'
-import { SimMotor, type CharacterState, type Neighbour, type VehiclePose } from './sim/motor'
+import { loadSim, SimMotor, type CharacterState, type Neighbour, type VehiclePose } from './sim/motor'
 import { Terrain } from './sim/terrain'
 import { VehicleDriver, type DrivenPose, type Feet } from './sim/driver'
 import { Predictor } from './sim/predict'
@@ -78,6 +78,8 @@ import { BallCam } from './render/ballcam'
 import { ChaseCam } from './render/chase'
 import { PerfReadout } from './render/perf'
 import { clock, lap } from './spans'
+import { LoadTracker, type LoadProgress } from './loading'
+import { bakeTreesAhead } from './render/treebake'
 import { Screenshots, type TiledBuilding } from './screenshot'
 import { LookWorker } from './render/lookworker'
 import { encodeHands, encodePhone, encodeRtc, KIND_AMV, KIND_CB90, KIND_MISSILE, KIND_PBV, KIND_SOLDIER, KIND_STRF, KIND_STRV, KIND_SUBMARINE, KIND_TANK, LIMB_ALL, LIMB_ARMS, LIMB_LEGS, THRUST_LOW_ROTOR, TURRET_ALT, TURRET_EMPTY } from './net/codec'
@@ -139,7 +141,7 @@ import { Headlights } from './entities/presenters/headlights'
 import { Beacons } from './entities/presenters/beacons'
 import { Roosters } from './entities/presenters/roosters'
 import { Animals } from './entities/presenters/animals'
-import { TileStreamer } from './stream'
+import { PRIME_RADIUS, TileStreamer } from './stream'
 import { frozen, loadManifest, NO_WATER, THEME_WINTER, WORLD_BASE, worldHash, type TileData, type TileRef, type WorldData } from './world'
 import { updateNow } from './pwa'
 import { HudLayer } from '@ragnarok/engine'
@@ -532,8 +534,15 @@ export class Game {
   private readonly health = new ConnectionHealth()
   /** What the HUD says while a lost session is being rejoined; null while joined, or never joined. */
   private rejoining: string | null = null
+  /** Follows the start up to the first frame, for the loading screen and the load bench. */
+  private readonly loading: LoadTracker
+  /** The models of everything but the soldier, loading or loaded: what `connect` waits for. */
+  private models: Promise<unknown> = Promise.resolve()
+  /** Whether a frame has been drawn yet. */
+  private drawn = false
 
-  constructor(container: HTMLElement, private readonly onStats: (stats: HudStats) => void) {
+  constructor(container: HTMLElement, private readonly onStats: (stats: HudStats) => void, onLoad: (progress: LoadProgress) => void = () => {}) {
+    this.loading = new LoadTracker(onLoad)
     this.scene = new Scene(container)
     this.scene.onRendererReplaced = () => void this.redrawWorld()
     this.hullMarks = new HullMarks(this.scene.scene.scars)
@@ -659,9 +668,18 @@ export class Game {
   }
 
   async start() {
+    const load = this.loading
+    // Everything that waits on nothing but the network or the GPU starts at once (LOAD-TIME.md); each
+    // is awaited where it is first needed.
+    const gpu = load.run('renderer', () => this.scene.init())
+    const manifest = load.run('world', () => loadManifest())
+    const sim = load.run('physics', () => loadSim())
+    const soldier = load.run('soldier', () => this.crowd.load())
+    // A failure of one is reported where it is awaited, not as a rejection nobody handled meanwhile.
+    for (const pending of [manifest, sim, soldier]) pending.catch(() => {})
     // The GPU first: with no WebGPU there is nothing to draw, and the error says so.
-    await this.scene.init()
-    const { world, hash } = await loadManifest()
+    await gpu
+    const { world, hash } = await manifest
     // Only now is the world's place known (in dev, the one the editor activated).
     this.hud.tiles = this.mapTiles
     void this.mapTiles.init(WORLD_BASE)
@@ -674,6 +692,10 @@ export class Game {
       this.scene.scene.add(this.marshMist.root, this.rainfall.root)
     }
     this.view.world = world
+    // The tile worker fetches its script and starts its own copy of the physics while the rest arrives,
+    // and the trees' impostors are baked off this thread.
+    this.view.warm()
+    const trees = load.time('trees', () => bakeTreesAhead())
     // On a hilly world the plane sits just under the terrain, so it only shows where a tile is late; the
     // view lowers it under sea beds as their tiles come in.
     const backdrop = buildGround(world.halfExtent, world.groundCell > 0 ? -0.05 : 0)
@@ -703,23 +725,6 @@ export class Game {
     this.scene.scene.add(this.gardens.root)
     this.applyGrass(this.scene.look)
     if (!world.bytes) throw new Error('the manifest came without its bytes')
-    const motor = await SimMotor.create(world.bytes)
-    // The lifts' pylons and stations come from the sim's own shapes, so the WASM must be up first.
-    this.liftView = new LiftView(world.lifts)
-    this.scene.scene.add(this.liftView.root)
-    this.busStops = new BusStops(world.busLines)
-    this.scene.scene.add(this.busStops.root)
-    this.fuelStations = new FuelStations(world.fuelStations ?? [])
-    this.scene.scene.add(this.fuelStations.root)
-    this.dealers = new Dealers(world.dealers ?? [])
-    this.scene.scene.add(this.dealers.root)
-    this.motor = this.view.motor = motor
-    this.ragdolls = new Ragdolls(motor)
-    this.driver = new VehicleDriver(motor)
-    // A wall the driven vehicle breaks through is seen to break as it hits, not a round trip later.
-    this.driver.onBreach = (holes) => this.view.rammed(holes)
-    this.driver.onForget = () => this.view.forgetRams()
-    await Promise.all([this.crowd.load(), loadVehicleModels(), loadRoosterModel(), loadAnimalModels()])
     // The buildings arrive as tiles, around wherever the player is.
     this.tiles = new TileStreamer(world, {
       prepare: (ref, tile) => this.view.prepareTile(ref, tile),
@@ -738,9 +743,46 @@ export class Game {
     // Until the server places us, walk around solo from the first spawn point.
     const [x, z] = world.spawns[0] ?? [0, 0]
     this.view.focus(x, z)
-    await this.tiles.prime(x, z)
+    const tiles = this.tiles
+    // The tiles are fetched and prepared from now on, and attached once the physics is here to take
+    // them and the trees' atlas to build them with.
+    let attach = () => {}
+    const attachable = new Promise<void>((resolve) => (attach = resolve))
+    const primed = load.run('terrain', async () => {
+      tiles.seek(x, z)
+      await attachable
+      await tiles.prime(x, z, PRIME_RADIUS, (done, of) => load.count('terrain', done, of))
+    })
+    primed.catch(() => {})
+    // Vehicles and animals are only seen once the server sends them, so the first frame does not wait
+    // for their models, and on a slow line they do not take its share: they are asked for once what
+    // the first frame needs has arrived.
+    this.models = Promise.allSettled([sim, soldier, primed]).then(() => load.time('models', () => Promise.all([loadVehicleModels(), loadRoosterModel(), loadAnimalModels()])))
+    this.models.catch(() => {})
+    await sim
+    const motor = await SimMotor.create(world.bytes)
+    // The lifts' pylons and stations come from the sim's own shapes, so the WASM must be up first.
+    this.liftView = new LiftView(world.lifts)
+    this.scene.scene.add(this.liftView.root)
+    this.busStops = new BusStops(world.busLines)
+    this.scene.scene.add(this.busStops.root)
+    this.fuelStations = new FuelStations(world.fuelStations ?? [])
+    this.scene.scene.add(this.fuelStations.root)
+    this.dealers = new Dealers(world.dealers ?? [])
+    this.scene.scene.add(this.dealers.root)
+    this.motor = this.view.motor = motor
+    this.ragdolls = new Ragdolls(motor)
+    this.driver = new VehicleDriver(motor)
+    // A wall the driven vehicle breaks through is seen to break as it hits, not a round trip later.
+    this.driver.onBreach = (holes) => this.view.rammed(holes)
+    this.driver.onForget = () => this.view.forgetRams()
+    await trees
+    attach()
+    await primed
     // Nothing is drawn yet: every building of the first tiles is made solid now, not a few a frame.
-    this.view.buildNear({ x, z }, true)
+    await load.run('buildings', () => this.view.buildNear({ x, z }, true))
+    // The local soldier is drawn from the first frame on.
+    await soldier
     this.predictor = new Predictor(motor.stepper, { position: [x, this.terrain.heightAt(x, z) + STANDING_Y, z], yaw: 0, vy: 0, grounded: true, knock: [0, 0], ride: 0, prone: false, chute: false, spent: 0, winded: false, lost: 0, down: 0, skis: false, skiStrain: 0, swimming: false, ghost: false })
     this.predictor.speedScale = (input) => aimSpeedScale(this.player.slot(input.slot).item, input.buttons) * (this.player.carrying ? BACKPACK_SPEED : 1)
     this.predictor.armed = (input) => fillsHands(this.player.slot(input.slot).item)
@@ -764,6 +806,15 @@ export class Game {
   private readonly onPageHide = () => this.transport.bye(BYE_LEAVING)
 
   private async connect() {
+    if (this.disposed) return
+    // What the server sends is drawn with the vehicles' and animals' models, so they are all here first.
+    this.loading.behind('Loading the vehicles', this.models)
+    try {
+      await this.models
+    } catch (error) {
+      this.warning = `The vehicles could not be loaded (${error instanceof Error ? error.message : String(error)}). Reload the page.`
+      return
+    }
     if (this.disposed) return
     try {
       await this.transport.connect(profileQuery(loadProfile(), this.worldHash))
@@ -1425,6 +1476,12 @@ export class Game {
     this.screenshots.afterRender()
     this.perf.end(ticks)
     this.onStats(stats)
+    if (!this.drawn) {
+      this.drawn = true
+      this.loading.reached('first-frame')
+      // The frame is on the screen once the GPU has done what it was sent, pipelines and all.
+      void this.scene.renderer?.device.queue.onSubmittedWorkDone().then(() => this.loading.reached('shown'))
+    }
   }
 
   /** Raises or lowers the phone and redraws its screen when something changed, or every so often. */

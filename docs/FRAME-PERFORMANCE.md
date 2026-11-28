@@ -93,7 +93,7 @@ is the dust and shards, and 3.9 ms for its collider.
   as about 2 ms allows, nearest first (`SimMotor.buildBuildings`).
 - What is done to a building meanwhile is kept and built in: cells carved out (`carve_building`), gates
   opened or shut (`set_gates`), the building brought down (`destroy`).
-- `prime` and a redrawn world make every building solid before the game moves.
+- `prime` and a redrawn world make every building of the tiles they wait for solid before the game moves.
 - Far buildings are solid within a second or two of their tile arriving. Until then the gunsight's range
   and the arcs see through them, which shows only in the client's readout.
 

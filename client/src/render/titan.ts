@@ -6,6 +6,7 @@ import { TITAN_ANKLE_HEIGHT, TITAN_ELBOW_POLE, TITAN_EYE, TITAN_FIST_REST, TITAN
 import type { Titan } from '@/entities/units'
 import { clamp } from '@/math'
 import type { VehicleModel } from './car'
+import { assetUrl } from '@/assets'
 
 /** Paint colours handed out by vehicle id, so two Titans are told apart. */
 /** A Titan's two colours, its armour and the second colour under it: which pair it wears goes by its id. */
@@ -15,7 +16,7 @@ const PAINTS = [
   [0xd8d4c8, 0x2f5d3a],
   [0x8a9aa8, 0x7a2f2a],
 ] as const
-export const TITAN_MODEL_URL = `${import.meta.env.BASE_URL}models/titan.glb`
+export const TITAN_MODEL_URL = assetUrl('models/titan.glb')
 /**
  * Upper arm and forearm, thigh and shin, and how far the ankle is above the sole, metres: the server's,
  * whose hit shapes are bent by the same IK (`UPPER`, `FORE`, `THIGH`, `SHIN`, `PAD` in build_titan.py).

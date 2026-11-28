@@ -3,6 +3,8 @@ import { computed, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
 import { Game, type HudStats } from './game'
 import { hotbarRectsCss } from './hud/gauges'
 import TouchControls from './TouchControls.vue'
+import LoadingScreen from './LoadingScreen.vue'
+import type { LoadProgress } from './loading'
 import type { InputController } from './sim/input'
 import { LOOK_OPTIONS, type Look } from './render/look'
 import { QUALITIES, resolveQuality, type Quality } from './render/quality'
@@ -14,6 +16,8 @@ import { GYRO_MODES, type GyroMode } from './sim/gyro'
 const container = ref<HTMLElement | null>(null)
 const stats = shallowRef<HudStats | null>(null)
 const error = ref<string | null>(null)
+/** Where the start of the game is, for the loading screen; after the first frame, what is still arriving behind it. */
+const load = shallowRef<LoadProgress | null>(null)
 /** This browser can show the game in a VR headset (WebXR on WebGPU). */
 const vrOk = ref(false)
 const input = shallowRef<InputController | null>(null)
@@ -37,7 +41,7 @@ onMounted(() => {
     if (now - lastStats < 200 && next.locked === stats.value?.locked && next.hands === stats.value?.hands && next.phoneUp === stats.value?.phoneUp) return
     lastStats = now
     stats.value = next
-  })
+  }, (progress) => (load.value = progress))
   input.value = game.input
   look.value = { ...game.look }
   quality.value = game.quality
@@ -129,12 +133,17 @@ const KEYS: [string, string][] = [
     @pointerdown.prevent="input?.selectSlot(k)"
   />
   <!-- The game's own warnings are drawn on the HUD, under the pills; this is for a game that would not start. -->
-  <div v-if="error" class="banner">{{ error }}</div>
+  <div v-if="error && stats" class="banner">{{ error }}</div>
+  <!-- Until the first frame is drawn; a game that would not start says why here. -->
+  <Transition name="loading">
+    <LoadingScreen v-if="!stats" :progress="load" :error="error" />
+  </Transition>
   <!-- Offered rather than done, so nobody is pulled out of a fight; on the pause screen it is one tap away. -->
   <button v-if="updateReady && !stats?.locked" type="button" class="chip update" @click.stop="applyUpdate">New version · Reload</button>
   <div v-if="stats && !stats.locked" class="overlay">
     <h1>RAGNAROK</h1>
     <p class="play">{{ stats.touch ? 'Tap to play' : 'Click to play' }}</p>
+    <p v-if="load?.background" class="behind">{{ load.background }}…</p>
     <div class="actions" @click.stop>
       <a class="chip" :href="settingsUrl" title="Leaves the match: you join again when you come back">Settings · name, colour, loadout, spawns</a>
       <button type="button" class="chip" :aria-expanded="lookOpen" @click="lookOpen = !lookOpen">Graphics {{ lookOpen ? '▴' : '▾' }}</button>
@@ -210,6 +219,7 @@ body { font-family: ui-rounded, 'SF Pro Rounded', system-ui, sans-serif; }
 }
 .overlay h1 { margin: 0; font-size: clamp(40px, 10vw, 88px); letter-spacing: 0.08em; transform: rotate(-3deg); }
 .overlay .play { margin: 0; font-size: 22px; font-weight: 800; }
+.overlay .behind { margin: -4px 0 0; font-size: 14px; font-weight: 700; opacity: 0.8; }
 .actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; pointer-events: auto; }
 .chip {
   display: inline-block; padding: 8px 16px; border: 0; border-radius: 999px; font: inherit; font-size: 15px; font-weight: 700;

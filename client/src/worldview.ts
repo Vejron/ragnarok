@@ -800,6 +800,11 @@ export class WorldView {
     }
   }
 
+  /** Starts the tile worker ahead of the first tile, so its script and its physics module are not what that tile waits for. */
+  warm() {
+    this.tileWorker()
+  }
+
   private tileWorker(): TileWorker | null {
     if (this.builder === undefined && this.world) {
       this.builder = TileWorker.create(this.world.halfExtent, this.world.tileSize, winter)

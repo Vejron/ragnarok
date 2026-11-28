@@ -1,7 +1,8 @@
 import { Animator, Color, Group, Mesh, parseGlb, type AnimationClip, type Node, Vector3 } from '@ragnarok/engine'
 import { toonMaterial } from './toon'
+import { assetUrl } from '@/assets'
 
-export const ROOSTER_URL = `${import.meta.env.BASE_URL}models/rooster.glb`
+export const ROOSTER_URL = assetUrl('models/rooster.glb')
 
 /** Ground speed above which the walk clip plays, m/s. The server walks it at 1.2 m/s. */
 const WALK_MIN_SPEED = 0.15
